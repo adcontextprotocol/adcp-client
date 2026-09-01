@@ -2,12 +2,48 @@
 
 A simple command-line utility for calling AdCP agents directly without writing code. Features protocol auto-detection and agent alias management for quick access.
 
+## Scaffold and diagnose a seller
+
+Requires Node.js `^20.19.0 || >=22.12.0`.
+
+```bash
+npx --package '@adcp/sdk@^14.0.0-0' adcp init seller \
+  --specialism sales-non-guaranteed --backend postgres --dir my-seller
+cd my-seller
+npm install
+cp .env.example .env
+# Edit .env with real credentials, catalog, database URL, and a unique deployment namespace.
+npm run migrate
+npm run doctor
+```
+
+The scaffold starts with the compact AdCP 3.2 lifecycle and real catalog input
+(`PRODUCT_CATALOG_JSON`); it never creates fallback inventory. `adcp doctor`
+checks the project contract, required secrets, SDK-major drift, database
+connectivity, canonical catalog shape, and the required task/idempotency/context
+tables. The generated `.gitignore` excludes `.env`, dependencies, and build
+output. A memory scaffold reports development-only conditions as warnings
+without failing `doctor`.
+
+The `webhooks` manifest field enables diagnostics only; it does not wire push
+delivery. First construct `createPostgresWebhookRuntime`, apply its migrations,
+pass `runtime.serverConfig` as the server's `webhooks` option, and schedule
+bounded `runtime.recoverOnce()` calls. Then set `webhooks: true` in
+`adcp.project.json` so doctor requires the delivery and outbox tables. For
+custom tables, declare `webhookTables: { "deliveries": "...", "outbox": "..." }`
+with the same distinct names passed to the runtime. See the
+[production durability checklist](./guides/PRODUCTION-DURABILITY.md).
+
+Use `--json` in CI.
+Pass `--agent <alias-or-url>` to run official-client capability discovery and
+compare the agent's advertised schema line with this SDK.
+
 ## Installation
 
 ### Global Installation (Recommended for CLI usage)
 
 ```bash
-npm install -g @adcp/sdk
+npm install -g '@adcp/sdk@^14.0.0-0'
 ```
 
 After global installation, the `adcp` command will be available system-wide.
@@ -15,7 +51,7 @@ After global installation, the `adcp` command will be available system-wide.
 ### Local Installation
 
 ```bash
-npm install @adcp/sdk
+npm install '@adcp/sdk@^14.0.0-0'
 ```
 
 Then use via npx:
@@ -23,6 +59,9 @@ Then use via npx:
 ```bash
 npx adcp [arguments...]
 ```
+
+The untagged `@adcp/sdk` install remains the maintained SDK 13 line until SDK
+14 reaches GA; it does not include the new `init seller` and `doctor` workflow.
 
 ## Quick Start
 

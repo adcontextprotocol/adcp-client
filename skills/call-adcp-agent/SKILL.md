@@ -9,12 +9,20 @@ type: cross-cutting
 
 ## Overview
 
-AdCP (Ad Context Protocol) agents expose a fixed tool surface (`get_products`, `create_media_buy`, `get_signals`, …) over MCP or A2A. Tool names come from `get_adcp_capabilities`; exact request/response shapes come from `get_schema(tool_name)` when the agent exposes it, otherwise from the bundled JSON Schemas your SDK ships (the layout differs by SDK — see "Discovery chain" below). This skill teaches the invariants that don't live cleanly in any schema: cross-tool patterns, async flow, error recovery.
+AdCP (Ad Context Protocol) agents expose a fixed tool surface over MCP or A2A.
+For media buying, prefer the AdCP 3.2 lifecycle:
+`list_products` → `buy_products` → `control_media_buy`, or
+`request_proposals` → `refine_proposals` → `accept_proposal`. The established
+`get_products` / `create_media_buy` / `update_media_buy` surface remains for
+3.0/3.1 compatibility. Tool names come from `get_adcp_capabilities`; exact
+request/response shapes come from `get_schema(tool_name)` when available or
+from the bundled JSON Schemas. This skill teaches the invariants that don't
+live cleanly in any schema: cross-tool patterns, async flow, error recovery.
 
 ## When to Use
 
 - User wants to call a publisher / SSP / retail media network over AdCP
-- Tool names like `get_products`, `create_media_buy`, `sync_creatives`, `get_signals` appear in the available-tools list
+- Tool names like `list_products`, `buy_products`, `request_proposals`, `sync_creatives`, or `get_signals` appear in the available-tools list
 - Agent card advertises `protocolVersion: '0.3.0'` with `skills` listing AdCP tool names
 - **Not this skill:** building an AdCP seller agent (see `@adcp/client/skills/build-seller-agent/` and analogous SDK skills)
 
@@ -38,7 +46,13 @@ UUID format. The key is your retry-safety guarantee — and the most common way 
 - **Same key, different body → server-defined.** Most agents return the original cached response and ignore the body change. Don't rely on it — pick a fresh key only when you genuinely want a new operation.
 - For async flows, the replayed response carries the **same `task_id`**, so polling continues against the same task instead of forking a duplicate.
 
-Required on: `create_media_buy`, `update_media_buy`, `sync_creatives`, `sync_audiences`, `sync_accounts`, `sync_catalogs`, `sync_event_sources`, `sync_plans`, `sync_governance`, `activate_signal`, `acquire_rights`, `log_event`, `report_usage`, `provide_performance_feedback`, `report_plan_outcome`, `create_property_list`, `update_property_list`, `delete_property_list`, `create_collection_list`, `update_collection_list`, `delete_collection_list`, `create_content_standards`, `update_content_standards`, `calibrate_content`, `si_initiate_session`, `si_send_message`.
+Required on: `buy_products`, `request_proposals`, `refine_proposals`,
+`decline_proposals`, `accept_proposal`, `control_media_buy`,
+`create_media_buy`, `update_media_buy`, `sync_creatives`, `sync_audiences`,
+`sync_accounts`, `sync_catalogs`, `sync_event_sources`, `sync_plans`,
+`sync_governance`, `activate_signal`, `acquire_rights`, `log_event`,
+`report_usage`, `provide_performance_feedback`, `report_plan_outcome`, and the
+other mutating tools declared by the current schema.
 
 Missing the key → `adcp_error.code: 'VALIDATION_ERROR'` with `/idempotency_key` in `issues`.
 
@@ -127,30 +141,32 @@ Every validation failure produces:
 
 ## Minimal working examples
 
-### get_products
+### list_products (AdCP 3.2)
 
 ```json
 {
-  "buying_mode": "brief",
-  "brief": "premium CTV sports inventory for live NBA finals in major US markets"
+  "account": { "account_id": "seller_assigned_id" },
+  "brand": { "domain": "acme.example" }
 }
 ```
 
-Returns `{ cache_scope: "public" | "account", products: [{ product_id, name, description, delivery_type, pricing_options, ... }] }`.
+Returns `{ outcome: "listed", products: [...], feed_version, cache_scope }`.
+Keep `feed_version` and select `product_id` plus `pricing_option_id` from the
+same snapshot.
 
-### create_media_buy
+### buy_products (AdCP 3.2)
 
 ```json
 {
   "idempotency_key": "<uuid>",
   "account": { "account_id": "seller_assigned_id" },
   "brand": { "domain": "acme.example" },
+  "feed_version": "<feed_version from list_products>",
   "start_time": "2026-05-01T00:00:00Z",
   "end_time": "2026-05-31T23:59:59Z",
-  "packages": [
+  "purchases": [
     {
-      "buyer_ref": "pkg_1",
-      "product_id": "<product_id from get_products>",
+      "product_id": "<product_id from list_products>",
       "budget": 10000,
       "pricing_option_id": "<pricing_option_id from product.pricing_options>"
     }
@@ -161,7 +177,16 @@ Returns `{ cache_scope: "public" | "account", products: [{ product_id, name, des
 If you don't have a `seller_assigned_id`, use the natural-key variant instead:
 `"account": { "brand": { "domain": "acme.example" }, "operator": "sales.example" }`.
 
-Returns **either** `{ media_buy_id, packages: [...], confirmed_at }` (sync) **or** `{ status: 'submitted', task_id, message }` (async — guaranteed / IO-signed flows).
+Returns either a completed commitment with `media_buy_id` and `revision`, or a
+submitted task. Use `control_media_buy` with the latest revision for pause,
+resume, cancel, or other changes inside accepted commercial terms.
+
+For a negotiated buy, call `request_proposals`, refine/finalize with
+`refine_proposals`, then pass the committed proposal's exact `proposal_id` and
+`terms_digest` to `accept_proposal`.
+
+For AdCP 3.0/3.1 sellers, use the established
+`get_products` → `create_media_buy` → `update_media_buy` lifecycle instead.
 
 ### sync_creatives
 

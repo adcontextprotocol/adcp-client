@@ -31,10 +31,10 @@ AdCP operations are **distributed and asynchronous by default**. An agent might:
 ```bash
 npm install @adcp/sdk@adcp-3.0   # 7.x, AdCP 3.0
 npm install @adcp/sdk             # 13.x, maintained AdCP 3.1 stable line
-npm install @adcp/sdk@beta        # 14.x beta, AdCP 3.2 beta
+npm install '@adcp/sdk@^14.0.0-0' # newest 14.x prerelease, AdCP 3.2 beta
 ```
 
-Trying the v14 beta? Read the [14.0.0 beta release notes](./docs/releases/14.0.0-beta.0.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The npm `latest` tag remains on v13 for the maintained AdCP 3.1 stable line. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
+Trying the v14 prerelease? Read the [14.0.0 prerelease notes](./docs/releases/14.0.0-beta.0.md), then use the [13-to-14](./docs/migration-13-to-14.md) or [12-to-14](./docs/migration-12-to-14.md) migration guide. The npm `latest` tag remains on v13 for the maintained AdCP 3.1 stable line. SDK 14 requires Node.js `^20.19.0 || >=22.12.0`. Older paths: [12-to-13](./docs/migration-12-to-13.md), **[MIGRATION-v8.md](./MIGRATION-v8.md)**, and [8.0-to-8.1](./docs/migration-8.0-to-8.1.md).
 
 ### Narrow type imports (`@adcp/sdk/types/<tool>`)
 
@@ -61,7 +61,45 @@ Large workspaces should keep the generated schema surface out of the default typ
 
 For application monorepos, keep `skipLibCheck: true` unless you are intentionally auditing SDK declarations. If a package only needs request/response types for a few tools, prefer the per-tool slices over importing generated types through the root package or the broad `@adcp/sdk/types` barrel.
 
-## Quick Start: Distributed Operations
+## Quick Start: AdCP 3.2
+
+SDK 14 makes the compact 3.2 lifecycle primary:
+
+```text
+list_products → buy_products → control_media_buy
+             ↘ request_proposals → refine_proposals → accept_proposal
+```
+
+Start with the persona guide that matches your job:
+
+- [Build a seller](./docs/guides/SELLER-QUICKSTART-3.2.md)
+- [Call a seller](./docs/guides/BUYER-QUICKSTART-3.2.md)
+- [Upgrade from SDK 13](./docs/migration-13-to-14.md)
+- [Run in production](./docs/guides/PRODUCTION-DURABILITY.md)
+
+```typescript
+import { ADCPMultiAgentClient } from '@adcp/sdk';
+
+const client = ADCPMultiAgentClient.simple('https://seller.example/mcp/', {
+  authToken: process.env.ADCP_TOKEN,
+});
+const seller = client.agent('default-agent');
+
+const listed = await seller.listProducts({
+  account: { account_id: 'account-42' },
+  brand: { domain: 'advertiser.example' },
+});
+
+if (listed.status === 'completed') {
+  console.log(listed.data.products, listed.data.feed_version);
+}
+```
+
+The established `get_products` / `create_media_buy` / `update_media_buy`
+surface remains supported for AdCP 3.0/3.1 compatibility. Its detailed client
+patterns follow below.
+
+## Established lifecycle and distributed operations
 
 ```typescript
 import { ADCPMultiAgentClient } from '@adcp/sdk';

@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-08-31
+> Generated at: 2026-09-01
 > @adcp/sdk v14.0.0-beta.25
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -172,6 +172,10 @@ interface TaskSettlementIntentCheckpoint extends DurableTaskSettlementRef {
 }
 
 function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): TaskSettlementIntent;
+function applyTaskSettlementIntent(
+  intent: TaskSettlementIntent,
+  options: { registry: TaskRegistry } | { coordinator: PostgresTaskSettlementCoordinator; push: TaskPushSettlementConfig }
+): Promise<'settled'>;
 
 interface TaskSettlementIntentRecoveryContext {
   attemptCount: number;
@@ -230,7 +234,7 @@ const settlementIntents = createPostgresTaskSettlementIntentQueue({
 });
 ```
 
-The queue requires a complete `DurableTaskSettlementRef`, including non-empty `registryId`. Use `canonicalizeTaskSettlementIntent()` for the immediate path so it compares the same cloned, validated, wire-safe artifact that `enqueue` persists. Pass the active transaction client to `enqueue(..., { db: tx })` so the domain outcome and immutable intent commit together. Acknowledgement compacts the payload and retains the exact fingerprint for `idempotencyHorizonMs` (seven days by default), preventing a conflicting artifact from rebinding the scoped task during the replay window. Schedule bounded `pruneAcknowledged()` calls when recovery traffic can be idle. Recovery is at least once: return `settled` only after proving the exact terminal artifact. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for polling and push helpers plus scoped dead-letter SQL.
+The queue requires a complete `DurableTaskSettlementRef`, including non-empty `registryId`. Use `canonicalizeTaskSettlementIntent()` for the immediate path so it compares the same cloned, validated, wire-safe artifact that `enqueue` persists. Pass the active transaction client to `enqueue(..., { db: tx })` so the domain outcome and immutable intent commit together. Acknowledgement compacts the payload and retains the exact fingerprint for `idempotencyHorizonMs` (seven days by default), preventing a conflicting artifact from rebinding the scoped task during the replay window. Schedule bounded `pruneAcknowledged()` calls when recovery traffic can be idle. Recovery is at least once: call `applyTaskSettlementIntent()` and acknowledge only after it returns `settled`. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for the complete workflow plus scoped dead-letter SQL.
 
 ## Crash-Safe Push Task Settlement
 
@@ -263,6 +267,29 @@ if (await settlements.hasTerminalCheckpoint(scopedTaskRef)) {
 ```
 
 The registry and outbox must share one PostgreSQL pool. Run the task-registry and webhook-recovery migrations, return `ctx.handoffToTask(producer, { settlement: 'external' })`, and persist the complete `ScopedTaskRef` plus encrypted push route before the producer returns. The framework waits for that durable producer commit before returning `submitted`; rejection fails the initial invocation. Poll `settlements.recovery` from a worker. After intentionally deleting a settled task's push config, first compare the stored terminal result/error with the intended artifact; then `hasTerminalCheckpoint()` proves that the scoped task still has its deterministic durable webhook checkpoint without reconstructing the secret route. It does not prove artifact compatibility or delivery. Reconstructed coordinators must retain the same publisher scope, registry storage ID/namespace, and outbox table, and checkpoint tombstones must remain through the intent replay horizon. See `docs/migration-task-registry-scoping.md`.
+
+## PostgreSQL Webhook Runtime
+
+```typescript
+const webhooks = createPostgresWebhookRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  deliveries: { tableName: 'seller_webhook_deliveries' },
+  outbox: { tableName: 'seller_webhook_outbox' },
+  signerProvider,
+  authenticationAdapter,
+});
+for (const sql of webhooks.migrations.all) await pool.query(sql);
+await webhooks.probe();
+const server = createAdcpServerFromPlatform(platform, {
+  name: 'seller-production', version: '1.0.0', webhooks: webhooks.serverConfig,
+});
+const instanceId = process.env.INSTANCE_ID;
+if (!instanceId) throw new Error('Set INSTANCE_ID to a stable worker identity');
+await webhooks.recoverOnce({ ownerToken: instanceId });
+```
+
+`createPostgresWebhookRuntime()` assembles the durable delivery store, encrypted recovery outbox, emitter, ready-to-pass server configuration, probes, migrations, fenced poller, and `WebhookEmitResult`-to-disposition mapping. Pass `webhooks.serverConfig` as the framework's `webhooks` option and schedule bounded `recoverOnce()` calls. Direct multi-tenant sends bind with `webhooks.emitter.forTenantScope(trustedTenant)`.
 
 ## Production Webhook Tenant Binding
 
@@ -339,7 +366,9 @@ Each tool is called as `agent.<methodName>(params)` and returns `TaskResult<Resp
 
 ### Protocol
 
-**`get_adcp_capabilities`** — Request parameters for cross-protocol capability discovery.
+#### `get_adcp_capabilities`
+
+Request parameters for cross-protocol capability discovery.
 
 _Request:_
 ```
@@ -379,7 +408,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_task_status`** — Request parameters for get_task_status, the 3.
+#### `get_task_status`
+
+Request parameters for get_task_status, the 3.
 
 _Request:_
 ```
@@ -411,7 +442,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_tasks`** — Request parameters for list_tasks, the 3.
+#### `list_tasks`
+
+Request parameters for list_tasks, the 3.
 
 _Request:_
 ```
@@ -435,7 +468,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_agent_notification_configs`** — Register, replace, pause, or clear agent-level webhook subscribers such as capabilities.
+#### `sync_agent_notification_configs`
+
+Register, replace, pause, or clear agent-level webhook subscribers such as capabilities.
 
 _Request:_
 ```
@@ -460,7 +495,9 @@ _Response (success branch):_
 
 ### Account Management
 
-**`list_account_changes`** — Request parameters for reading the durable account change feed.
+#### `list_account_changes`
+
+Request parameters for reading the durable account change feed.
 
 _Request:_
 ```
@@ -490,7 +527,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_accounts`** — Request parameters for listing accounts accessible to the authenticated agent.
+#### `list_accounts`
+
+Request parameters for listing accounts accessible to the authenticated agent.
 
 _Request:_
 ```
@@ -515,7 +554,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_accounts`** — Request parameters for syncing advertiser accounts with a seller.
+#### `sync_accounts`
+
+Request parameters for syncing advertiser accounts with a seller.
 
 _Request:_
 ```
@@ -538,7 +579,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_governance`** — Request parameters for registering governance agent endpoints on accounts.
+#### `sync_governance`
+
+Request parameters for registering governance agent endpoints on accounts.
 
 _Request:_
 ```
@@ -557,7 +600,9 @@ _Response (success branch):_
 }
 ```
 
-**`report_usage`** — Request parameters for reporting vendor service consumption after delivery.
+#### `report_usage`
+
+Request parameters for reporting vendor service consumption after delivery.
 
 _Request:_
 ```
@@ -579,7 +624,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_account_financials`** — Request parameters for querying financial status of an operator-billed account.
+#### `get_account_financials`
+
+Request parameters for querying financial status of an operator-billed account.
 
 _Request:_
 ```
@@ -609,7 +656,9 @@ _Response (success branch):_
 
 ### Media Buying
 
-**`get_products`** — AdCP 3.
+#### `get_products`
+
+AdCP 3.
 
 _Request:_
 ```
@@ -667,7 +716,9 @@ _Watch out:_
 - `cache_scope` is required whenever the response includes `products` or `unchanged: true`. Use `public` for the universal rate card and `account` for account-specific rate cards or pricing overlays.
 - SDK server handlers may omit `cache_scope` only for no-account product feeds; the framework can safely infer `public` only when there is no inline account and no auth-derived/resolved account.
 
-**`list_products`** — Request parameters for synchronous product-offer reads.
+#### `list_products`
+
+Request parameters for synchronous product-offer reads.
 
 _Request:_
 ```
@@ -704,7 +755,9 @@ _Response (success branch):_
 }
 ```
 
-**`request_proposals`** — Request parameters for creating actionable seller proposals.
+#### `request_proposals`
+
+Request parameters for creating actionable seller proposals.
 
 _Request:_
 ```
@@ -740,7 +793,9 @@ _Response (success branch):_
 }
 ```
 
-**`refine_proposals`** — Request parameters for creating one or more proposal revisions.
+#### `refine_proposals`
+
+Request parameters for creating one or more proposal revisions.
 
 _Request:_
 ```
@@ -769,7 +824,9 @@ _Response (success branch):_
 }
 ```
 
-**`decline_proposals`** — Request parameters for terminally declining one or more proposals.
+#### `decline_proposals`
+
+Request parameters for terminally declining one or more proposals.
 
 _Request:_
 ```
@@ -796,7 +853,9 @@ _Response (success branch):_
 }
 ```
 
-**`buy_products`** — Create a MediaBuy directly from canonical published product offers.
+#### `buy_products`
+
+Create a MediaBuy directly from canonical published product offers.
 
 _Request:_
 ```
@@ -830,7 +889,9 @@ _Request:_
 ```
 
 
-**`accept_proposal`** — Accept a committed new-buy, amendment, or cancellation proposal.
+#### `accept_proposal`
+
+Accept a committed new-buy, amendment, or cancellation proposal.
 
 _Request:_
 ```
@@ -854,7 +915,9 @@ _Request:_
 ```
 
 
-**`control_media_buy`** — Apply operational controls inside accepted commercial terms.
+#### `control_media_buy`
+
+Apply operational controls inside accepted commercial terms.
 
 _Request:_
 ```
@@ -898,7 +961,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_creative_formats`** — Deprecated 3.
+#### `list_creative_formats`
+
+Deprecated 3.
 
 _Request:_
 ```
@@ -941,7 +1006,9 @@ _Watch out:_
 - Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
-**`create_media_buy`** — AdCP 3.
+#### `create_media_buy`
+
+AdCP 3.
 
 _Request:_
 ```
@@ -1008,7 +1075,9 @@ _Response (success branch):_
 _Watch out:_
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
 
-**`update_media_buy`** — AdCP 3.
+#### `update_media_buy`
+
+AdCP 3.
 
 _Request:_
 ```
@@ -1067,7 +1136,9 @@ _Response (success branch):_
 _Watch out:_
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
 
-**`get_media_buys`** — Request parameters for retrieving media buy status, creative approvals, and delivery snapshots.
+#### `get_media_buys`
+
+Request parameters for retrieving media buy status, creative approvals, and delivery snapshots.
 
 _Request:_
 ```
@@ -1096,7 +1167,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_media_buy_delivery`** — Request parameters for retrieving comprehensive delivery metrics.
+#### `get_media_buy_delivery`
+
+Request parameters for retrieving comprehensive delivery metrics.
 
 _Request:_
 ```
@@ -1135,7 +1208,9 @@ _Response (success branch):_
 }
 ```
 
-**`provide_performance_feedback`** — Request parameters for sharing performance outcomes with publishers.
+#### `provide_performance_feedback`
+
+Request parameters for sharing performance outcomes with publishers.
 
 _Request:_
 ```
@@ -1159,7 +1234,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_event_sources`** — Request parameters for configuring event sources on an account.
+#### `sync_event_sources`
+
+Request parameters for configuring event sources on an account.
 
 _Request:_
 ```
@@ -1181,7 +1258,9 @@ _Response (success branch):_
 }
 ```
 
-**`log_event`** — Request parameters for logging conversion or marketing events.
+#### `log_event`
+
+Request parameters for logging conversion or marketing events.
 
 _Request:_
 ```
@@ -1207,7 +1286,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_audiences`** — Request parameters for managing CRM-based audiences on an account.
+#### `sync_audiences`
+
+Request parameters for managing CRM-based audiences on an account.
 
 _Request:_
 ```
@@ -1229,7 +1310,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_catalogs`** — Request parameters for syncing catalog feeds (products, inventory, stores, promotions, offerings) with approval workflow.
+#### `sync_catalogs`
+
+Request parameters for syncing catalog feeds (products, inventory, stores, promotions, offerings) with approval workflow.
 
 _Request:_
 ```
@@ -1263,7 +1346,9 @@ _Response (success branch):_
 
 ### Creative
 
-**`build_creative`** — Request parameters for AI-powered creative generation.
+#### `build_creative`
+
+Request parameters for AI-powered creative generation.
 
 _Request:_
 ```
@@ -1332,7 +1417,9 @@ _Watch out:_
 - Use `buildCreativeResponse({ creative_manifest })` / `buildCreativeMultiResponse({ creative_manifests })` from `@adcp/sdk/server` to enforce the shape at compile time.
 - Each asset under `creative_manifest.assets` needs an `asset_type` discriminator — use the factories: `imageAsset`, `videoAsset`, `audioAsset`, `htmlAsset`, `urlAsset`, `textAsset` (or `Asset.image(...)`).
 
-**`preview_creative`** — Request parameters for generating creative previews.
+#### `preview_creative`
+
+Request parameters for generating creative previews.
 
 _Request:_
 ```
@@ -1370,7 +1457,9 @@ _Response (success branch):_
 _Watch out:_
 - Each `renders[]` entry is a oneOf on `output_format` — use `urlRender({...})`, `htmlRender({...})`, or `bothRender({...})` to inject the discriminator and require the matching `preview_url`/`preview_html` field.
 
-**`list_creative_formats`** — Deprecated 3.
+#### `list_creative_formats`
+
+Deprecated 3.
 
 _Request:_
 ```
@@ -1412,7 +1501,9 @@ _Watch out:_
 - Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).
 - Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).
 
-**`list_transformers`** — Request parameters for discovering account-scoped creative transformers (the creative analog of products), with optional brief filtering, per-param option expansion, and pricing.
+#### `list_transformers`
+
+Request parameters for discovering account-scoped creative transformers (the creative analog of products), with optional brief filtering, per-param option expansion, and pricing.
 
 _Request:_
 ```
@@ -1443,7 +1534,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_creative_delivery`** — Request parameters for retrieving creative delivery data with variant-level breakdowns.
+#### `get_creative_delivery`
+
+Request parameters for retrieving creative delivery data with variant-level breakdowns.
 
 _Request:_
 ```
@@ -1473,7 +1566,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_creatives`** — Request parameters for querying creative library with filtering and pagination.
+#### `list_creatives`
+
+Request parameters for querying creative library with filtering and pagination.
 
 _Request:_
 ```
@@ -1511,7 +1606,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_creatives`** — Request parameters for syncing creative assets with upsert semantics.
+#### `sync_creatives`
+
+Request parameters for syncing creative assets with upsert semantics.
 
 _Request:_
 ```
@@ -1540,7 +1637,9 @@ _Response (success branch):_
 }
 ```
 
-**`validate_input`** — Request parameters for validating a creative manifest against canonical formats and/or specific products without committing to a render.
+#### `validate_input`
+
+Request parameters for validating a creative manifest against canonical formats and/or specific products without committing to a render.
 
 _Request:_
 ```
@@ -1561,7 +1660,9 @@ _Response (success branch):_
 
 ### Signals
 
-**`get_signals`** — Request parameters for discovering signals based on description.
+#### `get_signals`
+
+Request parameters for discovering signals based on description.
 
 _Request:_
 ```
@@ -1600,7 +1701,9 @@ _Response (success branch):_
 }
 ```
 
-**`activate_signal`** — Request parameters for activating a signal on a specific platform/account.
+#### `activate_signal`
+
+Request parameters for activating a signal on a specific platform/account.
 
 _Request:_
 ```
@@ -1627,7 +1730,9 @@ _Response (success branch):_
 
 ### Governance
 
-**`create_property_list`** — Request parameters for creating a new property list.
+#### `create_property_list`
+
+Request parameters for creating a new property list.
 
 _Request:_
 ```
@@ -1653,7 +1758,9 @@ _Response (success branch):_
 }
 ```
 
-**`update_property_list`** — Request parameters for updating an existing property list.
+#### `update_property_list`
+
+Request parameters for updating an existing property list.
 
 _Request:_
 ```
@@ -1680,7 +1787,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_property_list`** — Request parameters for retrieving a property list with resolved properties.
+#### `get_property_list`
+
+Request parameters for retrieving a property list with resolved properties.
 
 _Request:_
 ```
@@ -1706,7 +1815,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_property_lists`** — Request parameters for listing property lists.
+#### `list_property_lists`
+
+Request parameters for listing property lists.
 
 _Request:_
 ```
@@ -1727,7 +1838,9 @@ _Response (success branch):_
 }
 ```
 
-**`delete_property_list`** — Request parameters for deleting a property list.
+#### `delete_property_list`
+
+Request parameters for deleting a property list.
 
 _Request:_
 ```
@@ -1749,7 +1862,9 @@ _Response (success branch):_
 }
 ```
 
-**`create_collection_list`** — Request parameters for creating a new collection list.
+#### `create_collection_list`
+
+Request parameters for creating a new collection list.
 
 _Request:_
 ```
@@ -1775,7 +1890,9 @@ _Response (success branch):_
 }
 ```
 
-**`update_collection_list`** — Request parameters for updating an existing collection list.
+#### `update_collection_list`
+
+Request parameters for updating an existing collection list.
 
 _Request:_
 ```
@@ -1802,7 +1919,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_collection_list`** — Request parameters for retrieving a collection list with resolved collections.
+#### `get_collection_list`
+
+Request parameters for retrieving a collection list with resolved collections.
 
 _Request:_
 ```
@@ -1828,7 +1947,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_collection_lists`** — Request parameters for listing collection lists.
+#### `list_collection_lists`
+
+Request parameters for listing collection lists.
 
 _Request:_
 ```
@@ -1849,7 +1970,9 @@ _Response (success branch):_
 }
 ```
 
-**`delete_collection_list`** — Request parameters for deleting a collection list.
+#### `delete_collection_list`
+
+Request parameters for deleting a collection list.
 
 _Request:_
 ```
@@ -1871,7 +1994,9 @@ _Response (success branch):_
 }
 ```
 
-**`list_content_standards`** — Request parameters for listing content standards configurations.
+#### `list_content_standards`
+
+Request parameters for listing content standards configurations.
 
 _Request:_
 ```
@@ -1893,7 +2018,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_content_standards`** — Request parameters for retrieving a specific standards configuration.
+#### `get_content_standards`
+
+Request parameters for retrieving a specific standards configuration.
 
 _Request:_
 ```
@@ -1910,7 +2037,9 @@ _Response (success branch):_
 }
 ```
 
-**`create_content_standards`** — Request parameters for creating a new content standards configuration.
+#### `create_content_standards`
+
+Request parameters for creating a new content standards configuration.
 
 _Request:_
 ```
@@ -1932,7 +2061,9 @@ _Response (success branch):_
 }
 ```
 
-**`update_content_standards`** — Request parameters for updating an existing content standards configuration.
+#### `update_content_standards`
+
+Request parameters for updating an existing content standards configuration.
 
 _Request:_
 ```
@@ -1956,7 +2087,9 @@ _Response (success branch):_
 }
 ```
 
-**`calibrate_content`** — Request parameters for collaborative calibration dialogue.
+#### `calibrate_content`
+
+Request parameters for collaborative calibration dialogue.
 
 _Request:_
 ```
@@ -1979,7 +2112,9 @@ _Response (success branch):_
 }
 ```
 
-**`validate_content_delivery`** — Request parameters for batch validating delivery records.
+#### `validate_content_delivery`
+
+Request parameters for batch validating delivery records.
 
 _Request:_
 ```
@@ -2001,7 +2136,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_media_buy_artifacts`** — Request parameters for retrieving content artifacts from a media buy.
+#### `get_media_buy_artifacts`
+
+Request parameters for retrieving content artifacts from a media buy.
 
 _Request:_
 ```
@@ -2027,7 +2164,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_creative_features`** — Request parameters for evaluating creative features from a governance agent.
+#### `get_creative_features`
+
+Request parameters for evaluating creative features from a governance agent.
 
 _Request:_
 ```
@@ -2053,7 +2192,9 @@ _Response (success branch):_
 }
 ```
 
-**`sync_plans`** — Push campaign plans to the governance agent.
+#### `sync_plans`
+
+Push campaign plans to the governance agent.
 
 _Request:_
 ```
@@ -2073,7 +2214,9 @@ _Response (success branch):_
 }
 ```
 
-**`report_plan_outcome`** — Report the outcome of an action to the governance agent.
+#### `report_plan_outcome`
+
+Report the outcome of an action to the governance agent.
 
 _Request:_
 ```
@@ -2106,7 +2249,9 @@ _Response (success branch):_
 }
 ```
 
-**`report_plan_adjustment`** — Seller-authenticated append-only commitment adjustment report.
+#### `report_plan_adjustment`
+
+Seller-authenticated append-only commitment adjustment report.
 
 _Request:_
 ```
@@ -2142,7 +2287,9 @@ _Response (success branch):_
 }
 ```
 
-**`get_plan_audit_logs`** — Retrieve governance state and audit trail for a plan.
+#### `get_plan_audit_logs`
+
+Retrieve governance state and audit trail for a plan.
 
 _Request:_
 ```
@@ -2164,7 +2311,9 @@ _Response (success branch):_
 }
 ```
 
-**`check_governance`** — Orchestrator or seller calls the governance agent to validate an action against the campaign plan.
+#### `check_governance`
+
+Orchestrator or seller calls the governance agent to validate an action against the campaign plan.
 
 _Request:_
 ```
@@ -2216,7 +2365,9 @@ _Response (success branch):_
 
 ### Sponsored Intelligence
 
-**`si_get_offering`** — Get offering details, availability, and optionally matching products before session handoff.
+#### `si_get_offering`
+
+Get offering details, availability, and optionally matching products before session handoff.
 
 _Request:_
 ```
@@ -2247,7 +2398,9 @@ _Response (success branch):_
 }
 ```
 
-**`si_initiate_session`** — Host initiates SI session with brand agent - includes context, identity, and capability negotiation.
+#### `si_initiate_session`
+
+Host initiates SI session with brand agent - includes context, identity, and capability negotiation.
 
 _Request:_
 ```
@@ -2279,7 +2432,9 @@ _Response (success branch):_
 }
 ```
 
-**`si_send_message`** — Send a message within an active SI session.
+#### `si_send_message`
+
+Send a message within an active SI session.
 
 _Request:_
 ```
@@ -2307,7 +2462,9 @@ _Response (success branch):_
 }
 ```
 
-**`si_terminate_session`** — Terminate an SI session with reason (handoff_transaction, handoff_complete, user_exit, session_timeout, host_terminated).
+#### `si_terminate_session`
+
+Terminate an SI session with reason (handoff_transaction, handoff_complete, user_exit, session_timeout, host_terminated).
 
 _Request:_
 ```

@@ -155,7 +155,11 @@ try {
   }
   console.log('   migration guides referenced by README are present');
 
-  const runtimeFloors = ['tldts@7.0.0', `undici@${undiciOverride ?? rangeFloor(pkg.dependencies.undici)}`];
+  const runtimeFloors = [
+    'tldts@7.0.0',
+    '@types/express@5.0.3',
+    `undici@${undiciOverride ?? rangeFloor(pkg.dependencies.undici)}`,
+  ];
   console.log(`📥 Installing tarball + runtime/peer floors:\n   ${[...runtimeFloors, ...peerFloors].join('\n   ')}`);
   run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error', tarballPath, ...runtimeFloors, ...peerFloors], {
     cwd: tmpDir,
@@ -176,6 +180,84 @@ try {
     throw new Error(`expected tldts compatibility floor 7.0.0, got ${installedTldtsVersion}`);
   }
   console.log('  tldts compatibility floor 7.0.0 installed');
+
+  writeFileSync(
+    path.join(tmpDir, 'tsconfig.packed-examples.json'),
+    JSON.stringify({
+      compilerOptions: {
+        noEmit: true,
+        strict: true,
+        noUncheckedIndexedAccess: true,
+        skipLibCheck: true,
+        target: 'ES2022',
+        module: 'Node16',
+        moduleResolution: 'Node16',
+        esModuleInterop: true,
+        allowSyntheticDefaultImports: true,
+        resolveJsonModule: true,
+      },
+      include: ['node_modules/@adcp/sdk/examples/**/*.ts'],
+      exclude: [],
+    })
+  );
+  console.log('🧭 Packed examples compile against public package exports:');
+  run(
+    process.execPath,
+    [
+      '--max-old-space-size=8192',
+      path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc'),
+      '--project',
+      'tsconfig.packed-examples.json',
+    ],
+    { cwd: tmpDir, stdio: 'inherit' }
+  );
+  console.log('  every shipped TypeScript example compiles from the installed tarball');
+
+  console.log('🚀 Compact 3.2 starter executes from the installed tarball:');
+  run(
+    path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx'),
+    [path.join(tmpDir, 'node_modules', '@adcp', 'sdk', 'examples', 'seller-3.2-starter.ts')],
+    {
+      cwd: tmpDir,
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ADCP_AUTH_TOKEN: 'package-smoke-secret',
+        ADCP_ACCOUNT_ID: 'package-smoke-account',
+        ADCP_EXAMPLE_CHECK: '1',
+      },
+    }
+  );
+  console.log('  starter initializes without source-tree access or invented inventory');
+
+  console.log('🏗️  Packed CLI scaffolds a clean, compilable PostgreSQL seller:');
+  const scaffoldDir = path.join(tmpDir, 'packed-seller');
+  run(
+    process.execPath,
+    [
+      path.join(tmpDir, 'node_modules', '@adcp', 'sdk', 'bin', 'adcp.js'),
+      'init',
+      'seller',
+      '--specialism',
+      'sales-non-guaranteed',
+      '--backend',
+      'postgres',
+      '--dir',
+      scaffoldDir,
+    ],
+    { cwd: tmpDir, stdio: 'inherit', env: { ...process.env, ADCP_SKIP_VERSION_CHECK: '1' } }
+  );
+  const scaffoldGitignore = readFileSync(path.join(scaffoldDir, '.gitignore'), 'utf8');
+  if (scaffoldGitignore !== '.env\nnode_modules/\ndist/\n') {
+    throw new Error('packed seller scaffold did not protect secrets and generated files in .gitignore');
+  }
+  const scaffoldPackagePath = path.join(scaffoldDir, 'package.json');
+  const scaffoldPackage = JSON.parse(readFileSync(scaffoldPackagePath, 'utf8'));
+  scaffoldPackage.dependencies['@adcp/sdk'] = `file:${tarballPath}`;
+  writeFileSync(scaffoldPackagePath, `${JSON.stringify(scaffoldPackage, null, 2)}\n`);
+  run('npm', ['install', '--no-audit', '--no-fund', '--loglevel=error'], { cwd: scaffoldDir, stdio: 'inherit' });
+  run('npm', ['run', 'build'], { cwd: scaffoldDir, stdio: 'inherit' });
+  console.log('  installed tarball CLI → scaffold → isolated dependency install → TypeScript build ok');
 
   // Cover the barrel, a zod-free enum entry, and the server subpath — the last
   // adds real ESM/CJS load coverage of the @a2a-js/sdk peer through a dedicated

@@ -17,7 +17,7 @@ import {
   type TaskResult,
   type DeferredContinuation,
   type SubmittedContinuation,
-} from '../src/lib/index';
+} from '@adcp/sdk';
 
 async function main() {
   console.log('🚀 PR #78 Async Patterns Demo\n');

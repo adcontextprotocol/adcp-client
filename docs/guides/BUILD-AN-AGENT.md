@@ -448,7 +448,7 @@ const platform = definePlatform({
 Three resolution modes:
 
 - **`'explicit'`** (default) — buyer passes `{account_id}` inline on every request. Snap, Meta, GAM-style sellers. The framework calls `resolve(ref, ctx)` with the inline ref.
-- **`'implicit'`** — buyer must call `sync_accounts` first; subsequent requests resolve from the auth-principal linkage your `upsert` populated. LinkedIn-shaped sellers. The framework refuses inline `{account_id}` references with `INVALID_REQUEST` (post-6.7 — pre-6.7 the docstring claimed this but nothing checked it). Use [`InMemoryImplicitAccountStore`](../../src/lib/adapters/implicit-account-store.ts) for the reference shape.
+- **`'implicit'`** — buyer must call `sync_accounts` first; subsequent requests resolve from the auth-principal linkage your `upsert` populated. LinkedIn-shaped sellers. The framework refuses inline `{account_id}` references with `INVALID_REQUEST` (post-6.7 — pre-6.7 the docstring claimed this but nothing checked it). Use [`InMemoryImplicitAccountStore`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/adapters/implicit-account-store.ts) for the reference shape.
 - **`'derived'`** — single-tenant agents where the auth principal alone identifies the tenant. Self-hosted broadcasters, retail-media operators in proxy mode. `resolve(undefined, ctx)` returns the singleton.
 
 **Stateless BYOK provider adapters.** For single-account API-key or
@@ -1052,6 +1052,6 @@ See [`examples/error-compliant-server.ts`](../../examples/error-compliant-server
 
 ## Related
 
-- [`registerAdcpTaskTool()`](../../src/lib/server/tasks.ts) — for async tools that need background processing
+- [`registerAdcpTaskTool()`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/server/tasks.ts) — for async tools that need background processing
 - [`examples/error-compliant-server.ts`](../../examples/error-compliant-server.ts) — media buy agent with multiple tools and error handling
 - [AdCP specification](https://adcontextprotocol.org) — full protocol reference

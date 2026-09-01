@@ -39,7 +39,7 @@ npm run build
 ```
 
 If your change depends on schemas from an unreleased protocol pull request,
-follow [the immutable protocol bundle workflow](docs/development/PROTOCOL-PR-BUNDLES.md)
+follow [the immutable protocol bundle workflow](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/PROTOCOL-PR-BUNDLES.md)
 so local generation and CI use the same commit-addressed artifact.
 
 #### npm-only workspaces
@@ -408,7 +408,7 @@ const agent = { agent_uri: 'https://hardcoded.example.com' };
 - **Discord**: Join our [Discord server](https://discord.gg/adcp) for real-time help
 - **Issues**: Use GitHub issues for bugs and feature requests
 - **Email**: Contact maintainers at [maintainers@adcontextprotocol.org](mailto:maintainers@adcontextprotocol.org)
-- **Documentation**: Check the [API docs](./API.md) and [examples](./examples/)
+- **Documentation**: Check the [API docs](https://adcontextprotocol.github.io/adcp-client/api/) and [examples](./examples/)
 
 ## Code of Conduct
 

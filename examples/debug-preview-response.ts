@@ -4,7 +4,7 @@
  * Debug: Inspect actual preview_creative response
  */
 
-import { AdCPClient } from '../src/lib/core/AdCPClient';
+import { AdCPClient } from '@adcp/sdk';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') as 'mcp' | 'a2a';

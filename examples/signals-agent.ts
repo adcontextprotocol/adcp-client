@@ -24,7 +24,7 @@ import type { GetSignalsResponse, ServeContext } from '@adcp/sdk';
 // ---------------------------------------------------------------------------
 // Audience segment catalog — typed to match the AdCP signals response schema
 // ---------------------------------------------------------------------------
-type Signal = GetSignalsResponse['signals'][number];
+type Signal = NonNullable<GetSignalsResponse['signals']>[number];
 
 const SEGMENTS: Signal[] = [
   {

@@ -7,6 +7,13 @@ export {
   WEBHOOK_DELIVERY_RECOVERY_MIGRATION,
 } from './pg';
 export type { PgWebhookDeliveryStoreOptions, PgWebhookDeliveryRecoveryOptions } from './pg';
+export { createPostgresWebhookRuntime, toWebhookRecoveryDisposition } from './postgres-runtime';
+export type {
+  CreatePostgresWebhookRuntimeOptions,
+  PostgresWebhookRecoveryPollOptions,
+  PostgresWebhookRuntime,
+  WebhookRecoveryDisposition,
+} from './postgres-runtime';
 export { redisWebhookDeliveryStore, redisWebhookDeliveryRecoveryBackend } from './redis';
 export type { RedisWebhookDeliveryStoreOptions, RedisWebhookDeliveryRecoveryOptions } from './redis';
 export {

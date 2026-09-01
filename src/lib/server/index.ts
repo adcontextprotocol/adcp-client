@@ -477,6 +477,8 @@ export {
   WEBHOOK_DELIVERY_MIGRATION,
   WEBHOOK_DELIVERY_RECOVERY_MIGRATION,
   createWebhookDeliveryRecovery,
+  createPostgresWebhookRuntime,
+  toWebhookRecoveryDisposition,
   pollWebhookDeliveryRecovery,
   memoryWebhookDeliveryRecoveryBackend,
   WebhookAuthenticationProtectionError,
@@ -503,6 +505,10 @@ export type {
   DurableWebhookDeliveryRecovery,
   CreateWebhookDeliveryRecoveryOptions,
   PollWebhookDeliveryRecoveryOptions,
+  CreatePostgresWebhookRuntimeOptions,
+  PostgresWebhookRecoveryPollOptions,
+  PostgresWebhookRuntime,
+  WebhookRecoveryDisposition,
 } from './webhook-delivery';
 export type {
   WebhookEmitter,

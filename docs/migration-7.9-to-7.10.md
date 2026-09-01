@@ -385,7 +385,7 @@ optional new path.
 ## 7. What to expect at 8.0
 
 The 8.0 design doc
-([`docs/development/v3.1-sdk-design.md`](./development/v3.1-sdk-design.md))
+([`docs/development/v3.1-sdk-design.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/v3.1-sdk-design.md))
 narrows the public Product type to V2-only — `format_ids[]` comes off
 the public surface and lives only on legacy adapters. 8.0 also adds
 **per-agent version negotiation** so the SDK can auto-detect a seller's

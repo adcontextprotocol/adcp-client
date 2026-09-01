@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 // Easy Configuration Demo - Show how simple it is to configure ADCP agents
 
-import { ADCPMultiAgentClient, ConfigurationManager, createFieldHandler } from '../src/lib';
+import { ADCPMultiAgentClient, ConfigurationManager, createFieldHandler } from '@adcp/sdk';
 
 /**
  * Demo 1: Environment Variable Configuration

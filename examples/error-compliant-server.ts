@@ -173,7 +173,7 @@ function createAgentServer() {
         for (let i = 0; i < packages.length; i++) {
           const pkg = packages[i]!;
 
-          if (pkg.budget < 0) {
+          if (pkg.budget !== undefined && pkg.budget < 0) {
             return adcpError('INVALID_REQUEST', {
               message: 'Budget must be non-negative',
               field: `packages[${i}].budget`,
@@ -195,6 +195,7 @@ function createAgentServer() {
           const pricing = product.pricing_options.find(po => po.pricing_option_id === pkg.pricing_option_id);
           if (
             pricing &&
+            pkg.budget !== undefined &&
             'min_spend_per_package' in pricing &&
             pricing.min_spend_per_package != null &&
             pkg.budget < pricing.min_spend_per_package

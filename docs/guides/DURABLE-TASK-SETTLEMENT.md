@@ -75,6 +75,7 @@ be atomically replaced by a newly enqueued intent.
 
 ```ts
 import {
+  applyTaskSettlementIntent,
   canonicalizeTaskSettlementIntent,
   type TaskSettlementIntent,
 } from '@adcp/sdk/server';
@@ -95,7 +96,7 @@ After commit, a polling-only task can try settlement immediately. Acknowledge
 only after the intended terminal state is proven:
 
 ```ts
-await applyPollingSettlementIntent(taskRegistry, intent);
+await applyTaskSettlementIntent(intent, { registry: taskRegistry });
 await settlementIntents.acknowledge(checkpoint);
 ```
 
@@ -104,10 +105,10 @@ idempotent settlement.
 
 ## Settle polling-only tasks safely
 
-For a polling-only task, the following helper handles both terminal actions
-and proves that an `already_terminal` outcome contains the exact artifact from
-the intent. It deliberately throws for a scope miss or conflicting terminal
-write so the queue retains the intent.
+For a polling-only task, `applyTaskSettlementIntent()` handles both terminal
+actions and proves that an `already_terminal` outcome contains the exact
+artifact from the intent. It deliberately throws for a scope miss or
+conflicting terminal write so the queue retains the intent.
 
 Build the immediate-path object with `canonicalizeTaskSettlementIntent()` as
 shown above. `enqueue` applies the same clone, validation, and wire sanitizer,
@@ -117,69 +118,17 @@ sanitizer, so intents written by an older SDK remain compatible with the
 current task registry after an upgrade.
 
 ```ts
-import { isDeepStrictEqual } from 'node:util';
 import {
+  applyTaskSettlementIntent,
   canonicalizeTaskSettlementIntent,
-  completeScopedTask,
-  failScopedTask,
   type TaskRegistry,
   type TaskSettlementIntent,
 } from '@adcp/sdk/server';
 
-export async function applyPollingSettlementIntent(
-  registry: TaskRegistry,
-  intent: TaskSettlementIntent
-): Promise<'settled'> {
-  const outcome =
-    intent.action === 'complete'
-      ? await completeScopedTask(registry, intent.taskRef, intent.result)
-      : await failScopedTask(
-          registry,
-          intent.taskRef,
-          intent.error,
-          intent.result
-        );
-
-  if (outcome.outcome === 'applied') return 'settled';
-  if (outcome.outcome === 'not_found_in_scope') {
-    throw new Error('Settlement task was not found in its trusted scope');
-  }
-
-  const stored = await registry.getTask(
-    intent.taskRef.taskId,
-    intent.taskRef
-  );
-  if (!stored) {
-    throw new Error('Terminal task disappeared from its trusted scope');
-  }
-
-  let storedIntent: TaskSettlementIntent | undefined;
-  if (stored.status === 'completed' && Object.hasOwn(stored, 'result')) {
-    storedIntent = canonicalizeTaskSettlementIntent({
-      taskRef: intent.taskRef,
-      action: 'complete',
-      result: stored.result,
-    });
-  } else if (stored.status === 'failed' && stored.error) {
-    storedIntent = canonicalizeTaskSettlementIntent({
-      taskRef: intent.taskRef,
-      action: 'fail',
-      error: stored.error,
-      ...(Object.hasOwn(stored, 'result') && { result: stored.result }),
-    });
-  }
-
-  const sameArtifact =
-    storedIntent !== undefined && isDeepStrictEqual(storedIntent, intent);
-
-  if (!sameArtifact) {
-    throw new Error('Task is terminal with a conflicting settlement artifact');
-  }
-  return 'settled';
-}
+await applyTaskSettlementIntent(intent, { registry });
 ```
 
-This helper is only for tasks without push notifications.
+This registry form is only for tasks without push notifications.
 `completeScopedTask()` and `failScopedTask()` reject registry-only settlement
 for a push-enabled task.
 
@@ -195,44 +144,9 @@ compatible `already_terminal` outcome proves both the exact task artifact and
 the immutable webhook checkpoint:
 
 ```ts
-import {
-  completeScopedPushTask,
-  failScopedPushTask,
-  type PostgresTaskSettlementCoordinator,
-  type TaskPushSettlementConfig,
-  type TaskSettlementIntent,
-} from '@adcp/sdk/server';
+import { applyTaskSettlementIntent } from '@adcp/sdk/server';
 
-async function applyPushSettlementIntent(
-  coordinator: PostgresTaskSettlementCoordinator,
-  push: TaskPushSettlementConfig,
-  intent: TaskSettlementIntent
-): Promise<'settled'> {
-  const outcome =
-    intent.action === 'complete'
-      ? await completeScopedPushTask(
-          coordinator,
-          intent.taskRef,
-          push,
-          intent.result
-        )
-      : await failScopedPushTask(
-          coordinator,
-          intent.taskRef,
-          push,
-          intent.error,
-          intent.result
-        );
-
-  if (outcome.outcome === 'applied') return 'settled';
-  if (
-    outcome.outcome === 'already_terminal' &&
-    outcome.compatibility === 'compatible'
-  ) {
-    return 'settled';
-  }
-  throw new Error('Push task has a scope or settlement compatibility conflict');
-}
+await applyTaskSettlementIntent(intent, { coordinator, push });
 ```
 
 Never return `settled` for `not_found_in_scope`, a conflicting terminal state,
@@ -245,7 +159,10 @@ the same checkpoint:
 const push = await protectedPushRoutes.load(intent.taskRef);
 if (!push) throw new Error('Durable push configuration was not found');
 
-await applyPushSettlementIntent(settlementCoordinator, push, intent);
+await applyTaskSettlementIntent(intent, {
+  coordinator: settlementCoordinator,
+  push,
+});
 await settlementIntents.acknowledge(checkpoint);
 ```
 
@@ -266,7 +183,7 @@ const metrics = await settlementIntents.recover({
   async settle(intent, claim) {
     // Renew again during work that can exceed leaseMs.
     if (!(await claim.extendLease())) throw new Error('Settlement intent lease lost');
-    return applyPollingSettlementIntent(taskRegistry, intent);
+    return applyTaskSettlementIntent(intent, { registry: taskRegistry });
   },
   onError(error, context) {
     telemetry.captureException(error, context);
@@ -275,7 +192,8 @@ const metrics = await settlementIntents.recover({
 ```
 
 For push-enabled recovery, load the protected push configuration by the full
-`intent.taskRef` and call `applyPushSettlementIntent()` instead. Run multiple
+`intent.taskRef` and call `applyTaskSettlementIntent()` with `{ coordinator,
+push }` instead. Run multiple
 workers for concurrency; each worker should use a stable, unique `workerId`.
 Throwing keeps the intent recoverable and reports through `onError` until the
 underlying configuration is corrected.

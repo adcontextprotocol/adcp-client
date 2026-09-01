@@ -216,5 +216,5 @@ Use `getExpectedAction(result.adcpError.recovery)` to map recovery to an action 
 
 - Explore [Real-World Examples](./guides/REAL-WORLD-EXAMPLES.md)
 - Learn about [Async Patterns](./guides/ASYNC-DEVELOPER-GUIDE.md)
-- Read the [API Reference](./api/index.html)
+- Read the [hosted API Reference](https://adcontextprotocol.github.io/adcp-client/api/index.html)
 - Try the Interactive Testing UI (`npm run dev`)

@@ -412,6 +412,10 @@ export {
   type TaskSettlementIntentRecoveryMetrics,
   type TaskSettlementIntentWriteOptions,
 } from './runtime/postgres-task-settlement-intents';
+export {
+  applyTaskSettlementIntent,
+  type ApplyTaskSettlementIntentOptions,
+} from './runtime/apply-task-settlement-intent';
 
 // Multi-tenant deployment helper — wraps createAdcpServerFromPlatform with
 // per-tenant config, health states (healthy/unverified/disabled), and JWKS

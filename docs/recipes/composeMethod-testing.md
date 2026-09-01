@@ -5,7 +5,7 @@ recipe shows how to write tests for handlers built with it, covering six pattern
 reach for most often.
 
 All snippets here are running tests in
-[`test/server-decisioning-compose-recipes.test.js`](../../test/server-decisioning-compose-recipes.test.js).
+[`server-decisioning-compose-recipes.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/server-decisioning-compose-recipes.test.js).
 If a snippet and the test ever diverge, the test is authoritative (the test runs in CI; the
 snippet does not). To verify locally: `node --test test/server-decisioning-compose-recipes.test.js`
 from the repo root after `npm run build:lib`.
