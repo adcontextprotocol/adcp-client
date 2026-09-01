@@ -69,6 +69,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   update_media_buy: schemas.UpdateMediaBuyResponseSchema,
   get_media_buys: schemas.GetMediaBuysResponseSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryResponseSchema,
+  get_reporting_status: schemas.GetReportingStatusResponseSchema,
+  sync_reporting_receipts: schemas.SyncReportingReceiptsResponseSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
 
   // Creative
@@ -148,6 +150,8 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_task_status: schemas.GetTaskStatusResponseSchema,
   list_tasks: schemas.ListTasksResponseSchema,
   sync_agent_notification_configs: schemas.SyncAgentNotificationConfigsResponseSchema,
+  sync_principal: schemas.SyncPrincipalResponseSchema,
+  get_principal: schemas.GetPrincipalResponseSchema,
 
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,
