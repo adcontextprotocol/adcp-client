@@ -6,6 +6,12 @@ const path = require('node:path');
 
 const ROOT = path.resolve(__dirname, '../..');
 const CLI = path.join(ROOT, 'bin', 'adcp.js');
+const TEST_TMP_ROOT = path.join(ROOT, 'tmp');
+
+function makeTempDir(prefix) {
+  mkdirSync(TEST_TMP_ROOT, { recursive: true });
+  return mkdtempSync(path.join(TEST_TMP_ROOT, prefix));
+}
 
 function run(args, env = {}) {
   return spawnSync(process.execPath, [CLI, ...args], {
@@ -16,7 +22,7 @@ function run(args, env = {}) {
 }
 
 test('init seller creates a compile-gated PostgreSQL 3.2 project without inventory fallbacks', () => {
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-init-'));
+  const dir = makeTempDir('adcp-cli-init-');
   try {
     const result = run([
       'init',
@@ -91,7 +97,7 @@ test('init seller creates a compile-gated PostgreSQL 3.2 project without invento
 });
 
 test('init and doctor reject unknown or duplicate options before doing work', () => {
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-init-flags-'));
+  const dir = makeTempDir('adcp-cli-init-flags-');
   try {
     const unknown = run(['init', 'seller', '--dir', dir, '--bogus']);
     assert.equal(unknown.status, 1);
@@ -193,7 +199,7 @@ test('doctor classifies common PostgreSQL failures without exposing raw errors',
 
 test('doctor recognizes the current PostgreSQL idempotency migration columns', async () => {
   const { _test } = require('../../bin/adcp-project.js');
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-doctor-pg-'));
+  const dir = makeTempDir('adcp-cli-doctor-pg-');
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousDeployment = process.env.ADCP_DEPLOYMENT_NAMESPACE;
   try {
@@ -234,7 +240,7 @@ test('doctor recognizes the current PostgreSQL idempotency migration columns', a
 
 test('doctor never loads PostgreSQL code from an inspected --dir target', async () => {
   const { _test } = require('../../bin/adcp-project.js');
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-doctor-untrusted-pg-'));
+  const dir = makeTempDir('adcp-cli-doctor-untrusted-pg-');
   const marker = path.join(dir, 'target-pg-loaded');
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousDeployment = process.env.ADCP_DEPLOYMENT_NAMESPACE;
@@ -266,7 +272,7 @@ test('doctor never loads PostgreSQL code from an inspected --dir target', async 
 
 test('doctor recognizes configured PostgreSQL webhook table names', async () => {
   const { _test } = require('../../bin/adcp-project.js');
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-doctor-webhook-pg-'));
+  const dir = makeTempDir('adcp-cli-doctor-webhook-pg-');
   const previousDatabaseUrl = process.env.DATABASE_URL;
   const previousDeployment = process.env.ADCP_DEPLOYMENT_NAMESPACE;
   try {
@@ -365,7 +371,7 @@ test('doctor recognizes configured PostgreSQL webhook table names', async () => 
 });
 
 test('doctor rejects unsafe or colliding webhook table configuration', () => {
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-doctor-webhook-config-'));
+  const dir = makeTempDir('adcp-cli-doctor-webhook-config-');
   try {
     writeFileSync(
       path.join(dir, 'adcp.project.json'),
@@ -397,7 +403,7 @@ test('doctor rejects unsafe or colliding webhook table configuration', () => {
 });
 
 test('init seller refuses to overwrite an existing project', () => {
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-init-existing-'));
+  const dir = makeTempDir('adcp-cli-init-existing-');
   try {
     const first = run(['init', 'seller', '--dir', dir]);
     assert.equal(first.status, 0, first.stderr || first.stdout);
@@ -410,7 +416,7 @@ test('init seller refuses to overwrite an existing project', () => {
 });
 
 test('memory scaffold doctor succeeds with explicit development warnings', () => {
-  const dir = mkdtempSync(path.join(ROOT, '.context', 'cli-doctor-memory-'));
+  const dir = makeTempDir('adcp-cli-doctor-memory-');
   try {
     const initialized = run(['init', 'seller', '--backend', 'memory', '--dir', dir]);
     assert.equal(initialized.status, 0, initialized.stderr || initialized.stdout);
