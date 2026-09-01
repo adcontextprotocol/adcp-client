@@ -15,6 +15,10 @@ export type StructuredContentFallbackTransport = 'mcp' | 'a2a' | 'direct';
  */
 export interface StructuredContentTextFallbackContext {
   transport: StructuredContentFallbackTransport;
+  /**
+   * Negotiated implementation identity when the transport safely retains it.
+   * Absent for direct embedding and stateless legacy HTTP serving.
+   */
   clientInfo?: Readonly<{ name: string; version: string; [key: string]: unknown }>;
   clientCapabilities?: Readonly<Record<string, unknown>>;
 }

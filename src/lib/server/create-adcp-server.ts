@@ -1966,6 +1966,10 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * client facts and transport; missing client facts are legitimate and the
    * named/default modes fail safe to mirroring. A2A named/default modes do not
    * mirror because its Task artifact already carries the typed DataPart.
+   * The default legacy `serve()` route is stateless across HTTP requests, so
+   * it cannot safely correlate `initialize` client facts with a later
+   * `tools/call`; predicates therefore take the unknown-client fail-safe path
+   * there. Modern MCP requests and stateful transports expose client facts.
    *
    * Decoration happens after response finalization and idempotency caching, so
    * a replay can be shaped independently for each client session.
