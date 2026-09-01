@@ -14,10 +14,7 @@ import {
   type PostgresTaskSettlementCoordinator,
   type TaskPushSettlementConfig,
 } from './postgres-task-settlement';
-import {
-  canonicalizeTaskSettlementIntent,
-  type TaskSettlementIntent,
-} from './postgres-task-settlement-intents';
+import { canonicalizeTaskSettlementIntent, type TaskSettlementIntent } from './postgres-task-settlement-intents';
 
 export type ApplyTaskSettlementIntentOptions =
   | {
@@ -72,12 +69,7 @@ export async function applyTaskSettlementIntent(
   const outcome =
     canonicalIntent.action === 'complete'
       ? await completeScopedTask(options.registry, canonicalIntent.taskRef, canonicalIntent.result)
-      : await failScopedTask(
-          options.registry,
-          canonicalIntent.taskRef,
-          canonicalIntent.error,
-          canonicalIntent.result
-        );
+      : await failScopedTask(options.registry, canonicalIntent.taskRef, canonicalIntent.error, canonicalIntent.result);
 
   if (outcome.outcome === 'applied') return 'settled';
   if (outcome.outcome === 'not_found_in_scope') {
