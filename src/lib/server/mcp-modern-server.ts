@@ -18,6 +18,8 @@ import {
   type ServerContext,
   type Tool as ModernTool,
   type ToolAnnotations,
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
 } from '@modelcontextprotocol/server';
 import { toNodeHandler, toWebRequest, type NodeMcpRequestHandler } from '@modelcontextprotocol/node';
 import type { IncomingMessage } from 'http';
@@ -39,6 +41,7 @@ import { ADCP_INSTRUCTIONS_RESOLVER, MEDIA_BUY_MCP_TOOL_PROFILE } from './create
 import { mcpAppResourceMetadata, readMcpAppResource } from './mcp-app';
 import { getMcpToolSchema, getMcpToolSummary, getToolSchemaDocument } from '../validation/schema-loader';
 import { isAdcpVersionAtLeast } from '../utils/adcp-version-config';
+import type { StructuredContentTextFallbackContext } from './structured-content-fallback';
 
 export interface ModernMcpServerAdapter {
   handle: NodeMcpRequestHandler;
@@ -54,6 +57,26 @@ function toAdcpAuthInfo(authInfo: ModernAuthInfo | undefined): AdcpAuthInfo | un
     scopes: authInfo.scopes,
     ...(authInfo.expiresAt !== undefined && { expiresAt: authInfo.expiresAt }),
     ...(authInfo.extra !== undefined && { extra: authInfo.extra }),
+  };
+}
+
+function structuredContentFallbackContext(ctx: ServerContext): StructuredContentTextFallbackContext {
+  const envelope = ctx.mcpReq.envelope as unknown as Record<string, unknown> | undefined;
+  const clientInfo = envelope?.[CLIENT_INFO_META_KEY];
+  const clientCapabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
+  return {
+    transport: 'mcp',
+    ...(clientInfo != null &&
+      typeof clientInfo === 'object' &&
+      typeof (clientInfo as { name?: unknown }).name === 'string' &&
+      typeof (clientInfo as { version?: unknown }).version === 'string' && {
+        clientInfo: clientInfo as StructuredContentTextFallbackContext['clientInfo'],
+      }),
+    ...(clientCapabilities != null &&
+      typeof clientCapabilities === 'object' &&
+      !Array.isArray(clientCapabilities) && {
+        clientCapabilities: clientCapabilities as Record<string, unknown>,
+      }),
   };
 }
 
@@ -217,6 +240,7 @@ export function createModernMcpServerAdapter(agentServer: AdcpServer): ModernMcp
             args,
             authInfo: toAdcpAuthInfo(ctx.http?.authInfo),
             signal: ctx.mcpReq.signal,
+            responseContext: structuredContentFallbackContext(ctx),
             // Only strengthen calls for tools whose exact official schema we
             // advertise. Hidden compatibility tools remain directly callable
             // and retain the adopter's configured validation mode.

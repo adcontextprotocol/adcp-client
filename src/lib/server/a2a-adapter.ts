@@ -510,6 +510,7 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
               toolName,
               args: invocation.input,
               ...(authInfo && { authInfo }),
+              responseContext: { transport: 'a2a' },
             });
             break;
           } catch (err) {

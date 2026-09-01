@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/create-adcp-server');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 const { adcpError } = require('../dist/lib/server/errors');
+const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } = require('../dist/lib/server/structured-content-fallback');
 
 // Idempotency tests use sparse handler fixtures; opt out of the strict
 // response-validation default so we stay focused on replay/claim behavior.
@@ -790,6 +791,51 @@ describe('createAdcpServer with idempotency', () => {
     assert.equal(replay.replayed, true);
     assert.equal(enhancements, 1, 'response enhancer must only run for the original execution');
     assert.equal(calls, 1);
+  });
+
+  it('caches the canonical response before applying a per-client text fallback', async () => {
+    let calls = 0;
+    const server = createAdcpServer({
+      name: 'T',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      resolveSessionKey: () => 'tenant',
+      structuredContentTextFallback: ({ clientInfo }) => clientInfo?.name !== 'capable-host',
+      mediaBuy: {
+        createMediaBuy: async () => {
+          calls += 1;
+          return { media_buy_id: 'mb_canonical_cache', packages: [] };
+        },
+      },
+    });
+    const args = { ...basePayload, idempotency_key: 'fallback_cache_abcdefgh' };
+
+    const first = await server.invoke({
+      toolName: 'create_media_buy',
+      args,
+      responseContext: {
+        transport: 'mcp',
+        clientInfo: { name: 'text-only-host', version: '1.0.0' },
+      },
+    });
+    const replay = await server.invoke({
+      toolName: 'create_media_buy',
+      args,
+      responseContext: {
+        transport: 'mcp',
+        clientInfo: { name: 'capable-host', version: '1.0.0' },
+      },
+    });
+
+    assert.equal(calls, 1, 'second client should replay rather than re-execute');
+    assert.equal(first.content.at(-1)._meta?.[ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY], true);
+    assert.equal(
+      replay.content.some(block => block._meta?.[ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY] === true),
+      false,
+      'the first client decoration must not be stored in the canonical replay entry'
+    );
+    assert.equal(replay.structuredContent.replayed, true);
   });
 
   it('fails closed when the idempotency backend cannot publish a completed response', async () => {

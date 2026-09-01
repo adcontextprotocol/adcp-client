@@ -67,6 +67,7 @@ import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import { applyStructuredContentTextFallback, type StructuredContentTextFallback } from './structured-content-fallback';
 import {
   ADCP_CAPABILITIES,
   ADCP_STATE_STORE,
@@ -1954,6 +1955,26 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * responses registered by `createAdcpServer`.
    */
   responseEnhancer?: (response: McpToolResponse) => void;
+  /**
+   * Mirror final MCP `structuredContent` into a marked compact-JSON text block
+   * for hosts that do not expose the structured channel to the model.
+   *
+   * Defaults to `always`, matching MCP's backwards-compatibility guidance.
+   * `never` is a deployment-owned opt-out. `auto` currently behaves like
+   * `always` until MCP defines a client capability for structured-result
+   * consumption. A predicate receives one extensible bag with the negotiated
+   * client facts and transport; missing client facts are legitimate and the
+   * named/default modes fail safe to mirroring. A2A named/default modes do not
+   * mirror because its Task artifact already carries the typed DataPart.
+   * The default legacy `serve()` route is stateless across HTTP requests, so
+   * it cannot safely correlate `initialize` client facts with a later
+   * `tools/call`; predicates therefore take the unknown-client fail-safe path
+   * there. Modern MCP requests and stateful transports expose client facts.
+   *
+   * Decoration happens after response finalization and idempotency caching, so
+   * a replay can be shaped independently for each client session.
+   */
+  structuredContentTextFallback?: StructuredContentTextFallback;
   /**
    * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
    * When set together with `capabilities.specialisms` containing
@@ -4609,6 +4630,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     credentialPolicy,
     testController: testControllerBridge,
     responseEnhancer,
+    structuredContentTextFallback = 'always',
   } = config;
   if (taskRegistry !== undefined && taskRegistry.scopeVersion !== 1) {
     throw new Error(
@@ -4618,6 +4640,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   if (!['auto', 'media-buy', 'all'].includes(mcpToolProfile)) {
     throw new Error(
       `createAdcpServer: mcpToolProfile must be "auto", "media-buy", or "all"; got ${JSON.stringify(mcpToolProfile)}`
+    );
+  }
+  if (
+    typeof structuredContentTextFallback !== 'function' &&
+    !['always', 'never', 'auto'].includes(structuredContentTextFallback)
+  ) {
+    throw new Error(
+      'createAdcpServer: structuredContentTextFallback must be "always", "never", "auto", or a predicate'
     );
   }
   const notificationHandlerConfigured = typeof config.protocol?.syncAgentNotificationConfigs === 'function';
@@ -5201,18 +5231,6 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
   const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
     responseEnhancer?.(response);
-    const structuredContent = response.structuredContent;
-    if (structuredContent !== undefined) {
-      const serialized = JSON.stringify(structuredContent);
-      const hasSerializedFallback = response.content.some(block => block.type === 'text' && block.text === serialized);
-      if (!hasSerializedFallback) {
-        // MCP recommends mirroring structuredContent into a TextContent block
-        // for clients that do not expose the structured channel to the model.
-        // Preserve any adopter-authored summary as the first block and append
-        // the exact final wire object after every framework/enhancer rewrite.
-        response.content.push({ type: 'text', text: serialized });
-      }
-    }
     return response;
   };
 
@@ -8405,6 +8423,33 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     );
   }
 
+  // Keep the canonical handler result (and idempotency cache entry) free of
+  // client-specific compatibility decoration. The low-level tools/call seam is
+  // after the registered handler has finalized/cached its response and is the
+  // first point where the legacy MCP SDK exposes negotiated clientInfo.
+  const wrappedToolsCallForStructuredFallback = wrapSdkRequestHandler(
+    server,
+    'tools/call',
+    async (original, request, extra) => {
+      const response = await original(request, extra);
+      const clientInfo = server.server.getClientVersion();
+      const clientCapabilities = server.server.getClientCapabilities();
+      return applyStructuredContentTextFallback(response, structuredContentTextFallback, {
+        transport: 'mcp',
+        ...(clientInfo !== undefined && { clientInfo }),
+        ...(clientCapabilities !== undefined && {
+          clientCapabilities: clientCapabilities as Readonly<Record<string, unknown>>,
+        }),
+      });
+    }
+  );
+  if (!wrappedToolsCallForStructuredFallback) {
+    throw new Error(
+      'createAdcpServer: failed to install MCP structured-content fallback decoration; ' +
+        'the MCP SDK request-handler internals may have changed'
+    );
+  }
+
   // Validate `credentialPolicy.tools` keys against the FULL registered
   // tool set, including `get_adcp_capabilities` (registered just above).
   // Earlier placement (before this tool was added) made
@@ -8469,7 +8514,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (taskRegistry?.clear) await taskRegistry.clear();
     },
   };
-  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
+  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion, {
+    structuredContentTextFallback,
+  });
   setToolVersionAvailabilityResolver(wrapped, toolAvailableForRelease);
   setDiscoveryVersionResolver(wrapped, requestedVersion => {
     if (requestedVersion === undefined) return adcpVersion;

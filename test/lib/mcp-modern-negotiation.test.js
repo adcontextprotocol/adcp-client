@@ -483,14 +483,20 @@ test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t =>
   const { serve, InMemoryStateStore } = require('../../dist/lib/index.js');
   const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
   const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+  const fallbackContexts = [];
 
   const httpServer = serve(
     () =>
       createAdcpServer({
         name: 'modern-adcp-test',
         version: '1.0.0',
+        adcpVersion: '3.1.18',
         stateStore: new InMemoryStateStore(),
         instructions: async () => 'Use AdCP tools with explicit account context.',
+        structuredContentTextFallback: context => {
+          fallbackContexts.push(context);
+          return context.clientInfo?.name !== 'pinned-modern-test';
+        },
       }),
     { port: 0, onListening: () => {} }
   );
@@ -529,6 +535,15 @@ test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t =>
   const result = await client.callTool({ name: 'get_adcp_capabilities', arguments: {} });
   assert.equal(result.isError, undefined);
   assert.ok(result.structuredContent, 'AdCP response should retain structured content on the modern route');
+  assert.equal(
+    result.content.some(block => block._meta?.['adcp/mirrored-structured-content'] === true),
+    false,
+    'modern client predicate should suppress the compatibility text block'
+  );
+  assert.equal(fallbackContexts.at(-1).transport, 'mcp');
+  assert.equal(fallbackContexts.at(-1).clientInfo.name, 'pinned-modern-test');
+  assert.equal(fallbackContexts.at(-1).clientInfo.version, '1.0.0');
+  assert.ok(fallbackContexts.at(-1).clientCapabilities);
 
   const endpoint = `http://127.0.0.1:${address.port}/mcp`;
   const malformed = await fetch(endpoint, {

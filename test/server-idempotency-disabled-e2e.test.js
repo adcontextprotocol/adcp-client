@@ -28,7 +28,7 @@ after(() => {
 });
 
 const lib = require('../dist/lib/index.js');
-const { serve } = lib;
+const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY, serve } = lib;
 const { createAdcpServer: _createAdcpServer } = require('../dist/lib/server/legacy/v5/index.js');
 const { createA2AAdapter } = require('../dist/lib/server/a2a-adapter');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
@@ -70,6 +70,46 @@ const basePayload = {
 };
 
 describe('idempotency: disabled — MCP wire roundtrip', () => {
+  it('fails safe on stateless legacy HTTP where initialize client facts cannot be correlated', async () => {
+    const fallbackContexts = [];
+    const httpServer = serve(
+      () =>
+        _createAdcpServer({
+          name: 'Stateless fallback E2E',
+          version: '1.0.0',
+          adcpVersion: '3.1.18',
+          idempotency: 'disabled',
+          validation: { requests: 'off', responses: 'off' },
+          structuredContentTextFallback: context => {
+            fallbackContexts.push(context);
+            return false;
+          },
+          mediaBuy: {
+            getProducts: async () => ({ products: [], cache_scope: 'public' }),
+          },
+        }),
+      { port: 0, onListening: () => {} }
+    );
+    await waitForListening(httpServer);
+    const port = httpServer.address().port;
+    try {
+      const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
+      const client = new Client({ name: 'Legacy stateless host', version: '1.0.0' });
+      await client.connect(transport);
+
+      const result = await client.callTool({ name: 'get_products', arguments: {} });
+      assert.equal(fallbackContexts.length, 0, 'unknown clients must not reach the deployment predicate');
+      assert.equal(
+        result.content.some(block => block._meta?.[ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY] === true),
+        true,
+        'unknown legacy HTTP clients must retain the compatibility mirror'
+      );
+      await client.close();
+    } finally {
+      httpServer.close();
+    }
+  });
+
   it('get_adcp_capabilities advertises {supported: false, no replay_ttl_seconds} over real HTTP', async () => {
     const httpServer = serve(makeFactory(), { port: 0, onListening: () => {} });
     await waitForListening(httpServer);
@@ -217,7 +257,26 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
 
   it('A2A: create_media_buy succeeds without idempotency_key under strict validation', async () => {
     const calls = [];
-    const adcp = makeFactory({ calls })();
+    const fallbackContexts = [];
+    const adcp = _createAdcpServer({
+      name: 'Disabled E2E',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      idempotency: 'disabled',
+      stateStore: new InMemoryStateStore(),
+      resolveSessionKey: () => 'tenant_e2e',
+      validation: { requests: 'strict', responses: 'off' },
+      structuredContentTextFallback: context => {
+        fallbackContexts.push(context);
+        return true;
+      },
+      mediaBuy: {
+        createMediaBuy: async params => {
+          calls.push(params);
+          return { media_buy_id: `mb_${calls.length}`, packages: [] };
+        },
+      },
+    });
     const a2a = createA2AAdapter({
       server: adcp,
       agentCard: {
@@ -249,5 +308,7 @@ describe('idempotency: disabled — A2A wire roundtrip', () => {
       `A2A roundtrip should accept missing idempotency_key in disabled mode, got: ${JSON.stringify(payload.adcp_error)}`
     );
     assert.equal(calls.length, 1);
+    assert.equal(fallbackContexts.at(-1).transport, 'a2a');
+    assert.equal(payload.content, undefined, 'A2A artifact must contain only the typed DataPart payload');
   });
 });

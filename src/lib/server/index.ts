@@ -162,6 +162,13 @@ export {
 } from './responses';
 export type { McpToolResponse } from './responses';
 
+export { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } from './structured-content-fallback';
+export type {
+  StructuredContentFallbackTransport,
+  StructuredContentTextFallback,
+  StructuredContentTextFallbackContext,
+} from './structured-content-fallback';
+
 export { validActionsForStatus } from './media-buy-helpers';
 export type { ValidAction, CancelMediaBuyInput } from './media-buy-helpers';
 export { assertUpdateMediaBuyAllowed } from './media-buy-actions';
@@ -357,6 +364,7 @@ export type {
   AdcpTestRequest,
   AdcpTestToolsCallRequest,
   AdcpTestResponse,
+  AdcpInvokeOptions,
 } from './adcp-server';
 // Handler-bag types describe the raw v5 server surface. Primary-barrel names
 // are explicit Legacy aliases; the legacy/v5 subpath retains the originals.
