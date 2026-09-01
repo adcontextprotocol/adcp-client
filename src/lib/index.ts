@@ -1184,6 +1184,15 @@ export type {
 export type { BrandJson, AdagentsJson } from './types/wellknown-schemas.generated';
 export { BrandJsonSchema, AdagentsJsonSchema } from './types/wellknown-schemas.generated';
 
+// ====== PLACEMENT PRESENTATION ======
+// These boundary validators are explicit root-level exceptions to the general
+// @adcp/sdk/schemas-only policy below. Consumers fetch presentation_ref from a
+// publisher-controlled URL, so keeping the canonical validation path visible
+// alongside ssrfSafeFetch and resolvePreviewAuthority avoids unsupported deep
+// imports or locally copied schemas.
+export type { PlacementPresentationDocument, PlacementPresentationReference } from './types/core.generated';
+export { PlacementPresentationDocumentSchema, PlacementPresentationReferenceSchema } from './types/schemas.generated';
+
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling
 export type { Error as TaskErrorDetail } from './types/core.generated';

@@ -54,6 +54,7 @@ import {
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 
 export * from '../types/schemas.generated';
+export type { PlacementPresentationDocument, PlacementPresentationReference } from '../types/core.generated';
 
 type LooseObjectShapeFor<T extends object> = {
   [K in keyof T]-?: undefined extends T[K]

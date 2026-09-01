@@ -64,6 +64,49 @@ async function fetchProducts() {
 }
 ```
 
+### Digest-pinned placement presentations
+
+Placement `presentation_ref` values point to publisher-controlled documents. Validate the reference before fetching, keep the fetch SSRF-safe and credential-free, verify the digest over the exact `response.body` bytes returned by `ssrfSafeFetch`, and only then parse the document with the canonical schema.
+
+```typescript
+import { createHash } from 'node:crypto';
+import { resolvePreviewAuthority, ssrfSafeFetch } from '@adcp/sdk';
+import {
+  PlacementPresentationDocumentSchema,
+  PlacementPresentationReferenceSchema,
+  type PlacementPresentationDocument,
+} from '@adcp/sdk/schemas';
+
+async function loadPlacementPresentation(rawRef: unknown): Promise<PlacementPresentationDocument> {
+  const ref = PlacementPresentationReferenceSchema.parse(rawRef);
+  const response = await ssrfSafeFetch(ref.uri, {
+    timeoutMs: 5_000,
+    maxBodyBytes: 256 * 1024,
+  });
+
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Presentation fetch failed with HTTP ${response.status}`);
+  }
+
+  const actualDigest = `sha256:${createHash('sha256').update(response.body).digest('hex')}`;
+  if (actualDigest !== ref.digest) {
+    throw new Error('Placement presentation digest mismatch');
+  }
+
+  const document = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
+  return PlacementPresentationDocumentSchema.parse(document);
+}
+
+const presentation = await loadPlacementPresentation(placement.presentation_ref);
+const authority = resolvePreviewAuthority({
+  targetPlacementId: placement.placement_id,
+  publisherPresentation: { placementId: placement.placement_id, value: presentation },
+  manifest,
+});
+```
+
+`ssrfSafeFetch` rejects private and non-HTTPS targets by default, pins DNS resolution, does not follow redirects, and enforces the supplied timeout and body limit. Do not attach ambient credentials when fetching presentation documents or their image decorations.
+
 ### Form Validation
 
 ```typescript
