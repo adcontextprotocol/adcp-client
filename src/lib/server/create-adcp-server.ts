@@ -252,10 +252,14 @@ import type {
   UpdateMediaBuyRequestSchema,
   GetMediaBuysRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
+  GetReportingStatusRequestSchema,
+  SyncReportingReceiptsRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
   GetTaskStatusRequestSchema,
   ListTasksRequestSchema,
   SyncAgentNotificationConfigsRequestSchema,
+  GetPrincipalRequestSchema,
+  SyncPrincipalRequestSchema,
   ListCreativeFormatsRequestSchema,
   ListTransformersRequestSchema,
   BuildCreativeRequestSchema,
@@ -331,9 +335,13 @@ import type {
   UpdateMediaBuyResponse,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
+  GetReportingStatusResponse,
+  SyncReportingReceiptsResponse,
   GetTaskStatusResponse,
   ListTasksResponse,
   SyncAgentNotificationConfigsResponse,
+  GetPrincipalResponse,
+  SyncPrincipalResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
   ListTransformersResponse,
@@ -687,6 +695,16 @@ export interface AdcpToolMap {
     result: ServerPayload<GetMediaBuyDeliveryResponse>;
     response: GetMediaBuyDeliveryResponse;
   };
+  get_reporting_status: {
+    params: z.input<typeof GetReportingStatusRequestSchema>;
+    result: ServerPayload<GetReportingStatusResponse>;
+    response: GetReportingStatusResponse;
+  };
+  sync_reporting_receipts: {
+    params: z.input<typeof SyncReportingReceiptsRequestSchema>;
+    result: ServerPayload<SyncReportingReceiptsResponse>;
+    response: SyncReportingReceiptsResponse;
+  };
   provide_performance_feedback: {
     params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>;
     result: ServerPayload<ProvidePerformanceFeedbackSuccess>;
@@ -706,6 +724,16 @@ export interface AdcpToolMap {
     params: z.input<typeof SyncAgentNotificationConfigsRequestSchema>;
     result: ServerPayload<SyncAgentNotificationConfigsResponse>;
     response: SyncAgentNotificationConfigsResponse;
+  };
+  get_principal: {
+    params: z.input<typeof GetPrincipalRequestSchema>;
+    result: ServerPayload<GetPrincipalResponse>;
+    response: GetPrincipalResponse;
+  };
+  sync_principal: {
+    params: z.input<typeof SyncPrincipalRequestSchema>;
+    result: ServerPayload<SyncPrincipalResponse>;
+    response: SyncPrincipalResponse;
   };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
@@ -1034,6 +1062,8 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   updateMediaBuy?: DomainHandler<'update_media_buy', TAccount>;
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
   getMediaBuyDelivery?: DomainHandler<'get_media_buy_delivery', TAccount>;
+  getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
+  syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;
   providePerformanceFeedback?: DomainHandler<'provide_performance_feedback', TAccount>;
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
   syncCreatives?: DomainHandler<'sync_creatives', TAccount>;
@@ -1109,6 +1139,8 @@ export interface ProtocolHandlers<TAccount = unknown> {
     params: AdcpToolMap['sync_agent_notification_configs']['params']
   ) => CallerMutationScope | Promise<CallerMutationScope>;
   syncAgentNotificationConfigs?: DomainHandler<'sync_agent_notification_configs', TAccount>;
+  getPrincipal?: DomainHandler<'get_principal', TAccount>;
+  syncPrincipal?: DomainHandler<'sync_principal', TAccount>;
 }
 
 export interface AccountHandlers<TAccount = unknown> {
@@ -2998,12 +3030,16 @@ const TOOL_META: Record<string, ToolMeta> = {
   update_media_buy: { wrap: updateMediaBuyResponse, annotations: MUT },
   get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
+  get_reporting_status: { wrap: null, annotations: RO },
+  sync_reporting_receipts: { wrap: null, annotations: IDEMP },
   provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
 
   // Protocol
   get_task_status: { wrap: null, annotations: RO },
   list_tasks: { wrap: null, annotations: RO },
   sync_agent_notification_configs: { wrap: null, annotations: IDEMP },
+  get_principal: { wrap: null, annotations: RO },
+  sync_principal: { wrap: null, annotations: IDEMP },
 
   // Creative
   list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
@@ -3279,6 +3315,8 @@ const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'updateMediaBuy', toolName: 'update_media_buy' },
   { handlerKey: 'getMediaBuys', toolName: 'get_media_buys' },
   { handlerKey: 'getMediaBuyDelivery', toolName: 'get_media_buy_delivery' },
+  { handlerKey: 'getReportingStatus', toolName: 'get_reporting_status' },
+  { handlerKey: 'syncReportingReceipts', toolName: 'sync_reporting_receipts' },
   { handlerKey: 'providePerformanceFeedback', toolName: 'provide_performance_feedback' },
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
   { handlerKey: 'syncCreatives', toolName: 'sync_creatives' },
@@ -3341,6 +3379,8 @@ const GOVERNANCE_ENTRIES: HandlerEntry[] = [
 
 const PROTOCOL_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'syncAgentNotificationConfigs', toolName: 'sync_agent_notification_configs' },
+  { handlerKey: 'getPrincipal', toolName: 'get_principal' },
+  { handlerKey: 'syncPrincipal', toolName: 'sync_principal' },
 ];
 
 const ACCOUNT_ENTRIES: HandlerEntry[] = [

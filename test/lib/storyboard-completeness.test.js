@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
 const { hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TASK_TO_METHOD } = require('../../dist/lib/testing/storyboard/task-map.js');
+const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas.js');
 const { TOOL_RESPONSE_SCHEMAS } = require('../../dist/lib/utils/response-schemas.js');
 
 const allStoryboards = listAllComplianceStoryboards();
@@ -173,6 +174,14 @@ describe('response schema coverage', () => {
         TOOL_RESPONSE_SCHEMAS[task],
         `Task "${task}" is used in storyboards but has no response schema in TOOL_RESPONSE_SCHEMAS`
       );
+    });
+  }
+});
+
+describe('AdCP 3.2 beta.10 request schema coverage', () => {
+  for (const task of ['get_principal', 'sync_principal', 'get_reporting_status', 'sync_reporting_receipts']) {
+    it(`${task} has a registered request schema`, () => {
+      assert.ok(TOOL_REQUEST_SCHEMAS[task], `Task "${task}" has no request schema in TOOL_REQUEST_SCHEMAS`);
     });
   }
 });

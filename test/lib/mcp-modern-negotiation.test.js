@@ -686,6 +686,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
           name: 'modern-profile-test',
           version: '1.0.0',
           adcpVersion: '3.2.0-beta.10',
+          idempotency: 'disabled',
           ...(mcpToolProfile !== undefined && { mcpToolProfile }),
           stateStore: new InMemoryStateStore(),
           validation: { requests: 'off', responses: 'off' },
@@ -696,6 +697,8 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
             buyProducts: async () => ({ media_buy_id: 'mb-buy' }),
             acceptProposal: async () => ({ media_buy_id: 'mb-accept' }),
             controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
+            getReportingStatus: async () => ({}),
+            syncReportingReceipts: async () => ({}),
             getProducts: async () => {
               legacyCalls++;
               return { products: [], cache_scope: 'public' };
@@ -703,6 +706,10 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
           },
           creative: {
             buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf-1', assets: [] } }),
+          },
+          protocol: {
+            getPrincipal: async () => ({}),
+            syncPrincipal: async () => ({}),
           },
         }),
       { port: 0, onListening: () => {} }
@@ -743,6 +750,9 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   const compactNames = compact.tools.map(tool => tool.name);
   assert.ok(compactNames.includes('list_products'));
   assert.ok(compactNames.includes('buy_products'));
+  assert.ok(compactNames.includes('sync_principal'));
+  assert.ok(compactNames.includes('get_reporting_status'));
+  assert.ok(compactNames.includes('sync_reporting_receipts'));
   assert.ok(!compactNames.includes('get_products'));
   assert.ok(!compactNames.includes('build_creative'));
   assert.equal(compactResult.legacyCalls, 1, 'a legacy tool hidden from discovery must remain directly callable');
@@ -794,6 +804,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   assert.ok(allNames.includes('list_products'));
   assert.ok(allNames.includes('get_products'));
   assert.ok(allNames.includes('build_creative'));
+  assert.ok(allNames.includes('get_principal'));
   assert.equal(
     all.tools.find(tool => tool.name === 'request_proposals').inputSchema.$schema,
     'https://json-schema.org/draft/2020-12/schema'
