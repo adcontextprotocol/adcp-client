@@ -83,6 +83,8 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   accept_proposal: 'media-buy',
   control_media_buy: 'media-buy',
   sync_agent_notification_configs: 'media-buy',
+  sync_principal: 'media-buy',
+  get_principal: 'media-buy',
   create_media_buy: 'media-buy',
   update_media_buy: 'media-buy',
   // The task-type schemas through AdCP 3.2 classify this dual-domain tool as
@@ -101,6 +103,7 @@ export const TOOL_PROTOCOL_MAP: Readonly<Record<string, AdcpProtocol>> = {
   get_account_financials: 'media-buy',
   report_usage: 'media-buy',
   provide_performance_feedback: 'media-buy',
+  sync_reporting_receipts: 'media-buy',
   get_media_buys: 'media-buy',
 };
 

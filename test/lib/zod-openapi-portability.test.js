@@ -82,6 +82,7 @@ describe('public Zod schema portability', () => {
       'agent_placement',
       'audio_daast',
       'audio_hosted',
+      'audio_vast',
       'coordinated_placements',
       'display_tag',
       'html5',

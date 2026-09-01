@@ -136,7 +136,7 @@ async function startSigningCaptureSeller() {
       return mcpResult({
         adcp: {
           major_versions: [3],
-          supported_versions: ['3.2.0-beta.9'],
+          supported_versions: ['3.2.0-beta.10'],
           idempotency: { supported: true, replay_ttl_seconds: 86400 },
         },
         supported_protocols: ['media_buy'],
@@ -255,7 +255,7 @@ describe('functional request signing', () => {
         replayStore,
         revocationStore: new InMemoryRevocationStore(),
         operation: 'get_products',
-        adcpVersion: '3.2.0-beta.9',
+        adcpVersion: '3.2.0-beta.10',
       });
       assert.strictEqual(verified.status, 'verified');
       assert.strictEqual(verified.keyid, options.functional_request_signing.kid);
@@ -541,7 +541,7 @@ describe('functional request signing', () => {
     const options = applyFunctionalRequestSigning(
       {
         sandbox: true,
-        adcpVersion: '3.2.0-beta.9',
+        adcpVersion: '3.2.0-beta.10',
         wireAdcpVersion: '3.1.0',
         _profile: {
           name: 'Versioned seller',
@@ -562,7 +562,7 @@ describe('functional request signing', () => {
     await getOrDiscoverProfile(client, options);
 
     const wireContext = buildAgentSigningContext(client.getAgent(), { adcpVersion: '3.1.0' });
-    const schemaContext = buildAgentSigningContext(client.getAgent(), { adcpVersion: '3.2.0-beta.9' });
+    const schemaContext = buildAgentSigningContext(client.getAgent(), { adcpVersion: '3.2.0-beta.10' });
     assert.deepStrictEqual(wireContext.cache.get(wireContext.capabilityCacheKey)?.requestSigning, {
       supported: true,
       required_for: ['get_products'],
@@ -583,10 +583,10 @@ describe('functional request signing', () => {
       },
     };
 
-    seedTestClientSigningCapability(client, profile, '3.2.0-beta.9');
+    seedTestClientSigningCapability(client, profile, '3.2.0-beta.10');
 
     const pinnedContext = buildAgentSigningContext(client.getAgent(), { adcpVersion: '3.1.0' });
-    const fallbackContext = buildAgentSigningContext(client.getAgent(), { adcpVersion: '3.2.0-beta.9' });
+    const fallbackContext = buildAgentSigningContext(client.getAgent(), { adcpVersion: '3.2.0-beta.10' });
     assert.deepStrictEqual(pinnedContext.cache.get(pinnedContext.capabilityCacheKey)?.requestSigning, {
       supported: true,
       required_for: ['get_products'],

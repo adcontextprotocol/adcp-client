@@ -399,7 +399,7 @@ _Response (success branch):_
   compliance_testing: object
   specialisms: Specialism[]
   extensions_supported: string[]
-  experimental_features: string[]
+  experimental_features: Experimental Feature Id[]
   wholesale_feed_versioning: object
   last_updated: string
   errors: Error[]
@@ -489,6 +489,49 @@ _Response (success branch):_
   dry_run: boolean
   notification_configs: Agent Notification Config[]
   errors: Error[]
+  context: Context
+}
+```
+
+#### `sync_principal`
+
+Declaratively synchronize caller-scoped webhooks and reusable reporting destinations.
+
+_Request:_
+```
+{
+  idempotency_key: string  // required
+  configuration: object  // required
+  expected_configuration_version: string
+  expected_principal_kind: Principal Kind
+  dry_run: boolean
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  result: Applied principal configuration | Validated principal dry run | Failed principal sync  // required
+  context: Context
+}
+```
+
+#### `get_principal`
+
+Read caller-scoped connection configuration, version, and destination setup states without mutation.
+
+_Request:_
+```
+{
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  result: union  // required
   context: Context
 }
 ```
@@ -1204,6 +1247,77 @@ _Response (success branch):_
   aggregated_totals: object
   errors: Error[]
   sandbox: boolean
+  context: Context
+}
+```
+
+#### `get_reporting_status`
+
+Request parameters for reconciling managed reporting obligations, revisions, and materializations.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  view: 'summary' | 'periods' | 'revision'  // required
+  media_buy_ids: string[]
+  delivery_config_ids: string[]
+  feed_purposes: ('pacing' | 'analytics' | 'billing')[]
+  period: object
+  health: Reporting Health[]
+  finality: Reporting Finality[]
+  reporting_revision_id: string
+  pagination: Pagination Request
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+  view: 'summary' | 'periods' | 'revision'
+  ledger_snapshot_id: string
+  ledger_as_of: string
+  account_id: string
+  scope: object
+  health: Reporting Health
+  coverage: Reporting Coverage
+  data_through: string,null
+  next_expected_at: string
+  obligation_counts: object
+  issues: Reporting Status Issue[]
+  periods: Reporting Obligation[]
+  revisions: Reporting Revision[]
+  pagination: Pagination Response
+  revision: Reporting Revision
+  materializations: Reporting Materialization[]
+  receipts: Reporting Receipt[]
+  errors: Error[]
+  context: Context
+}
+```
+
+#### `sync_reporting_receipts`
+
+Submit authenticated consumer reconciliation receipts for durable reporting materializations.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  idempotency_key: string  // required
+  receipts: object[]  // required
+  adcp_version: string
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+  results: (Recorded reporting receipt | Unchanged reporting receipt | Failed reporting receipt)[]  // required
   context: Context
 }
 ```

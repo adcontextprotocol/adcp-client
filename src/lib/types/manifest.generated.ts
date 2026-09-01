@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.0-beta.9/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.0-beta.10/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.0-beta.9.
+ * Manifest-derived constants for AdCP 3.2.0-beta.10.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.0-beta.9/manifest.json` (adcp_version: 3.2.0-beta.9, generated_at:
- * 2026-08-28T11:14:49.880Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.0-beta.10/manifest.json` (adcp_version: 3.2.0-beta.10, generated_at:
+ * 2026-09-01T14:59:01.684Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -218,6 +218,11 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     recovery: "correctable",
     suggestion: "supply or assign a creative variant matching every in-scope format option's accepted_language_ranges, narrow placement scope, choose a compatible format option, or change an ineligible serve_default"
   },
+  "CREATIVE_MISSING_CLICK_URL": {
+    description: "A submitted creative that requires a destination URL does not provide one. Sellers SHOULD identify the missing buyer-visible field in error.field and MUST NOT expose downstream ad-server names or internal object identifiers in the buyer-facing message.",
+    recovery: "correctable",
+    suggestion: "add the required destination URL and resubmit the creative"
+  },
   "CREATIVE_NOT_FOUND": {
     description: "Referenced creative does not exist in the agent's creative library. Sellers MUST return this code uniformly for any creative_id not owned by the calling account — never distinguish 'exists in another tenant' from 'does not exist', which would enable cross-tenant enumeration.",
     recovery: "correctable",
@@ -237,6 +242,16 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     description: "A sync_creatives item reused a revision_id for different canonical revision content under the same creative_id. Revision identity is scoped to the parent creative and immutable after first acceptance. Sellers MUST evaluate the buyer input before transcoding or normalization, MUST leave the prior creative state unchanged, and SHOULD return details conforming to error-details/creative-revision-content-mismatch.json. Distinct from IDEMPOTENCY_CONFLICT: idempotency_key protects one request replay window, while revision identity protects creative content across requests and retention.",
     recovery: "correctable",
     suggestion: "resend the exact content previously bound to this revision_id, or mint a new revision_id for changed content"
+  },
+  "CREATIVE_SIZE_MISMATCH": {
+    description: "The submitted creative dimensions do not match any size accepted by the selected packages. Sellers SHOULD identify the offending creative in error.field and MAY include the submitted and accepted dimensions in buyer-safe error.details.",
+    recovery: "correctable",
+    suggestion: "resize or replace the creative with a size accepted by every selected package that may serve it"
+  },
+  "CREATIVE_VALIDATION_FAILED_GENERIC": {
+    description: "The creative failed buyer-correctable validation, but the producer cannot classify the failure with a more specific standard code. Producers SHOULD prefer a specific creative code whenever one applies and MUST keep buyer-facing messages free of vendor identifiers, internal object names, internal IDs, and stack traces.",
+    recovery: "correctable",
+    suggestion: "correct the buyer-visible validation problem and resubmit the creative"
   },
   "CREATIVE_VALUE_NOT_ALLOWED": {
     description: "A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling.",
@@ -698,6 +713,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "get_media_buy_delivery",
   "get_media_buys",
   "get_products",
+  "get_reporting_status",
   "list_creative_formats",
   "list_products",
   "log_event",
@@ -707,6 +723,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "sync_audiences",
   "sync_catalogs",
   "sync_event_sources",
+  "sync_reporting_receipts",
   "update_media_buy",
 ] as const;
 
@@ -721,9 +738,11 @@ export const PROPERTY_TOOLS_FROM_MANIFEST = [
 
 export const PROTOCOL_TOOLS_FROM_MANIFEST = [
   "get_adcp_capabilities",
+  "get_principal",
   "get_task_status",
   "list_tasks",
   "sync_agent_notification_configs",
+  "sync_principal",
 ] as const;
 
 export const SIGNALS_TOOLS_FROM_MANIFEST = [

@@ -302,7 +302,7 @@ describe('SingleAgentClient Request Validation', () => {
       inner.cachedCapabilities = {
         version: 'v3',
         majorVersions: [3],
-        supportedVersions: ['3.2.0-beta.9'],
+        supportedVersions: ['3.2.0-beta.10'],
         protocols: ['media_buy'],
         features: {
           inlineCreativeManagement: false,
@@ -1094,7 +1094,7 @@ describe('v3 partial-schema field stripping', () => {
       inner.cachedCapabilities = {
         version: 'v3',
         majorVersions: [3],
-        supportedVersions: ['3.2.0-beta.9'],
+        supportedVersions: ['3.2.0-beta.10'],
         protocols: ['media_buy'],
         features: {
           inlineCreativeManagement: false,

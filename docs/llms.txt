@@ -330,6 +330,29 @@ Register, replace, pause, or clear agent-level webhook subscribers such as capab
 - Required: `action: 'updated' | 'unchanged' | 'cleared' | 'failed'`
 - Optional: `dry_run: boolean`, `notification_configs: Agent Notification Config[]`, `errors: Error[]`, `context: Context`
 
+#### `sync_principal`
+
+Declaratively synchronize caller-scoped webhooks and reusable reporting destinations.
+
+**Request:**
+- Required: `idempotency_key: string`, `configuration: object`
+- Optional: `expected_configuration_version: string`, `expected_principal_kind: Principal Kind`, `dry_run: boolean`, `context: Context`
+
+**Response (success branch):**
+- Required: `result: Applied principal configuration | Validated principal dry run | Failed principal sync`
+- Optional: `context: Context`
+
+#### `get_principal`
+
+Read caller-scoped connection configuration, version, and destination setup states without mutation.
+
+**Request:**
+- Optional: `context: Context`
+
+**Response (success branch):**
+- Required: `result: union`
+- Optional: `context: Context`
+
 ### Account Management
 
 #### `list_account_changes`
@@ -565,6 +588,30 @@ Request parameters for retrieving comprehensive delivery metrics.
 **Response (success branch):**
 - Required: `reporting_period: object`, `currency: string`, `media_buy_deliveries: object[]`
 - Optional: `notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update'`, `partial_data: boolean`, `unavailable_count: integer`, `sequence_number: integer`, `next_expected_at: string`, `attribution_window: Attribution Window`, `aggregated_totals: object`, `errors: Error[]`, +2 more
+
+#### `get_reporting_status`
+
+Request parameters for reconciling managed reporting obligations, revisions, and materializations.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `view: 'summary' | 'periods' | 'revision'`
+- Optional: `media_buy_ids: string[]`, `delivery_config_ids: string[]`, `feed_purposes: ('pacing' | 'analytics' | 'billing')[]`, `period: object`, `health: Reporting Health[]`, `finality: Reporting Finality[]`, `reporting_revision_id: string`, `pagination: Pagination Request`, +1 more
+
+**Response (success branch):**
+- Required: `status: 'completed'`
+- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, `data_through: string,null`, +11 more
+
+#### `sync_reporting_receipts`
+
+Submit authenticated consumer reconciliation receipts for durable reporting materializations.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `idempotency_key: string`, `receipts: object[]`
+- Optional: `adcp_version: string`, `context: Context`
+
+**Response (success branch):**
+- Required: `status: 'completed'`, `results: (Recorded reporting receipt | Unchanged reporting receipt | Failed reporting receipt)[]`
+- Optional: `context: Context`
 
 #### `provide_performance_feedback`
 
@@ -1303,6 +1350,9 @@ Flow: `get_media_buys → control_media_buy → get_media_buys → control_media
 **Seller fulfills a media buy with a clicks optimization goal (target CPC)** — Verifies that a seller advertising clicks in supported_optimization_metrics can accept a media buy whose metric-kind optimization_goal targets cost-per-click and reports clicks + cost_per_click on delivery. Lightweight sibling to the performance scenarios on the click-optimization side: sellers that don't advertise clicks as an optimization metric (rare — most do; pure brand sellers like broadcast TV upper-funnel video are the not_applicable population) grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
+**Buyer commits collection selection and the seller echoes it as concrete selectors on readback** — Verifies mode: selected accepts an explicit domain-qualified subset, mode: default materializes the product's full bundle on readback, package readback always echoes committed collection_selection as concrete selectors, and a fixed (non-selectable) bundle rejects partial selection while accepting an exact restatement.
+Flow: `get_products → create_media_buy → get_media_buys → create_media_buy → get_media_buys → create_media_buy`
+
 **Seller completes the compact direct-buy lifecycle** — Verifies published-offer discovery, direct purchase, revision-checked operational control, and authoritative readback through AdCP 3.2 compact tools.
 Flow: `comply_test_controller → list_products → buy_products → control_media_buy → get_media_buys`
 
@@ -1347,6 +1397,9 @@ Flow: `sync_accounts → get_products → sync_event_sources → create_media_bu
 
 **Seller rejects execution after a proposal hold expires** — Verifies that an expired committed proposal returns PROPOSAL_EXPIRED instead of creating a MediaBuy.
 Flow: `comply_test_controller → request_proposals → refine_proposals → comply_test_controller → accept_proposal → create_media_buy`
+
+**Seller binds an external audience source into a targetable audience** — Verifies dataset-source ingestion, discovery echo, media-buy targeting, unsupported-rail rejection, and transport immutability.
+Flow: `sync_audiences → create_media_buy → sync_audiences`
 
 **Seller honors a package-level frequency cap and reports observed frequency at-or-below the cap** — Verifies that a seller advertising frequency_capping accepts a package-level frequency_cap (max_impressions + per + window form) on create_media_buy and, after simulated delivery, reports observed reach and frequency on get_media_buy_delivery with the observed frequency at-or-below the requested cap. Runtime-enforcement scenario — no rejection arm. Sellers without frequency_capping grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
@@ -1404,6 +1457,9 @@ Flow: `get_products → create_media_buy`
 
 **Seller solves for budget from a structured outcome target** — Verifies criteria.outcome_target reverse forecasting: a metric or event goal plus desired volume answered with total_budget_guidance on proposals and a forecast whose points carry the goal's key in metrics.
 Flow: `sync_accounts → request_proposals`
+
+**Seller declares owner-sold channel carriage and enforces collection selector boundaries** — Verifies an owner-sold channel product combines host property scope with the owner's canonical collection selector, that buyer collection selection requires explicit collection_ids, and that unknown or mismatched collection selectors are rejected rather than silently substituted.
+Flow: `get_products → create_media_buy`
 
 **Seller preserves explicit package automatic bidding** — Verifies package-scoped automatic bidding independently of media-buy bidding support.
 Flow: `sync_accounts → create_media_buy → get_media_buys`
@@ -1491,6 +1547,9 @@ Flow: `get_adcp_capabilities → get_products → sync_governance → create_med
 
 **Catalog-driven creative and conversion tracking** — Seller that renders dynamic ads from product catalogs, tracks conversions, and optimizes delivery based on performance feedback.
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
+
+**Digital out-of-home — non-guaranteed** — DOOH seller for non-guaranteed venue and screen inventory with canonical screen formats and substantive play reporting.
+Flow: `get_adcp_capabilities → list_products → validate_input → sync_creatives → sync_governance → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
@@ -1638,11 +1697,17 @@ Flow: `get_adcp_capabilities → comply_test_controller → list_accounts`
 **Pagination cursor integrity** — Validates the cursor↔has_more invariant by walking a paginated list_creatives response from a continuation page to a terminal page.
 Flow: `get_adcp_capabilities → list_creatives`
 
+**Principal configuration** — Validates the experimental stable-principal-scoped configuration surface: capability discovery, pre-configuration identity readback, NO_AUTH rejection, dry-run setup, applied lifecycle with readback, idempotent replay, and section clearing.
+Flow: `get_adcp_capabilities → get_principal → sync_principal → get_principal → sync_principal → get_principal → sync_principal → get_principal`
+
 **Pagination cursor integrity — list_property_lists** — Validates the cursor↔has_more invariant by walking a paginated list_property_lists response from a continuation page to a terminal page.
 Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 
 **Read-tool idempotency_key tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade accept an optional idempotency_key without strict wrapper rejection.
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
+
+**Reporting Core tier** — Validates the required reporting.core tier: capability declaration with tier boundaries, and that a polling-only seller needs no receipt task, push notification, destination, or canonicalization surface.
+Flow: `get_adcp_capabilities`
 
 **Schema compliance — signals protocol** — Validates that signals agent responses conform to AdCP schemas with all required fields present and correctly typed.
 Flow: `get_adcp_capabilities → get_signals`
@@ -1748,10 +1813,13 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `CREATIVE_DEADLINE_EXCEEDED` | correctable | Creative change submitted after the package's creative_deadline. Distinct from CREATIVE_REJECTED (content-policy, brand-safety, or accessibility-review failure). |
 | `CREATIVE_INACCESSIBLE` | correctable | A creative governance agent (get_creative_features) could not retrieve the submitted creative_manifest assets for evaluation — an asset URL was unreachable, returned an error, or required credentials the agent does not hold. Distinct from CREATIVE_NOT_FOUND (a creative_id absent from the agent's library, not an asset-fetch failure) and CREATIVE_REJECTED (assets retrieved but failed creative review). |
 | `CREATIVE_LOCALE_NOT_ACCEPTED` | correctable | A creative bound to a locale-constrained product format has no materialized variant matching locale_policy.accepted_language_ranges, lacks protocol-declared locale topology, or uses serve_default with a seller-ineligible default variant. Seller ranges use RFC 4647 Basic Filtering and are applied independently for every placement where the assignment may serve, before buyer Lookup, locale_fallbacks, or default selection. Distinct from CREATIVE_REJECTED because this is a mechanically discoverable assignment-eligibility mismatch, not subjective content review. error.field SHOULD point to the offending creative or assignment; error.details SHOULD include format_option_id when present, accepted_language_ranges, available_variant_locales, and placement identity when applicable. |
+| `CREATIVE_MISSING_CLICK_URL` | correctable | A submitted creative that requires a destination URL does not provide one. Sellers SHOULD identify the missing buyer-visible field in error.field and MUST NOT expose downstream ad-server names or internal object identifiers in the buyer-facing message. |
 | `CREATIVE_NOT_FOUND` | correctable | Referenced creative does not exist in the agent's creative library. Sellers MUST return this code uniformly for any creative_id not owned by the calling account — never distinguish 'exists in another tenant' from 'does not exist', which would enable cross-tenant enumeration. |
 | `CREATIVE_REJECTED` | correctable | Creative failed content-policy, brand-safety, or accessibility review. For deadline violations, see CREATIVE_DEADLINE_EXCEEDED. Accessibility failures SHOULD use structured details conforming to error-details/accessibility-violation.json. |
 | `CREATIVE_REPRESENTATION_UNRESOLVED` | correctable | No representation in a CreativeRepresentationSet is compatible with the selected target capability or product format option. The resolver MUST retain the complete representation set and MUST include one `error.details.representation_rejections[]` entry per candidate, conforming to `error-details/creative-representation-unresolved.json`; silent seller guessing is forbidden. |
 | `CREATIVE_REVISION_CONTENT_MISMATCH` | correctable | A sync_creatives item reused a revision_id for different canonical revision content under the same creative_id. Revision identity is scoped to the parent creative and immutable after first acceptance. Sellers MUST evaluate the buyer input before transcoding or normalization, MUST leave the prior creative state unchanged, and SHOULD return details conforming to error-details/creative-revision-content-mismatch.json. Distinct from IDEMPOTENCY_CONFLICT: idempotency_key protects one request replay window, while revision identity protects creative content across requests and retention. |
+| `CREATIVE_SIZE_MISMATCH` | correctable | The submitted creative dimensions do not match any size accepted by the selected packages. Sellers SHOULD identify the offending creative in error.field and MAY include the submitted and accepted dimensions in buyer-safe error.details. |
+| `CREATIVE_VALIDATION_FAILED_GENERIC` | correctable | The creative failed buyer-correctable validation, but the producer cannot classify the failure with a more specific standard code. Producers SHOULD prefer a specific creative code whenever one applies and MUST keep buyer-facing messages free of vendor identifiers, internal object names, internal IDs, and stack traces. |
 | `CREATIVE_VALUE_NOT_ALLOWED` | correctable | A submitted text-asset value is not in the format's declared `allowed_values` list. Distinct from `CREATIVE_REJECTED` (generic creative-review failure) by being a closed-set constraint violation that the buyer can resolve mechanically without policy interpretation — the seller has published the complete list of acceptable values on the format, and any value outside that list is rejected by definition. The seller MUST set `error.field` to the offending asset's path within the manifest (e.g., `creatives[0].creative_manifest.assets[0].value` or the field name declared by the format) and SHOULD include the format's `allowed_values` array in `error.details.allowed_values` so the buyer agent can re-prompt its LLM with constrained sampling. |
 | `CREDENTIAL_IN_ARGS` | terminal | The seller detected authentication material or caller-supplied trust material placed in request args (top-level, in `context`, in `ext`, or any other nested location in the task payload) instead of arriving on the relevant transport authentication or trust channel. This includes buyer-principal credentials that should arrive on the inbound transport (`Authorization: Bearer` per RFC 6750 §2 for HTTP, RFC 9421 signature headers for signed requests, MCP/A2A authentication framing per RFC 9728 §3), and evaluator-call credentials or JWK/JWKS/JWKS-URI trust material smuggled into evaluator-related payload fields instead of being established through the creative agent's outbound transport authentication to the evaluator. Distinct from `AUTH_MISSING` (no credentials presented on the transport channel) and `AUTH_INVALID` (credentials presented but rejected on the transport channel) and `PERMISSION_DENIED` (authenticated caller not authorized for the action). Distinct from the receiver-side credentials carried in `push_notification_config.authentication.credentials`, which configure the seller's webhook callback authentication and are not buyer-principal or evaluator-call credentials — those are an explicit carve-out and MUST NOT trigger this code. Sellers SHOULD reject credential-in-args under AdCP 3.1; the requirement upgrades to MUST 90 days after the 3.1 publication date. |
 | `CURSOR_EXPIRED` | correctable | The list_account_changes cursor is no longer within the seller's retained account change window. The seller MUST NOT silently restart from the retention boundary. error.details SHOULD include available_since and MAY include a replacement starting-position hint, without disclosing inaccessible history. |

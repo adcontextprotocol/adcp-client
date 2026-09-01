@@ -26,7 +26,7 @@ export interface V1FormatId {
 }
 
 /**
- * 12 canonical `format_kind` values from
+ * Canonical `format_kind` values from
  * `static/schemas/source/formats/canonical/` plus the `custom` escape
  * hatch. Kept as a literal union so a future canonical gets surfaced at
  * the projection's switch statement (exhaustive-check).
@@ -39,6 +39,7 @@ export type CanonicalFormatKind =
   | 'video_hosted'
   | 'video_vast'
   | 'audio_hosted'
+  | 'audio_vast'
   | 'audio_daast'
   | 'sponsored_placement'
   | 'native_in_feed'

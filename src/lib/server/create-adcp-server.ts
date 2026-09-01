@@ -1518,6 +1518,7 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'get_adcp_capabilities',
   'get_media_buy_delivery',
   'get_media_buys',
+  'get_reporting_status',
   'get_task_status',
   'list_accounts',
   'list_creatives',
@@ -1529,12 +1530,13 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'report_usage',
   'request_proposals',
   'sync_accounts',
-  'sync_agent_notification_configs',
+  'sync_principal',
   'sync_audiences',
   'sync_catalogs',
   'sync_creatives',
   'sync_event_sources',
   'sync_governance',
+  'sync_reporting_receipts',
 ] as const;
 
 export type AdcpMcpToolProfile = 'auto' | 'media-buy' | 'all';
