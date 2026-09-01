@@ -776,7 +776,14 @@ export interface ComplianceBundleAssessmentOptions {
   failingBundleIds?: readonly string[];
 }
 
-const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>(['peer_branch_taken', 'peer_substituted']);
+const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>([
+  'peer_branch_taken',
+  'peer_substituted',
+  // The runner emits this only when an explicit phase capability gate made
+  // the prerequisite state unavailable. Ordinary prerequisite_failed skips
+  // remain coverage gaps and therefore keep the bundle partial.
+  'capability_prerequisite_unavailable',
+]);
 
 /**
  * Aggregate the exact cache bundles selected for a capability-driven run.
@@ -809,15 +816,42 @@ export function buildComplianceBundleResults(
       const branchSetPhaseIds = new Set(
         storyboard.phases.filter(phase => phase.branch_set !== undefined).map(phase => phase.id)
       );
+      const phaseDefs = new Map(storyboard.phases.map(phase => [phase.id, phase]));
       const hasCoverageGapSkip = (result.passes?.flatMap(pass => pass.phases) ?? result.phases).some(phase =>
         phase.steps.some(step => {
           if (!step.skipped && step.skip === undefined && step.skip_reason === undefined) return false;
-          const reason = step.skip?.reason ?? step.skip_reason;
-          if (reason !== undefined && NEUTRAL_BUNDLE_SKIP_REASONS.has(reason)) return false;
+          // A phase-level capability gate deliberately emits the protocol's
+          // canonical not_applicable reason for every step. It is complete
+          // applicability evidence, not a generic coverage gap. Keep this
+          // phase-scoped so an unrelated not_applicable skip remains partial.
+          const phaseDef = phaseDefs.get(phase.phase_id);
+          if (
+            result.overall_passed &&
+            phaseDef?.requires_capability !== undefined &&
+            phase.steps.length > 0 &&
+            phase.steps.every(
+              candidate =>
+                candidate.skipped === true && (candidate.skip?.reason ?? candidate.skip_reason) === 'not_applicable'
+            )
+          ) {
+            return false;
+          }
+          // The output-contract `skip.reason` intentionally canonicalizes
+          // detailed runner reasons. Prefer the detailed field here so a
+          // capability-gated prerequisite can be neutral without making all
+          // canonical not_applicable skips neutral coverage.
+          const detailedReason = step.skip_reason;
+          const canonicalReason = step.skip?.reason ?? detailedReason;
+          if (
+            (detailedReason !== undefined && NEUTRAL_BUNDLE_SKIP_REASONS.has(detailedReason)) ||
+            (canonicalReason !== undefined && NEUTRAL_BUNDLE_SKIP_REASONS.has(canonicalReason))
+          ) {
+            return false;
+          }
           // A successful authored any-of branch makes its unselected peers
           // legitimately not applicable; generic not_applicable skips remain
           // coverage gaps everywhere else.
-          if (reason === 'not_applicable' && result.overall_passed && branchSetPhaseIds.has(phase.phase_id)) {
+          if (canonicalReason === 'not_applicable' && result.overall_passed && branchSetPhaseIds.has(phase.phase_id)) {
             return false;
           }
           return true;
