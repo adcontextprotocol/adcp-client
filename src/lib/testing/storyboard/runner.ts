@@ -3096,6 +3096,16 @@ async function executeStoryboardPass(
       });
       skippedCount += skippedSteps.length;
       phaseCapabilitySkippedIds.add(phase.id);
+      // A capability-gated phase that contains stateful steps would have
+      // populated $context.* keys consumed by downstream phases. Without
+      // this entry downstream stateful steps see no cascade trip and
+      // execute with unresolved placeholders on the wire. adcp#7115.
+      if (phase.steps.some(s => s.stateful)) {
+        phaseStatefulCascades.set(phase.id, {
+          stepId: phase.steps.find(s => s.stateful)!.id,
+          reason: 'not_applicable',
+        });
+      }
       priorPhaseIds.push(phase.id);
       continue;
     }
