@@ -301,7 +301,7 @@ test('e2e: response summaries fail closed outside native getProducts', async () 
     proposalManager: undefined,
     sales: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
   });
-  platform.capabilities.adcp_version = '3.2.0-beta.9';
+  platform.capabilities.adcp_version = '3.2.0-beta.10';
   platform.mediaBuyLifecycle = {
     listProducts: async () =>
       withResponseSummary({ products: [], feed_version: 'feed_1' }, 'Unsupported summary text.'),
@@ -321,7 +321,7 @@ test('e2e: response summaries fail closed outside native getProducts', async () 
   assert.strictEqual(response.isError, true);
   assert.notStrictEqual(response.content[0].text, 'Unsupported summary text.');
   assert.notDeepStrictEqual(response.structuredContent, {
-    adcp_version: '3.2-beta.9',
+    adcp_version: '3.2-beta.10',
   });
 
   const proposalStore = new InMemoryProposalStore();

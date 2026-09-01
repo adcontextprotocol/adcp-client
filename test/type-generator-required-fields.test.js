@@ -668,6 +668,32 @@ writeFileSync(__OUTPUT__, JSON.stringify({
   assert.ok(result.canonicalRequired.geo.includes('geo_code'));
 });
 
+test('reporting file transfer keeps the established audience activation type name distinct', () => {
+  const result = runGeneratorHarness(`
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { applyCodegenSchemaWorkarounds } from __GENERATOR__;
+
+const schema = JSON.parse(
+  readFileSync(path.join(__REPO_ROOT__, 'schemas/cache/latest/core/reporting-delivery-method.json'), 'utf8')
+);
+const transformed = applyCodegenSchemaWorkarounds(schema, 'ReportingDeliveryMethod');
+const nested = applyCodegenSchemaWorkarounds(
+  { properties: { reporting_delivery: schema } },
+  'MediaBuy'
+);
+writeFileSync(__OUTPUT__, JSON.stringify({
+  originalTitle: schema.oneOf[0].title,
+  transformedTitle: transformed.oneOf[0].title,
+  nestedTransformedTitle: nested.properties.reporting_delivery.oneOf[0].title,
+}));
+`);
+
+  assert.equal(result.originalTitle, 'File transfer');
+  assert.equal(result.transformedTitle, 'Reporting file transfer');
+  assert.equal(result.nestedTransformedTitle, 'Reporting file transfer');
+});
+
 test('every unconditional canonical core required property is required in generated TypeScript', () => {
   const requiredByType = new Map();
   let requiredCellCount = 0;

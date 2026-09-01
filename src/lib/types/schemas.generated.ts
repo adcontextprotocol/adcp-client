@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-08-30T17:54:53.168Z
+// Generated at: 2026-09-01T21:39:10.542Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -121,7 +121,7 @@ export const CoBrandingRequirementSchema = z.union([z.literal("required"), z.lit
 
 export const CollectionCadenceSchema = z.union([z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("seasonal"), z.literal("event"), z.literal("irregular")]);
 
-export const CollectionKindSchema = z.union([z.literal("series"), z.literal("publication"), z.literal("event_series"), z.literal("rotation")]);
+export const CollectionKindSchema = z.union([z.literal("series"), z.literal("publication"), z.literal("event_series"), z.literal("rotation"), z.literal("channel")]);
 
 export const CollectionRelationshipSchema = z.union([z.literal("spinoff"), z.literal("companion"), z.literal("sequel"), z.literal("prequel"), z.literal("crossover")]);
 
@@ -163,6 +163,8 @@ export const DayOfWeekSchema = z.union([z.literal("monday"), z.literal("tuesday"
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
+export const DeliveryRecipientCloudSchema = z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]);
+
 export const DeliveryStatusSchema = z.union([z.literal("delivering"), z.literal("not_delivering"), z.literal("completed"), z.literal("budget_exhausted"), z.literal("flight_ended"), z.literal("goal_met")]);
 
 export const DeliveryTypeSchema = z.union([z.literal("guaranteed"), z.literal("non_guaranteed")]);
@@ -185,11 +187,13 @@ export const DisclosurePositionSchema = z.union([z.literal("prominent"), z.liter
 
 export const DistanceUnitSchema = z.union([z.literal("km"), z.literal("mi"), z.literal("m")]);
 
-export const DistributionIdentifierTypeSchema = z.union([z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("rss_url"), z.literal("podcast_guid"), z.literal("amazon_music_id"), z.literal("iheart_id"), z.literal("podcast_index_id"), z.literal("youtube_channel_id"), z.literal("youtube_channel_handle"), z.literal("youtube_channel_url"), z.literal("youtube_playlist_id"), z.literal("amazon_title_id"), z.literal("roku_channel_id"), z.literal("pluto_channel_id"), z.literal("tubi_id"), z.literal("peacock_id"), z.literal("tiktok_id"), z.literal("twitch_channel"), z.literal("imdb_id"), z.literal("gracenote_id"), z.literal("eidr_id"), z.literal("domain"), z.literal("substack_id")]);
+export const DistributionIdentifierTypeSchema = z.union([z.literal("apple_podcast_id"), z.literal("spotify_collection_id"), z.literal("rss_url"), z.literal("podcast_guid"), z.literal("amazon_music_id"), z.literal("iheart_id"), z.literal("podcast_index_id"), z.literal("youtube_channel_id"), z.literal("youtube_channel_handle"), z.literal("youtube_channel_url"), z.literal("youtube_playlist_id"), z.literal("amazon_title_id"), z.literal("platform_channel_id"), z.literal("roku_channel_id"), z.literal("pluto_channel_id"), z.literal("tubi_id"), z.literal("peacock_id"), z.literal("tiktok_id"), z.literal("twitch_channel"), z.literal("imdb_id"), z.literal("gracenote_id"), z.literal("eidr_id"), z.literal("domain"), z.literal("substack_id")]);
+
+export const DOOHMotionTypeSchema = z.union([z.literal("full_motion"), z.literal("partial_motion"), z.literal("static")]);
 
 export const EmbeddedProvenanceMethodSchema = z.union([z.literal("manifest_wrapper"), z.literal("provenance_markers")]);
 
-export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("AUTH_MISSING"), z.literal("AUTH_INVALID"), z.literal("AUTHORIZATION_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("CONFIGURATION_ERROR"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("CREATIVE_LOCALE_NOT_ACCEPTED"), z.literal("CREATIVE_VALUE_NOT_ALLOWED"), z.literal("CREATIVE_REVISION_CONTENT_MISMATCH"), z.literal("UNSUPPORTED_FEATURE"), z.literal("UNPRICEABLE_OUTPUT"), z.literal("UNSUPPORTED_GRANULARITY"), z.literal("UNSUPPORTED_PROVISIONING"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_REQUIRED"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_MOVED"), z.literal("ACCOUNT_IDENTITY_CONFLICT"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("BUDGET_CAP_REACHED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("IDEMPOTENCY_IN_FLIGHT"), z.literal("CURSOR_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("CREATIVE_INACCESSIBLE"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("PLACE_TARGET_UNAVAILABLE"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SIGNAL_TARGETING_INCOMPATIBLE"), z.literal("SESSION_NOT_FOUND"), z.literal("PLAN_NOT_FOUND"), z.literal("REFERENCE_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("PROPOSAL_NOT_FOUND"), z.literal("MULTI_FINALIZE_UNSUPPORTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("BIDDING_PLACEMENT_CONFLICT"), z.literal("AMBIGUOUS_BIDDING_POLICY"), z.literal("CONFLICTING_SELECTORS"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED"), z.literal("CAMPAIGN_SUSPENDED"), z.literal("GOVERNANCE_UNAVAILABLE"), z.literal("GOVERNANCE_AGENT_NOT_ACCEPTED"), z.literal("PERMISSION_DENIED"), z.literal("SCOPE_INSUFFICIENT"), z.literal("READ_ONLY_SCOPE"), z.literal("FIELD_NOT_PERMITTED"), z.literal("PROVENANCE_REQUIRED"), z.literal("PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING"), z.literal("PROVENANCE_SYNTHETIC_DEPICTION_MISSING"), z.literal("PROVENANCE_DISCLOSURE_MISSING"), z.literal("PROVENANCE_EMBEDDED_MISSING"), z.literal("PROVENANCE_VERIFIER_NOT_ACCEPTED"), z.literal("PROVENANCE_CLAIM_CONTRADICTED"), z.literal("EVALUATOR_AGENT_NOT_ACCEPTED"), z.literal("BILLING_NOT_SUPPORTED"), z.literal("BILLING_NOT_PERMITTED_FOR_AGENT"), z.literal("BILLING_OUT_OF_BAND"), z.literal("PAYMENT_TERMS_NOT_SUPPORTED"), z.literal("BRAND_REQUIRED"), z.literal("AGENT_SUSPENDED"), z.literal("AGENT_BLOCKED"), z.literal("CREDENTIAL_IN_ARGS"), z.literal("ACTION_NOT_ALLOWED"), z.literal("PRIVATE_FIELD_IN_PUBLIC_PLACEMENT"), z.literal("FORMAT_PROJECTION_FAILED"), z.literal("FORMAT_DECLARATION_DIVERGENT"), z.literal("FORMAT_SHAPE_PROMOTED"), z.literal("FORMAT_DECLARATION_V1_AMBIGUOUS"), z.literal("FORMAT_OPTION_UNRESOLVED"), z.literal("FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE"), z.literal("FORMAT_NOT_SUPPORTED"), z.literal("PIXEL_TRACKER_LOSSY_DOWNGRADE"), z.literal("PIXEL_TRACKER_UPGRADE_INFERRED"), z.literal("STALE_RESPONSE"), z.literal("FEED_FETCH_FAILED"), z.literal("SOURCE_ACCESS_FAILED"), z.literal("INVALID_FEED_FORMAT"), z.literal("ITEM_VALIDATION_FAILED"), z.literal("CATALOG_LIMIT_EXCEEDED"), z.literal("INVALID_PRICING_OPTION"), z.literal("INVALID_USAGE_DATA"), z.literal("SIGNED_RESPONSE_ENVELOPE_EXPIRED"), z.literal("SIGNED_RESPONSE_REQUEST_HASH_MISMATCH"), z.literal("SIGNED_RESPONSE_TENANT_MISMATCH"), z.literal("VAST_PARSE_FAILED"), z.literal("VAST_VERSION_MISMATCH"), z.literal("VAST_WRAPPER_DEPTH_EXCEEDED"), z.literal("CREATIVE_REPRESENTATION_UNRESOLVED"), z.literal("MACRO_RESOLUTION_FAILED")]);
+export const ErrorCodeSchema = z.union([z.literal("INVALID_REQUEST"), z.literal("AUTH_REQUIRED"), z.literal("AUTH_MISSING"), z.literal("AUTH_INVALID"), z.literal("AUTHORIZATION_REQUIRED"), z.literal("RATE_LIMITED"), z.literal("SERVICE_UNAVAILABLE"), z.literal("CONFIGURATION_ERROR"), z.literal("POLICY_VIOLATION"), z.literal("PRODUCT_NOT_FOUND"), z.literal("PRODUCT_UNAVAILABLE"), z.literal("PROPOSAL_EXPIRED"), z.literal("BUDGET_TOO_LOW"), z.literal("CREATIVE_REJECTED"), z.literal("CREATIVE_SIZE_MISMATCH"), z.literal("CREATIVE_MISSING_CLICK_URL"), z.literal("CREATIVE_VALIDATION_FAILED_GENERIC"), z.literal("CREATIVE_LOCALE_NOT_ACCEPTED"), z.literal("CREATIVE_VALUE_NOT_ALLOWED"), z.literal("CREATIVE_REVISION_CONTENT_MISMATCH"), z.literal("UNSUPPORTED_FEATURE"), z.literal("UNPRICEABLE_OUTPUT"), z.literal("UNSUPPORTED_GRANULARITY"), z.literal("UNSUPPORTED_PROVISIONING"), z.literal("AUDIENCE_TOO_SMALL"), z.literal("ACCOUNT_REQUIRED"), z.literal("ACCOUNT_NOT_FOUND"), z.literal("ACCOUNT_MOVED"), z.literal("ACCOUNT_IDENTITY_CONFLICT"), z.literal("ACCOUNT_SETUP_REQUIRED"), z.literal("ACCOUNT_AMBIGUOUS"), z.literal("ACCOUNT_PAYMENT_REQUIRED"), z.literal("ACCOUNT_SUSPENDED"), z.literal("COMPLIANCE_UNSATISFIED"), z.literal("GOVERNANCE_DENIED"), z.literal("BUDGET_EXHAUSTED"), z.literal("BUDGET_EXCEEDED"), z.literal("BUDGET_CAP_REACHED"), z.literal("CONFLICT"), z.literal("IDEMPOTENCY_CONFLICT"), z.literal("IDEMPOTENCY_EXPIRED"), z.literal("IDEMPOTENCY_IN_FLIGHT"), z.literal("CURSOR_EXPIRED"), z.literal("CREATIVE_DEADLINE_EXCEEDED"), z.literal("CREATIVE_INACCESSIBLE"), z.literal("INVALID_STATE"), z.literal("MEDIA_BUY_NOT_FOUND"), z.literal("NOT_CANCELLABLE"), z.literal("PACKAGE_NOT_FOUND"), z.literal("PLACE_TARGET_UNAVAILABLE"), z.literal("CREATIVE_NOT_FOUND"), z.literal("SIGNAL_NOT_FOUND"), z.literal("SIGNAL_TARGETING_INCOMPATIBLE"), z.literal("SESSION_NOT_FOUND"), z.literal("PLAN_NOT_FOUND"), z.literal("REFERENCE_NOT_FOUND"), z.literal("SESSION_TERMINATED"), z.literal("VALIDATION_ERROR"), z.literal("PRODUCT_EXPIRED"), z.literal("PROPOSAL_NOT_COMMITTED"), z.literal("PROPOSAL_NOT_FOUND"), z.literal("MULTI_FINALIZE_UNSUPPORTED"), z.literal("IO_REQUIRED"), z.literal("TERMS_REJECTED"), z.literal("BIDDING_PLACEMENT_CONFLICT"), z.literal("AMBIGUOUS_BIDDING_POLICY"), z.literal("CONFLICTING_SELECTORS"), z.literal("REQUOTE_REQUIRED"), z.literal("VERSION_UNSUPPORTED"), z.literal("CAMPAIGN_SUSPENDED"), z.literal("GOVERNANCE_UNAVAILABLE"), z.literal("GOVERNANCE_AGENT_NOT_ACCEPTED"), z.literal("PERMISSION_DENIED"), z.literal("SCOPE_INSUFFICIENT"), z.literal("READ_ONLY_SCOPE"), z.literal("FIELD_NOT_PERMITTED"), z.literal("PROVENANCE_REQUIRED"), z.literal("PROVENANCE_DIGITAL_SOURCE_TYPE_MISSING"), z.literal("PROVENANCE_SYNTHETIC_DEPICTION_MISSING"), z.literal("PROVENANCE_DISCLOSURE_MISSING"), z.literal("PROVENANCE_EMBEDDED_MISSING"), z.literal("PROVENANCE_VERIFIER_NOT_ACCEPTED"), z.literal("PROVENANCE_CLAIM_CONTRADICTED"), z.literal("EVALUATOR_AGENT_NOT_ACCEPTED"), z.literal("BILLING_NOT_SUPPORTED"), z.literal("BILLING_NOT_PERMITTED_FOR_AGENT"), z.literal("BILLING_OUT_OF_BAND"), z.literal("PAYMENT_TERMS_NOT_SUPPORTED"), z.literal("BRAND_REQUIRED"), z.literal("AGENT_SUSPENDED"), z.literal("AGENT_BLOCKED"), z.literal("CREDENTIAL_IN_ARGS"), z.literal("ACTION_NOT_ALLOWED"), z.literal("PRIVATE_FIELD_IN_PUBLIC_PLACEMENT"), z.literal("FORMAT_PROJECTION_FAILED"), z.literal("FORMAT_DECLARATION_DIVERGENT"), z.literal("FORMAT_SHAPE_PROMOTED"), z.literal("FORMAT_DECLARATION_V1_AMBIGUOUS"), z.literal("FORMAT_OPTION_UNRESOLVED"), z.literal("FORMAT_DECLARATION_V1_LOSSY_MULTI_SIZE"), z.literal("FORMAT_NOT_SUPPORTED"), z.literal("PIXEL_TRACKER_LOSSY_DOWNGRADE"), z.literal("PIXEL_TRACKER_UPGRADE_INFERRED"), z.literal("STALE_RESPONSE"), z.literal("FEED_FETCH_FAILED"), z.literal("SOURCE_ACCESS_FAILED"), z.literal("INVALID_FEED_FORMAT"), z.literal("ITEM_VALIDATION_FAILED"), z.literal("CATALOG_LIMIT_EXCEEDED"), z.literal("INVALID_PRICING_OPTION"), z.literal("INVALID_USAGE_DATA"), z.literal("SIGNED_RESPONSE_ENVELOPE_EXPIRED"), z.literal("SIGNED_RESPONSE_REQUEST_HASH_MISMATCH"), z.literal("SIGNED_RESPONSE_TENANT_MISMATCH"), z.literal("VAST_PARSE_FAILED"), z.literal("VAST_VERSION_MISMATCH"), z.literal("VAST_WRAPPER_DEPTH_EXCEEDED"), z.literal("CREATIVE_REPRESENTATION_UNRESOLVED"), z.literal("MACRO_RESOLUTION_FAILED")]);
 
 export const ErrorScopeSchema = z.union([z.literal("capability"), z.literal("account"), z.literal("agent")]);
 
@@ -293,7 +297,7 @@ export const MoovAtomPositionSchema = z.union([z.literal("start"), z.literal("en
 
 export const CreativeMotionLevelSchema = z.union([z.literal("static"), z.literal("limited_motion"), z.literal("full_motion")]);
 
-export const NotificationTypeSchema = z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update"), z.literal("impairment"), z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("capabilities.changed")]);
+export const NotificationTypeSchema = z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update"), z.literal("impairment"), z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("capabilities.changed"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("principal.changed")]);
 
 export const OfferingAvailabilityStatusSchema = z.union([z.literal("available"), z.literal("limited"), z.literal("sold_out"), z.literal("expired"), z.literal("region_restricted"), z.literal("inactive")]);
 
@@ -321,6 +325,8 @@ export const PricingModelSchema = z.union([z.literal("cpm"), z.literal("vcpm"), 
 
 export const PricingStructureSchema = z.union([z.literal("fixed"), z.literal("auction"), z.literal("contingent")]);
 
+export const PrincipalKindSchema = z.union([z.literal("buyer_agent"), z.literal("operator")]);
+
 export const ProductionQualitySchema = z.union([z.literal("professional"), z.literal("prosumer"), z.literal("ugc")]);
 
 export const PropertyTypeSchema = z.union([z.literal("website"), z.literal("mobile_app"), z.literal("ctv_app"), z.literal("desktop_app"), z.literal("dooh"), z.literal("podcast"), z.literal("radio"), z.literal("linear_tv"), z.literal("streaming_audio"), z.literal("ai_assistant")]);
@@ -337,7 +343,13 @@ export const PurchaseTypeSchema = z.union([z.literal("media_buy"), z.literal("ri
 
 export const ReachUnitSchema = z.union([z.literal("individuals"), z.literal("households"), z.literal("devices"), z.literal("accounts"), z.literal("cookies"), z.literal("custom")]);
 
+export const ReportingDestinationSetupStateSchema = z.union([z.literal("validating"), z.literal("ready"), z.literal("action_required"), z.literal("inactive"), z.literal("rejected")]);
+
+export const ReportingFinalitySchema = z.union([z.literal("snapshot"), z.literal("official")]);
+
 export const ReportingFrequencySchema = z.union([z.literal("hourly"), z.literal("daily"), z.literal("weekly"), z.literal("monthly"), z.literal("quarterly"), z.literal("post_campaign")]);
+
+export const ReportingHealthSchema = z.union([z.literal("healthy"), z.literal("waiting"), z.literal("delayed"), z.literal("action_required"), z.literal("complete")]);
 
 export const RepresentationSelectionStrategySchema = z.union([z.literal("representation_order"), z.literal("highest_compatible_vast")]);
 
@@ -371,7 +383,7 @@ export const SortMetricSchema = z.union([z.literal("impressions"), z.literal("sp
 
 export const SpecialCategorySchema = z.union([z.literal("awards"), z.literal("championship"), z.literal("concert"), z.literal("conference"), z.literal("election"), z.literal("festival"), z.literal("gala"), z.literal("holiday"), z.literal("premiere"), z.literal("product_launch"), z.literal("reunion"), z.literal("tribute")]);
 
-export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("creative-transformers"), z.literal("governance-aware-seller"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-social"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests"), z.literal("sponsored-intelligence")]);
+export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("creative-transformers"), z.literal("governance-aware-seller"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-dooh"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-social"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests"), z.literal("sponsored-intelligence")]);
 
 export const SponsoredPlacementTypeSchema = z.union([z.literal("sponsored_search"), z.literal("sponsored_display"), z.literal("sponsored_native")]);
 
@@ -379,7 +391,7 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const TaskStatusSchema = z.union([z.literal("submitted"), z.literal("working"), z.literal("input-required"), z.literal("completed"), z.literal("canceled"), z.literal("failed"), z.literal("rejected"), z.literal("auth-required"), z.literal("unknown")]);
 
-export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs")]);
+export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs"), z.literal("sync_principal"), z.literal("get_principal"), z.literal("sync_reporting_receipts")]);
 
 export const TrackerExecutionActorSchema = z.union([z.literal("seller"), z.literal("request_executor")]);
 
@@ -881,6 +893,59 @@ export const CancellationPolicySchema = z.object({
         }).passthrough()])
 }).passthrough();
 
+export const AdCPAudienceSyncSchema = z.object({
+    pattern: z.literal("sync_audiences")
+}).passthrough();
+
+export const TMPIdentityMatchSchema = z.object({
+    pattern: z.literal("tmp_identity_match"),
+    buyer_agent: z.object({
+        agent_url: z.string()
+    }).passthrough()
+}).passthrough();
+
+export const ReportingOrchestrationSchema = z.union([z.literal("producer_managed"), z.literal("consumer_managed")]);
+
+export const ExistingBindingSchema = z.object({
+    mode: z.literal("existing"),
+    destination_ref: z.string()
+}).passthrough();
+
+export const ProvisionBindingSchema = z.object({
+    mode: z.literal("provision"),
+    provider: z.object({
+        domain: z.string()
+    }).passthrough(),
+    location: z.string(),
+    access_mode: z.string().optional()
+}).passthrough();
+
+export const ExistingBinding1Schema = ExistingBindingSchema;
+
+export const ReportingCloudSchema = z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]);
+
+export const ReportingWriteDestinationSchema = z.union([ExistingBindingSchema, ProvisionBindingSchema]);
+
+export const ProvisionRecipientSchema = z.object({
+    mode: z.literal("provision"),
+    provider: z.object({
+        domain: z.string()
+    }).passthrough(),
+    access_mode: z.string(),
+    recipient: z.object({
+        identity: z.string(),
+        cloud: ReportingCloudSchema.optional(),
+        region: z.string().optional()
+    }).passthrough()
+}).passthrough();
+
+export const WarehouseMaterializationSchema = z.object({
+    pattern: z.literal("warehouse_materialization"),
+    transport: z.string(),
+    orchestration: ReportingOrchestrationSchema,
+    destination: ReportingWriteDestinationSchema
+}).passthrough();
+
 export const BiddingPolicySchema = z.object({}).passthrough().merge(z.object({
     automatic: z.literal(true).optional(),
     bid_amount: z.number().gt(0).optional(),
@@ -1028,6 +1093,11 @@ export const PublisherCatalogPlacementIdentitySchema = z.object({
     placement_id: z.string()
 }).passthrough();
 
+export const ProductDefaultCollectionsSchema = z.object({
+    mode: z.literal("default"),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CreativeAssignmentSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     creative_id: z.string(),
     weight: z.number().gte(0).lte(100).optional(),
@@ -1055,7 +1125,7 @@ export const FormatReferenceStructuredObjectSchema = z.object({
     pixel_ratio: z.number().gt(0).optional()
 }).passthrough();
 
-export const CanonicalFormatKindSchema = z.union([z.literal("image"), z.literal("html5"), z.literal("display_tag"), z.literal("image_carousel"), z.literal("video_hosted"), z.literal("video_vast"), z.literal("audio_hosted"), z.literal("audio_daast"), z.literal("sponsored_placement"), z.literal("native_in_feed"), z.literal("responsive_creative"), z.literal("agent_placement"), z.literal("seller_rendered_stateful_display"), z.literal("coordinated_placements"), z.literal("custom")]);
+export const CanonicalFormatKindSchema = z.union([z.literal("image"), z.literal("html5"), z.literal("display_tag"), z.literal("image_carousel"), z.literal("video_hosted"), z.literal("video_vast"), z.literal("audio_hosted"), z.literal("audio_vast"), z.literal("audio_daast"), z.literal("sponsored_placement"), z.literal("native_in_feed"), z.literal("responsive_creative"), z.literal("agent_placement"), z.literal("seller_rendered_stateful_display"), z.literal("coordinated_placements"), z.literal("custom")]);
 
 export const CreativeAssetsSchema = z.object({}).passthrough();
 
@@ -1403,6 +1473,11 @@ export const SellerAgentReferenceSchema = z.object({
     id: z.string().min(1).regex(new RegExp("^[a-zA-Z0-9_-]+$")).optional()
 }).passthrough();
 
+export const CollectionSelectorSchema = z.object({
+    publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
+    collection_ids: z.array(z.string()).optional()
+}).passthrough();
+
 export const RepresentationSelectionSchema = z.object({
     creative_id: z.string().min(1),
     revision_id: CreativeRevisionIDSchema,
@@ -1429,36 +1504,6 @@ export const URLAssetSchema: Omit<z.ZodObject<{ [K in keyof URLAsset]-?: undefin
     state_id: z.string().optional(),
     provenance: ProvenanceSchema.optional()
 }).passthrough();
-
-export const BrandReferenceSchema = z.object({
-    domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
-    brand_id: BrandIDSchema.optional(),
-    countries: z.array(z.string()).optional(),
-    industries: z.array(z.string()).optional(),
-    data_subject_contestation: z.object({
-        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//).optional(),
-        email: z.email().optional(),
-        languages: z.array(z.string()).optional()
-    }).passthrough().optional(),
-    brand_kit_override: z.object({
-        logo: ImageAssetSchema.optional(),
-        colors: z.object({
-            primary: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-            secondary: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-            accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional()
-        }).passthrough().optional(),
-        voice: z.string().optional(),
-        tagline: z.string().optional()
-    }).passthrough().optional()
-}).passthrough();
-
-export const AttestationBrandSubjectSchema = z.object({
-    type: z.literal("brand"),
-    brand: BrandReferenceSchema,
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const BrandReference2Schema = BrandReferenceSchema;
 
 export const IndicatorScopeSchema = z.object({
     publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
@@ -1735,6 +1780,45 @@ export const CanonicalFormatHostedAudioSchema = z.object({
     companion_image_aspect_ratio: z.string().optional(),
     companion_image_max_file_size_kb: z.int().min(1).optional(),
     brand_name_max_chars: z.int().min(1).optional()
+}).passthrough();
+
+export const CanonicalFormatVASTAudioSchema = z.object({
+    experimental: z.boolean().optional(),
+    deprecated: z.boolean().optional(),
+    v1_translatable: z.boolean().optional(),
+    since_version: z.string().optional(),
+    migration_target_version: z.string().optional(),
+    composition_model: z.union([z.literal("deterministic"), z.literal("algorithmic")]).optional(),
+    provenance_required: z.boolean().optional(),
+    platform_extensions: z.array(PlatformExtensionReferenceSchema).optional(),
+    synthesis_nondeterministic: z.boolean().optional(),
+    slots: z.array(z.object({
+        asset_group_id: z.string(),
+        asset_type: z.union([z.literal("image"), z.literal("video"), z.literal("audio"), z.literal("text"), z.literal("markdown"), z.literal("url"), z.literal("html"), z.literal("css"), z.literal("javascript"), z.literal("vast"), z.literal("daast"), z.literal("display_tag"), z.literal("webhook"), z.literal("brief"), z.literal("catalog"), z.literal("published_post"), z.literal("zip"), z.literal("card"), z.literal("object"), z.literal("pixel_tracker"), z.literal("vast_tracker"), z.literal("daast_tracker")]),
+        required: z.boolean().optional(),
+        min: z.number().optional(),
+        max: z.number().optional(),
+        max_chars: z.number().optional(),
+        max_size_kb: z.number().optional(),
+        pixel_ratios: z.array(z.number()).optional(),
+        required_pixel_ratios: z.array(z.number()).optional(),
+        logo_slots: z.array(LogoSlotSchema).optional(),
+        required_logo_slots: z.array(LogoSlotSchema).optional(),
+        description: z.string().optional(),
+        consumed_for_production: z.boolean().optional()
+    }).passthrough()).optional(),
+    required_connections: z.array(DownstreamConnectionRequirementSchema).optional(),
+    reference_mutability: z.union([z.literal("immutable_snapshot"), z.literal("mutable_requires_reapproval"), z.literal("mutable_auto_recheck")]).optional(),
+    production_window_business_days: z.number().optional(),
+    vast_versions: z.array(VASTVersionSchema).optional(),
+    vast_version: VASTVersionSchema.optional(),
+    media_file_requirements: VASTMediaFileRequirementsSchema.optional(),
+    duration_ms_range: z.array(z.number()).optional(),
+    duration_ms_exact: z.int().min(1).optional(),
+    skippable_after_ms: z.int().min(0).optional(),
+    max_wrapper_depth: z.int().min(0).optional(),
+    ssl_required: z.boolean().optional(),
+    companion_image_required: z.boolean().optional()
 }).passthrough();
 
 export const CanonicalFormatDAASTAudioSchema = z.object({
@@ -2134,7 +2218,7 @@ export const CanonicalFormatVASTVideoSchema = z.object({
 }).passthrough();
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const CanonicalFormatSellerRenderedStatefulDisplaySchema: z.ZodObject<{ [K in keyof CanonicalFormatSellerRenderedStatefulDisplay]-?: undefined extends CanonicalFormatSellerRenderedStatefulDisplay[K] ? z.ZodOptional<z.ZodType<Exclude<CanonicalFormatSellerRenderedStatefulDisplay[K], undefined>, Exclude<CanonicalFormatSellerRenderedStatefulDisplay[K], undefined>>> : z.ZodType<CanonicalFormatSellerRenderedStatefulDisplay[K], CanonicalFormatSellerRenderedStatefulDisplay[K]> }, z.core.$loose> & z.ZodType<CanonicalFormatSellerRenderedStatefulDisplay & Record<string, unknown>, CanonicalFormatSellerRenderedStatefulDisplay & Record<string, unknown>> = z.object({ "experimental": z.boolean().describe("Experimental in AdCP 3.2 while the creative working group gathers implementation evidence across premium web and mobile/app sellers.").optional(), "deprecated": z.boolean().describe("When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.").optional(), "v1_translatable": z.boolean().describe("No v1 named-format equivalent can express multiple seller-rendered states and their breakpoint bindings.").optional(), "since_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.").optional(), "migration_target_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').").optional(), "composition_model": z.enum(["deterministic","algorithmic"]).describe("Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).").optional(), "provenance_required": z.boolean().describe("When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.").optional(), "platform_extensions": z.array(z.object({ "uri": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://")).describe("HTTPS URL identifying the extension. `https://` is mandatory — `http://`, `file://`, `data:`, and other schemes are rejected at the schema layer (defense-in-depth on top of the fetch-contract normative rules). The URI base is the owning agent's URL; the path identifies the extension within that agent. Example: 'https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel'. The full fetch contract — SSRF allowlist, response-size cap, $ref sandbox, schema-compile bounds — is documented on `product-format-declaration.json#format_schema` and applies to ALL fetches of this reference shape regardless of whether the field is named `format_schema` (load-bearing for validation) or `platform_extensions` (informational); the *transport* rules are identical, only the *consumption* semantics differ."), "digest": z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).describe("SHA-256 content digest of the extension definition (sha256:<hex>). Used to detect drift — if the agent revises the extension, the digest changes and cached definitions become invalid.") }).catchall(z.any()).describe("Reference to a platform extension definition. The agent that owns the URI is authoritative for the extension's schema. Buyers fetch the definition once per content digest and cache it. Platform extensions are typically bundled in `get_products` responses under an `extensions` map keyed by `uri@digest`, eliminating the need for a separate fetch.\n\n**Within a single response**, multiple references to the same `uri` MUST carry the same `digest` — divergent digests in one response indicate producer-side error (e.g., concurrent extension revision mid-render). Buyers encountering divergent digests for the same URI MUST fail closed: treat all references to that URI as unresolved and surface a validation error rather than picking one branch silently. **Across responses**, digest divergence is normal — extension authors revise their schemas, the new digest differs, the cache key changes, and the buyer refetches. Cache by `uri@digest`, not by `uri` alone.")).describe("Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.\n\n**Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: \"platform_extension_field\", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.").optional(), "synthesis_nondeterministic": z.boolean().describe("When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.\n\n**Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.").optional(), "slots": z.array(z.object({ "asset_group_id": z.string().describe("Canonical asset_group_id from /schemas/core/asset-group-vocabulary.json. Non-canonical IDs are valid but trigger soft warnings."), "asset_type": z.enum(["image","video","audio","text","markdown","url","html","css","javascript","vast","daast","display_tag","webhook","brief","catalog","published_post","zip","card","object","pixel_tracker","vast_tracker","daast_tracker"]).describe("Discriminator selecting the asset schema this slot accepts. SDK codegen uses this to type the slot value. `display_tag` is the atomic third-party display representation (URL, inline markup, or paired redirect). `published_post` is an existing-post reference asset. `pixel_tracker` / `vast_tracker` / `daast_tracker` are renderer-fired tracker primitives. `object` is a last-resort fallback."), "required": z.boolean().describe("Whether this slot is required for a valid manifest.").optional(), "min": z.number().int().gte(0).describe("Minimum count for repeatable / pool slots.").optional(), "max": z.number().int().gte(1).describe("Maximum count for repeatable / pool slots.").optional(), "max_chars": z.number().int().gte(1).describe("Per-slot character limit. Valid only when `asset_type` is `text`, `markdown`, or `brief`. Mutually exclusive with `max_size_kb` (which applies to binary asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "max_size_kb": z.number().int().gte(1).describe("Per-slot file size limit in exact kilobytes, where 1 KB = 1,000 bytes. Valid only when `asset_type` is `image`, `video`, `audio`, or `zip`. Mutually exclusive with `max_chars` (which applies to text asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Accepted intrinsic-pixel densities for this image-bearing slot. Valid when `asset_type` is `image`, and on a `card` slot where it constrains each card's image media (video media is unaffected). This makes density available to every canonical carrying image assets (native, carousel, responsive, companion images, and image itself), not only `format_kind: image`. When the image canonical also declares top-level `params.pixel_ratios`, the effective set is the intersection; an empty intersection is invalid. One matching asset satisfies the slot unless `required_pixel_ratios` requires rendition coverage.").optional(), "required_pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Required density coverage for an image rendition set. Valid only when `asset_type` is `image` and `pixel_ratios` is also declared. Every value MUST appear in the effective accepted set after intersecting any top-level image `params.pixel_ratios`, and the manifest slot value MUST be an array containing exactly one matching image rendition for each required ratio. Other accepted ratios remain optional. For example, `pixel_ratios: [1, 1.5, 2]` with `required_pixel_ratios: [1, 2]` requires the 1x and 2x renditions while making 1.5x optional. SDKs enforce intersection, subset, coverage, and duplicate-ratio rules because JSON Schema draft-07 cannot express them generically.").optional(), "logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("When `asset_group_id` is `logo`, renderer-facing brand.json logo slots acceptable for this format slot. Producers selecting from brand.json SHOULD prefer `logos[]` entries whose `slots[]` intersects this list, then apply `visual_guidelines.logo_usage_rules[]`.").optional(), "required_logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Subset of `logo_slots` for which this format expects explicit logo coverage. A manifest or brand-derived logo pool SHOULD include at least one usable logo for each required slot; if coverage is missing, builders SHOULD surface a validation warning or approval mapping instead of guessing from prose.").optional(), "description": z.string().describe("Human-readable description of what the slot expects from the buyer.").optional(), "consumed_for_production": z.boolean().describe("Dispatch hint for `build_creative` and v1↔v2 wire translators: when `true`, the slot's value is consumed as INPUT to a production step (host-read script, brief copy fed to generative synthesis, catalog feed driving per-SKU rendering) and is not rendered verbatim. When `false` (default), the slot's value is rendered verbatim on the placement (image bytes, video file, display tag).\n\nMotivates the v1↔v2 dispatch table: pre-v2 buyers shipped production-consumed inputs separately in a `inputs` map on the build_creative request; v2 collapses inputs and rendered assets into a single `assets` map keyed by `asset_group_id`. SDK translators between v1 and v2 use this flag per canonical to know which assets in the v2 manifest map back to v1 `inputs` vs v1 `assets`. Without the per-slot flag the dispatch table lives in adopter code and every SDK gets it slightly different.\n\nProducers SHOULD set this explicitly on slots whose consumption pattern isn't obvious (host-read scripts on `audio_hosted`, briefs on generative `video_hosted`, catalog feeds on `sponsored_placement`). For canonicals where every slot is render-verbatim (`image`, `display_tag`, `video_vast`), the default `false` is sufficient and the flag MAY be omitted.").optional() }).catchall(z.any()).and(z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["text","markdown","brief"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["text","markdown","brief"]) }), z.any().refine((value) => !z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }), z.any().refine((value) => !z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.union([z.any().refine((value) => !z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema").safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.any().refine((value) => !z.union([z.object({ "logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "required_logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]))), z.intersection(z.any(), z.intersection(z.union([z.any().refine((value) => !z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "asset_type": z.literal("image").optional() }))]), z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }), z.any().refine((value) => !z.union([z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))])))))).describe("Default manifest slots; which are consumed depends on `supply_mode`. `state_canvases` images MUST carry `state_id` and `breakpoint_id`, and `state_click_urls` entries MUST carry `state_id` (semantic validators resolve the bindings). Component images SHOULD carry `focal_point` for deterministic seller cropping. `landing_page_url` is the default destination (see `clickthrough`). `font_files` MUST contain only buyer-licensed fonts; publisher-proprietary fonts never travel in manifests. Only image, video, text, url, zip, and pixel_tracker slot asset types are accepted — executable types (javascript, html, css, webhook) are rejected even via `slots` overrides.").optional(), "required_connections": z.array(z.object({ "provider": z.string().describe("Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.").optional(), "connection_type": z.enum(["advertiser_account","publisher_identity","post_authorization"]).describe("Kind of downstream connection required. `advertiser_account` is the platform account used to buy/manage ads. `publisher_identity` is the creator, page, channel, organization, or profile that owns source posts. `post_authorization` is a post-scoped grant when the platform authorizes individual posts instead of, or in addition to, the owning identity."), "required_for": z.array(z.string().min(1)).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Concrete AdCP protocol operation names that require this downstream connection. Sellers SHOULD include this in product declarations when the requirement is known ahead of time, and in AUTHORIZATION_REQUIRED details when it explains the failed operation. Prefer specific operation names such as `list_creatives`, `sync_creatives`, `create_media_buy`, `get_media_buy_delivery`, or `get_creative_delivery` over broad category labels such as `reporting`.").optional(), "scope": z.enum(["account","identity","post","unknown"]).describe("Granularity of the downstream grant.").optional(), "status": z.enum(["connected","missing","pending","expired","revoked","not_required","unknown"]).describe("Current seller-observed state for this downstream connection when known. Product declarations MAY omit status or use `unknown`; AUTHORIZATION_REQUIRED details SHOULD use `missing`, `expired`, or `revoked` for the connection that blocked the call.").optional(), "connection_id": z.string().describe("Seller-defined identifier for an already-created downstream connection. Omit when no connection exists yet or when exposing it would leak platform/account state.").optional(), "resource_ref": z.object({ "platform_account_id": z.string().describe("Provider-native advertiser or business account id, when safe to disclose.").optional(), "identity_id": z.string().describe("Provider-native creator, page, channel, organization, or profile id, when safe to disclose.").optional(), "handle": z.string().describe("Provider-native public handle for the owning identity, when available.").optional(), "profile_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the owning identity, when available.").optional(), "post_id": z.string().describe("Provider-native post id, when the grant is post-scoped or the failed request referenced a specific post.").optional(), "post_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the referenced post, when available.").optional() }).catchall(z.any()).describe("Optional opaque provider-native resource hint, such as a platform account id, profile URL, handle, channel id, post id, or post URL. This is a hint for routing authorization, not proof that authorization exists.").optional(), "authorization_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.").optional(), "authorization_instructions": z.string().describe("Human-readable instructions for completing or restoring this downstream connection.").optional(), "expires_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }), z.union([z.object({ "provider": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "authorization_url": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]))])).describe("A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.")).describe("Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.").optional(), "reference_mutability": z.enum(["immutable_snapshot","mutable_requires_reapproval","mutable_auto_recheck"]).describe("Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.").optional(), "production_window_business_days": z.number().int().gte(0).describe("Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).").optional(), "supply_mode": z.enum(["components","rendered_canvases","layered_source"]).describe("Which end of the template contract the buyer feeds. `components`: buyer supplies component slots; seller renders states (no `state_canvases`/`layered_source` assets allowed). `rendered_canvases`: buyer supplies exactly one `state_canvases` image per declared state × breakpoint pair. `layered_source`: buyer ships design source (+ optional `font_files`); seller production derives states (`production_window_business_days` applies) — transitional for sellers without executable templates.").optional(), "states": z.array(z.object({ "state_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).describe("Stable identifier used by `state_canvases[].state_id` and `state_click_urls[].state_id`."), "anchoring": z.enum(["inline","sticky_top","sticky_bottom","overlay","fullscreen_overlay","underlay"]).describe("`underlay` renders the canvas beneath page content, which scrolls over it (IAB New Ad Portfolio underlay class: skins, reveal units). Transitions into `overlay`/`fullscreen_overlay` states SHOULD be user-initiated; non-user-action entries emit LEAN policy warnings."), "slot_bindings": z.array(z.string().regex(new RegExp("^[a-z0-9_]+$"))).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Asset group IDs rendered in this state (components mode). Makes the template executable: given components and bindings, assembly is deterministic. Every value MUST resolve to a declared slot. Omitted means all supplied component slots may render.").optional(), "motion": z.enum(["static","animated"]).describe("Whether the seller-rendered layout animates within this state (attract loops, load animations). Intra-state animation is seller-rendered; buyer canvases stay static images.").optional(), "max_animation_s": z.number().gt(0).describe("Upper bound on intra-state animation duration. Required when `motion` is `animated`.").optional(), "breakpoints": z.array(z.object({ "breakpoint_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).describe("Stable identifier used by `state_canvases[].breakpoint_id`."), "width": z.number().int().gte(1).optional(), "width_range": z.array(z.number().int().gte(1)).min(2).max(2).describe("Inclusive [minimum, maximum] accepted canvas width. The first value MUST be no greater than the second; semantic validators enforce ordering.").optional(), "width_mode": z.enum(["full_bleed","gutter_residual"]).describe("Fluid width classes. `full_bleed`: edge-to-edge viewport width (IAB adhesion, topscroll). `gutter_residual`: the margin remaining beside the page content column (desktop skins). Fluid breakpoints cannot be targeted by `rendered_canvases` supply — semantic validation rejects that pairing.").optional(), "height": z.number().int().gte(1).optional(), "height_range": z.array(z.number().int().gte(1)).min(2).max(2).describe("Inclusive [minimum, maximum] accepted canvas height. The first value MUST be no greater than the second; semantic validators enforce ordering.").optional(), "viewport_height_percent": z.number().gt(0).lte(100).describe("Height as a percentage of the viewport (topscroll 80%, mobile skin panel 15%). Fluid; cannot be targeted by `rendered_canvases` supply.").optional(), "canvas_aspect_ratio": z.string().regex(new RegExp("^[0-9]+(\\.[0-9]+)?:[0-9]+(\\.[0-9]+)?$")).describe("Aspect ratio the rendered canvas maintains across the size range (IAB flexible units, ratio-bucket responsive). When both fixed `width` and `height` are declared, the ratio MUST be consistent with them.").optional() }).catchall(z.any()).and(z.intersection(z.union([z.object({ "width": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "width_range": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "width_mode": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.object({ "height": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "height_range": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewport_height_percent": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).min(1).superRefine((breakpoints, ctx) => {
+export const CanonicalFormatSellerRenderedStatefulDisplaySchema: z.ZodObject<{ [K in keyof CanonicalFormatSellerRenderedStatefulDisplay]-?: undefined extends CanonicalFormatSellerRenderedStatefulDisplay[K] ? z.ZodOptional<z.ZodType<Exclude<CanonicalFormatSellerRenderedStatefulDisplay[K], undefined>, Exclude<CanonicalFormatSellerRenderedStatefulDisplay[K], undefined>>> : z.ZodType<CanonicalFormatSellerRenderedStatefulDisplay[K], CanonicalFormatSellerRenderedStatefulDisplay[K]> }, z.core.$loose> & z.ZodType<CanonicalFormatSellerRenderedStatefulDisplay & Record<string, unknown>, CanonicalFormatSellerRenderedStatefulDisplay & Record<string, unknown>> = z.object({ "experimental": z.boolean().describe("Experimental in AdCP 3.2 while the creative working group gathers implementation evidence across premium web and mobile/app sellers.").optional(), "deprecated": z.boolean().describe("When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.").optional(), "v1_translatable": z.boolean().describe("No v1 named-format equivalent can express multiple seller-rendered states and their breakpoint bindings.").optional(), "since_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.").optional(), "migration_target_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').").optional(), "composition_model": z.enum(["deterministic","algorithmic"]).describe("Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).").optional(), "provenance_required": z.boolean().describe("When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.").optional(), "platform_extensions": z.array(z.object({ "uri": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://")).describe("HTTPS URL identifying the extension. `https://` is mandatory — `http://`, `file://`, `data:`, and other schemes are rejected at the schema layer (defense-in-depth on top of the fetch-contract normative rules). The URI base is the owning agent's URL; the path identifies the extension within that agent. Example: 'https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel'. The full fetch contract — SSRF allowlist, response-size cap, $ref sandbox, schema-compile bounds — is documented on `product-format-declaration.json#format_schema` and applies to ALL fetches of this reference shape regardless of whether the field is named `format_schema` (load-bearing for validation) or `platform_extensions` (informational); the *transport* rules are identical, only the *consumption* semantics differ."), "digest": z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).describe("SHA-256 content digest of the extension definition (sha256:<hex>). Used to detect drift — if the agent revises the extension, the digest changes and cached definitions become invalid.") }).catchall(z.any()).describe("Reference to a platform extension definition. The agent that owns the URI is authoritative for the extension's schema. Buyers fetch the definition once per content digest and cache it. Platform extensions are typically bundled in `get_products` responses under an `extensions` map keyed by `uri@digest`, eliminating the need for a separate fetch.\n\n**Within a single response**, multiple references to the same `uri` MUST carry the same `digest` — divergent digests in one response indicate producer-side error (e.g., concurrent extension revision mid-render). Buyers encountering divergent digests for the same URI MUST fail closed: treat all references to that URI as unresolved and surface a validation error rather than picking one branch silently. **Across responses**, digest divergence is normal — extension authors revise their schemas, the new digest differs, the cache key changes, and the buyer refetches. Cache by `uri@digest`, not by `uri` alone.")).describe("Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.\n\n**Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: \"platform_extension_field\", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.").optional(), "synthesis_nondeterministic": z.boolean().describe("When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.\n\n**Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.").optional(), "slots": z.array(z.object({ "asset_group_id": z.string().describe("Canonical asset_group_id from /schemas/core/asset-group-vocabulary.json. Non-canonical IDs are valid but trigger soft warnings."), "asset_type": z.enum(["image","video","audio","text","markdown","url","html","css","javascript","vast","daast","display_tag","webhook","brief","catalog","published_post","zip","card","object","pixel_tracker","vast_tracker","daast_tracker"]).describe("Discriminator selecting the asset schema this slot accepts. SDK codegen uses this to type the slot value. `display_tag` is the atomic third-party display representation (URL, inline markup, or paired redirect). `published_post` is an existing-post reference asset. `pixel_tracker` / `vast_tracker` / `daast_tracker` are renderer-fired tracker primitives. `object` is a last-resort fallback."), "required": z.boolean().describe("Whether this slot is required for a valid manifest.").optional(), "min": z.number().int().gte(0).describe("Minimum count for repeatable / pool slots.").optional(), "max": z.number().int().gte(1).describe("Maximum count for repeatable / pool slots.").optional(), "max_chars": z.number().int().gte(1).describe("Per-slot character limit. Valid only when `asset_type` is `text`, `markdown`, or `brief`. Mutually exclusive with `max_size_kb` (which applies to binary asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "max_size_kb": z.number().int().gte(1).describe("Per-slot file size limit in exact kilobytes, where 1 KB = 1,000 bytes. Valid only when `asset_type` is `image`, `video`, `audio`, or `zip`. Mutually exclusive with `max_chars` (which applies to text asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Accepted intrinsic-pixel densities for this image-bearing slot. Valid when `asset_type` is `image`, and on a `card` slot where it constrains each card's image media (video media is unaffected). This makes density available to every canonical carrying image assets (native, carousel, responsive, companion images, and image itself), not only `format_kind: image`. When the image canonical also declares top-level `params.pixel_ratios`, the effective set is the intersection; an empty intersection is invalid. One matching asset satisfies the slot unless `required_pixel_ratios` requires rendition coverage.").optional(), "required_pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Required density coverage for an image rendition set. Valid only when `asset_type` is `image` and `pixel_ratios` is also declared. Every value MUST appear in the effective accepted set after intersecting any top-level image `params.pixel_ratios`, and the manifest slot value MUST be an array containing exactly one matching image rendition for each required ratio. Other accepted ratios remain optional. For example, `pixel_ratios: [1, 1.5, 2]` with `required_pixel_ratios: [1, 2]` requires the 1x and 2x renditions while making 1.5x optional. SDKs enforce intersection, subset, coverage, and duplicate-ratio rules because JSON Schema draft-07 cannot express them generically.").optional(), "logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("When `asset_group_id` is `logo`, renderer-facing brand.json logo slots acceptable for this format slot. Producers selecting from brand.json SHOULD prefer `logos[]` entries whose `slots[]` intersects this list, then apply `visual_guidelines.logo_usage_rules[]`.").optional(), "required_logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Subset of `logo_slots` for which this format expects explicit logo coverage. A manifest or brand-derived logo pool SHOULD include at least one usable logo for each required slot; if coverage is missing, builders SHOULD surface a validation warning or approval mapping instead of guessing from prose.").optional(), "description": z.string().describe("Human-readable description of what the slot expects from the buyer.").optional(), "consumed_for_production": z.boolean().describe("Dispatch hint for `build_creative` and v1↔v2 wire translators: when `true`, the slot's value is consumed as INPUT to a production step (host-read script, brief copy fed to generative synthesis, catalog feed driving per-SKU rendering) and is not rendered verbatim. When `false` (default), the slot's value is rendered verbatim on the placement (image bytes, video file, display tag).\n\nMotivates the v1↔v2 dispatch table: pre-v2 buyers shipped production-consumed inputs separately in a `inputs` map on the build_creative request; v2 collapses inputs and rendered assets into a single `assets` map keyed by `asset_group_id`. SDK translators between v1 and v2 use this flag per canonical to know which assets in the v2 manifest map back to v1 `inputs` vs v1 `assets`. Without the per-slot flag the dispatch table lives in adopter code and every SDK gets it slightly different.\n\nProducers SHOULD set this explicitly on slots whose consumption pattern isn't obvious (host-read scripts on `audio_hosted`, briefs on generative `video_hosted`, catalog feeds on `sponsored_placement`). For canonicals where every slot is render-verbatim (`image`, `display_tag`, `video_vast`, `audio_vast`), the default `false` is sufficient and the flag MAY be omitted.").optional() }).catchall(z.any()).and(z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["text","markdown","brief"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["text","markdown","brief"]) }), z.any().refine((value) => !z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }), z.any().refine((value) => !z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.union([z.any().refine((value) => !z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema").safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.any().refine((value) => !z.union([z.object({ "logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "required_logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]))), z.intersection(z.any(), z.intersection(z.union([z.any().refine((value) => !z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "asset_type": z.literal("image").optional() }))]), z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }), z.any().refine((value) => !z.union([z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))])))))).describe("Default manifest slots; which are consumed depends on `supply_mode`. `state_canvases` images MUST carry `state_id` and `breakpoint_id`, and `state_click_urls` entries MUST carry `state_id` (semantic validators resolve the bindings). Component images SHOULD carry `focal_point` for deterministic seller cropping. `landing_page_url` is the default destination (see `clickthrough`). `font_files` MUST contain only buyer-licensed fonts; publisher-proprietary fonts never travel in manifests. Only image, video, text, url, zip, and pixel_tracker slot asset types are accepted — executable types (javascript, html, css, webhook) are rejected even via `slots` overrides.").optional(), "required_connections": z.array(z.object({ "provider": z.string().describe("Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.").optional(), "connection_type": z.enum(["advertiser_account","publisher_identity","post_authorization"]).describe("Kind of downstream connection required. `advertiser_account` is the platform account used to buy/manage ads. `publisher_identity` is the creator, page, channel, organization, or profile that owns source posts. `post_authorization` is a post-scoped grant when the platform authorizes individual posts instead of, or in addition to, the owning identity."), "required_for": z.array(z.string().min(1)).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Concrete AdCP protocol operation names that require this downstream connection. Sellers SHOULD include this in product declarations when the requirement is known ahead of time, and in AUTHORIZATION_REQUIRED details when it explains the failed operation. Prefer specific operation names such as `list_creatives`, `sync_creatives`, `create_media_buy`, `get_media_buy_delivery`, or `get_creative_delivery` over broad category labels such as `reporting`.").optional(), "scope": z.enum(["account","identity","post","unknown"]).describe("Granularity of the downstream grant.").optional(), "status": z.enum(["connected","missing","pending","expired","revoked","not_required","unknown"]).describe("Current seller-observed state for this downstream connection when known. Product declarations MAY omit status or use `unknown`; AUTHORIZATION_REQUIRED details SHOULD use `missing`, `expired`, or `revoked` for the connection that blocked the call.").optional(), "connection_id": z.string().describe("Seller-defined identifier for an already-created downstream connection. Omit when no connection exists yet or when exposing it would leak platform/account state.").optional(), "resource_ref": z.object({ "platform_account_id": z.string().describe("Provider-native advertiser or business account id, when safe to disclose.").optional(), "identity_id": z.string().describe("Provider-native creator, page, channel, organization, or profile id, when safe to disclose.").optional(), "handle": z.string().describe("Provider-native public handle for the owning identity, when available.").optional(), "profile_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the owning identity, when available.").optional(), "post_id": z.string().describe("Provider-native post id, when the grant is post-scoped or the failed request referenced a specific post.").optional(), "post_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the referenced post, when available.").optional() }).catchall(z.any()).describe("Optional opaque provider-native resource hint, such as a platform account id, profile URL, handle, channel id, post id, or post URL. This is a hint for routing authorization, not proof that authorization exists.").optional(), "authorization_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.").optional(), "authorization_instructions": z.string().describe("Human-readable instructions for completing or restoring this downstream connection.").optional(), "expires_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }), z.union([z.object({ "provider": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "authorization_url": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]))])).describe("A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.")).describe("Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.").optional(), "reference_mutability": z.enum(["immutable_snapshot","mutable_requires_reapproval","mutable_auto_recheck"]).describe("Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.").optional(), "production_window_business_days": z.number().int().gte(0).describe("Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).").optional(), "supply_mode": z.enum(["components","rendered_canvases","layered_source"]).describe("Which end of the template contract the buyer feeds. `components`: buyer supplies component slots; seller renders states (no `state_canvases`/`layered_source` assets allowed). `rendered_canvases`: buyer supplies exactly one `state_canvases` image per declared state × breakpoint pair. `layered_source`: buyer ships design source (+ optional `font_files`); seller production derives states (`production_window_business_days` applies) — transitional for sellers without executable templates.").optional(), "states": z.array(z.object({ "state_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).describe("Stable identifier used by `state_canvases[].state_id` and `state_click_urls[].state_id`."), "anchoring": z.enum(["inline","sticky_top","sticky_bottom","overlay","fullscreen_overlay","underlay"]).describe("`underlay` renders the canvas beneath page content, which scrolls over it (IAB New Ad Portfolio underlay class: skins, reveal units). Transitions into `overlay`/`fullscreen_overlay` states SHOULD be user-initiated; non-user-action entries emit LEAN policy warnings."), "slot_bindings": z.array(z.string().regex(new RegExp("^[a-z0-9_]+$"))).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Asset group IDs rendered in this state (components mode). Makes the template executable: given components and bindings, assembly is deterministic. Every value MUST resolve to a declared slot. Omitted means all supplied component slots may render.").optional(), "motion": z.enum(["static","animated"]).describe("Whether the seller-rendered layout animates within this state (attract loops, load animations). Intra-state animation is seller-rendered; buyer canvases stay static images.").optional(), "max_animation_s": z.number().gt(0).describe("Upper bound on intra-state animation duration. Required when `motion` is `animated`.").optional(), "breakpoints": z.array(z.object({ "breakpoint_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).describe("Stable identifier used by `state_canvases[].breakpoint_id`."), "width": z.number().int().gte(1).optional(), "width_range": z.array(z.number().int().gte(1)).min(2).max(2).describe("Inclusive [minimum, maximum] accepted canvas width. The first value MUST be no greater than the second; semantic validators enforce ordering.").optional(), "width_mode": z.enum(["full_bleed","gutter_residual"]).describe("Fluid width classes. `full_bleed`: edge-to-edge viewport width (IAB adhesion, topscroll). `gutter_residual`: the margin remaining beside the page content column (desktop skins). Fluid breakpoints cannot be targeted by `rendered_canvases` supply — semantic validation rejects that pairing.").optional(), "height": z.number().int().gte(1).optional(), "height_range": z.array(z.number().int().gte(1)).min(2).max(2).describe("Inclusive [minimum, maximum] accepted canvas height. The first value MUST be no greater than the second; semantic validators enforce ordering.").optional(), "viewport_height_percent": z.number().gt(0).lte(100).describe("Height as a percentage of the viewport (topscroll 80%, mobile skin panel 15%). Fluid; cannot be targeted by `rendered_canvases` supply.").optional(), "canvas_aspect_ratio": z.string().regex(new RegExp("^[0-9]+(\\.[0-9]+)?:[0-9]+(\\.[0-9]+)?$")).describe("Aspect ratio the rendered canvas maintains across the size range (IAB flexible units, ratio-bucket responsive). When both fixed `width` and `height` are declared, the ratio MUST be consistent with them.").optional() }).catchall(z.any()).and(z.intersection(z.union([z.object({ "width": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "width_range": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "width_mode": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.object({ "height": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "height_range": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewport_height_percent": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).min(1).superRefine((breakpoints, ctx) => {
             breakpoints.forEach((breakpoint, index) => {
               const widthKeys = ["width", "width_range", "width_mode"].filter(key => breakpoint[key] !== undefined);
               const heightKeys = ["height", "height_range", "viewport_height_percent"].filter(key => breakpoint[key] !== undefined);
@@ -2231,6 +2315,28 @@ export const MultiSize2Schema = MultiSizeSchema;
 
 export const None2Schema = NoneSchema;
 
+export const BrandReferenceSchema = z.object({
+    domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
+    brand_id: BrandIDSchema.optional(),
+    countries: z.array(z.string()).optional(),
+    industries: z.array(z.string()).optional(),
+    data_subject_contestation: z.object({
+        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\//).optional(),
+        email: z.email().optional(),
+        languages: z.array(z.string()).optional()
+    }).passthrough().optional(),
+    brand_kit_override: z.object({
+        logo: ImageAssetSchema.optional(),
+        colors: z.object({
+            primary: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+            secondary: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+            accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional()
+        }).passthrough().optional(),
+        voice: z.string().optional(),
+        tagline: z.string().optional()
+    }).passthrough().optional()
+}).passthrough();
+
 export const OperatorUnitSchema = z.object({
     id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9._:/-]*$")),
     name: z.string().min(1).max(200).optional()
@@ -2255,6 +2361,10 @@ export const IdentifierSchema = z.object({
 export const ErrorSchema = z.object({
     code: z.string().min(1).max(64),
     message: z.string(),
+    buyer_reason: z.object({
+        code: z.string().min(1).max(64),
+        message: z.string()
+    }).passthrough().optional(),
     field: z.string().optional(),
     suggestion: z.string().optional(),
     retry_after: z.number().gte(1).lte(3600).optional(),
@@ -2369,7 +2479,7 @@ export const MacroResolutionResultSchema = z.object({}).passthrough().merge(z.ob
 export const NotificationConfigSchema = z.object({}).passthrough().merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2380,7 +2490,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2391,7 +2501,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2402,7 +2512,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2413,7 +2523,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2424,7 +2534,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2435,7 +2545,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2446,7 +2556,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2457,7 +2567,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2468,7 +2578,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2479,7 +2589,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2490,7 +2600,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2501,7 +2611,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2512,7 +2622,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2523,7 +2633,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2534,7 +2644,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2543,6 +2653,20 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
     active: z.boolean().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
+
+export const ReportingDeliveryConfigurationLifecycleStateSchema = z.union([z.literal("pending_validation"), z.literal("pending_setup"), z.literal("ready"), z.literal("action_required"), z.literal("inactive")]);
+
+export const ReportingFeedPurposeSchema = z.union([z.literal("pacing"), z.literal("analytics"), z.literal("billing")]);
+
+export const ReportingMediaBuyIDSchema = z.string();
+
+export const ReportingReconciliationModeSchema = z.union([z.literal("delivery_only"), z.literal("consumer_receipt")]);
+
+export const ReportingScheduleAlignmentSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("billing_cycle")]);
+
+export const ReportingPackageIDSchema = z.string();
+
+export const ReportingStatusSeveritySchema = z.union([z.literal("delayed"), z.literal("action_required")]);
 
 export const OptimizationGoalSchema = z.union([z.object({
         kind: z.literal("metric"),
@@ -2666,12 +2790,12 @@ export const AudienceCharacteristicSchema = z.object({
     label: z.string().optional()
 }).passthrough());
 
+export const BrandReference2Schema = BrandReferenceSchema;
+
 export const DateRangeSchema = z.object({
     start: z.string(),
     end: z.string()
 }).passthrough();
-
-export const AttestationSubjectSchema = z.union([AttestationBrandSubjectSchema, AttestationAgentSubjectSchema, AttestationResourceSubjectSchema]);
 
 export const AttestationEvaluationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
     reference_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
@@ -2728,6 +2852,11 @@ export const VASTVideoFormatDeclarationSchema = z.object({
 export const HostedAudioFormatDeclarationSchema = z.object({
     format_kind: z.literal("audio_hosted"),
     params: CanonicalFormatHostedAudioSchema
+}).passthrough();
+
+export const VASTAudioFormatDeclarationSchema = z.object({
+    format_kind: z.literal("audio_vast"),
+    params: CanonicalFormatVASTAudioSchema
 }).passthrough();
 
 export const DAASTAudioFormatDeclarationSchema = z.object({
@@ -2819,7 +2948,42 @@ export const AccountIdentityChangeRejectedSchema = z.object({
     reason: z.string()
 }).passthrough();
 
-export const BrandReference3Schema = BrandReferenceSchema;
+export const ReportingCoverageSchema = z.object({
+    status: z.union([z.literal("full"), z.literal("partial"), z.literal("none"), z.literal("unknown")]),
+    evaluated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    fully_covered_media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    partially_covered_media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    unsupported_media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    unknown_media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    package_ids: z.array(ReportingPackageIDSchema),
+    covered_package_ids: z.array(ReportingPackageIDSchema),
+    unsupported_package_ids: z.array(ReportingPackageIDSchema),
+    unknown_package_ids: z.array(ReportingPackageIDSchema),
+    limitations: z.array(z.object({
+        reason: z.union([z.literal("offering_unsupported"), z.literal("account_entitlement_unavailable"), z.literal("credential_scope_insufficient"), z.literal("provider_limitation"), z.literal("capability_unknown")]),
+        media_buy_id: ReportingMediaBuyIDSchema,
+        package_ids: z.array(ReportingPackageIDSchema).optional()
+    }).passthrough())
+}).passthrough();
+
+export const ReportingStatusIssueSchema = z.object({
+    issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE")]),
+    severity: ReportingStatusSeveritySchema,
+    responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
+    recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
+    message: z.string().max(500).optional(),
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")).optional(),
+    delivery_config_version: z.number().int().gte(1).optional(),
+    feed_purpose: ReportingFeedPurposeSchema.optional(),
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional(),
+    package_ids: z.array(ReportingPackageIDSchema).optional(),
+    period_start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    period_end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough();
 
 export const PriceAdjustmentSchema = z.object({
     kind: PriceAdjustmentKindSchema,
@@ -2883,7 +3047,7 @@ const CoordinatedPlacementInlineParamsRuntimeSchemas: Record<string, z.ZodType> 
 };
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const CanonicalFormatCoordinatedPlacementsSchema: z.ZodObject<{ [K in keyof CanonicalFormatCoordinatedPlacements]-?: undefined extends CanonicalFormatCoordinatedPlacements[K] ? z.ZodOptional<z.ZodType<Exclude<CanonicalFormatCoordinatedPlacements[K], undefined>, Exclude<CanonicalFormatCoordinatedPlacements[K], undefined>>> : z.ZodType<CanonicalFormatCoordinatedPlacements[K], CanonicalFormatCoordinatedPlacements[K]> }, z.core.$loose> & z.ZodType<CanonicalFormatCoordinatedPlacements & Record<string, unknown>, CanonicalFormatCoordinatedPlacements & Record<string, unknown>> = z.object({ "experimental": z.boolean().describe("Experimental in AdCP 3.2 while the creative working group gathers implementation evidence for atomic cross-placement composition.").optional(), "deprecated": z.boolean().describe("When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.").optional(), "v1_translatable": z.boolean().describe("No v1 named-format equivalent can express a coordinated multi-placement buy.").optional(), "since_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.").optional(), "migration_target_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').").optional(), "composition_model": z.enum(["deterministic","algorithmic"]).describe("Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).").optional(), "provenance_required": z.boolean().describe("When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.").optional(), "platform_extensions": z.array(z.object({ "uri": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://")).describe("HTTPS URL identifying the extension. `https://` is mandatory — `http://`, `file://`, `data:`, and other schemes are rejected at the schema layer (defense-in-depth on top of the fetch-contract normative rules). The URI base is the owning agent's URL; the path identifies the extension within that agent. Example: 'https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel'. The full fetch contract — SSRF allowlist, response-size cap, $ref sandbox, schema-compile bounds — is documented on `product-format-declaration.json#format_schema` and applies to ALL fetches of this reference shape regardless of whether the field is named `format_schema` (load-bearing for validation) or `platform_extensions` (informational); the *transport* rules are identical, only the *consumption* semantics differ."), "digest": z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).describe("SHA-256 content digest of the extension definition (sha256:<hex>). Used to detect drift — if the agent revises the extension, the digest changes and cached definitions become invalid.") }).catchall(z.any()).describe("Reference to a platform extension definition. The agent that owns the URI is authoritative for the extension's schema. Buyers fetch the definition once per content digest and cache it. Platform extensions are typically bundled in `get_products` responses under an `extensions` map keyed by `uri@digest`, eliminating the need for a separate fetch.\n\n**Within a single response**, multiple references to the same `uri` MUST carry the same `digest` — divergent digests in one response indicate producer-side error (e.g., concurrent extension revision mid-render). Buyers encountering divergent digests for the same URI MUST fail closed: treat all references to that URI as unresolved and surface a validation error rather than picking one branch silently. **Across responses**, digest divergence is normal — extension authors revise their schemas, the new digest differs, the cache key changes, and the buyer refetches. Cache by `uri@digest`, not by `uri` alone.")).describe("Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.\n\n**Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: \"platform_extension_field\", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.").optional(), "synthesis_nondeterministic": z.boolean().describe("When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.\n\n**Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.").optional(), "slots": z.array(z.object({ "asset_group_id": z.string().describe("Canonical asset_group_id from /schemas/core/asset-group-vocabulary.json. Non-canonical IDs are valid but trigger soft warnings."), "asset_type": z.enum(["image","video","audio","text","markdown","url","html","css","javascript","vast","daast","display_tag","webhook","brief","catalog","published_post","zip","card","object","pixel_tracker","vast_tracker","daast_tracker"]).describe("Discriminator selecting the asset schema this slot accepts. SDK codegen uses this to type the slot value. `display_tag` is the atomic third-party display representation (URL, inline markup, or paired redirect). `published_post` is an existing-post reference asset. `pixel_tracker` / `vast_tracker` / `daast_tracker` are renderer-fired tracker primitives. `object` is a last-resort fallback."), "required": z.boolean().describe("Whether this slot is required for a valid manifest.").optional(), "min": z.number().int().gte(0).describe("Minimum count for repeatable / pool slots.").optional(), "max": z.number().int().gte(1).describe("Maximum count for repeatable / pool slots.").optional(), "max_chars": z.number().int().gte(1).describe("Per-slot character limit. Valid only when `asset_type` is `text`, `markdown`, or `brief`. Mutually exclusive with `max_size_kb` (which applies to binary asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "max_size_kb": z.number().int().gte(1).describe("Per-slot file size limit in exact kilobytes, where 1 KB = 1,000 bytes. Valid only when `asset_type` is `image`, `video`, `audio`, or `zip`. Mutually exclusive with `max_chars` (which applies to text asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Accepted intrinsic-pixel densities for this image-bearing slot. Valid when `asset_type` is `image`, and on a `card` slot where it constrains each card's image media (video media is unaffected). This makes density available to every canonical carrying image assets (native, carousel, responsive, companion images, and image itself), not only `format_kind: image`. When the image canonical also declares top-level `params.pixel_ratios`, the effective set is the intersection; an empty intersection is invalid. One matching asset satisfies the slot unless `required_pixel_ratios` requires rendition coverage.").optional(), "required_pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Required density coverage for an image rendition set. Valid only when `asset_type` is `image` and `pixel_ratios` is also declared. Every value MUST appear in the effective accepted set after intersecting any top-level image `params.pixel_ratios`, and the manifest slot value MUST be an array containing exactly one matching image rendition for each required ratio. Other accepted ratios remain optional. For example, `pixel_ratios: [1, 1.5, 2]` with `required_pixel_ratios: [1, 2]` requires the 1x and 2x renditions while making 1.5x optional. SDKs enforce intersection, subset, coverage, and duplicate-ratio rules because JSON Schema draft-07 cannot express them generically.").optional(), "logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("When `asset_group_id` is `logo`, renderer-facing brand.json logo slots acceptable for this format slot. Producers selecting from brand.json SHOULD prefer `logos[]` entries whose `slots[]` intersects this list, then apply `visual_guidelines.logo_usage_rules[]`.").optional(), "required_logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Subset of `logo_slots` for which this format expects explicit logo coverage. A manifest or brand-derived logo pool SHOULD include at least one usable logo for each required slot; if coverage is missing, builders SHOULD surface a validation warning or approval mapping instead of guessing from prose.").optional(), "description": z.string().describe("Human-readable description of what the slot expects from the buyer.").optional(), "consumed_for_production": z.boolean().describe("Dispatch hint for `build_creative` and v1↔v2 wire translators: when `true`, the slot's value is consumed as INPUT to a production step (host-read script, brief copy fed to generative synthesis, catalog feed driving per-SKU rendering) and is not rendered verbatim. When `false` (default), the slot's value is rendered verbatim on the placement (image bytes, video file, display tag).\n\nMotivates the v1↔v2 dispatch table: pre-v2 buyers shipped production-consumed inputs separately in a `inputs` map on the build_creative request; v2 collapses inputs and rendered assets into a single `assets` map keyed by `asset_group_id`. SDK translators between v1 and v2 use this flag per canonical to know which assets in the v2 manifest map back to v1 `inputs` vs v1 `assets`. Without the per-slot flag the dispatch table lives in adopter code and every SDK gets it slightly different.\n\nProducers SHOULD set this explicitly on slots whose consumption pattern isn't obvious (host-read scripts on `audio_hosted`, briefs on generative `video_hosted`, catalog feeds on `sponsored_placement`). For canonicals where every slot is render-verbatim (`image`, `display_tag`, `video_vast`), the default `false` is sufficient and the flag MAY be omitted.").optional() }).catchall(z.any()).and(z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["text","markdown","brief"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["text","markdown","brief"]) }), z.any().refine((value) => !z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }), z.any().refine((value) => !z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.union([z.any().refine((value) => !z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema").safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.any().refine((value) => !z.union([z.object({ "logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "required_logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]))), z.intersection(z.any(), z.intersection(z.union([z.any().refine((value) => !z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "asset_type": z.literal("image").optional() }))]), z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }), z.any().refine((value) => !z.union([z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))])))))).describe("Programmatic declaration of which canonical asset_group_id slots a manifest targeting this format must (or may) populate. Lets SDK codegen and validators enumerate expected slots without parsing the format's prose description. Each entry references an asset_group_id from the canonical vocabulary registry, paired with an `asset_type` so the validator knows which asset schema to apply. Format-level narrowing parameters that apply across all slots (e.g., flat `headline_max_chars` on responsive_creative) may also live on the format declaration; per-slot constraints (a specific slot's `max_chars` or `max_size_kb`) live on the slot entry.").optional(), "required_connections": z.array(z.object({ "provider": z.string().describe("Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.").optional(), "connection_type": z.enum(["advertiser_account","publisher_identity","post_authorization"]).describe("Kind of downstream connection required. `advertiser_account` is the platform account used to buy/manage ads. `publisher_identity` is the creator, page, channel, organization, or profile that owns source posts. `post_authorization` is a post-scoped grant when the platform authorizes individual posts instead of, or in addition to, the owning identity."), "required_for": z.array(z.string().min(1)).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Concrete AdCP protocol operation names that require this downstream connection. Sellers SHOULD include this in product declarations when the requirement is known ahead of time, and in AUTHORIZATION_REQUIRED details when it explains the failed operation. Prefer specific operation names such as `list_creatives`, `sync_creatives`, `create_media_buy`, `get_media_buy_delivery`, or `get_creative_delivery` over broad category labels such as `reporting`.").optional(), "scope": z.enum(["account","identity","post","unknown"]).describe("Granularity of the downstream grant.").optional(), "status": z.enum(["connected","missing","pending","expired","revoked","not_required","unknown"]).describe("Current seller-observed state for this downstream connection when known. Product declarations MAY omit status or use `unknown`; AUTHORIZATION_REQUIRED details SHOULD use `missing`, `expired`, or `revoked` for the connection that blocked the call.").optional(), "connection_id": z.string().describe("Seller-defined identifier for an already-created downstream connection. Omit when no connection exists yet or when exposing it would leak platform/account state.").optional(), "resource_ref": z.object({ "platform_account_id": z.string().describe("Provider-native advertiser or business account id, when safe to disclose.").optional(), "identity_id": z.string().describe("Provider-native creator, page, channel, organization, or profile id, when safe to disclose.").optional(), "handle": z.string().describe("Provider-native public handle for the owning identity, when available.").optional(), "profile_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the owning identity, when available.").optional(), "post_id": z.string().describe("Provider-native post id, when the grant is post-scoped or the failed request referenced a specific post.").optional(), "post_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the referenced post, when available.").optional() }).catchall(z.any()).describe("Optional opaque provider-native resource hint, such as a platform account id, profile URL, handle, channel id, post id, or post URL. This is a hint for routing authorization, not proof that authorization exists.").optional(), "authorization_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.").optional(), "authorization_instructions": z.string().describe("Human-readable instructions for completing or restoring this downstream connection.").optional(), "expires_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }), z.union([z.object({ "provider": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "authorization_url": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]))])).describe("A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.")).describe("Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.").optional(), "reference_mutability": z.enum(["immutable_snapshot","mutable_requires_reapproval","mutable_auto_recheck"]).describe("Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.").optional(), "production_window_business_days": z.number().int().gte(0).describe("Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).").optional(), "components": z.array(z.object({ "component_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).describe("Stable coordination-local component identifier. Values MUST be unique within `components[]`."), "placement_ref": z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Public product placement this component supplies. MUST resolve against the containing product's `placements[]`."), "required": z.boolean(), "sequence": z.number().int().gte(1).describe("Declared presentation order for sequential-messaging coordinated buys. Components sharing a sequence value present simultaneously; absent means unordered/simultaneous (default). Sequence declares seller-rendered ordering, not buyer-controlled timing.").optional(), "serving_policy": z.enum(["seller_served_only","third_party_allowed"]).describe("Per-component serving/tracking policy. Some sellers restrict specific components (e.g., page skins) to first-party serving while allowing third-party tags on sibling components. Defaults to the product-level policy when absent.").optional(), "canvas_constraints": z.array(z.object({ "constraint": z.enum(["safe_area","reserved_region","decoration_only_edge","no_text_or_logos"]), "state_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).optional(), "breakpoint_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).optional(), "region": z.object({ "x": z.number().gte(0), "y": z.number().gte(0), "width": z.number().gt(0), "height": z.number().gt(0), "unit": z.enum(["px","percent"]).optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "unit": z.literal("percent") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "unit": z.literal("percent") }), z.object({ "x": z.any().optional(), "y": z.any().optional(), "width": z.any().optional(), "height": z.any().optional() }))])) }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "breakpoint_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "breakpoint_id": z.any().refine((value) => value !== undefined, "Required"), "state_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Rectangular rule applied to buyer artwork. State and breakpoint selectors are optional so the same shape can constrain a coordinated-placement component or a specific stateful-display canvas.")).describe("Artwork constraints applied to this component, including safe areas and seller-reserved regions.").optional(), "format_option_ref": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+export const CanonicalFormatCoordinatedPlacementsSchema: z.ZodObject<{ [K in keyof CanonicalFormatCoordinatedPlacements]-?: undefined extends CanonicalFormatCoordinatedPlacements[K] ? z.ZodOptional<z.ZodType<Exclude<CanonicalFormatCoordinatedPlacements[K], undefined>, Exclude<CanonicalFormatCoordinatedPlacements[K], undefined>>> : z.ZodType<CanonicalFormatCoordinatedPlacements[K], CanonicalFormatCoordinatedPlacements[K]> }, z.core.$loose> & z.ZodType<CanonicalFormatCoordinatedPlacements & Record<string, unknown>, CanonicalFormatCoordinatedPlacements & Record<string, unknown>> = z.object({ "experimental": z.boolean().describe("Experimental in AdCP 3.2 while the creative working group gathers implementation evidence for atomic cross-placement composition.").optional(), "deprecated": z.boolean().describe("When true, this canonical (or a seller's specific narrowing of it) is going away. Existing adopters are supported through the deprecation cycle; new adoption is discouraged. Pair with `migration_target_version` to indicate when the canonical is expected to be removed. Distinct from `experimental`: an experimental canonical may stabilize and stop being experimental; a deprecated canonical is on a sunset path.").optional(), "v1_translatable": z.boolean().describe("No v1 named-format equivalent can express a coordinated multi-placement buy.").optional(), "since_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version that introduced this canonical (e.g., '3.1', '3.2'). Lets adopters reason about minimum protocol version requirements when consuming a format declaration. Patch precision is intentionally rejected — canonicals are introduced at minor-version boundaries.").optional(), "migration_target_version": z.string().regex(new RegExp("^[1-9]\\d*\\.(0|[1-9]\\d*)$")).describe("AdCP MAJOR.MINOR version by which the working group expects this canonical to stabilize, surface a breaking revision, or (when `deprecated: true`) be removed. Patch precision is intentionally rejected — canonicals shift at minor-version boundaries. Absence signals 'no specific target' (omit the field rather than use a placeholder like 'unknown').").optional(), "composition_model": z.enum(["deterministic","algorithmic"]).describe("Whether the surface composes deterministically (buyer can predict per-slot rendering — sponsored_placement, image, video) or algorithmically (surface chooses combinations or phrasing — responsive_creative, agent_placement).").optional(), "provenance_required": z.boolean().describe("When true, the product rejects unsigned synthesized assets. Builders calling build_creative MUST attach a C2PA-compatible provenance manifest attributing synthesis to the creative agent.").optional(), "platform_extensions": z.array(z.object({ "uri": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://")).describe("HTTPS URL identifying the extension. `https://` is mandatory — `http://`, `file://`, `data:`, and other schemes are rejected at the schema layer (defense-in-depth on top of the fetch-contract normative rules). The URI base is the owning agent's URL; the path identifies the extension within that agent. Example: 'https://creative.adcontextprotocol.org/translated/meta/extensions/meta_pixel'. The full fetch contract — SSRF allowlist, response-size cap, $ref sandbox, schema-compile bounds — is documented on `product-format-declaration.json#format_schema` and applies to ALL fetches of this reference shape regardless of whether the field is named `format_schema` (load-bearing for validation) or `platform_extensions` (informational); the *transport* rules are identical, only the *consumption* semantics differ."), "digest": z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).describe("SHA-256 content digest of the extension definition (sha256:<hex>). Used to detect drift — if the agent revises the extension, the digest changes and cached definitions become invalid.") }).catchall(z.any()).describe("Reference to a platform extension definition. The agent that owns the URI is authoritative for the extension's schema. Buyers fetch the definition once per content digest and cache it. Platform extensions are typically bundled in `get_products` responses under an `extensions` map keyed by `uri@digest`, eliminating the need for a separate fetch.\n\n**Within a single response**, multiple references to the same `uri` MUST carry the same `digest` — divergent digests in one response indicate producer-side error (e.g., concurrent extension revision mid-render). Buyers encountering divergent digests for the same URI MUST fail closed: treat all references to that URI as unresolved and surface a validation error rather than picking one branch silently. **Across responses**, digest divergence is normal — extension authors revise their schemas, the new digest differs, the cache key changes, and the buyer refetches. Cache by `uri@digest`, not by `uri` alone.")).describe("Platform-specific extensions narrowing the canonical (pixel ID shapes, conversion event taxonomies, platform-specific CTAs/destinations). Each extension is a URI+digest reference resolved against the bundled `extensions` map in get_products responses or fetched directly.\n\n**Collision precedence (normative).** When two or more `platform_extensions[]` entries on the same declaration extend the same target (e.g., both extend `tracking`) with overlapping field names, **array order is authoritative — later entries override earlier ones on a per-field basis** (last-in-array-wins). SDKs MUST surface the overlap via the `errors[]` array on the `get_products` response with a structured code (`FORMAT_DECLARATION_DIVERGENT` is appropriate when the overlap appears across dual-emitted shapes; a producer-self-emitted overlap on a single declaration SHOULD use the same code with `error.details: { collision_kind: \"platform_extension_field\", target, overlapping_fields, winning_extension_uri }`). Producers SHOULD avoid the collision by emitting one extension per target or by partitioning fields across extensions; the deterministic precedence is for last-resort consistency across SDK implementations, not a sanctioned merging strategy.").optional(), "synthesis_nondeterministic": z.boolean().describe("When true, the format's production pipeline is genuinely nondeterministic — the platform cannot guarantee that synthesis from a given input set produces in-spec output. Veo / Sora / Runway-class generative video, and other AI-synthesis flows where output dimensions, duration, or quality vary per run. Implies a different validation contract: predictive `validate_input` is impossible; the platform's own post-synthesis QA loop applies; if the QA loop exhausts without producing a valid artifact, `build_creative` returns task_failed with a synthesis_failed reason. Distinct from `composition_model` (which describes how the surface composes per-slot rendering, not whether synthesis is deterministic). When false or absent, the format's production is predictable enough that `validate_input` can predict output properties from input properties.\n\n**Compatibility with `asset_source` / `item_production_model`**: `synthesis_nondeterministic: true` MAY pair with any of `seller_pre_rendered_from_brief`, `seller_human_designed`, or `agent_synthesized` (the QA loop is concept-level, not source-specific — 'seller renders from brief but each retry differs' is just as nondeterministic as Veo). It MUST NOT pair with `buyer_uploaded` (the buyer ships pre-rendered bytes; there's no synthesis step to be nondeterministic about). It MUST NOT pair with `publisher_host_recorded` (the publisher's host produces a deterministic-from-script output even if the human voice varies). When `synthesis_nondeterministic: true` is set with an incompatible source, validators SHOULD reject with a structured error.").optional(), "slots": z.array(z.object({ "asset_group_id": z.string().describe("Canonical asset_group_id from /schemas/core/asset-group-vocabulary.json. Non-canonical IDs are valid but trigger soft warnings."), "asset_type": z.enum(["image","video","audio","text","markdown","url","html","css","javascript","vast","daast","display_tag","webhook","brief","catalog","published_post","zip","card","object","pixel_tracker","vast_tracker","daast_tracker"]).describe("Discriminator selecting the asset schema this slot accepts. SDK codegen uses this to type the slot value. `display_tag` is the atomic third-party display representation (URL, inline markup, or paired redirect). `published_post` is an existing-post reference asset. `pixel_tracker` / `vast_tracker` / `daast_tracker` are renderer-fired tracker primitives. `object` is a last-resort fallback."), "required": z.boolean().describe("Whether this slot is required for a valid manifest.").optional(), "min": z.number().int().gte(0).describe("Minimum count for repeatable / pool slots.").optional(), "max": z.number().int().gte(1).describe("Maximum count for repeatable / pool slots.").optional(), "max_chars": z.number().int().gte(1).describe("Per-slot character limit. Valid only when `asset_type` is `text`, `markdown`, or `brief`. Mutually exclusive with `max_size_kb` (which applies to binary asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "max_size_kb": z.number().int().gte(1).describe("Per-slot file size limit in exact kilobytes, where 1 KB = 1,000 bytes. Valid only when `asset_type` is `image`, `video`, `audio`, or `zip`. Mutually exclusive with `max_chars` (which applies to text asset types). Schema enforces via if/then so a producer can't set both on the same slot.").optional(), "pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Accepted intrinsic-pixel densities for this image-bearing slot. Valid when `asset_type` is `image`, and on a `card` slot where it constrains each card's image media (video media is unaffected). This makes density available to every canonical carrying image assets (native, carousel, responsive, companion images, and image itself), not only `format_kind: image`. When the image canonical also declares top-level `params.pixel_ratios`, the effective set is the intersection; an empty intersection is invalid. One matching asset satisfies the slot unless `required_pixel_ratios` requires rendition coverage.").optional(), "required_pixel_ratios": z.array(z.number().gt(0)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Required density coverage for an image rendition set. Valid only when `asset_type` is `image` and `pixel_ratios` is also declared. Every value MUST appear in the effective accepted set after intersecting any top-level image `params.pixel_ratios`, and the manifest slot value MUST be an array containing exactly one matching image rendition for each required ratio. Other accepted ratios remain optional. For example, `pixel_ratios: [1, 1.5, 2]` with `required_pixel_ratios: [1, 2]` requires the 1x and 2x renditions while making 1.5x optional. SDKs enforce intersection, subset, coverage, and duplicate-ratio rules because JSON Schema draft-07 cannot express them generically.").optional(), "logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("When `asset_group_id` is `logo`, renderer-facing brand.json logo slots acceptable for this format slot. Producers selecting from brand.json SHOULD prefer `logos[]` entries whose `slots[]` intersects this list, then apply `visual_guidelines.logo_usage_rules[]`.").optional(), "required_logo_slots": z.array(z.enum(["logo_card_light","logo_card_dark","profile_mark","favicon","app_icon","social_profile_mark","nav_header","footer","email_header","watermark","ad_end_card","co_brand_lockup","marketplace_listing"]).describe("Canonical renderer-facing logo slot. Use when selecting a logo variant from brand.json for a specific UI or creative placement.")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Subset of `logo_slots` for which this format expects explicit logo coverage. A manifest or brand-derived logo pool SHOULD include at least one usable logo for each required slot; if coverage is missing, builders SHOULD surface a validation warning or approval mapping instead of guessing from prose.").optional(), "description": z.string().describe("Human-readable description of what the slot expects from the buyer.").optional(), "consumed_for_production": z.boolean().describe("Dispatch hint for `build_creative` and v1↔v2 wire translators: when `true`, the slot's value is consumed as INPUT to a production step (host-read script, brief copy fed to generative synthesis, catalog feed driving per-SKU rendering) and is not rendered verbatim. When `false` (default), the slot's value is rendered verbatim on the placement (image bytes, video file, display tag).\n\nMotivates the v1↔v2 dispatch table: pre-v2 buyers shipped production-consumed inputs separately in a `inputs` map on the build_creative request; v2 collapses inputs and rendered assets into a single `assets` map keyed by `asset_group_id`. SDK translators between v1 and v2 use this flag per canonical to know which assets in the v2 manifest map back to v1 `inputs` vs v1 `assets`. Without the per-slot flag the dispatch table lives in adopter code and every SDK gets it slightly different.\n\nProducers SHOULD set this explicitly on slots whose consumption pattern isn't obvious (host-read scripts on `audio_hosted`, briefs on generative `video_hosted`, catalog feeds on `sponsored_placement`). For canonicals where every slot is render-verbatim (`image`, `display_tag`, `video_vast`, `audio_vast`), the default `false` is sufficient and the flag MAY be omitted.").optional() }).catchall(z.any()).and(z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["text","markdown","brief"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["text","markdown","brief"]) }), z.any().refine((value) => !z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.intersection(z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["image","video","audio","zip"]) }), z.any().refine((value) => !z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]), z.union([z.any().refine((value) => !z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema").safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.any().refine((value) => !z.object({ "asset_group_id": z.literal("logo") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.any().refine((value) => !z.union([z.object({ "logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "required_logo_slots": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))]))), z.intersection(z.any(), z.intersection(z.union([z.any().refine((value) => !z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "required_pixel_ratios": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "asset_type": z.literal("image").optional() }))]), z.union([z.any().refine((value) => !z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "asset_type": z.enum(["url","catalog","published_post","html","css","javascript","webhook","daast","vast","display_tag","card","object","pixel_tracker","vast_tracker","daast_tracker"]) }), z.any().refine((value) => !z.union([z.object({ "max_chars": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_size_kb": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"))])))))).describe("Programmatic declaration of which canonical asset_group_id slots a manifest targeting this format must (or may) populate. Lets SDK codegen and validators enumerate expected slots without parsing the format's prose description. Each entry references an asset_group_id from the canonical vocabulary registry, paired with an `asset_type` so the validator knows which asset schema to apply. Format-level narrowing parameters that apply across all slots (e.g., flat `headline_max_chars` on responsive_creative) may also live on the format declaration; per-slot constraints (a specific slot's `max_chars` or `max_size_kb`) live on the slot entry.").optional(), "required_connections": z.array(z.object({ "provider": z.string().describe("Stable provider or platform namespace, preferably lowercase. Examples: `social.example`, `shortvideo.example`, or a seller-defined namespace. Omit only when the requirement is provider-agnostic, or when an `authorization_url` fully routes the human to the correct provider-specific connection flow.").optional(), "connection_type": z.enum(["advertiser_account","publisher_identity","post_authorization"]).describe("Kind of downstream connection required. `advertiser_account` is the platform account used to buy/manage ads. `publisher_identity` is the creator, page, channel, organization, or profile that owns source posts. `post_authorization` is a post-scoped grant when the platform authorizes individual posts instead of, or in addition to, the owning identity."), "required_for": z.array(z.string().min(1)).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Concrete AdCP protocol operation names that require this downstream connection. Sellers SHOULD include this in product declarations when the requirement is known ahead of time, and in AUTHORIZATION_REQUIRED details when it explains the failed operation. Prefer specific operation names such as `list_creatives`, `sync_creatives`, `create_media_buy`, `get_media_buy_delivery`, or `get_creative_delivery` over broad category labels such as `reporting`.").optional(), "scope": z.enum(["account","identity","post","unknown"]).describe("Granularity of the downstream grant.").optional(), "status": z.enum(["connected","missing","pending","expired","revoked","not_required","unknown"]).describe("Current seller-observed state for this downstream connection when known. Product declarations MAY omit status or use `unknown`; AUTHORIZATION_REQUIRED details SHOULD use `missing`, `expired`, or `revoked` for the connection that blocked the call.").optional(), "connection_id": z.string().describe("Seller-defined identifier for an already-created downstream connection. Omit when no connection exists yet or when exposing it would leak platform/account state.").optional(), "resource_ref": z.object({ "platform_account_id": z.string().describe("Provider-native advertiser or business account id, when safe to disclose.").optional(), "identity_id": z.string().describe("Provider-native creator, page, channel, organization, or profile id, when safe to disclose.").optional(), "handle": z.string().describe("Provider-native public handle for the owning identity, when available.").optional(), "profile_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the owning identity, when available.").optional(), "post_id": z.string().describe("Provider-native post id, when the grant is post-scoped or the failed request referenced a specific post.").optional(), "post_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Public URL for the referenced post, when available.").optional() }).catchall(z.any()).describe("Optional opaque provider-native resource hint, such as a platform account id, profile URL, handle, channel id, post id, or post URL. This is a hint for routing authorization, not proof that authorization exists.").optional(), "authorization_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("Seller-hosted or provider-hosted URL where a human can complete or restore this downstream connection.").optional(), "authorization_instructions": z.string().describe("Human-readable instructions for completing or restoring this downstream connection.").optional(), "expires_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "status": z.enum(["missing","pending","expired","revoked"]) }), z.union([z.object({ "provider": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "authorization_url": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]))])).describe("A seller/platform-side connection or grant required by a product, format, or request. This is not the AdCP caller credential: the AdCP request is still authenticated once, and the seller uses these stored downstream connections to call a platform or service on the buyer's behalf. Use this shape for platforms that require more than one downstream grant, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.")).describe("Downstream platform connections or grants required to use this format declaration. These are in addition to the single AdCP caller credential. Use this when a platform product requires multiple downstream grants, such as an advertiser account connection plus a publisher identity or post authorization for published-post references.").optional(), "reference_mutability": z.enum(["immutable_snapshot","mutable_requires_reapproval","mutable_auto_recheck"]).describe("Policy for formats whose `slots` accept a `published_post` reference. `immutable_snapshot`: seller snapshots the referenced post at approval and later source changes do not change the served creative. `mutable_requires_reapproval`: the source post may change and material changes require review before continued serving. `mutable_auto_recheck`: the source post may change and the seller continuously or periodically rechecks authorization/policy without requiring buyer resubmission. Omit when the format has no `published_post` slot.").optional(), "production_window_business_days": z.number().int().gte(0).describe("Typical production turnaround in business days when the format requires seller-side production (e.g., host-recording from a buyer-supplied script). 0 for synchronous (e.g., generative AI); >0 for human-produced (e.g., podcast host-read). Absent when no production is required (buyer uploads complete creative).").optional(), "components": z.array(z.object({ "component_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).describe("Stable coordination-local component identifier. Values MUST be unique within `components[]`."), "placement_ref": z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Public product placement this component supplies. MUST resolve against the containing product's `placements[]`."), "required": z.boolean(), "sequence": z.number().int().gte(1).describe("Declared presentation order for sequential-messaging coordinated buys. Components sharing a sequence value present simultaneously; absent means unordered/simultaneous (default). Sequence declares seller-rendered ordering, not buyer-controlled timing.").optional(), "serving_policy": z.enum(["seller_served_only","third_party_allowed"]).describe("Per-component serving/tracking policy. Some sellers restrict specific components (e.g., page skins) to first-party serving while allowing third-party tags on sibling components. Defaults to the product-level policy when absent.").optional(), "canvas_constraints": z.array(z.object({ "constraint": z.enum(["safe_area","reserved_region","decoration_only_edge","no_text_or_logos"]), "state_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).optional(), "breakpoint_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).optional(), "region": z.object({ "x": z.number().gte(0), "y": z.number().gte(0), "width": z.number().gt(0), "height": z.number().gt(0), "unit": z.enum(["px","percent"]).optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "unit": z.literal("percent") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "unit": z.literal("percent") }), z.object({ "x": z.any().optional(), "y": z.any().optional(), "width": z.any().optional(), "height": z.any().optional() }))])) }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "breakpoint_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "breakpoint_id": z.any().refine((value) => value !== undefined, "Required"), "state_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Rectangular rule applied to buyer artwork. State and breakpoint selectors are optional so the same shape can constrain a coordinated-placement component or a specific stateful-display canvas.")).describe("Artwork constraints applied to this component, including safe areas and seller-reserved regions.").optional(), "format_option_ref": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
     const schemas = [z.object({ "scope": z.literal("publisher").describe("Reference resolves against the named publisher's adagents.json top-level `formats[]` catalog."), "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Publisher domain where the adagents.json declaring this format option is hosted."), "format_option_id": z.string().describe("Stable format option ID from the publisher's adagents.json top-level `formats[]`, matching a publisher-catalog-backed entry in the target product's `format_options[]`.") }).catchall(z.any()).describe("Selects a publisher-catalog-backed product format option by publisher domain and format option ID."), z.object({ "scope": z.literal("product").describe("Reference resolves only against the target product's inline `format_options[]`."), "format_option_id": z.string().describe("Stable format option ID from the target product's inline `format_options[]`."), "publisher_domain": z.never().optional() }).catchall(z.any()).describe("Selects a product-local format option by ID within the enclosing package/product context. This branch deliberately forbids `publisher_domain` (`publisher_domain: false` in the schema) because product-local references are namespaced by the enclosing product only; include `scope: \"publisher\"` when the selector must cross into a publisher catalog.")];
     const { errors, failed } = schemas.reduce<{
       errors: z.core.$ZodIssue[];
@@ -3010,11 +3174,6 @@ export const ProductCardReferenceAssetSchema = z.object({}).passthrough().merge(
     asset: z.union([ImageAssetSchema, VideoAssetSchema, MarkdownAssetSchema, URLAssetSchema]),
     description: z.string().optional()
 }).passthrough());
-
-export const CollectionSelectorSchema = z.object({
-    publisher_domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
-    collection_ids: z.array(z.string())
-}).passthrough();
 
 export const AcceptancePolicyProfileIDsSchema = z.array(z.string());
 
@@ -3190,49 +3349,14 @@ export const CollectionListApplicationSchema = z.object({
     }).passthrough()
 }).passthrough();
 
-export const AdCPAudienceSyncSchema = z.object({
-    pattern: z.literal("sync_audiences")
-}).passthrough();
-
-export const TMPIdentityMatchSchema = z.object({
-    pattern: z.literal("tmp_identity_match"),
-    buyer_agent: z.object({
-        agent_url: z.string()
-    }).passthrough()
-}).passthrough();
-
-export const FileTransferSchema = z.object({
-    pattern: z.literal("file_transfer"),
-    transport: CloudStorageProtocolSchema,
-    directions: z.array(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
-    vendor: BrandReferenceSchema
-}).passthrough();
-
-export const DatasetQuerySchema = z.object({
-    pattern: z.literal("dataset_query"),
-    vendor: BrandReferenceSchema,
-    consumer_identities: z.array(z.object({
-        cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
-        region: z.string().optional(),
-        identity: z.string()
-    }).passthrough()).optional()
-}).passthrough();
-
-export const CleanRoomSchema = z.object({
-    pattern: z.literal("clean_room"),
-    vendor: BrandReferenceSchema
-}).passthrough();
-
-export const PlatformDistributionSchema = z.object({
-    pattern: z.literal("platform_distribution"),
-    vendor: BrandReferenceSchema,
-    destination_ref: z.string().optional(),
-    bind_expiry_days: z.number().optional()
-}).passthrough();
-
 export const NamedFormatProductSchema = z.object({}).passthrough();
 
 export const CanonicalFormatProductSchema = z.object({}).passthrough();
+
+export const ProductDOOHScreenResolutionSchema = z.object({
+    width: z.number(),
+    height: z.number()
+}).passthrough();
 
 export const PriceGuidanceSchema = z.object({
     p25: z.number().gte(0).optional(),
@@ -4142,6 +4266,11 @@ export const CanonicalProductActionSchema = z.object({
     sla: SLAWindowSchema.optional(),
     constraints: MediaBuyChangeTermConstraintsSchema.optional(),
     terms_ref: z.string().optional()
+}).passthrough();
+
+export const CanonicalDOOHScreenResolutionSchema = z.object({
+    width: z.number(),
+    height: z.number()
 }).passthrough();
 
 export const CanonicalMediaBuyActionFieldsSchema = z.object({
@@ -5203,16 +5332,54 @@ export const AgentEncryptionKeySchema = z.object({
     x: z.string()
 }).passthrough();
 
+export const AgentNotificationConfigStateSchema = z.object({
+    subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    event_types: z.array(NotificationTypeSchema.and(z.object({}).passthrough())),
+    all_authorized_accounts: z.boolean().optional(),
+    include_future_event_types: z.boolean().optional(),
+    authentication: z.object({
+        schemes: z.tuple([AuthenticationSchemeSchema])
+    }).passthrough().optional(),
+    active: z.boolean().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const AgentNotificationConfigSchema = z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.literal("capabilities.changed")),
+    event_types: z.array(NotificationTypeSchema.and(z.object({}).passthrough())),
+    all_authorized_accounts: z.boolean().optional(),
+    include_future_event_types: z.boolean().optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
         credentials: z.string().min(32).optional()
     }).passthrough().optional(),
     active: z.boolean().optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ReportingVerificationProfileSetSchema = z.array(z.union([z.literal("native_commit"), z.literal("manifest_checksums"), z.literal("canonical_digest")]));
+
+export const DeliveryProviderSchema = z.object({
+    domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$"))
+}).passthrough();
+
+export const WarehouseMaterializationDestinationSchema = z.object({
+    pattern: z.literal("warehouse_materialization"),
+    destination_id: z.string(),
+    operator_id: z.string().optional(),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string(),
+    location: z.string(),
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough();
+
+export const DeliveryRecipientSchema = z.object({
+    identity: z.string().min(1).max(512),
+    cloud: DeliveryRecipientCloudSchema.optional(),
+    region: z.string().min(1).max(128).optional()
 }).passthrough();
 
 export const AgentSigningKeySchema = z.object({
@@ -5455,10 +5622,11 @@ export const CatchmentSchema = z.object({
 
 export const CollectionDistributionSchema = z.object({
     publisher_domain: z.string(),
+    property_ids: z.array(PropertyIDSchema).optional(),
     identifiers: z.array(z.object({
         type: DistributionIdentifierTypeSchema,
         value: z.string()
-    }).passthrough())
+    }).passthrough()).optional()
 }).passthrough();
 
 export const PropertyReferenceSchema = z.object({
@@ -5663,6 +5831,8 @@ export const EventSchema = z.object({}).passthrough().merge(z.object({
     custom_event_name: z.string().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
+
+export const ExperimentalFeatureIDSchema = z.string().min(1).max(128).regex(new RegExp("^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"));
 
 export const AdCPFormatShapeVocabularyRegistrySchema = z.object({}).passthrough();
 
@@ -6083,6 +6253,11 @@ export const CoordinatedPlacementsFormatDeclarationSchema = z.object({
     params: CanonicalFormatCoordinatedPlacementsSchema
 }).passthrough();
 
+export const PublisherDOOHScreenResolutionSchema = z.object({
+    width: z.int().min(1),
+    height: z.int().min(1)
+}).passthrough();
+
 export const LayerSchema = z.union([z.literal("behind_creative"), z.literal("in_front_of_creative")]);
 
 export const ColorSchema = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
@@ -6139,14 +6314,46 @@ export const PlannedDeliverySchema = z.object({}).passthrough().merge(z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
+export const PrincipalChangedWebhookSchema = z.object({
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    notification_type: z.literal("principal.changed"),
+    fired_at: z.iso.datetime(),
+    subscriber_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    changed_at: z.iso.datetime(),
+    reason: z.union([z.literal("destination_state_changed"), z.literal("setup_expiring"), z.literal("setup_expired"), z.literal("proof_invalidated"), z.literal("declarations_intersection_changed"), z.literal("other")]),
+    destination_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AgentDeclarationsSchema = z.object({
+    async_adcp_versions: z.array(z.string()).optional(),
+    webhook_signing_algorithms: z.array(z.union([z.literal("ed25519"), z.literal("ecdsa-p256-sha256")])).optional(),
+    experimental_features: z.array(ExperimentalFeatureIDSchema).optional()
+}).passthrough();
+
+export const PrincipalDeclarationsStateSchema = z.object({
+    declared: AgentDeclarationsSchema,
+    accepted: AgentDeclarationsSchema,
+    selected_async_adcp_version: z.string().regex(new RegExp("^\\d+\\.\\d+$")).optional(),
+    exclusions: z.array(z.object({
+        axis: z.union([z.literal("async_adcp_versions"), z.literal("webhook_signing_algorithms"), z.literal("experimental_features")]),
+        value: z.string().min(1).max(128),
+        reason: z.string().min(1).max(512)
+    }).passthrough()).optional()
+}).passthrough();
+
 export const ProductChangeMapSchema = z.record(z.string(), z.union([z.literal("include"), z.literal("omit")]));
+
+export const BrandReference3Schema = BrandReferenceSchema;
 
 export const ReferenceRendererSchema = z.object({
     runtime: z.literal("browser-esm"),
     package: z.string().regex(/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/),
     version: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/),
     export: z.string().min(1),
-    format_revision: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/),
+    format_revision: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/).optional(),
     integrity: z.string().regex(/^(?:sha256-[A-Za-z0-9+\/]{43}=|sha384-[A-Za-z0-9+\/]{64}|sha512-[A-Za-z0-9+\/]{86}==)$/),
     provenance: z.object({
         source_repository: z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(/^https:\/\/github\.com\//),
@@ -6265,6 +6472,309 @@ export const CompliancePayloadSchema = z.object({
 }).passthrough();
 
 export const Property1Schema = PropertySchema;
+
+export const ReportingCanonicalContentDigestSchema = z.object({
+    algorithm: z.literal("sha256"),
+    value: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+    canonicalization_id: z.string().min(1).max(128),
+    canonicalization_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+    canonicalization_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$"))
+}).passthrough();
+
+export const ReportingPrimaryKeySchema = z.string();
+
+export const EmptyReportGoldenVectorSchema = z.object({
+    name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+    purpose: z.literal("empty_report"),
+    input_rows: z.array(z.unknown()),
+    canonical_utf8_base64: z.literal("W10="),
+    sha256: z.literal("4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945")
+}).passthrough();
+
+export const OrderingEncodingGoldenVectorSchema = z.object({
+    name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+    purpose: z.literal("ordering_encoding"),
+    input_rows: z.array(z.object({}).passthrough()),
+    canonical_utf8_base64: z.string().min(1),
+    sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
+}).passthrough();
+
+export const AdditionalGoldenVectorSchema = z.object({
+    name: z.string().min(1).max(128).regex(/^[A-Za-z0-9_.:-]{1,128}$/),
+    purpose: z.literal("additional"),
+    input_rows: z.array(z.object({}).passthrough()),
+    canonical_utf8_base64: z.string().min(1),
+    sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
+}).passthrough();
+
+export const IntegerReportingControlTotalSchema = z.object({
+    name: z.string(),
+    value: z.string(),
+    value_type: z.literal("integer"),
+    unit: z.string().optional()
+}).passthrough();
+
+export const DecimalReportingControlTotalSchema = z.object({
+    name: z.string(),
+    value: z.string(),
+    value_type: z.literal("decimal"),
+    unit: z.string().optional()
+}).passthrough();
+
+export const ReportingScheduleOfferingSchema = z.object({}).passthrough().merge(z.object({
+    period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
+    alignment: ReportingScheduleAlignmentSchema,
+    period_anchor_policy: z.union([z.literal("fixed"), z.literal("configurable")]).optional(),
+    period_anchor: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    period_timezone: z.string().min(1).max(255).optional(),
+    delivery_sla: z.string().regex(new RegExp("^P(?=\\d|T)(?=.*\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"))
+}).passthrough());
+
+export const ReportingDeliveryOfferingSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
+    offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    feed_purpose: ReportingFeedPurposeSchema,
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    report_definition_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+    report_definition_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+    reporting_profile: z.object({
+        id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+        version: z.string().min(1).max(64),
+        schema_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+        schema_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+        schema_dialect: z.literal("https://json-schema.org/draft/2020-12/schema"),
+        schema_ref_policy: z.literal("local_fragment_only"),
+        grain: z.string().min(1).max(128),
+        primary_keys: z.array(ReportingPrimaryKeySchema),
+        canonicalization_id: z.string().min(1).max(128).optional(),
+        canonicalization_contract_version: z.literal("1.0").optional(),
+        canonicalization_media_type: z.literal("application/vnd.adcp.reporting-canonicalization+json").optional(),
+        canonicalization_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        canonicalization_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional()
+    }).passthrough(),
+    schedule: ReportingScheduleOfferingSchema,
+    supported_finality: z.array(ReportingFinalitySchema),
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    method: z.object({}).passthrough().and(z.object({}).passthrough()).and(z.object({}).passthrough()).optional()
+}).passthrough()).merge(z.object({
+    offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    feed_purpose: ReportingFeedPurposeSchema,
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    report_definition_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+    report_definition_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+    reporting_profile: z.object({
+        id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+        version: z.string().min(1).max(64),
+        schema_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+        schema_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+        schema_dialect: z.literal("https://json-schema.org/draft/2020-12/schema"),
+        schema_ref_policy: z.literal("local_fragment_only"),
+        grain: z.string().min(1).max(128),
+        primary_keys: z.array(ReportingPrimaryKeySchema),
+        canonicalization_id: z.string().min(1).max(128).optional(),
+        canonicalization_contract_version: z.literal("1.0").optional(),
+        canonicalization_media_type: z.literal("application/vnd.adcp.reporting-canonicalization+json").optional(),
+        canonicalization_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        canonicalization_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional()
+    }).passthrough(),
+    schedule: ReportingScheduleOfferingSchema,
+    supported_finality: z.array(ReportingFinalitySchema),
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    method: z.object({}).passthrough().and(z.object({}).passthrough()).and(z.object({}).passthrough()).optional()
+}).passthrough());
+
+export const ReportingDeliveryReadyWebhookSchema = z.object({
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    notification_type: z.literal("reporting.delivery_ready"),
+    fired_at: z.iso.datetime(),
+    subscriber_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    account_id: z.string().min(1),
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    delivery_config_version: z.int().min(1),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    readiness: z.union([z.literal("available"), z.literal("delivered")]),
+    finality: ReportingFinalitySchema,
+    data_through: z.iso.datetime().nullable(),
+    feed_purpose: ReportingFeedPurposeSchema
+}).passthrough();
+
+export const ReportingFileCompressionSchema = z.union([z.literal("none"), z.literal("gzip"), z.literal("zstd"), z.literal("snappy")]);
+
+export const ReportingFileEntrySchema = z.object({
+    object_ref: z.string().min(1).max(1024),
+    size_bytes: z.int().min(0),
+    sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    row_count: z.int().min(0),
+    partition: z.record(z.string(), z.string()).optional()
+}).passthrough();
+
+export const ReportingControlTotalSchema = z.union([IntegerReportingControlTotalSchema, DecimalReportingControlTotalSchema]);
+
+export const ReportingReaderCompatibilityItemSchema = z.string();
+
+export const ReportingVerificationProfileSchema = z.union([z.literal("native_commit"), z.literal("manifest_checksums"), z.literal("canonical_digest")]);
+
+export const SHA256PhysicalChecksumSchema = z.object({
+    object_ref: z.string(),
+    algorithm: z.literal("sha256"),
+    value: z.string()
+}).passthrough();
+
+export const SHA512PhysicalChecksumSchema = z.object({
+    object_ref: z.string(),
+    algorithm: z.literal("sha512"),
+    value: z.string()
+}).passthrough();
+
+export const ReportingResourceSchema = z.object({}).passthrough().merge(z.object({
+    resource_ref: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    kind: z.union([z.literal("manifest"), z.literal("dataset"), z.literal("warehouse_relation")]),
+    location: z.string().min(1).max(2048),
+    native_version_ref: z.string().min(1).max(512).optional(),
+    manifest_version: z.literal("1.0").optional(),
+    manifest_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
+    immutability: z.union([z.literal("immutable_location"), z.literal("native_version")]),
+    expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    reader_compatibility: z.array(ReportingReaderCompatibilityItemSchema).optional()
+}).passthrough());
+
+export const ReportingVerificationSchema = z.object({}).passthrough().merge(z.object({
+    verified_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    verification_path: z.union([z.literal("producer"), z.literal("representative_consumer"), z.literal("destination")]),
+    verification_profile: ReportingVerificationProfileSchema,
+    row_count: z.number().int().gte(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
+    physical_checksums: z.array(z.union([SHA256PhysicalChecksumSchema, SHA512PhysicalChecksumSchema])).optional(),
+    native_commit_evidence: z.object({
+        native_version_ref: z.string().min(1).max(512),
+        observed_through: z.union([z.literal("representative_consumer"), z.literal("destination")])
+    }).passthrough().optional()
+}).passthrough());
+
+export const ReportingScheduleSchema = z.object({}).passthrough().merge(z.object({
+    period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
+    alignment: ReportingScheduleAlignmentSchema,
+    period_anchor: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    period_timezone: z.string().min(1).max(255).optional(),
+    delivery_sla: z.string().regex(new RegExp("^P(?=\\d|T)(?=.*\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"))
+}).passthrough());
+
+export const ReportingReceiptSchema = z.object({}).passthrough().merge(z.object({
+    reporting_receipt_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")),
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reporting_materialization_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    status: z.union([z.literal("accepted"), z.literal("rejected")]),
+    verification_profile: ReportingVerificationProfileSchema,
+    observed_row_count: z.number().int().gte(0),
+    observed_control_totals: z.array(ReportingControlTotalSchema),
+    observed_canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
+    observed_manifest_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
+    observed_native_version_ref: z.string().min(1).max(512).optional(),
+    consumer_commit_ref: z.string().min(1).max(512).optional(),
+    rejection_codes: z.array(z.string()).optional(),
+    observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    received_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough());
+
+export const ReportCalendarTimezoneBasisSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("configured_timezone")]);
+
+export const ReportingReportDefinitionSchema = z.object({
+    contract_version: z.literal("1.0"),
+    media_type: z.literal("application/vnd.adcp.reporting-definition+json"),
+    report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_profile: z.string().min(1).max(128),
+    grain: z.string().min(1).max(128),
+    source: z.object({
+        provider: z.object({
+            domain: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/)
+        }).passthrough(),
+        system: z.string().min(1).max(128),
+        api_version: z.string().min(1).max(128),
+        query_semantics: z.object({}).passthrough()
+    }).passthrough(),
+    calendar: z.object({
+        timezone_basis: ReportCalendarTimezoneBasisSchema,
+        timezone: z.string().min(1).max(255).optional()
+    }).passthrough(),
+    metrics: z.array(z.object({
+        name: z.string().min(1).max(128),
+        source_expression: z.string().min(1).max(2048),
+        aggregation: z.union([z.literal("sum"), z.literal("count"), z.literal("min"), z.literal("max"), z.literal("average"), z.literal("ratio"), z.literal("last"), z.literal("custom")]),
+        unit: z.string().min(1).max(64).optional()
+    }).passthrough()),
+    dimensions: z.array(z.string()),
+    restatement_policy: z.object({
+        source_requery_duration: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
+        emit_only_on_content_change: z.literal(true)
+    }).passthrough(),
+    finality_policies: z.array(z.union([z.object({
+            finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+            basis: z.literal("source_final"),
+            source_signal: z.string().min(1).max(512)
+        }).passthrough(), z.object({
+            finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+            basis: z.literal("contractual_cutoff"),
+            duration_after_period_end: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/)
+        }).passthrough(), z.object({
+            finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+            basis: z.literal("stabilized"),
+            minimum_age: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
+            unchanged_for: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/)
+        }).passthrough()]))
+}).passthrough();
+
+export const ReportingRevisionSchema = z.object({}).passthrough().merge(z.object({
+    reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    report_definition_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+    report_definition_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+    reporting_profile: z.string().min(1).max(128),
+    schema_version: z.string().min(1).max(64),
+    schema_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
+    schema_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+    schema_dialect: z.literal("https://json-schema.org/draft/2020-12/schema"),
+    schema_ref_policy: z.literal("local_fragment_only"),
+    account_id: z.string().min(1),
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    coverage: ReportingCoverageSchema,
+    period: z.object({
+        start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    finality: ReportingFinalitySchema,
+    finality_basis: z.union([z.literal("source_final"), z.literal("contractual_cutoff"), z.literal("stabilized")]).optional(),
+    finality_policy_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    finalized_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    data_through: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").nullable(),
+    data_through_precision: z.union([z.literal("exact"), z.literal("lower_bound"), z.literal("unknown")]),
+    supersedes_reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    row_count: z.number().int().gte(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
+    created_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+}).passthrough());
+
+export const ReportingStatusChangedWebhookSchema = z.object({
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    notification_type: z.literal("reporting.status_changed"),
+    fired_at: z.iso.datetime(),
+    subscriber_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    account_id: z.string().min(1),
+    delivery_config_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    delivery_config_version: z.int().min(1),
+    feed_purpose: ReportingFeedPurposeSchema,
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    health: ReportingHealthSchema,
+    previous_health: ReportingHealthSchema.optional(),
+    issue_ids: z.array(z.string()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const ReportingWebhookSchema = z.object({
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -6631,7 +7141,7 @@ export const CacheLayerScopeSchema = z.union([z.object({
 
 export const RemovalReasonSchema = z.union([z.literal("withdrawn"), z.literal("cancellation"), z.literal("expired"), z.literal("depublication"), z.literal("policy_takedown")]);
 
-export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("identity_relying_party")]);
+export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
 
 export const CreativeAuditObservationSchema = z.object({
     code: z.literal("OVERSIGHT_DISCLOSURE_CARVEOUT_CLAIMED"),
@@ -7640,6 +8150,12 @@ export const SellerInlinePlacementIdentitySchema = z.object({
     placement_id: z.string()
 }).passthrough();
 
+export const SelectedCollectionsSchema = z.object({
+    mode: z.literal("selected"),
+    collections: z.array(CollectionSelectorSchema.merge(z.object({}).passthrough())),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const ScopeCapabilitySchema = z.object({
     fixed: PolicyProfileSchema.optional(),
     seller_optimized: PolicyProfileSchema.optional()
@@ -7670,6 +8186,7 @@ export const ReportingCapabilitiesSchema = z.object({
     expected_delay_minutes: z.number().int().gte(0),
     timezone: z.string(),
     supports_webhooks: z.boolean(),
+    reporting_delivery_offering_ids: z.array(z.string()).optional(),
     available_metrics: z.array(AvailableMetricSchema),
     vendor_metrics: z.array(z.object({
         vendor: BrandReferenceSchema,
@@ -7730,8 +8247,6 @@ export const MeasurementReadinessSchema = z.object({
     notes: z.string().optional()
 }).passthrough();
 
-export const AudienceActivationMethodSchema = z.union([AdCPAudienceSyncSchema, TMPIdentityMatchSchema, FileTransferSchema, DatasetQuerySchema, CleanRoomSchema, PlatformDistributionSchema]);
-
 export const VASTTrackerConstraintsSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     vast_event: z.union([z.literal("creativeView"), z.literal("loaded"), z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("mute"), z.literal("unmute"), z.literal("pause"), z.literal("resume"), z.literal("rewind"), z.literal("skip"), z.literal("playerExpand"), z.literal("playerCollapse"), z.literal("fullscreen"), z.literal("exitFullscreen"), z.literal("progress"), z.literal("acceptInvitation"), z.literal("adExpand"), z.literal("adCollapse"), z.literal("minimize"), z.literal("overlayViewDuration"), z.literal("otherAdInteraction"), z.literal("interactiveStart"), z.literal("close"), z.literal("closeLinear")]).optional(),
     target: z.union([z.literal("linear"), z.literal("non_linear"), z.literal("companion")]).optional(),
@@ -7745,6 +8260,13 @@ export const DAASTTrackerConstraintsSchema = z.object({}).passthrough().merge(z.
     offset: z.string().optional(),
     daast_versions: DaastVersionsSchema.optional()
 }).passthrough());
+
+export const ProductDOOHPlacementAttributesSchema = z.object({
+    slot_duration_seconds: z.number().optional(),
+    loop_duration_seconds: z.number().optional(),
+    screen_resolution: ProductDOOHScreenResolutionSchema.optional(),
+    motion: DOOHMotionTypeSchema.optional()
+}).passthrough();
 
 export const CPMPricingOptionSchema = z.object({
     pricing_option_id: z.string(),
@@ -7780,6 +8302,41 @@ export const PlacementForecastDimensionSchema = z.object({
 
 export const AttestationIssuerSchema = z.union([AttestationBrandIssuerSchema, AttestationAgentIssuerSchema, AttestationOriginIssuerSchema]);
 
+export const AttestationBrandSubjectSchema = z.object({
+    type: z.literal("brand"),
+    brand: BrandReferenceSchema,
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const FileTransferSchema = z.object({
+    pattern: z.literal("file_transfer"),
+    transport: CloudStorageProtocolSchema,
+    directions: z.array(z.union([z.literal("buyer_to_seller"), z.literal("seller_to_buyer")])).optional(),
+    vendor: BrandReferenceSchema
+}).passthrough();
+
+export const DatasetQuerySchema = z.object({
+    pattern: z.literal("dataset_query"),
+    vendor: BrandReferenceSchema,
+    consumer_identities: z.array(z.object({
+        cloud: z.union([z.literal("aws"), z.literal("azure"), z.literal("gcp")]).optional(),
+        region: z.string().optional(),
+        identity: z.string()
+    }).passthrough()).optional()
+}).passthrough();
+
+export const CleanRoomSchema = z.object({
+    pattern: z.literal("clean_room"),
+    vendor: BrandReferenceSchema
+}).passthrough();
+
+export const PlatformDistributionSchema = z.object({
+    pattern: z.literal("platform_distribution"),
+    vendor: BrandReferenceSchema,
+    destination_ref: z.string().optional(),
+    bind_expiry_days: z.number().optional()
+}).passthrough();
+
 export const TrackerExecutionSelectorSchema = z.union([z.object({}).passthrough(), VASTTrackerConstraintsSchema, DAASTTrackerConstraintsSchema]);
 
 export const ForecastVendorMetricValueSchema = z.object({
@@ -7797,48 +8354,6 @@ export const PlaceSupportSchema = z.object({
     max_packages: z.number().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
-
-export const AttestationReferenceSchema = z.object({
-    issuer: AttestationIssuerSchema,
-    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    subject: AttestationSubjectSchema,
-    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
-    embedded_credential: z.object({
-        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough().optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    credential_version: z.string().min(1).max(255).optional(),
-    validity_hint: z.object({
-        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    verify_agent: z.object({
-        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
-    }).passthrough().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
-    issuer: AttestationIssuerSchema,
-    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    subject: AttestationSubjectSchema,
-    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
-    embedded_credential: z.object({
-        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough().optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    credential_version: z.string().min(1).max(255).optional(),
-    validity_hint: z.object({
-        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    verify_agent: z.object({
-        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
-    }).passthrough().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
 
 export const InstallmentDeadlinesSchema = z.object({
     booking_deadline: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
@@ -7893,6 +8408,13 @@ export const TargetingOverlayRequirementsSchema = z.object({
 export const BiddingPolicyCapabilitySchema = z.object({
     media_buy: ScopeCapabilitySchema.optional(),
     package: ScopeCapabilitySchema.optional()
+}).passthrough();
+
+export const CanonicalDOOHPlacementAttributesSchema = z.object({
+    slot_duration_seconds: z.number().optional(),
+    loop_duration_seconds: z.number().optional(),
+    screen_resolution: CanonicalDOOHScreenResolutionSchema.optional(),
+    motion: DOOHMotionTypeSchema.optional()
 }).passthrough();
 
 export const ForecastPointDimensionsSchema = z.array(z.union([GeoForecastDimensionSchema, PlacementForecastDimensionSchema, DeviceTypeForecastDimensionSchema, DevicePlatformForecastDimensionSchema, AudienceForecastDimensionSchema, SignalForecastDimensionSchema, TimeForecastDimensionSchema]));
@@ -8154,12 +8676,21 @@ export const AccountIdentityChangePendingSchema = z.object({
     requested_at: z.string().optional()
 }).passthrough();
 
+export const ReportingDatasetShareDestinationSchema = z.union([ExistingBinding1Schema, ProvisionRecipientSchema]);
+
 export const PackageTargetingResolutionSchema = z.object({
     demographics: DemographicTargetingResolutionSchema,
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const AccountIdentityChangeSchema = z.union([AccountIdentityChangePendingSchema, AccountIdentityChangeRejectedSchema]);
+
+export const DatasetShareSchema = z.object({
+    pattern: z.literal("dataset_share"),
+    transport: z.string(),
+    orchestration: ReportingOrchestrationSchema,
+    destination: ReportingDatasetShareDestinationSchema
+}).passthrough();
 
 export const GetMediaBuysRequestSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
@@ -8174,53 +8705,6 @@ export const GetMediaBuysRequestSchema = z.object({
     webhook_activity_limit: z.int().min(1).max(200).optional(),
     pagination: PaginationRequestSchema.optional(),
     context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const AccountSchema = z.object({
-    account_id: z.string(),
-    name: z.string(),
-    advertiser: z.string().optional(),
-    billing_proxy: z.string().optional(),
-    status: AccountStatusSchema,
-    brand: BrandReferenceSchema.optional(),
-    operator: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    operator_unit: OperatorUnitSchema.optional(),
-    revision: z.number().int().gte(1).optional(),
-    identity_change: AccountIdentityChangeSchema.optional(),
-    currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
-    timezone: z.string().min(1).optional(),
-    billing: BillingPartySchema.optional(),
-    billing_entity: BusinessEntitySchema.optional(),
-    destination_billing_entity: z.object({}).passthrough().optional(),
-    rate_card: z.string().optional(),
-    payment_terms: PaymentTermsSchema.optional(),
-    credit_limit: z.object({
-        amount: z.number().gte(0),
-        currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
-    }).passthrough().optional(),
-    setup: z.object({
-        url: z.string().optional(),
-        message: z.string(),
-        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-    }).passthrough().optional(),
-    account_scope: AccountScopeSchema.optional(),
-    governance_agents: z.tuple([z.object({
-            url: z.string()
-        }).passthrough()]).optional(),
-    reporting_bucket: z.object({
-        protocol: CloudStorageProtocolSchema,
-        bucket: z.string().min(3).max(63).regex(new RegExp("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")),
-        prefix: z.string().max(512).regex(new RegExp("^[a-zA-Z0-9/_.-]+$")).optional(),
-        region: z.string().max(64).regex(new RegExp("^[a-z0-9-]+$")).optional(),
-        format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]).optional(),
-        compression: z.union([z.literal("gzip"), z.literal("none")]).optional(),
-        file_retention_days: z.number().int().gte(1),
-        setup_instructions: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
-    }).passthrough().optional(),
-    sandbox: z.boolean().optional(),
-    notification_configs: z.array(NotificationConfigSchema).optional(),
-    webhook_activity: z.array(WebhookActivityRecordSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -8362,6 +8846,160 @@ export const VendorMetricValueSchema = z.object({
     measurable_impressions: z.number().gte(0).optional(),
     qualifier: CanonicalMetricQualifierSchema.optional(),
     breakdown: z.object({}).passthrough().optional()
+}).passthrough();
+
+export const ReportingStatusViewSchema = z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]);
+
+export const GetReportingStatusRequestSchema = z.object({
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    account: CanonicalAccountReferenceSchema,
+    view: ReportingStatusViewSchema,
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional(),
+    delivery_config_ids: z.array(z.string()).optional(),
+    feed_purposes: z.array(ReportingFeedPurposeSchema).optional(),
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime()
+    }).passthrough().optional(),
+    health: z.array(ReportingHealthSchema).optional(),
+    finality: z.array(ReportingFinalitySchema).optional(),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    pagination: PaginationRequestSchema.optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ReportingObligationSchema = z.object({}).passthrough().merge(z.object({
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    delivery_config_version: z.number().int().gte(1),
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    feed_purpose: ReportingFeedPurposeSchema,
+    reporting_profile: z.string().min(1).max(128),
+    account_id: z.string().min(1),
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema),
+    scope_resolved_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    coverage: ReportingCoverageSchema,
+    period: z.object({
+        start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    schedule: ReportingScheduleSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    required_finality: ReportingFinalitySchema,
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    reconciliation_status: z.union([z.literal("not_required"), z.literal("pending"), z.literal("accepted"), z.literal("rejected")]),
+    health: ReportingHealthSchema,
+    production_status: z.union([z.literal("not_due"), z.literal("pending"), z.literal("published"), z.literal("failed")]),
+    revision_count: z.number().int().gte(0),
+    materialization_count: z.number().int().gte(0).optional(),
+    successful_materialization_count: z.number().int().gte(0).optional(),
+    receipt_count: z.number().int().gte(0).optional(),
+    accepted_receipt_count: z.number().int().gte(0).optional(),
+    issues: z.array(ReportingStatusIssueSchema),
+    resource_retained_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough());
+
+export const ReportingMaterializationSchema = z.object({}).passthrough().merge(z.object({
+    reporting_materialization_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    delivery_config_version: z.number().int().gte(1),
+    destination_ref: z.string().min(1).max(255),
+    feed_purpose: ReportingFeedPurposeSchema,
+    method: z.union([z.literal("file_transfer"), z.literal("dataset_share"), z.literal("warehouse_materialization")]),
+    transport: z.string().min(1).max(64).regex(new RegExp("^[a-z][a-z0-9_.-]*$")).optional(),
+    attempt: z.number().int().gte(1),
+    status: z.union([z.literal("pending"), z.literal("available"), z.literal("delivered"), z.literal("failed")]),
+    ready_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    failed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    failure_code: z.string().min(1).max(128).regex(new RegExp("^[A-Z][A-Z0-9_]*$")).optional(),
+    resource: ReportingResourceSchema.optional(),
+    verification: ReportingVerificationSchema.optional(),
+    created_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+}).passthrough());
+
+export const SummaryViewSchema = z.object({
+    status: z.literal("completed"),
+    view: z.literal("summary")
+}).passthrough();
+
+export const PeriodsViewSchema = z.object({
+    status: z.literal("completed"),
+    view: z.literal("periods"),
+    pagination: z.object({}).passthrough()
+}).passthrough();
+
+export const RevisionViewSchema = z.object({
+    status: z.literal("completed"),
+    view: z.literal("revision"),
+    pagination: z.object({}).passthrough()
+}).passthrough();
+
+export const UnavailableLookupSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.int().optional(),
+    status: z.literal("failed"),
+    view: z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]),
+    failure_kind: z.literal("lookup_unavailable"),
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    message: z.literal("Reporting status resource is unavailable.").optional(),
+    timestamp: z.iso.datetime().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: z.object({
+        code: z.literal("NOT_FOUND"),
+        message: z.literal("Reporting status resource is unavailable.")
+    }).passthrough().optional(),
+    errors: z.array(z.object({
+        code: z.literal("NOT_FOUND"),
+        message: z.literal("Reporting status resource is unavailable.")
+    }).passthrough())
+}).passthrough();
+
+export const OperationalFailureSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.int().optional(),
+    status: z.literal("failed"),
+    view: z.union([z.literal("summary"), z.literal("periods"), z.literal("revision")]),
+    failure_kind: z.literal("operational"),
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    message: z.string().optional(),
+    timestamp: z.iso.datetime().optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    errors: z.array(ErrorSchema)
+}).passthrough();
+
+export const SyncReportingReceiptsRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    account: CanonicalAccountReferenceSchema,
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    receipts: z.array(ReportingReceiptSchema),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const RecordedReportingReceiptSchema = z.object({
+    result: z.literal("recorded"),
+    receipt: ReportingReceiptSchema.and(z.object({}).passthrough())
+}).passthrough();
+
+export const UnchangedReportingReceiptSchema = z.object({
+    result: z.literal("unchanged"),
+    receipt: ReportingReceiptSchema.and(z.object({}).passthrough())
+}).passthrough();
+
+export const FailedReportingReceiptSchema = z.object({
+    result: z.literal("failed"),
+    reporting_receipt_id: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    errors: z.array(ErrorSchema)
 }).passthrough();
 
 export const ProvidePerformanceFeedbackRequestSchema = z.object({
@@ -8665,74 +9303,6 @@ export const EvaluatorSpecSchema = z.object({
         agent_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI")
     }).passthrough()]));
 
-export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object({
-    rights_id: z.string(),
-    rights_agent: z.object({
-        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        id: z.string()
-    }).passthrough(),
-    rights_holder: BrandReference1Schema.optional(),
-    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    uses: z.array(RightUseSchema),
-    countries: z.array(z.string()).optional(),
-    excluded_countries: z.array(z.string()).optional(),
-    impression_cap: z.number().int().gte(1).optional(),
-    right_type: RightTypeSchema.optional(),
-    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
-    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
-    restrictions: z.array(z.string()).optional(),
-    disclosure: z.object({}).passthrough().optional(),
-    creative_approval_required: z.boolean().optional(),
-    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
-        issuer: z.object({
-            type: z.literal("brand"),
-            brand: BrandReference2Schema
-        }).passthrough().optional(),
-        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-        }).passthrough().optional()
-    }).passthrough())).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough()).merge(z.object({
-    rights_id: z.string(),
-    rights_agent: z.object({
-        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-        id: z.string()
-    }).passthrough(),
-    rights_holder: BrandReference1Schema.optional(),
-    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    uses: z.array(RightUseSchema),
-    countries: z.array(z.string()).optional(),
-    excluded_countries: z.array(z.string()).optional(),
-    impression_cap: z.number().int().gte(1).optional(),
-    right_type: RightTypeSchema.optional(),
-    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
-    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
-    restrictions: z.array(z.string()).optional(),
-    disclosure: z.object({}).passthrough().optional(),
-    creative_approval_required: z.boolean().optional(),
-    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
-    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
-        issuer: z.object({
-            type: z.literal("brand"),
-            brand: BrandReference2Schema
-        }).passthrough().optional(),
-        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-        }).passthrough().optional()
-    }).passthrough())).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
-
 export const PreviewCreativeBatchResponseSchema = z.object({
     response_type: z.literal("batch"),
     results: z.array(z.union([PreviewBatchResultSuccessSchema, PreviewBatchResultErrorSchema])),
@@ -8926,28 +9496,6 @@ export const ListCreativesRequestSchema = z.object({
     account: AccountReferenceSchema.optional(),
     fields: z.array(z.union([z.literal("creative_id"), z.literal("name"), z.literal("format_id"), z.literal("format_kind"), z.literal("format_option_ref"), z.literal("assets"), z.literal("status"), z.literal("created_date"), z.literal("updated_date"), z.literal("tags"), z.literal("rights"), z.literal("rights_attestation_evaluations"), z.literal("localization"), z.literal("localization_unavailable"), z.literal("assignments"), z.literal("snapshot"), z.literal("items"), z.literal("variables"), z.literal("concept"), z.literal("pricing_options")])).optional(),
     context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const RightsAttestationEvaluationSchema = z.object({
-    rights_id: z.string().min(1),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    reference: AttestationReferenceSchema.and(z.object({
-        issuer: z.object({
-            type: z.literal("brand"),
-            brand: BrandReferenceSchema
-        }).passthrough().optional(),
-        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
-        }).passthrough().optional()
-    }).passthrough()),
-    evaluation: AttestationEvaluationSchema.and(z.object({
-        action_binding: z.object({
-            action_type: z.literal("https://adcontextprotocol.org/actions/rights-grant-evaluation")
-        }).passthrough()
-    }).passthrough()).and(z.object({}).passthrough()),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -9378,6 +9926,8 @@ export const GetCollectionListResponseSchema = z.object({
     list: CollectionListSchema,
     collections: z.array(z.object({
         collection_rid: z.string().optional(),
+        publisher_domain: z.string().optional(),
+        collection_id: z.string().optional(),
         name: z.string(),
         distribution_ids: z.array(z.object({
             type: DistributionIdentifierTypeSchema,
@@ -10096,194 +10646,6 @@ export const GetPlanAuditLogsRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const GetPlanAuditLogsResponseSchema = z.object({
-    context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
-    status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    replayed: z.boolean().optional(),
-    adcp_error: ErrorSchema.optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().optional(),
-    payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    plans: z.array(z.object({
-        plan_id: z.string(),
-        plan_version: z.int(),
-        status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
-        budget: z.object({
-            authorized: z.number().optional(),
-            accounting_mode: z.union([z.literal("gross_commitment"), z.literal("verified_net_cost")]).optional(),
-            committed: z.number().optional(),
-            gross_committed: z.number().optional(),
-            adjustments_reported: z.number().optional(),
-            adjustments_verified: z.number().optional(),
-            net_cost: z.number().optional(),
-            headroom_restored: z.number().optional(),
-            net_committed: z.number().optional(),
-            ledger_committed: z.number().optional(),
-            remaining: z.number().optional(),
-            utilization_pct: z.number().optional()
-        }).passthrough(),
-        channel_allocation: z.record(z.string(), z.object({
-                committed: z.number().optional(),
-                pct: z.number().optional()
-            }).passthrough()).optional(),
-        summary: z.object({
-            checks_performed: z.int().optional(),
-            outcomes_reported: z.int().optional(),
-            adjustments_reported: z.int().optional(),
-            adjustments_verified: z.int().optional(),
-            statuses: z.object({
-                approved: z.int().optional(),
-                denied: z.int().optional(),
-                conditions: z.int().optional(),
-                human_reviewed: z.int().optional()
-            }).passthrough().optional(),
-            findings_count: z.int().optional(),
-            escalations: z.array(z.object({
-                check_id: z.string(),
-                reason: z.string(),
-                resolution: z.string().optional(),
-                resolved_at: z.iso.datetime().optional()
-            }).passthrough()).optional(),
-            drift_metrics: z.object({
-                escalation_rate: z.number().min(0).max(1).optional(),
-                escalation_rate_trend: z.union([z.literal("increasing"), z.literal("stable"), z.literal("declining")]).optional(),
-                auto_approval_rate: z.number().min(0).max(1).optional(),
-                human_override_rate: z.number().min(0).max(1).optional(),
-                mean_confidence: z.number().min(0).max(1).optional(),
-                thresholds: z.object({
-                    escalation_rate_max: z.number().min(0).max(1).optional(),
-                    escalation_rate_min: z.number().min(0).max(1).optional(),
-                    auto_approval_rate_max: z.number().min(0).max(1).optional(),
-                    human_override_rate_max: z.number().min(0).max(1).optional()
-                }).passthrough().optional()
-            }).passthrough().optional()
-        }).passthrough(),
-        entries: z.array(z.object({
-            id: z.string(),
-            type: z.union([z.literal("check"), z.literal("outcome"), z.literal("adjustment")]),
-            timestamp: z.iso.datetime(),
-            plan_id: z.string().optional(),
-            caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-            tool: z.string().optional(),
-            verdict: GovernanceDecisionSchema.optional(),
-            check_type: z.union([z.literal("intent"), z.literal("execution")]).optional(),
-            mode: GovernanceModeSchema.optional(),
-            explanation: z.string().optional(),
-            policies_evaluated: z.array(z.string()).optional(),
-            categories_evaluated: z.array(z.string()).optional(),
-            findings: z.array(z.object({
-                category_id: z.string(),
-                policy_id: z.string().optional(),
-                source_plan_id: z.string().optional(),
-                severity: EscalationSeveritySchema,
-                explanation: z.string(),
-                details: z.object({}).passthrough().optional(),
-                confidence: z.number().min(0).max(1).optional(),
-                uncertainty_reason: z.string().optional(),
-                attestation_reference_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional()
-            }).passthrough()).optional(),
-            delivery_statement: z.object({
-                statement_id: z.string(),
-                statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-                sequence: z.int().min(1),
-                issued_at: z.iso.datetime(),
-                seller_reference: z.string(),
-                cumulative_spend: z.number().min(0),
-                currency: z.string().regex(/^[A-Z]{3}$/),
-                reporting_period: z.object({
-                    start: z.iso.datetime(),
-                    end: z.iso.datetime()
-                }).passthrough(),
-                canonical_payload: z.object({
-                    seller_reference: z.string(),
-                    delivery_metrics: z.object({}).passthrough()
-                }).passthrough()
-            }).passthrough().optional(),
-            outcome: OutcomeTypeSchema.optional(),
-            error: ReportedOutcomeErrorSchema.optional(),
-            outcome_id: z.string().optional(),
-            seller_adjustment_id: z.string().optional(),
-            adjustment_type: z.union([z.literal("decommitment"), z.literal("refund"), z.literal("credit"), z.literal("makegood")]).optional(),
-            amount: z.object({
-                amount: z.number(),
-                currency: z.string().regex(/^[A-Z]{3}$/)
-            }).passthrough().optional(),
-            headroom_restored: z.number().min(0).optional(),
-            reason: z.string().optional(),
-            effective_at: z.iso.datetime().optional(),
-            committed_budget: z.number().optional(),
-            reported_committed_budget: z.number().min(0).optional(),
-            seller_reference: z.string().optional(),
-            delivery: z.object({
-                observation_id: z.string().min(1).max(255).optional(),
-                source: z.union([z.literal("seller_statement_copy"), z.literal("buyer_measurement")]).optional(),
-                observed_at: z.iso.datetime().optional(),
-                seller_statement_id: z.string().optional(),
-                seller_statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-                reporting_period: z.object({
-                    start: z.iso.datetime(),
-                    end: z.iso.datetime()
-                }).passthrough().optional(),
-                cumulative_spend: z.number().min(0).optional(),
-                currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-                period_closed: z.boolean().optional(),
-                impressions: z.int().min(0).optional()
-            }).passthrough().optional(),
-            governance_context: z.string().optional(),
-            plan_hash: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
-            runtime_attestations: z.array(z.object({
-                reference: AttestationReferenceSchema,
-                evaluation: AttestationEvaluationSchema
-            }).passthrough()).optional(),
-            runtime_attestation_binding_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-            purchase_type: PurchaseTypeSchema.optional(),
-            outcome_status: z.string().optional(),
-            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
-            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
-            adjustment_state: z.union([z.literal("reported"), z.literal("verified"), z.literal("disputed")]).optional(),
-            verified_amount: z.number().min(0).optional(),
-            evidence: z.object({
-                evidence_id: z.string(),
-                evidence_type: z.union([z.literal("decommitment_agreement"), z.literal("refund_settlement"), z.literal("credit_note"), z.literal("makegood_agreement")]),
-                digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
-                issued_at: z.iso.datetime()
-            }).passthrough().optional(),
-            reviewed_by: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-            reviewed_at: z.iso.datetime().optional(),
-            review_reason: z.string().optional()
-        }).passthrough()).optional(),
-        governed_actions: z.array(z.object({
-            governance_context: z.string(),
-            purchase_type: PurchaseTypeSchema,
-            status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
-            committed: z.number(),
-            adjustments_reported: z.number().optional(),
-            adjustments_verified: z.number().optional(),
-            net_cost: z.number().optional(),
-            headroom_restored: z.number().optional(),
-            net_committed: z.number().optional(),
-            seller_reported_spend: z.number().min(0).optional(),
-            buyer_observed_spend: z.number().min(0).optional(),
-            delivery_reporting_period: z.object({
-                start: z.iso.datetime(),
-                end: z.iso.datetime()
-            }).passthrough().optional(),
-            conservative_exposure: z.number().min(0).optional(),
-            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
-            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
-            check_count: z.int(),
-            seller_reference: z.string().optional()
-        }).passthrough())
-    }).passthrough()),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const CheckGovernanceResponseSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
     adcp_major_version: z.number().int().gte(1).lte(99).optional(),
@@ -10588,6 +10950,27 @@ export const AttestationCapabilitiesSchema = z.object({}).passthrough().merge(z.
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
+export const CapabilityReportingDeliveryMethodSchema = z.union([z.literal("webhook"), z.literal("offline")]);
+
+export const ReportingDeliveryCapabilitiesSchema = z.object({}).passthrough().merge(z.object({
+    supported: z.literal(true),
+    managed_delivery: z.boolean().optional(),
+    reconciled_billing: z.boolean().optional(),
+    configuration_task: z.literal("sync_accounts"),
+    status_task: z.literal("get_reporting_status"),
+    receipt_task: z.literal("sync_reporting_receipts").optional(),
+    readiness_notification: z.literal("reporting.delivery_ready").optional(),
+    status_notification: z.literal("reporting.status_changed").optional(),
+    offerings: z.array(ReportingDeliveryOfferingSchema),
+    automated_recovery_window_seconds: z.number().int().gte(0),
+    status_retention_days: z.number().int().gte(1),
+    resource_retention_days: z.number().int().gte(1).optional(),
+    supports_webhook_activity: z.boolean().optional(),
+    authorization_revocation_seconds: z.number().int().gte(0).optional()
+}).passthrough());
+
+export const BudgetCappingTimezoneBasisSchema = z.union([z.literal("account"), z.literal("fixed")]);
+
 export const IdempotencySupportedSchema = z.object({
     supported: z.literal(true),
     replay_ttl_seconds: z.int().min(3600).max(604800),
@@ -10601,7 +10984,7 @@ export const IdempotencyUnsupportedSchema = z.object({
 
 export const CapabilityChangeNotificationsSupportedSchema = z.object({
     supported: z.literal(true),
-    registration_task: z.literal("sync_agent_notification_configs"),
+    registration_task: z.union([z.literal("sync_agent_notification_configs"), z.literal("sync_principal")]),
     event_types: z.array(z.literal("capabilities.changed")),
     coalescence_window_seconds: z.int().min(0).max(86400).optional()
 }).passthrough();
@@ -10658,6 +11041,8 @@ export const GeographicPlaceSystemSupportSchema = z.object({
     countries: z.record(z.string(), z.array(GeographicPlaceTypeSchema)),
     catalog: GeographicPlaceCatalogCapabilitySchema
 }).passthrough();
+
+export const AudienceActivationMethodSchema = z.union([AdCPAudienceSyncSchema, TMPIdentityMatchSchema, FileTransferSchema, DatasetQuerySchema, CleanRoomSchema, PlatformDistributionSchema]);
 
 export const GetTaskStatusRequestSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
@@ -10817,6 +11202,99 @@ export const SyncAgentNotificationConfigsResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const FileTransferDestinationSchema = z.object({
+    pattern: z.literal("file_transfer"),
+    destination_id: z.string(),
+    operator_id: z.string().optional(),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string(),
+    location: z.string(),
+    accepted_formats: z.array(z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])),
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough();
+
+export const DatasetShareRecipientSchema = z.object({
+    pattern: z.literal("dataset_share"),
+    destination_id: z.string(),
+    operator_id: z.string().optional(),
+    active: z.boolean(),
+    provider: DeliveryProviderSchema,
+    transport: z.string(),
+    access_mode: z.string(),
+    recipient: DeliveryRecipientSchema,
+    accepted_verification_profiles: ReportingVerificationProfileSetSchema
+}).passthrough();
+
+export const AgentReportingDestinationSchema = z.union([FileTransferDestinationSchema, WarehouseMaterializationDestinationSchema, DatasetShareRecipientSchema]);
+
+export const AgentReportingDestinationStateSchema = z.object({}).passthrough().merge(z.object({
+    destination_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    destination_ref: z.string().min(1).max(255),
+    prior_destination_refs: z.array(z.string()).optional(),
+    state: ReportingDestinationSetupStateSchema,
+    configuration: AgentReportingDestinationSchema,
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("accept_share"), z.literal("prove_control"), z.literal("contact_support")]),
+        setup_url: z.string().regex(new RegExp("^https://[!z.string()-;=@-~]+$")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ErrorSchema).optional()
+}).passthrough());
+
+export const ValidatedPrincipalDryRunSchema = z.object({
+    kind: z.literal("validated"),
+    action: z.union([z.literal("would_update"), z.literal("would_be_unchanged"), z.literal("would_clear")]),
+    dry_run: z.literal(true),
+    warnings: z.array(ErrorSchema).optional()
+}).passthrough();
+
+export const FailedPrincipalSyncSchema = z.object({
+    kind: z.literal("failed"),
+    errors: z.array(ErrorSchema)
+}).passthrough();
+
+export const PrincipalStateSchema = z.object({
+    notification_configs: z.array(AgentNotificationConfigStateSchema).optional(),
+    reporting_destinations: z.array(AgentReportingDestinationStateSchema).optional(),
+    declarations: PrincipalDeclarationsStateSchema.optional(),
+    retired_destinations: z.array(z.object({
+        destination_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+        destination_refs: z.array(z.string()),
+        revoked_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough()).optional()
+}).passthrough();
+
+export const GetPrincipalRequestSchema = z.object({
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const CurrentPrincipalConfigurationSchema = z.object({
+    kind: z.literal("current"),
+    principal_id: z.string().min(1).max(255),
+    principal_kind: PrincipalKindSchema,
+    configuration_version: z.string().min(1).max(255),
+    configuration: PrincipalStateSchema
+}).passthrough();
+
+export const RecognizedPrincipalWithoutStandingConfigurationSchema = z.object({
+    kind: z.literal("recognized"),
+    principal_id: z.string().min(1).max(255),
+    principal_kind: PrincipalKindSchema
+}).passthrough();
+
+export const UnconfiguredPrincipalSchema = z.object({
+    kind: z.literal("unconfigured")
+}).passthrough();
+
+export const FailedPrincipalReadSchema = z.object({
+    kind: z.literal("failed"),
+    errors: z.array(ErrorSchema)
+}).passthrough();
+
 export const ListAccountChangesRequestSchema = z.object({
     adcp_version: z.string().regex(/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$/).optional(),
     adcp_major_version: z.int().min(1).max(99).optional(),
@@ -10913,56 +11391,6 @@ export const ListAccountsRequestSchema = z.object({
     webhook_activity_limit: z.int().min(1).max(200).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const AccountWithAuthorizationSchema = AccountSchema.merge(z.object({
-    authorization: AccountAuthorizationSchema.optional()
-}).passthrough());
-
-export const ListAccountsResponseSchema = z.object({
-    context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
-    status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    replayed: z.boolean().optional(),
-    adcp_error: ErrorSchema.optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
-    payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    accounts: z.array(AccountWithAuthorizationSchema),
-    errors: z.array(ErrorSchema).optional(),
-    pagination: PaginationResponseSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const ProvisioningModeSchema = z.object({
-    brand: BrandReferenceSchema,
-    operator: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
-    operator_unit: OperatorUnitSchema.optional(),
-    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-    timezone: z.string().min(1).optional(),
-    billing: BillingPartySchema,
-    billing_entity: BusinessEntitySchema.optional(),
-    payment_terms: PaymentTermsSchema.optional(),
-    sandbox: z.boolean().optional(),
-    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
-    notification_configs: z.array(NotificationConfigSchema).optional()
-}).passthrough();
-
-export const SettingsUpdateModeSchema = z.object({
-    account: AccountReferenceSchema,
-    revision: z.int().min(1).optional(),
-    operator_identity: OperatorIdentitySchema.optional(),
-    destination_billing_entity: BusinessEntitySchema.optional(),
-    billing_entity: BusinessEntitySchema.optional(),
-    payment_terms: PaymentTermsSchema.optional(),
-    sandbox: z.boolean().optional(),
-    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
-    notification_configs: z.array(NotificationConfigSchema).optional()
 }).passthrough();
 
 export const SyncAccountsErrorSchema = z.object({
@@ -11154,6 +11582,22 @@ export const GetSignalsCompletionSchema = AdCPVersionEnvelopeSchema.merge(Protoc
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
+
+export const DoohMetricsSchema = z.object({
+    loop_plays: z.number().optional(),
+    screens_used: z.number().optional(),
+    screen_time_seconds: z.number().optional(),
+    sov_achieved: z.number().optional(),
+    calculation_notes: z.string().optional(),
+    venue_breakdown: z.array(z.object({
+        venue_id: z.string(),
+        venue_name: z.string().optional(),
+        venue_type: z.string().optional(),
+        impressions: z.number(),
+        loop_plays: z.number().optional(),
+        screens_used: z.number().optional()
+    }).passthrough()).optional()
+}).passthrough();
 
 export const QualifierSchema = z.object({
     viewability_standard: ViewabilityStandardSchema.optional(),
@@ -11348,10 +11792,22 @@ export const TrackerExecutionContractSchema = z.object({
     honored: z.array(TrackerExecutionSelectorSchema)
 }).passthrough();
 
+export const ReportingDeliveryMethodSchema = z.union([FileTransferSchema, DatasetShareSchema, WarehouseMaterializationSchema]);
+
+export const ReportingFileTransferSchema = z.object({
+    pattern: z.literal("file_transfer"),
+    transport: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_.-]*$/),
+    orchestration: ReportingOrchestrationSchema,
+    destination: ReportingWriteDestinationSchema,
+    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])
+}).passthrough();
+
 export const PackageSignalTargetingGroupsSchema = z.object({
     operator: z.literal("all"),
     groups: z.array(PackageSignalTargetingGroupSchema)
 }).passthrough();
+
+export const CollectionSelectionSchema = z.union([SelectedCollectionsSchema, ProductDefaultCollectionsSchema]);
 
 export const SelectedPlacementsSchema = z.object({
     mode: z.literal("selected"),
@@ -11446,6 +11902,8 @@ export const DAASTTrackerAssetSchema = z.object({}).passthrough().merge(z.object
     provenance: ProvenanceSchema.optional()
 }).passthrough());
 
+export const AttestationSubjectSchema = z.union([AttestationBrandSubjectSchema, AttestationAgentSubjectSchema, AttestationResourceSubjectSchema]);
+
 export const DeliveryRecordSchema = z.object({
     identifier: IdentifierSchema,
     impressions: z.number().int().gte(0),
@@ -11474,6 +11932,361 @@ export const ValidationResultSchema = z.object({
     authorization: AuthorizationResultSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+
+export const ReportingDeliveryConfigurationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    delivery_config_version: z.number().int().gte(1),
+    offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    active: z.boolean(),
+    feed_purpose: ReportingFeedPurposeSchema,
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reporting_profile: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    scope: z.object({
+        all_media_buys: z.literal(true).optional(),
+        media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional()
+    }).passthrough(),
+    coverage_requirement: z.union([z.literal("full"), z.literal("allow_partial")]),
+    required_finality: ReportingFinalitySchema,
+    reconciliation_mode: ReportingReconciliationModeSchema,
+    schedule: ReportingScheduleSchema,
+    method: ReportingDeliveryMethodSchema.optional(),
+    revocation_effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough());
+
+export const AttestationReferenceSchema = z.object({
+    issuer: AttestationIssuerSchema,
+    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    subject: AttestationSubjectSchema,
+    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
+    embedded_credential: z.object({
+        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough().optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    credential_version: z.string().min(1).max(255).optional(),
+    validity_hint: z.object({
+        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    verify_agent: z.object({
+        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
+    }).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
+    issuer: AttestationIssuerSchema,
+    claim_type: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    subject: AttestationSubjectSchema,
+    locator: z.union([AttestationCredentialUriLocatorSchema, AttestationIssuerCredentialIdLocatorSchema]).optional(),
+    embedded_credential: z.object({
+        format: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        value: z.union([z.object({}).passthrough(), z.string().min(1)]),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough().optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    credential_version: z.string().min(1).max(255).optional(),
+    validity_hint: z.object({
+        not_before: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    verify_agent: z.object({
+        agent_url: z.string().regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")).refine(adcpJsonSchemaUri, "Invalid URI")
+    }).passthrough().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
+// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
+export const ProductFormatDeclarationSchema: z.ZodObject<{ [K in keyof ProductFormatDeclaration]-?: undefined extends ProductFormatDeclaration[K] ? z.ZodOptional<z.ZodType<Exclude<ProductFormatDeclaration[K], undefined>, Exclude<ProductFormatDeclaration[K], undefined>>> : z.ZodType<ProductFormatDeclaration[K], ProductFormatDeclaration[K]> }, z.core.$loose> & z.ZodType<ProductFormatDeclaration & Record<string, unknown>, ProductFormatDeclaration & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
+    format_option_id: z.string().optional(),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
+    tracker_execution_contract: TrackerExecutionContractSchema.optional(),
+    macro_resolution_capabilities: z.array(MacroProcessingCapabilitySchema).optional(),
+    technical_requirements_complete: z.boolean().optional(),
+    display_name: z.string().optional(),
+    sample_render_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    applies_to_channels: z.array(MediaChannelSchema).optional(),
+    seller_preference: z.union([z.literal("preferred"), z.literal("accepted"), z.literal("discouraged")]).optional(),
+    locale_policy: CreativeLocalePolicySchema.optional(),
+    canonical_formats_only: z.boolean().optional(),
+    experimental: z.boolean().optional(),
+    format_shape: z.string().optional(),
+    v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
+    format_schema: PlatformExtensionReferenceSchema.optional()
+}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, VASTAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
+
+export const ReportingDeliveryConfigurationStateSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough()).merge(z.object({
+    configuration: ReportingDeliveryConfigurationSchema,
+    state: ReportingDeliveryConfigurationLifecycleStateSchema,
+    destination_ref: z.string().min(1).max(255).optional(),
+    validated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    activated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    deactivated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    publication_stopped_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    seller_managed_access_ends_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    current_coverage: ReportingCoverageSchema.optional(),
+    setup: z.object({
+        action: z.union([z.literal("grant_access"), z.literal("activate_recipient"), z.literal("authorize_provider"), z.literal("repair_access")]),
+        message: z.string().min(1).max(2000),
+        url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional()
+}).passthrough());
 
 export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     evidence_id: z.string().min(1),
@@ -11544,23 +12357,29 @@ export const AudienceEvidenceSchema: z.ZodType = z.object({}).passthrough().merg
 }).passthrough());
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const ProductFormatDeclarationSchema: z.ZodObject<{ [K in keyof ProductFormatDeclaration]-?: undefined extends ProductFormatDeclaration[K] ? z.ZodOptional<z.ZodType<Exclude<ProductFormatDeclaration[K], undefined>, Exclude<ProductFormatDeclaration[K], undefined>>> : z.ZodType<ProductFormatDeclaration[K], ProductFormatDeclaration[K]> }, z.core.$loose> & z.ZodType<ProductFormatDeclaration & Record<string, unknown>, ProductFormatDeclaration & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
-    format_option_id: z.string().optional(),
+export const PlacementSchema: z.ZodType<Placement & Record<string, unknown>, Placement & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
+    kind: z.union([z.literal("publisher_ref"), z.literal("seller_inline")]),
+    placement_id: z.string(),
     publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    tracker_execution_contract: TrackerExecutionContractSchema.optional(),
-    macro_resolution_capabilities: z.array(MacroProcessingCapabilitySchema).optional(),
-    technical_requirements_complete: z.boolean().optional(),
-    display_name: z.string().optional(),
-    sample_render_url: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    applies_to_channels: z.array(MediaChannelSchema).optional(),
-    seller_preference: z.union([z.literal("preferred"), z.literal("accepted"), z.literal("discouraged")]).optional(),
-    locale_policy: CreativeLocalePolicySchema.optional(),
-    canonical_formats_only: z.boolean().optional(),
-    experimental: z.boolean().optional(),
-    format_shape: z.string().optional(),
-    v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_schema: PlatformExtensionReferenceSchema.optional()
-}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
+    seller_agent: SellerAgentReferenceSchema.optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    mode: z.union([z.literal("targetable"), z.literal("included")]),
+    tags: z.array(z.string()).optional(),
+    format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
+    format_options: z.array(ProductFormatDeclarationSchema).optional(),
+    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
+    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
+    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
+    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
+    identifiers: z.array(z.object({
+        type: PropertyIdentifierTypesSchema,
+        value: z.string()
+    }).passthrough()).optional(),
+    dooh_placement_attributes: ProductDOOHPlacementAttributesSchema.optional()
+}).passthrough());
+
+export const PricingOptionSchema = z.union([CPMPricingOptionSchema, VCPMPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, CPAPricingOptionSchema, RevenueSharePricingOptionSchema, FlatRatePricingOptionSchema, TimeBasedPricingOptionSchema]);
 
 export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
     evidence_id: z.string().min(1),
@@ -11581,26 +12400,6 @@ export const AudienceEvidenceSelectionSchema: z.ZodType = z.object({
     }).passthrough()).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
-
-// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const PlacementSchema: z.ZodType<Placement & Record<string, unknown>, Placement & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
-    kind: z.union([z.literal("publisher_ref"), z.literal("seller_inline")]),
-    placement_id: z.string(),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    seller_agent: SellerAgentReferenceSchema.optional(),
-    name: z.string().optional(),
-    description: z.string().optional(),
-    mode: z.union([z.literal("targetable"), z.literal("included")]),
-    tags: z.array(z.string()).optional(),
-    format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
-    format_options: z.array(ProductFormatDeclarationSchema).optional(),
-    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
-    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
-    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
-    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional()
-}).passthrough());
-
-export const PricingOptionSchema = z.union([CPMPricingOptionSchema, VCPMPricingOptionSchema, CPCPricingOptionSchema, CPCVPricingOptionSchema, CPVPricingOptionSchema, CPPPricingOptionSchema, CPAPricingOptionSchema, RevenueSharePricingOptionSchema, FlatRatePricingOptionSchema, TimeBasedPricingOptionSchema]);
 
 export const InstallmentSchema = z.object({
     installment_id: z.string(),
@@ -11885,7 +12684,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
         cta_label: z.string().optional(),
         reference_assets: z.array(ProductCardReferenceAssetSchema).optional()
     }).passthrough().optional(),
-    collections: z.array(CollectionSelectorSchema).optional(),
+    collections: z.array(CollectionSelectorSchema.merge(z.object({}).passthrough())).optional(),
     collection_targeting_allowed: z.boolean().optional(),
     list_applications: z.array(InventoryListApplicationSchema).optional(),
     installments: z.array(InstallmentSchema).optional(),
@@ -11950,13 +12749,81 @@ export const CanonicalFormatOptionSchema = z.object({
     locale_policy: CreativeLocalePolicySchema.optional(),
     canonical_formats_only: z.boolean().optional(),
     experimental: z.boolean().optional(),
-    format_kind: z.union([z.literal("image"), z.literal("html5"), z.literal("display_tag"), z.literal("image_carousel"), z.literal("video_hosted"), z.literal("video_vast"), z.literal("audio_hosted"), z.literal("audio_daast"), z.literal("sponsored_placement"), z.literal("native_in_feed"), z.literal("responsive_creative"), z.literal("agent_placement"), z.literal("seller_rendered_stateful_display"), z.literal("coordinated_placements"), z.literal("custom")]),
+    format_kind: z.union([z.literal("image"), z.literal("html5"), z.literal("display_tag"), z.literal("image_carousel"), z.literal("video_hosted"), z.literal("video_vast"), z.literal("audio_hosted"), z.literal("audio_vast"), z.literal("audio_daast"), z.literal("sponsored_placement"), z.literal("native_in_feed"), z.literal("responsive_creative"), z.literal("agent_placement"), z.literal("seller_rendered_stateful_display"), z.literal("coordinated_placements"), z.literal("custom")]),
     params: z.object({}).passthrough(),
     format_shape: z.string().min(1).optional(),
     format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough();
 
 export const AssetVariantSchema = z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, DisplayTagAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema]);
+
+export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object({
+    rights_id: z.string(),
+    rights_agent: z.object({
+        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        id: z.string()
+    }).passthrough(),
+    rights_holder: BrandReference1Schema.optional(),
+    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    uses: z.array(RightUseSchema),
+    countries: z.array(z.string()).optional(),
+    excluded_countries: z.array(z.string()).optional(),
+    impression_cap: z.number().int().gte(1).optional(),
+    right_type: RightTypeSchema.optional(),
+    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
+    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
+    restrictions: z.array(z.string()).optional(),
+    disclosure: z.object({}).passthrough().optional(),
+    creative_approval_required: z.boolean().optional(),
+    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReference2Schema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough())).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).merge(z.object({
+    rights_id: z.string(),
+    rights_agent: z.object({
+        url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+        id: z.string()
+    }).passthrough(),
+    rights_holder: BrandReference1Schema.optional(),
+    valid_from: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    uses: z.array(RightUseSchema),
+    countries: z.array(z.string()).optional(),
+    excluded_countries: z.array(z.string()).optional(),
+    impression_cap: z.number().int().gte(1).optional(),
+    right_type: RightTypeSchema.optional(),
+    approval_status: z.union([z.literal("pending"), z.literal("approved"), z.literal("rejected")]).optional(),
+    grant_status: z.union([z.literal("active"), z.literal("paused"), z.literal("revoked")]).optional(),
+    restrictions: z.array(z.string()).optional(),
+    disclosure: z.object({}).passthrough().optional(),
+    creative_approval_required: z.boolean().optional(),
+    verification_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")).optional(),
+    attestation_refs: z.array(AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReference2Schema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough())).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
 
 export const DeliveryForecast1Schema = DeliveryForecastSchema;
 
@@ -11999,7 +12866,12 @@ export const CanonicalProductPlacementSchema = z.object({
     video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
     audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
     sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
-    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional()
+    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
+    identifiers: z.array(z.object({
+        type: PropertyIdentifierTypesSchema,
+        value: z.string()
+    }).passthrough()).optional(),
+    dooh_placement_attributes: CanonicalDOOHPlacementAttributesSchema.optional()
 }).passthrough().and(z.union([z.object({
         kind: z.literal("publisher_ref")
     }).passthrough(), z.object({
@@ -12350,6 +13222,54 @@ export const ContentStandardsSchema = z.object({
         fail: z.array(ArtifactSchema).optional()
     }).passthrough().optional(),
     pricing_options: z.array(VendorPricingOptionSchema).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AccountSchema = z.object({
+    account_id: z.string(),
+    name: z.string(),
+    advertiser: z.string().optional(),
+    billing_proxy: z.string().optional(),
+    status: AccountStatusSchema,
+    brand: BrandReferenceSchema.optional(),
+    operator: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
+    operator_unit: OperatorUnitSchema.optional(),
+    revision: z.number().int().gte(1).optional(),
+    identity_change: AccountIdentityChangeSchema.optional(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
+    timezone: z.string().min(1).optional(),
+    billing: BillingPartySchema.optional(),
+    billing_entity: BusinessEntitySchema.optional(),
+    destination_billing_entity: z.object({}).passthrough().optional(),
+    rate_card: z.string().optional(),
+    payment_terms: PaymentTermsSchema.optional(),
+    credit_limit: z.object({
+        amount: z.number().gte(0),
+        currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
+    }).passthrough().optional(),
+    setup: z.object({
+        url: z.string().optional(),
+        message: z.string(),
+        expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+    }).passthrough().optional(),
+    account_scope: AccountScopeSchema.optional(),
+    governance_agents: z.tuple([z.object({
+            url: z.string()
+        }).passthrough()]).optional(),
+    reporting_bucket: z.object({
+        protocol: CloudStorageProtocolSchema,
+        bucket: z.string().min(3).max(63).regex(new RegExp("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")),
+        prefix: z.string().max(512).regex(new RegExp("^[a-zA-Z0-9/_.-]+$")).optional(),
+        region: z.string().max(64).regex(new RegExp("^[a-z0-9-]+$")).optional(),
+        format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]).optional(),
+        compression: z.union([z.literal("gzip"), z.literal("none")]).optional(),
+        file_retention_days: z.number().int().gte(1),
+        setup_instructions: z.string().regex(new RegExp("^https://")).refine(adcpJsonSchemaUri, "Invalid URI").optional()
+    }).passthrough().optional(),
+    sandbox: z.boolean().optional(),
+    notification_configs: z.array(NotificationConfigSchema).optional(),
+    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationStateSchema).optional(),
+    webhook_activity: z.array(WebhookActivityRecordSchema).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -12711,7 +13631,14 @@ export const InlineDeclarationSchema = z.object({}).passthrough().merge(z.object
     format_shape: z.string().optional(),
     v1_format_ref: z.array(FormatReferenceStructuredObjectSchema).optional(),
     format_schema: PlatformExtensionReferenceSchema.optional()
-}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
+}).passthrough()).and(z.union([ImageFormatDeclarationSchema, HTML5FormatDeclarationSchema, DisplayTagFormatDeclarationSchema, ImageCarouselFormatDeclarationSchema, HostedVideoFormatDeclarationSchema, VASTVideoFormatDeclarationSchema, HostedAudioFormatDeclarationSchema, VASTAudioFormatDeclarationSchema, DAASTAudioFormatDeclarationSchema, SponsoredPlacementFormatDeclarationSchema, NativeInFeedFormatDeclarationSchema, ResponsiveCreativeFormatDeclarationSchema, AgentPlacementFormatDeclarationSchema, SellerRenderedStatefulDisplayFormatDeclarationSchema, CoordinatedPlacementsFormatDeclarationSchema, CustomFormatDeclarationSchema]));
+
+export const PublisherDOOHPlacementAttributesSchema = z.object({
+    slot_duration_seconds: z.int().min(1).optional(),
+    loop_duration_seconds: z.int().min(1).optional(),
+    screen_resolution: PublisherDOOHScreenResolutionSchema.optional(),
+    motion: DOOHMotionTypeSchema.optional()
+}).passthrough();
 
 export const PlacementDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     placement_identity: PlacementIdentitySchema.optional(),
@@ -13070,6 +13997,39 @@ export const RegistryEventSchema = z.object({
         payload: AuthorizationPayloadSchema.optional()
     }).passthrough()]));
 
+export const ReportingCanonicalizationContractSchema = z.object({
+    contract_version: z.literal("1.0"),
+    media_type: z.literal("application/vnd.adcp.reporting-canonicalization+json"),
+    algorithm: z.literal("adcp_jcs_rows_v1"),
+    schema_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
+    primary_keys: z.array(ReportingPrimaryKeySchema),
+    golden_vectors: z.object({
+        empty_report: EmptyReportGoldenVectorSchema,
+        ordering_encoding: OrderingEncodingGoldenVectorSchema,
+        additional: z.array(AdditionalGoldenVectorSchema).optional()
+    }).passthrough()
+}).passthrough();
+
+export const ReportingFileManifestSchema = z.object({
+    manifest_version: z.literal("1.0"),
+    complete: z.literal(true),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime(),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]),
+    compression: ReportingFileCompressionSchema,
+    files: z.array(ReportingFileEntrySchema),
+    total_size_bytes: z.int().min(0),
+    row_count: z.int().min(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    created_at: z.iso.datetime()
+}).passthrough();
+
 export const RepresentationDestinationSchema = z.object({
     product_id: z.string().min(1),
     format_option: ProductFormatDeclarationSchema,
@@ -13087,6 +14047,28 @@ export const CatalogRequirementsSchema = z.object({
     feed_formats: z.array(FeedFormatSchema).optional(),
     offering_asset_constraints: z.array(OfferingAssetConstraintSchema).optional(),
     field_bindings: z.array(CatalogFieldBindingSchema).optional()
+}).passthrough();
+
+export const RightsAttestationEvaluationSchema = z.object({
+    rights_id: z.string().min(1),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
+    reference: AttestationReferenceSchema.and(z.object({
+        issuer: z.object({
+            type: z.literal("brand"),
+            brand: BrandReferenceSchema
+        }).passthrough().optional(),
+        claim_type: z.literal("https://adcontextprotocol.org/claims/rights/grant").optional(),
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/rights-grant")
+        }).passthrough().optional()
+    }).passthrough()),
+    evaluation: AttestationEvaluationSchema.and(z.object({
+        action_binding: z.object({
+            action_type: z.literal("https://adcontextprotocol.org/actions/rights-grant-evaluation")
+        }).passthrough()
+    }).passthrough()).and(z.object({}).passthrough()),
+    ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const SignalPricingOptionSchema = z.object({
@@ -13464,6 +14446,7 @@ export const TargetingOverlaySchema = z.object({}).passthrough().merge(z.object(
     collection_list: CollectionListReferenceSchema.optional(),
     collection_list_exclude: CollectionListReferenceSchema.optional(),
     placement_selection: PlacementSelectionSchema.optional(),
+    collection_selection: CollectionSelectionSchema.optional(),
     age_restriction: z.object({
         min: z.number().int().gte(13).lte(99),
         verification_required: z.boolean().optional(),
@@ -14229,6 +15212,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             by_placement_property_sort_direction: SortDirectionSchema.optional(),
             by_spot: z.array(DeliveryMetricsSchema.merge(z.object({
                 spot_id: z.string().min(1),
+                creative_id: z.string().min(1).optional(),
                 aired_at: z.iso.datetime(),
                 network: z.string().min(1).optional(),
                 station: z.string().min(1).optional(),
@@ -14269,6 +15253,28 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
     }).passthrough()),
     errors: z.array(ErrorSchema).optional(),
     sandbox: z.boolean().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const SuccessfulLookupSchema = z.union([SummaryViewSchema, PeriodsViewSchema, RevisionViewSchema]);
+
+export const FailedLookupSchema = z.union([UnavailableLookupSchema, OperationalFailureSchema]);
+
+export const SyncReportingReceiptsResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    results: z.array(z.union([RecordedReportingReceiptSchema, UnchangedReportingReceiptSchema, FailedReportingReceiptSchema])),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -14876,6 +15882,194 @@ export const ReportPlanOutcomeRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const GetPlanAuditLogsResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    plans: z.array(z.object({
+        plan_id: z.string(),
+        plan_version: z.int(),
+        status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
+        budget: z.object({
+            authorized: z.number().optional(),
+            accounting_mode: z.union([z.literal("gross_commitment"), z.literal("verified_net_cost")]).optional(),
+            committed: z.number().optional(),
+            gross_committed: z.number().optional(),
+            adjustments_reported: z.number().optional(),
+            adjustments_verified: z.number().optional(),
+            net_cost: z.number().optional(),
+            headroom_restored: z.number().optional(),
+            net_committed: z.number().optional(),
+            ledger_committed: z.number().optional(),
+            remaining: z.number().optional(),
+            utilization_pct: z.number().optional()
+        }).passthrough(),
+        channel_allocation: z.record(z.string(), z.object({
+                committed: z.number().optional(),
+                pct: z.number().optional()
+            }).passthrough()).optional(),
+        summary: z.object({
+            checks_performed: z.int().optional(),
+            outcomes_reported: z.int().optional(),
+            adjustments_reported: z.int().optional(),
+            adjustments_verified: z.int().optional(),
+            statuses: z.object({
+                approved: z.int().optional(),
+                denied: z.int().optional(),
+                conditions: z.int().optional(),
+                human_reviewed: z.int().optional()
+            }).passthrough().optional(),
+            findings_count: z.int().optional(),
+            escalations: z.array(z.object({
+                check_id: z.string(),
+                reason: z.string(),
+                resolution: z.string().optional(),
+                resolved_at: z.iso.datetime().optional()
+            }).passthrough()).optional(),
+            drift_metrics: z.object({
+                escalation_rate: z.number().min(0).max(1).optional(),
+                escalation_rate_trend: z.union([z.literal("increasing"), z.literal("stable"), z.literal("declining")]).optional(),
+                auto_approval_rate: z.number().min(0).max(1).optional(),
+                human_override_rate: z.number().min(0).max(1).optional(),
+                mean_confidence: z.number().min(0).max(1).optional(),
+                thresholds: z.object({
+                    escalation_rate_max: z.number().min(0).max(1).optional(),
+                    escalation_rate_min: z.number().min(0).max(1).optional(),
+                    auto_approval_rate_max: z.number().min(0).max(1).optional(),
+                    human_override_rate_max: z.number().min(0).max(1).optional()
+                }).passthrough().optional()
+            }).passthrough().optional()
+        }).passthrough(),
+        entries: z.array(z.object({
+            id: z.string(),
+            type: z.union([z.literal("check"), z.literal("outcome"), z.literal("adjustment")]),
+            timestamp: z.iso.datetime(),
+            plan_id: z.string().optional(),
+            caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+            tool: z.string().optional(),
+            verdict: GovernanceDecisionSchema.optional(),
+            check_type: z.union([z.literal("intent"), z.literal("execution")]).optional(),
+            mode: GovernanceModeSchema.optional(),
+            explanation: z.string().optional(),
+            policies_evaluated: z.array(z.string()).optional(),
+            categories_evaluated: z.array(z.string()).optional(),
+            findings: z.array(z.object({
+                category_id: z.string(),
+                policy_id: z.string().optional(),
+                source_plan_id: z.string().optional(),
+                severity: EscalationSeveritySchema,
+                explanation: z.string(),
+                details: z.object({}).passthrough().optional(),
+                confidence: z.number().min(0).max(1).optional(),
+                uncertainty_reason: z.string().optional(),
+                attestation_reference_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional()
+            }).passthrough()).optional(),
+            delivery_statement: z.object({
+                statement_id: z.string(),
+                statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+                sequence: z.int().min(1),
+                issued_at: z.iso.datetime(),
+                seller_reference: z.string(),
+                cumulative_spend: z.number().min(0),
+                currency: z.string().regex(/^[A-Z]{3}$/),
+                reporting_period: z.object({
+                    start: z.iso.datetime(),
+                    end: z.iso.datetime()
+                }).passthrough(),
+                canonical_payload: z.object({
+                    seller_reference: z.string(),
+                    delivery_metrics: z.object({}).passthrough()
+                }).passthrough()
+            }).passthrough().optional(),
+            outcome: OutcomeTypeSchema.optional(),
+            error: ReportedOutcomeErrorSchema.optional(),
+            outcome_id: z.string().optional(),
+            seller_adjustment_id: z.string().optional(),
+            adjustment_type: z.union([z.literal("decommitment"), z.literal("refund"), z.literal("credit"), z.literal("makegood")]).optional(),
+            amount: z.object({
+                amount: z.number(),
+                currency: z.string().regex(/^[A-Z]{3}$/)
+            }).passthrough().optional(),
+            headroom_restored: z.number().min(0).optional(),
+            reason: z.string().optional(),
+            effective_at: z.iso.datetime().optional(),
+            committed_budget: z.number().optional(),
+            reported_committed_budget: z.number().min(0).optional(),
+            seller_reference: z.string().optional(),
+            delivery: z.object({
+                observation_id: z.string().min(1).max(255).optional(),
+                source: z.union([z.literal("seller_statement_copy"), z.literal("buyer_measurement")]).optional(),
+                observed_at: z.iso.datetime().optional(),
+                seller_statement_id: z.string().optional(),
+                seller_statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+                reporting_period: z.object({
+                    start: z.iso.datetime(),
+                    end: z.iso.datetime()
+                }).passthrough().optional(),
+                cumulative_spend: z.number().min(0).optional(),
+                currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+                period_closed: z.boolean().optional(),
+                impressions: z.int().min(0).optional()
+            }).passthrough().optional(),
+            governance_context: z.string().optional(),
+            plan_hash: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+            runtime_attestations: z.array(z.object({
+                reference: AttestationReferenceSchema,
+                evaluation: AttestationEvaluationSchema
+            }).passthrough()).optional(),
+            runtime_attestation_binding_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+            purchase_type: PurchaseTypeSchema.optional(),
+            outcome_status: z.string().optional(),
+            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
+            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
+            adjustment_state: z.union([z.literal("reported"), z.literal("verified"), z.literal("disputed")]).optional(),
+            verified_amount: z.number().min(0).optional(),
+            evidence: z.object({
+                evidence_id: z.string(),
+                evidence_type: z.union([z.literal("decommitment_agreement"), z.literal("refund_settlement"), z.literal("credit_note"), z.literal("makegood_agreement")]),
+                digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+                issued_at: z.iso.datetime()
+            }).passthrough().optional(),
+            reviewed_by: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+            reviewed_at: z.iso.datetime().optional(),
+            review_reason: z.string().optional()
+        }).passthrough()).optional(),
+        governed_actions: z.array(z.object({
+            governance_context: z.string(),
+            purchase_type: PurchaseTypeSchema,
+            status: z.union([z.literal("active"), z.literal("suspended"), z.literal("completed")]),
+            committed: z.number(),
+            adjustments_reported: z.number().optional(),
+            adjustments_verified: z.number().optional(),
+            net_cost: z.number().optional(),
+            headroom_restored: z.number().optional(),
+            net_committed: z.number().optional(),
+            seller_reported_spend: z.number().min(0).optional(),
+            buyer_observed_spend: z.number().min(0).optional(),
+            delivery_reporting_period: z.object({
+                start: z.iso.datetime(),
+                end: z.iso.datetime()
+            }).passthrough().optional(),
+            conservative_exposure: z.number().min(0).optional(),
+            delivery_reconciliation_status: z.union([z.literal("consistent"), z.literal("measurement_variance"), z.literal("disputed"), z.literal("unmatched"), z.literal("closed_unresolved")]).optional(),
+            delivery_period_state: z.union([z.literal("open"), z.literal("closed")]).optional(),
+            check_count: z.int(),
+            seller_reference: z.string().optional()
+        }).passthrough())
+    }).passthrough()),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdCPCapabilitiesResponse]-?: undefined extends GetAdCPCapabilitiesResponse[K] ? z.ZodOptional<z.ZodType<Exclude<GetAdCPCapabilitiesResponse[K], undefined>, Exclude<GetAdCPCapabilitiesResponse[K], undefined>>> : z.ZodType<GetAdCPCapabilitiesResponse[K], GetAdCPCapabilitiesResponse[K]> }, z.core.$loose> & z.ZodType<GetAdCPCapabilitiesResponse & Record<string, unknown>, GetAdCPCapabilitiesResponse & Record<string, unknown>> = z.object({
     context_id: z.string().optional(),
@@ -14896,6 +16090,23 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
         supported_versions: z.array(z.string()).optional(),
         build_version: z.string().regex(/^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/).optional(),
         idempotency: z.union([IdempotencySupportedSchema, IdempotencyUnsupportedSchema]),
+        principal: z.object({
+            supported: z.literal(true),
+            sync_task: z.literal("sync_principal"),
+            read_task: z.literal("get_principal"),
+            supported_sections: z.array(z.union([z.literal("notification_configs"), z.literal("reporting_destinations"), z.literal("declarations")])),
+            max_reporting_destinations: z.int().min(1).max(64).optional(),
+            reporting_destination_offerings: z.array(z.object({
+                pattern: z.union([z.literal("file_transfer"), z.literal("warehouse_materialization"), z.literal("dataset_share")]),
+                transports: z.array(z.string()),
+                formats: z.array(z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])).optional(),
+                access_modes: z.array(z.string()).optional(),
+                verification_profiles: ReportingVerificationProfileSetSchema
+            }).passthrough()).optional(),
+            suspension_interval_seconds: z.int().min(1).max(86400).optional(),
+            caller_event_types: z.array(NotificationTypeSchema).optional(),
+            optimistic_concurrency: z.boolean()
+        }).passthrough().optional(),
         capability_changes: z.object({
             capabilities_version: z.string().min(1).max(255).optional(),
             last_modified: z.iso.datetime().optional(),
@@ -14964,11 +16175,12 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
             supported_dimensions: z.array(z.union([z.literal("total_budget"), z.literal("cpm"), z.literal("impressions"), z.literal("flight"), z.literal("product_changes"), z.literal("alternatives"), z.literal("criteria")])),
             max_alternatives: z.int().min(2).max(10).optional()
         }).passthrough().optional(),
-        reporting_delivery_methods: z.array(z.union([z.literal("webhook"), z.literal("offline")])).optional(),
+        reporting_delivery_methods: z.array(CapabilityReportingDeliveryMethodSchema).optional(),
         performance_feedback: z.object({
             reports_application_status: z.boolean().optional()
         }).passthrough().optional(),
         offline_delivery_protocols: z.array(CloudStorageProtocolSchema).optional(),
+        reporting_delivery: ReportingDeliveryCapabilitiesSchema.optional(),
         supports_proposals: z.boolean().optional(),
         outcome_target: z.boolean().optional(),
         governance_aware: z.boolean().optional(),
@@ -15083,7 +16295,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
         budget_capping: z.object({
             supported_scopes: z.array(z.union([z.literal("media_buy"), z.literal("package")])),
             supported_periods: z.array(z.literal("day")),
-            timezone_basis: z.union([z.literal("account"), z.literal("fixed")]),
+            timezone_basis: BudgetCappingTimezoneBasisSchema,
             fixed_timezone: z.string().min(1).optional(),
             buyer_timezone_override: z.boolean().optional()
         }).passthrough().optional(),
@@ -15260,7 +16472,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
     }).passthrough().optional(),
     specialisms: z.array(AdCPSpecialismSchema).optional(),
     extensions_supported: z.array(z.string()).optional(),
-    experimental_features: z.array(z.string()).optional(),
+    experimental_features: z.array(ExperimentalFeatureIDSchema).optional(),
     wholesale_feed_versioning: z.object({
         supported: z.boolean(),
         pricing_version_separate: z.boolean().optional(),
@@ -15275,16 +16487,101 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
     }).passthrough().optional()
 }).passthrough();
 
-export const SyncAccountsRequestSchema = z.object({
+export const SyncPrincipalRequestSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
     adcp_major_version: z.number().int().gte(1).lte(99).optional(),
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
-    accounts: z.array(z.union([ProvisioningModeSchema, SettingsUpdateModeSchema])),
-    delete_missing: z.boolean().optional(),
+    expected_configuration_version: z.string().min(1).max(255).optional(),
+    expected_principal_kind: PrincipalKindSchema.optional(),
+    configuration: z.object({
+        notification_configs: z.array(AgentNotificationConfigSchema).optional(),
+        reporting_destinations: z.array(AgentReportingDestinationSchema).optional(),
+        declarations: AgentDeclarationsSchema.optional()
+    }).passthrough(),
     dry_run: z.boolean().optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AppliedPrincipalConfigurationSchema = z.object({
+    kind: z.literal("applied"),
+    action: z.union([z.literal("updated"), z.literal("unchanged"), z.literal("cleared")]),
+    dry_run: z.literal(false),
+    principal_id: z.string().min(1).max(255),
+    principal_kind: PrincipalKindSchema,
+    configuration_version: z.string().min(1).max(255),
+    configuration: PrincipalStateSchema,
+    warnings: z.array(ErrorSchema).optional()
+}).passthrough();
+
+export const GetPrincipalResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    result: z.union([CurrentPrincipalConfigurationSchema, RecognizedPrincipalWithoutStandingConfigurationSchema, UnconfiguredPrincipalSchema, FailedPrincipalReadSchema]),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const AccountWithAuthorizationSchema = AccountSchema.merge(z.object({
+    authorization: AccountAuthorizationSchema.optional()
+}).passthrough());
+
+export const ListAccountsResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    accounts: z.array(AccountWithAuthorizationSchema),
+    errors: z.array(ErrorSchema).optional(),
+    pagination: PaginationResponseSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ProvisioningModeSchema = z.object({
+    brand: BrandReferenceSchema,
+    operator: z.string().regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/),
+    operator_unit: OperatorUnitSchema.optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    timezone: z.string().min(1).optional(),
+    billing: BillingPartySchema,
+    billing_entity: BusinessEntitySchema.optional(),
+    payment_terms: PaymentTermsSchema.optional(),
+    sandbox: z.boolean().optional(),
+    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
+    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationSchema).optional(),
+    notification_configs: z.array(NotificationConfigSchema).optional()
+}).passthrough();
+
+export const SettingsUpdateModeSchema = z.object({
+    account: AccountReferenceSchema,
+    revision: z.int().min(1).optional(),
+    operator_identity: OperatorIdentitySchema.optional(),
+    destination_billing_entity: BusinessEntitySchema.optional(),
+    billing_entity: BusinessEntitySchema.optional(),
+    payment_terms: PaymentTermsSchema.optional(),
+    sandbox: z.boolean().optional(),
+    preferred_reporting_protocol: CloudStorageProtocolSchema.optional(),
+    reporting_delivery_configs: z.array(ReportingDeliveryConfigurationSchema).optional(),
+    notification_configs: z.array(NotificationConfigSchema).optional()
 }).passthrough();
 
 export const SyncAccountsSuccessSchema = z.object({
@@ -15321,6 +16618,7 @@ export const SyncAccountsSuccessSchema = z.object({
         warnings: z.array(z.string()).optional(),
         sandbox: z.boolean().optional(),
         notification_configs: z.array(NotificationConfigSchema).optional(),
+        reporting_delivery_configs: z.array(ReportingDeliveryConfigurationStateSchema).optional(),
         authorization: AccountAuthorizationSchema.optional()
     }).passthrough()),
     context: ContextObjectSchema.optional(),
@@ -15969,7 +17267,7 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
         message: "Invalid input: Should pass single schema. Passed " + passed,
       });
     }
-  }).describe("Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.")).min(1).describe("DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.").optional(), "demographics": z.object({ "age": z.intersection(z.object({ "min": z.number().int().gte(0).lte(150).describe("Inclusive minimum age in completed years. Omit for an open lower bound.").optional(), "max": z.number().int().gte(0).lte(150).describe("Inclusive maximum age in completed years. Omit for an open upper bound.").optional(), "include_unknown": z.boolean().describe("Whether delivery to people whose age is unavailable is part of this predicate. This field has no default and MUST be supplied.") }).catchall(z.any()).and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A canonical audience-age predicate in completed integer years. min and max are inclusive; omitting one bound means no restriction in that direction. At least one bound is required. include_unknown is always explicit because people whose age is unavailable are not members of any numeric interval. Implementations MUST reject min greater than max; JSON Schema draft-07 cannot compare sibling numeric values."), z.object({ "accepted_bases": z.array(z.enum(["verified","declared","inferred"]).describe("User-level bases that may resolve age for demographic targeting execution. Population estimates are deliberately absent because aggregate composition cannot establish an individual impression's age.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("User-level age determination bases the buyer permits for this predicate. Sellers MUST use only these bases or reject the request; they MUST NOT silently fall back to another basis. When omitted, the buyer imposes no determination-basis constraint beyond product capability and any age_restriction. population_estimate is structurally unavailable because aggregate evidence cannot identify an eligible user.").optional(), "accepted_verification_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Verification methods acceptable when verified is an accepted basis. This field narrows verified demographic execution; age_restriction.accepted_methods independently governs legal eligibility and the two sets are intersected when both are present.").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema") }))]))) }).catchall(z.any()).describe("Canonical demographic audience targeting intent with optional constraints on how age may be determined. This is distinct from age_restriction: demographics selects an audience, while age_restriction expresses a legal eligibility or verification floor. Fresh create/update targeting MUST compile exactly or be rejected. During get_products, a seller may offer a different configured predicate only through sparse targeting_resolution modifications on a distinguishable product_id; selecting that product accepts the alternative. Sellers never silently broaden, narrow, default, drop, or substitute the basis.").optional(), "frequency_cap": z.object({ "suppress": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {\"interval\": 60, \"unit\": \"minutes\"} for a 1-hour cooldown). Preferred over suppress_minutes.").optional(), "suppress_minutes": z.number().gte(0).describe("Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).").optional(), "max_impressions": z.number().int().gte(1).describe("Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.").optional(), "per": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").describe("Entity granularity for impression counting. Required when max_impressions is set.").optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Time window for the max_impressions cap (e.g. {\"interval\": 7, \"unit\": \"days\"} or {\"interval\": 1, \"unit\": \"campaign\"} for the full flight). Required when max_impressions is set.").optional() }).catchall(z.any()).and(z.union([z.object({ "suppress": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "suppress_minutes": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required"), "per": z.any().refine((value) => value !== undefined, "Required"), "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.intersection(z.union([z.any().refine((value) => !z.object({ "per": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "per": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.any().refine((value) => !z.object({ "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "window": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).describe("Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.").optional(), "property_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.").optional(), "property_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for including specific collections (programs, shows) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for excluding specific collections (programs, shows) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities.").optional(), "placement_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+  }).describe("Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.")).min(1).describe("DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.").optional(), "demographics": z.object({ "age": z.intersection(z.object({ "min": z.number().int().gte(0).lte(150).describe("Inclusive minimum age in completed years. Omit for an open lower bound.").optional(), "max": z.number().int().gte(0).lte(150).describe("Inclusive maximum age in completed years. Omit for an open upper bound.").optional(), "include_unknown": z.boolean().describe("Whether delivery to people whose age is unavailable is part of this predicate. This field has no default and MUST be supplied.") }).catchall(z.any()).and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A canonical audience-age predicate in completed integer years. min and max are inclusive; omitting one bound means no restriction in that direction. At least one bound is required. include_unknown is always explicit because people whose age is unavailable are not members of any numeric interval. Implementations MUST reject min greater than max; JSON Schema draft-07 cannot compare sibling numeric values."), z.object({ "accepted_bases": z.array(z.enum(["verified","declared","inferred"]).describe("User-level bases that may resolve age for demographic targeting execution. Population estimates are deliberately absent because aggregate composition cannot establish an individual impression's age.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("User-level age determination bases the buyer permits for this predicate. Sellers MUST use only these bases or reject the request; they MUST NOT silently fall back to another basis. When omitted, the buyer imposes no determination-basis constraint beyond product capability and any age_restriction. population_estimate is structurally unavailable because aggregate evidence cannot identify an eligible user.").optional(), "accepted_verification_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Verification methods acceptable when verified is an accepted basis. This field narrows verified demographic execution; age_restriction.accepted_methods independently governs legal eligibility and the two sets are intersected when both are present.").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema") }))]))) }).catchall(z.any()).describe("Canonical demographic audience targeting intent with optional constraints on how age may be determined. This is distinct from age_restriction: demographics selects an audience, while age_restriction expresses a legal eligibility or verification floor. Fresh create/update targeting MUST compile exactly or be rejected. During get_products, a seller may offer a different configured predicate only through sparse targeting_resolution modifications on a distinguishable product_id; selecting that product accepts the alternative. Sellers never silently broaden, narrow, default, drop, or substitute the basis.").optional(), "frequency_cap": z.object({ "suppress": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {\"interval\": 60, \"unit\": \"minutes\"} for a 1-hour cooldown). Preferred over suppress_minutes.").optional(), "suppress_minutes": z.number().gte(0).describe("Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).").optional(), "max_impressions": z.number().int().gte(1).describe("Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.").optional(), "per": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").describe("Entity granularity for impression counting. Required when max_impressions is set.").optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Time window for the max_impressions cap (e.g. {\"interval\": 7, \"unit\": \"days\"} or {\"interval\": 1, \"unit\": \"campaign\"} for the full flight). Required when max_impressions is set.").optional() }).catchall(z.any()).and(z.union([z.object({ "suppress": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "suppress_minutes": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required"), "per": z.any().refine((value) => value !== undefined, "Required"), "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.intersection(z.union([z.any().refine((value) => !z.object({ "per": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "per": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.any().refine((value) => !z.object({ "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "window": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).describe("Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.").optional(), "property_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.").optional(), "property_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for including specific collections (programs, publications, channels) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for excluding specific collections (programs, publications, channels) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities.").optional(), "placement_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
     const schemas = [z.object({ "mode": z.literal("selected"), "placement_refs": z.array(z.union([z.intersection(z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Legacy-compatible product-context reference to a placement. For publisher-catalog placements, publisher_domain plus placement_id resolves the declaration in that publisher's adagents.json. For seller-inline placements, the enclosing seller and product supply scope. When publisher_domain is omitted on legacy inputs, receivers MAY interpret the ID relative to the enclosing single-publisher product. Use placement-identity.json when a self-contained cross-document identity is required."), z.object({ "publisher_domain": z.any().refine((value) => value !== undefined, "Required") }).passthrough()), z.any().superRefine((x, ctx) => {
     const schemas = [z.object({ "kind": z.literal("publisher_ref"), "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain whose adagents.json declares placement_id."), "placement_id": z.string().min(1) }).passthrough(), z.object({ "kind": z.literal("seller_inline"), "seller_agent": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("The seller agent's API endpoint URL as declared in the property publisher's adagents.json `authorized_agents[].url`. MUST use the `https://` scheme. Receivers compare this URL against the `authorized_agents` list using the AdCP URL canonicalization rules — not byte-equality — and reject mismatches with `seller_not_authorized`. See docs/reference/url-canonicalization."), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).min(1).describe("Reserved for a future registry-assigned stable seller identifier. Not used today — senders MUST NOT populate this field until a registry is defined. When a future release populates both `agent_url` and `id`, `agent_url` remains authoritative and `id` is advisory.").optional() }).passthrough().describe("Sales agent that defines and maintains the inline placement namespace."), "placement_id": z.string().min(1).describe("Stable placement ID within the defining sales agent's namespace. The agent MUST NOT reuse it for a different semantic placement.") }).passthrough()];
     const { errors, failed } = schemas.reduce<{
@@ -16033,7 +17331,39 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
         message: "Invalid input: Should pass single schema. Passed " + passed,
       });
     }
-  })).describe("Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. On update, the surrounding targeting_overlay replacement semantics apply.").optional(), "age_restriction": z.object({ "min": z.number().int().gte(13).lte(99).describe("Minimum age required"), "verification_required": z.boolean().describe("Whether verified age (not inferred) is required for compliance").default(false), "accepted_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).describe("Accepted verification methods. If omitted, any method the platform supports is acceptable.").optional() }).passthrough().describe("Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.").optional(), "device_platform": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.").optional(), "device_platform_exclude": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "device_type": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).").optional(), "device_type_exclude": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).").optional(), "browser": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.").optional(), "browser_exclude": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "store_catchments": z.array(z.object({ "catalog_id": z.string().describe("Synced store-type catalog ID from sync_catalogs."), "store_ids": z.array(z.string()).min(1).describe("Filter to specific stores within the catalog. Omit to target all stores.").optional(), "catchment_ids": z.array(z.string()).min(1).describe("Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.").optional() }).catchall(z.any())).min(1).describe("Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.").optional(), "geo_proximity": z.array(z.object({ "lat": z.number().gte(-90).lte(90).describe("Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "lng": z.number().gte(-180).lte(180).describe("Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "label": z.string().describe("Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').").optional(), "travel_time": z.object({ "value": z.number().gte(1).describe("Travel time limit."), "unit": z.enum(["min","hr"]).describe("Time unit for isochrone (travel-time catchment) calculations.") }).passthrough().describe("Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks.").optional(), "transport_mode": z.enum(["walking","cycling","driving","public_transport"]).describe("Transportation mode for isochrone calculation. Required when travel_time is provided.").optional(), "radius": z.object({ "value": z.number().gt(0).describe("Radius distance."), "unit": z.enum(["km","mi","m"]).describe("Distance unit.") }).passthrough().describe("Simple radius from the point. The platform draws a circle of this distance around the coordinates.").optional(), "geometry": z.object({ "type": z.enum(["Polygon","MultiPolygon"]).describe("GeoJSON geometry type."), "coordinates": z.array(z.any()).describe("GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.") }).passthrough().describe("Pre-computed GeoJSON geometry defining the proximity boundary. Use when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom boundaries. When geometry is provided, lat/lng are not required.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
+  })).describe("Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. On update, the surrounding targeting_overlay replacement semantics apply.").optional(), "collection_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "mode": z.literal("selected"), "collections": z.array(z.intersection(z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring these collections is hosted (e.g., 'mrbeast.com'). The collections array in that file contains the authoritative collection definitions."), "collection_ids": z.array(z.string()).min(1).describe("Collection IDs from the adagents.json collections array. Each ID must match a collection_id declared in that file. Omit to reference all collections declared in that file.").optional() }).catchall(z.any()).describe("References collections declared in an adagents.json. Buyers resolve full collection objects by fetching the adagents.json at the given domain and matching collection_ids against its collections array. When collection_ids is omitted, the selector references every collection declared in that adagents.json — the bulk-grant form for authorization scoping (e.g., a host authorizing a channel owner's sales agent for all of the owner's collections without tracking owner-assigned IDs)."), z.object({ "collection_ids": z.any().refine((value) => value !== undefined, "Required") }).passthrough())).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Complete required collection set as domain-qualified selectors with explicit collection_ids; the domain-only bulk-grant form is authorization scoping, not selection. publisher_domain may be an external channel owner's domain."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "mode": z.literal("default"), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).describe("Purchased collection selection within the product. On create, mode selected supplies the complete selected set and mode default uses the product's full bundle. On package readback this is the committed selection sellers MUST echo as concrete selectors, materializing any collection_list composition; collection_list fields remain the buyer-managed list mechanism. On update, the surrounding targeting_overlay replacement semantics apply.").optional(), "age_restriction": z.object({ "min": z.number().int().gte(13).lte(99).describe("Minimum age required"), "verification_required": z.boolean().describe("Whether verified age (not inferred) is required for compliance").default(false), "accepted_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).describe("Accepted verification methods. If omitted, any method the platform supports is acceptable.").optional() }).passthrough().describe("Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.").optional(), "device_platform": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.").optional(), "device_platform_exclude": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "device_type": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).").optional(), "device_type_exclude": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).").optional(), "browser": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.").optional(), "browser_exclude": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "store_catchments": z.array(z.object({ "catalog_id": z.string().describe("Synced store-type catalog ID from sync_catalogs."), "store_ids": z.array(z.string()).min(1).describe("Filter to specific stores within the catalog. Omit to target all stores.").optional(), "catchment_ids": z.array(z.string()).min(1).describe("Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.").optional() }).catchall(z.any())).min(1).describe("Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.").optional(), "geo_proximity": z.array(z.object({ "lat": z.number().gte(-90).lte(90).describe("Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "lng": z.number().gte(-180).lte(180).describe("Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "label": z.string().describe("Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').").optional(), "travel_time": z.object({ "value": z.number().gte(1).describe("Travel time limit."), "unit": z.enum(["min","hr"]).describe("Time unit for isochrone (travel-time catchment) calculations.") }).passthrough().describe("Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks.").optional(), "transport_mode": z.enum(["walking","cycling","driving","public_transport"]).describe("Transportation mode for isochrone calculation. Required when travel_time is provided.").optional(), "radius": z.object({ "value": z.number().gt(0).describe("Radius distance."), "unit": z.enum(["km","mi","m"]).describe("Distance unit.") }).passthrough().describe("Simple radius from the point. The platform draws a circle of this distance around the coordinates.").optional(), "geometry": z.object({ "type": z.enum(["Polygon","MultiPolygon"]).describe("GeoJSON geometry type."), "coordinates": z.array(z.any()).describe("GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.") }).passthrough().describe("Pre-computed GeoJSON geometry defining the proximity boundary. Use when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom boundaries. When geometry is provided, lat/lng are not required.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
     const schemas = [z.object({ "lat": z.any().refine((value) => value !== undefined, "Required"), "lng": z.any().refine((value) => value !== undefined, "Required"), "travel_time": z.any().refine((value) => value !== undefined, "Required"), "transport_mode": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "lat": z.any().refine((value) => value !== undefined, "Required"), "lng": z.any().refine((value) => value !== undefined, "Required"), "radius": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "geometry": z.any().refine((value) => value !== undefined, "Required") }).passthrough()];
     const { errors, failed } = schemas.reduce<{
       errors: z.core.$ZodIssue[];
@@ -17096,6 +18426,11 @@ export const PlacementDefinitionSchema = z.object({}).passthrough().merge(z.obje
     audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
     sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
     social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
+    identifiers: z.array(z.object({
+        type: PropertyIdentifierTypesSchema,
+        value: z.string()
+    }).passthrough()).optional(),
+    dooh_placement_attributes: PublisherDOOHPlacementAttributesSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
@@ -17326,6 +18661,63 @@ export const GetMediaBuysResponseMediaBuySchema: z.ZodType = z.object({
     }).passthrough()).optional()
 }).passthrough();
 
+export const GetReportingStatusResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    view: ReportingStatusViewSchema.optional(),
+    ledger_snapshot_id: z.string().min(1).max(255).optional(),
+    ledger_as_of: z.iso.datetime().optional(),
+    account_id: z.string().min(1).optional(),
+    scope: z.object({
+        period_start: z.iso.datetime(),
+        period_end: z.iso.datetime(),
+        scope_closed: z.boolean(),
+        media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional(),
+        all_accessible_media_buys: z.boolean(),
+        delivery_config_generations: z.array(z.object({
+            delivery_config_id: z.string().min(1).max(64),
+            delivery_config_version: z.int().min(1),
+            feed_purpose: ReportingFeedPurposeSchema
+        }).passthrough()),
+        feed_purposes: z.array(ReportingFeedPurposeSchema),
+        finality: z.array(ReportingFinalitySchema),
+        ledger_retained_from: z.iso.datetime(),
+        coverage_complete: z.boolean()
+    }).passthrough().optional(),
+    health: ReportingHealthSchema.optional(),
+    coverage: ReportingCoverageSchema.optional(),
+    data_through: z.iso.datetime().optional().nullable(),
+    next_expected_at: z.iso.datetime().optional(),
+    obligation_counts: z.object({
+        total: z.int().min(0),
+        waiting: z.int().min(0),
+        healthy: z.int().min(0),
+        delayed: z.int().min(0),
+        action_required: z.int().min(0),
+        complete: z.int().min(0)
+    }).passthrough().optional(),
+    issues: z.array(ReportingStatusIssueSchema).optional(),
+    periods: z.array(ReportingObligationSchema).optional(),
+    revisions: z.array(ReportingRevisionSchema).optional(),
+    pagination: PaginationResponseSchema.optional(),
+    revision: ReportingRevisionSchema.optional(),
+    materializations: z.array(ReportingMaterializationSchema).optional(),
+    receipts: z.array(ReportingReceiptSchema).optional(),
+    errors: z.array(ErrorSchema).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([SuccessfulLookupSchema, FailedLookupSchema]));
+
 export const ListedCreativeNamedFormatReferenceSchema: z.ZodType = z.object({
     creative_id: z.string(),
     revision_id: CreativeRevisionIDSchema.optional(),
@@ -17506,6 +18898,36 @@ export const CheckGovernanceRequestSchema = z.object({}).passthrough().merge(z.o
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
+export const SyncPrincipalResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    result: z.union([AppliedPrincipalConfigurationSchema, ValidatedPrincipalDryRunSchema, FailedPrincipalSyncSchema]),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const SyncAccountsRequestSchema = z.object({
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    accounts: z.array(z.union([ProvisioningModeSchema, SettingsUpdateModeSchema])),
+    delete_missing: z.boolean().optional(),
+    dry_run: z.boolean().optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const SyncAccountsResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
@@ -17550,6 +18972,8 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         termination_reason: z.string().optional(),
         impressions: z.int().min(0).optional(),
         clicks: z.int().min(0).optional(),
+        plays: z.int().min(0).optional(),
+        dooh_metrics: DoohMetricsSchema.optional(),
         conversions: z.int().min(0).optional(),
         delivery_date: z.iso.date().optional(),
         conversion_value: z.number().min(0).optional(),

@@ -110,6 +110,18 @@ function loadIndex(): SchemaIndex {
   return JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
 }
 
+function resolveSchemaFragment(schema: any, fragment: string): any {
+  if (!fragment.startsWith('#/')) return schema;
+
+  let resolved = schema;
+  for (const rawSegment of fragment.slice(2).split('/')) {
+    const segment = decodeURIComponent(rawSegment).replaceAll('~1', '/').replaceAll('~0', '~');
+    resolved = resolved?.[segment];
+    if (resolved === undefined) return null;
+  }
+  return resolved;
+}
+
 function loadSchema(ref: string): any {
   // Indexes may use either root-relative or absolute canonical schema URLs.
   // Resolve both to a cache-relative path before stripping the version.
@@ -135,16 +147,9 @@ function loadSchema(ref: string): any {
     }
   }
   const filePath = path.join(SCHEMA_CACHE_DIR, rel);
-  if (!existsSync(filePath)) return null;
-  let schema = JSON.parse(readFileSync(filePath, 'utf8'));
-  if (fragment.startsWith('#/')) {
-    for (const rawSegment of fragment.slice(2).split('/')) {
-      const segment = decodeURIComponent(rawSegment).replaceAll('~1', '/').replaceAll('~0', '~');
-      schema = schema?.[segment];
-      if (schema === undefined) return null;
-    }
-  }
-  return schema;
+  if (!existsSync(filePath) || !statSync(filePath).isFile()) return null;
+  const schema = JSON.parse(readFileSync(filePath, 'utf8'));
+  return resolveSchemaFragment(schema, fragment);
 }
 
 function kebabToSnake(s: string): string {
@@ -168,7 +173,7 @@ function summarizeFields(schema: any): { required: string[]; optional: string[] 
     // Skip protocol-level fields that appear on every request
     if (name === 'adcp_major_version' || name === 'ext') continue;
 
-    const typeHint = fieldType(prop);
+    const typeHint = fieldType(prop, schema);
     const entry = typeHint ? `${name}: ${typeHint}` : name;
 
     if (req.has(name)) {
@@ -229,19 +234,20 @@ function summarizeResponseFields(schema: any): { required: string[]; optional: s
   return summarizeFields(schema);
 }
 
-function fieldType(prop: any): string {
+function fieldType(prop: any, rootSchema?: any): string {
   if (!prop) return '';
   if (prop.enum) return prop.enum.map((v: string) => `'${v}'`).join(' | ');
   if (prop.const) return `'${prop.const}'`;
   if (prop.type === 'array') {
-    const itemType = fieldType(prop.items) || 'object';
+    const itemType = fieldType(prop.items, rootSchema) || 'object';
     return itemType.includes(' | ') ? `(${itemType})[]` : `${itemType}[]`;
   }
   if (prop.type === 'object' && prop.title) return prop.title;
   if (prop.$ref) {
-    if (prop.$ref.includes('#')) {
-      const resolved = loadSchema(prop.$ref);
-      if (resolved) return fieldType(resolved);
+    const isLocalRef = prop.$ref.startsWith('#');
+    if (isLocalRef || prop.$ref.includes('#')) {
+      const resolved = isLocalRef ? resolveSchemaFragment(rootSchema, prop.$ref) : loadSchema(prop.$ref);
+      if (resolved) return fieldType(resolved, isLocalRef ? rootSchema : resolved);
     }
     // Extract type name from $ref path
     const parts = prop.$ref.split('#')[0].split('/');
@@ -252,7 +258,7 @@ function fieldType(prop: any): string {
     const variants = prop.oneOf || prop.anyOf;
     if (variants.length <= 3) {
       return variants
-        .map((v: any) => v.title || v.const || fieldType(v))
+        .map((v: any) => v.title || v.const || fieldType(v, rootSchema))
         .filter(Boolean)
         .join(' | ');
     }

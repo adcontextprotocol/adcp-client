@@ -97,7 +97,7 @@ test('commercial-terms verifier accepts a digest-bound exact reviewed snapshot',
   const result = verifyProposalCommercialTerms(
     proposal('proposal-terms', 'source-1', { commercial_terms: terms }),
     terms,
-    { adcpVersion: '3.2-beta.9' }
+    { adcpVersion: '3.2-beta.10' }
   );
 
   assert.equal(result.ok, true);
@@ -348,7 +348,7 @@ test('commercial-terms verifier fails closed when the requested schema bundle is
     proposal('proposal-version', 'source-1', { commercial_terms: terms }),
     terms,
     {
-      adcpVersion: '3.2.0-beta.999',
+      adcpVersion: '3.2.0-beta.1099',
     }
   );
   assert.equal(result.ok, false);
@@ -532,7 +532,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2-beta.9');
+  assert.equal(built.adcp_version, '3.2-beta.10');
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');
