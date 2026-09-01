@@ -153,6 +153,10 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   sync_principal: schemas.SyncPrincipalResponseSchema,
   get_principal: schemas.GetPrincipalResponseSchema,
 
+  // Principal configuration
+  get_principal: schemas.GetPrincipalResponseSchema,
+  sync_principal: schemas.SyncPrincipalResponseSchema,
+
   // Test controller
   comply_test_controller: schemas.ComplyTestControllerResponseSchema,
 
