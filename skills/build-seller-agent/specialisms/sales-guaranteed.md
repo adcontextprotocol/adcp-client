@@ -71,7 +71,7 @@ Declare `requires_io_approval` in your `capabilities.features` for this path. Fo
 
 ### Forecast (`Product.forecast`)
 
-Drive `Product.forecast` from a per-query upstream call so the buyer sees deltas across targeting, dates, and budget. Static seed-data `availability` blobs are placeholder; real GAM/FreeWheel/Operative integrations spend most of their API time here. The mock-server exposes the upstream-shape used by the worked adapter — see [`../../../src/lib/mock-server/sales-guaranteed/openapi.yaml`](../../../src/lib/mock-server/sales-guaranteed/openapi.yaml):
+Drive `Product.forecast` from a per-query upstream call so the buyer sees deltas across targeting, dates, and budget. Static seed-data `availability` blobs are placeholder; real GAM/FreeWheel/Operative integrations spend most of their API time here. The mock-server exposes the upstream-shape used by the worked adapter — see [`sales-guaranteed/openapi.yaml`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/mock-server/sales-guaranteed/openapi.yaml):
 
 | Mock endpoint                                                              | Returns                                              | When                                                       |
 | -------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------- |

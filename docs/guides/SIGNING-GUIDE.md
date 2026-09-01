@@ -541,39 +541,36 @@ applications do not need to reproduce the atomic binding and lease rules:
 
 ```typescript
 import {
-  createWebhookDeliveryRecovery,
-  getWebhookDeliveryMigration,
-  getWebhookDeliveryRecoveryMigration,
-  pgWebhookDeliveryStore,
-  pgWebhookDeliveryRecoveryBackend,
-  pollWebhookDeliveryRecovery,
+  createPostgresWebhookRuntime,
 } from '@adcp/sdk/server';
 
 const deliveryTable = 'myagent_webhook_deliveries';
 const outboxTable = 'myagent_webhook_outbox';
-await pool.query(getWebhookDeliveryMigration({ tableName: deliveryTable }));
-await pool.query(getWebhookDeliveryRecoveryMigration({ tableName: outboxTable }));
-
-const deliveryStore = pgWebhookDeliveryStore(pool, { tableName: deliveryTable });
-const deliveryRecovery = createWebhookDeliveryRecovery({
-  backend: pgWebhookDeliveryRecoveryBackend(pool, { tableName: outboxTable }),
+const webhooks = createPostgresWebhookRuntime({
+  db: pool,
+  publisherScope: 'myagent-production',
+  deliveries: { tableName: deliveryTable },
+  outbox: { tableName: outboxTable },
+  signerProvider,
   authenticationAdapter: {
     protect: (authentication, key) => secretManager.protect(authentication, key),
     resolve: (protectedValue, key) => secretManager.resolve(protectedValue, key),
   },
 });
 
-await pollWebhookDeliveryRecovery({
-  recovery: deliveryRecovery,
+for (const sql of webhooks.migrations.all) await pool.query(sql);
+await webhooks.probe();
+
+createAdcpServerFromPlatform(platform, {
+  name: 'myagent-production',
+  version: '1.0.0',
+  webhooks: webhooks.serverConfig,
+});
+
+await webhooks.recoverOnce({
   ownerToken: process.env.INSTANCE_ID,
   errorRetryAfterMs: 30_000,
   onError: (error, lease) => metrics.recordWebhookRecoveryError(error, lease.key),
-  deliver: async lease => {
-    const result = await webhookEmitter.forTenantScope(lease.key.tenantScope).emitRecovered(lease);
-    if (result.delivered) return { disposition: 'delivered' };
-    if (result.terminal) return { disposition: 'terminal' };
-    return { disposition: 'retry', retryAfterMs: 30_000 };
-  },
 });
 ```
 

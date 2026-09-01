@@ -10,7 +10,7 @@ import {
   ProposalNegotiator,
   extractProposalRefinementSupport,
   type CanonicalProposal,
-} from '../src/lib';
+} from '@adcp/sdk';
 
 const agentUrl = process.env['ADCP_AGENT_URL'];
 const sourceProposalId = process.env['ADCP_PROPOSAL_ID'];

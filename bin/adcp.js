@@ -51,7 +51,8 @@ const {
 } = require('./adcp-storyboard-summary.js');
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
-const { LIBRARY_VERSION } = require('../dist/lib/version.js');
+const { ADCP_VERSION, LIBRARY_VERSION } = require('../dist/lib/version.js');
+const { isAdcpVersionSupported } = require('../dist/lib/utils/adcp-version-config.js');
 const { appendBuiltInVersionUnsupportedHint } = require('./adcp-version-unsupported-hint.js');
 const { sandboxRunOptions } = require('./adcp-storyboard-sandbox.js');
 const {
@@ -1946,6 +1947,8 @@ USAGE:
   adcp <command> [args]
 
 COMMANDS:
+  init seller [options]       Scaffold a compact AdCP 3.2 seller
+  doctor [options]            Check project secrets, SDK drift, and migrations
   storyboard <subcommand>     Test agent flows (run, list, show, step)
   specialism <subcommand>     Inspect a compliance specialism (list, show)
   grade <subject> <url>       Conformance graders (e.g. request-signing)
@@ -5545,6 +5548,33 @@ async function main() {
   if (args[0] === 'registry') {
     const code = await handleRegistryCommand(args.slice(1));
     process.exitCode = code;
+    return;
+  }
+
+  if (args[0] === 'init') {
+    const { handleInitCommand } = require('./adcp-project.js');
+    await handleInitCommand(
+      args.slice(1).filter(arg => arg !== '--allow-v2' && arg !== '--allow-http'),
+      { libraryVersion: LIBRARY_VERSION }
+    );
+    return;
+  }
+
+  if (args[0] === 'doctor') {
+    const { handleDoctorCommand } = require('./adcp-project.js');
+    await handleDoctorCommand(
+      args.slice(1).filter(arg => arg !== '--allow-v2' && arg !== '--allow-http'),
+      {
+        libraryVersion: LIBRARY_VERSION,
+        adcpVersion: ADCP_VERSION,
+        AdCPClient,
+        detectProtocol,
+        isAdcpVersionSupported,
+        resolveAgent(name) {
+          return BUILT_IN_AGENTS[name] ?? getAgent(name) ?? { url: name };
+        },
+      }
+    );
     return;
   }
 

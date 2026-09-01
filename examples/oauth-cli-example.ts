@@ -13,8 +13,8 @@ import {
   hasValidOAuthTokens,
   clearOAuthTokens,
   getEffectiveAuthToken,
-} from '../src/lib/auth/oauth';
-import type { AgentConfig } from '../src/lib/types/adcp';
+} from '@adcp/sdk/auth';
+import type { AgentConfig } from '@adcp/sdk';
 
 // Example: Agent configured for OAuth
 const agent: AgentConfig = {

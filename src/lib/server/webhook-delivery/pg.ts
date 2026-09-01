@@ -45,8 +45,12 @@ export interface PgWebhookDeliveryRecoveryOptions {
   tableName?: string;
   /** Assert that the database/schema is dedicated to this deployment. */
   acknowledgeIsolatedDatabase?: boolean;
-  /** Restrict recovery leases to this trusted publisher/tenant namespace. */
-  claimScope?: Pick<WebhookDeliveryKey, 'publisherScope' | 'tenantScope'>;
+  /**
+   * Restrict recovery leases to this trusted publisher namespace and,
+   * optionally, one tenant. Omit `tenantScope` for a publisher runtime that
+   * serves multiple trusted tenants via `emitter.forTenantScope(...)`.
+   */
+  claimScope?: Pick<WebhookDeliveryKey, 'publisherScope'> & Partial<Pick<WebhookDeliveryKey, 'tenantScope'>>;
 }
 
 export function getWebhookDeliveryMigration(options: PgWebhookDeliveryStoreOptions = {}): string {
@@ -208,12 +212,17 @@ export function pgWebhookDeliveryRecoveryBackend(
   const table = quoteWebhookTable(tableName);
   assertPgDeploymentNamespace('pgWebhookDeliveryRecoveryBackend', tableName, DEFAULT_OUTBOX_TABLE, options);
   if (options.claimScope) {
-    assertDeliveryKey({ ...options.claimScope, deliveryId: 'claim-scope-validation' });
+    assertDeliveryKey({
+      publisherScope: options.claimScope.publisherScope,
+      tenantScope: options.claimScope.tenantScope ?? 'claim-scope-validation',
+      deliveryId: 'claim-scope-validation',
+    });
   }
   const assertConfiguredScope = (key: Readonly<WebhookDeliveryKey>) => {
     if (
       options.claimScope &&
-      (key.publisherScope !== options.claimScope.publisherScope || key.tenantScope !== options.claimScope.tenantScope)
+      (key.publisherScope !== options.claimScope.publisherScope ||
+        (options.claimScope.tenantScope !== undefined && key.tenantScope !== options.claimScope.tenantScope))
     ) {
       throw new Error('Webhook recovery key is outside the configured claim scope');
     }
@@ -324,7 +333,9 @@ export function pgWebhookDeliveryRecoveryBackend(
     },
     async claimPending({ ownerToken, leaseMs, limit }): Promise<WebhookRecoveryRecord[]> {
       assertLeaseControls(ownerToken, leaseMs, limit);
-      const scopePredicate = options.claimScope ? 'AND publisher_scope = $4 AND tenant_scope = $5' : '';
+      const scopePredicate = options.claimScope
+        ? `AND publisher_scope = $4${options.claimScope.tenantScope === undefined ? '' : ' AND tenant_scope = $5'}`
+        : '';
       const result = await query(
         'claimPending',
         `WITH candidates AS (
@@ -358,7 +369,12 @@ export function pgWebhookDeliveryRecoveryBackend(
           ownerToken,
           leaseMs,
           limit,
-          ...(options.claimScope ? [options.claimScope.publisherScope, options.claimScope.tenantScope] : []),
+          ...(options.claimScope
+            ? [
+                options.claimScope.publisherScope,
+                ...(options.claimScope.tenantScope === undefined ? [] : [options.claimScope.tenantScope]),
+              ]
+            : []),
         ]
       );
       return result.rows.map(rowToRecoveryRecord);

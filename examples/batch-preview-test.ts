@@ -9,9 +9,14 @@
  * 3. Caching behavior
  */
 
-import { AdCPClient } from '../src/lib/core/AdCPClient';
-import { batchPreviewProducts, batchPreviewFormatsLegacy, clearPreviewCache } from '../src/lib/utils/preview-utils';
-import type { Product, Format } from '../src/lib/types/tools.generated';
+import {
+  AdCPClient,
+  batchPreviewProducts,
+  batchPreviewFormatsLegacy,
+  clearPreviewCache,
+  type Product,
+  type Format,
+} from '@adcp/sdk';
 
 // Configuration
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';

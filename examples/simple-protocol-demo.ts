@@ -6,7 +6,7 @@
  * Shows how easy it is to detect input requests with ADCP spec PR #77
  */
 
-import { ProtocolResponseParser, ADCP_STATUS } from '../src/lib/index';
+import { ProtocolResponseParser, ADCP_STATUS } from '@adcp/sdk';
 
 function main() {
   console.log('🎯 Simple ADCP Protocol Detection\n');

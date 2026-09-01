@@ -1,4 +1,4 @@
-# Migrating from 12.x to 14 beta
+# Migrating from 12.x to the 14 prerelease
 
 This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-beta.9` preview surface. Treat it as two review checkpoints even if you deploy one package update.
 
@@ -11,10 +11,10 @@ and crash-safe continuation generation replacement. Beta.6 adds coordinated
 placements, seller-rendered stateful display, creative component assets, and
 A2A 1.0 request-signing method names.
 
-Install the beta explicitly:
+Install the v14 prerelease explicitly:
 
 ```bash
-npm install @adcp/sdk@beta
+npm install '@adcp/sdk@^14.0.0-0'
 ```
 
 If a pre-3.2 brief can return products without a proposal, configure a durable

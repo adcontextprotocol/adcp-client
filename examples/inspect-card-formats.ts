@@ -9,8 +9,13 @@
  * 3. How to properly structure creative_manifest for cards
  */
 
-import { AdCPClient } from '../src/lib/core/AdCPClient';
-import { getFormatAssets, getRequiredAssets, getOptionalAssets, usesDeprecatedAssetsField } from '../src/lib';
+import {
+  AdCPClient,
+  getFormatAssets,
+  getRequiredAssets,
+  getOptionalAssets,
+  usesDeprecatedAssetsField,
+} from '@adcp/sdk';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 const CREATIVE_AGENT_PROTOCOL = (process.env.CREATIVE_AGENT_PROTOCOL || 'mcp') as 'mcp' | 'a2a';

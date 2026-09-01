@@ -73,7 +73,7 @@ Real walled-garden Marketing APIs (Meta `delivery_estimate`, TikTok `audience_es
 | `POST /v1.3/advertiser/{id}/audience_reach_estimate`  | total + matchable audience size              | `Product.forecast.points[0].metrics.audience_size` (availability point) |
 | `POST /v1.3/advertiser/{id}/audience/{aud}/lookalike` | lookalike size + activation ETA              | adapter-state, surfaced in `sync_audiences` follow-up                   |
 
-OpenAPI: [`../../../src/lib/mock-server/sales-social/openapi.yaml`](../../../src/lib/mock-server/sales-social/openapi.yaml).
+OpenAPI: [`sales-social/openapi.yaml`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/mock-server/sales-social/openapi.yaml).
 
 **Upstream → AdCP field map.** The mock returns upstream-shaped `{min, max}` ranges; AdCP `ForecastRange` uses `{low, mid, high}`. Renames the worked adapter handles:
 

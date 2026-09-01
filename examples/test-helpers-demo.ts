@@ -2,7 +2,7 @@
 // Test Helpers Demo - Using Pre-configured Test Agents
 // This example shows how to use the built-in test helpers for quick testing and examples
 
-import { testAgent, testAgentA2A, testAgentClient, createTestAgent, AdCPClient } from '../src/lib';
+import { testAgent, testAgentA2A, testAgentClient, createTestAgent, AdCPClient } from '@adcp/sdk';
 
 /**
  * Example 1: Simplest Possible Usage

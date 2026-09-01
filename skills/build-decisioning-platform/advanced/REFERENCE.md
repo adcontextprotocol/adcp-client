@@ -175,7 +175,7 @@ createMediaBuy: async (req, ctx) => {
 
 **Same primitive across all specialisms** — sales (`product` / `media_buy` / `package`), creative-builder (refine workflow: stash on `build_creative`, read on `refine_creative`), audiences, signals, brand-rights.
 
-See [`docs/proposals/decisioning-platform-v6-1-ctx-metadata.md`](../../docs/proposals/decisioning-platform-v6-1-ctx-metadata.md) for the full design.
+See [`decisioning-platform-v6-1-ctx-metadata.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/proposals/decisioning-platform-v6-1-ctx-metadata.md) for the full design.
 
 ## Two async patterns
 
@@ -1003,10 +1003,10 @@ Hooks are throw-safe — adopter callback exceptions are caught and logged via t
 
 ## Reference
 
-- Worked example: [`examples/decisioning-platform-mock-seller.ts`](../../examples/decisioning-platform-mock-seller.ts)
-- Integration tests: [`test/server-decisioning-mock-seller.test.js`](../../test/server-decisioning-mock-seller.test.js)
-- Design doc: [`docs/proposals/decisioning-platform-v1.md`](../../docs/proposals/decisioning-platform-v1.md)
-- MCP+A2A serving: [`docs/proposals/mcp-a2a-unified-serving.md`](../../docs/proposals/mcp-a2a-unified-serving.md)
+- Worked example: [`examples/decisioning-platform-mock-seller.ts`](../../../examples/decisioning-platform-mock-seller.ts)
+- Integration tests: [`server-decisioning-mock-seller.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/server-decisioning-mock-seller.test.js)
+- Design doc: [`decisioning-platform-v1.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/proposals/decisioning-platform-v1.md)
+- MCP+A2A serving: [`mcp-a2a-unified-serving.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/proposals/mcp-a2a-unified-serving.md)
 - Migration sketches: `docs/proposals/decisioning-platform-{training-agent,gam,scope3,prebid}-migration.md`
 
 ## What's not in v6.0 alpha

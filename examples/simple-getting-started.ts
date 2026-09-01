@@ -2,7 +2,7 @@
 // Simple Getting Started Example - Your First ADCP Client
 // This example shows the absolute simplest way to use the ADCP client library
 
-import { ADCPMultiAgentClient, createFieldHandler, type AgentConfig } from '../src/lib';
+import { ADCPMultiAgentClient, createFieldHandler, type AgentConfig } from '@adcp/sdk';
 
 /**
  * Example 1: Absolute Simplest Usage

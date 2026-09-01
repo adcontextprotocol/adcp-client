@@ -7,7 +7,7 @@
 > **[planned]** describe the contract Phase 2 will ship.
 >
 > Tracking: [adcp-client#1494](https://github.com/adcontextprotocol/adcp-client/issues/1494)
-> · proposal: [`docs/proposals/lifecycle-state-and-sandbox-authority.md`](./proposals/lifecycle-state-and-sandbox-authority.md)
+> · proposal: [`docs/proposals/lifecycle-state-and-sandbox-authority.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/proposals/lifecycle-state-and-sandbox-authority.md)
 
 ## tl;dr — the one diff you need to make
 
@@ -35,7 +35,7 @@ In 6.x, mode is informational — the framework gates `comply_test_controller` o
 
 ## What ships in 7.0 [planned]
 
-1. **`ctx.upstream` on `HandlerContext`** — the framework resolves the per-request upstream URL from the resolved account's mode and threads it through every adapter call. Lives at [`src/lib/server/create-adcp-server.ts`](../src/lib/server/create-adcp-server.ts) — today `HandlerContext` is allocated fresh per tool-handler invocation; Phase 2 stamps `upstream` on the same allocation.
+1. **`ctx.upstream` on `HandlerContext`** — the framework resolves the per-request upstream URL from the resolved account's mode and threads it through every adapter call. Lives at [`src/lib/server/create-adcp-server.ts`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/server/create-adcp-server.ts) — today `HandlerContext` is allocated fresh per tool-handler invocation; Phase 2 stamps `upstream` on the same allocation.
 2. **Adapter contract**: every `SalesPlatform` / `SignalsPlatform` / `CreativePlatform` method receives `ctx.upstream` as the source of truth for the URL its outbound HTTP calls should target. Adapters that ignore it (and hard-code their own URL) work for `'live'` mode but fail conformance in `'mock'` mode.
 3. **`mock-server` URL contract**: [`bin/adcp.js mock-server <specialism>`](../bin/adcp.js) exposes a stable URL that the framework hands to adapters for `mock`-mode requests. The framework boots / supervises the mock-server when configured to.
 4. **`account.mode` persistence across async-task lifecycle** — `tasks/get` polls and webhook emissions read the resolved `mode` from the original request's account, not from the polling caller's auth. A buy created on a `'sandbox'` account stays sandbox-routed for its whole lifecycle.
@@ -125,7 +125,7 @@ When 7.0 ships, run through:
 
 ## Refs
 
-- `docs/proposals/lifecycle-state-and-sandbox-authority.md` — the design proposal
+- [`docs/proposals/lifecycle-state-and-sandbox-authority.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/proposals/lifecycle-state-and-sandbox-authority.md) — the design proposal
 - adcp-client#1495 — mock-server fixture scaffolding (companion track)
 - adcp-client#1647 — derived resolution mode rework (companion track for upstream-managed rosters)
 - `adcp mock-server --help` — CLI surface for the per-specialism mock fixtures

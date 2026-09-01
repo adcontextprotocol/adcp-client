@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-08-31
+> Generated at: 2026-09-01
 > Library: @adcp/sdk v14.0.0-beta.25
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -11,10 +11,17 @@
 
 AdCP is an open protocol for AI agents to buy, manage, and optimize advertising programmatically. It defines MCP tools that agents call on publisher ad servers — discover inventory, create media buys, sync creatives, manage brand safety, and track delivery. Every tool follows request/response JSON schemas; the TypeScript client wraps them with async task handling, conversation context, and governance middleware.
 
-## Are you building a client or a server?
+## Start here: SDK 14 and AdCP 3.2
 
-- **Client** (calling existing agents): Continue reading — the Quick Start below is for you.
-- **Server** (implementing an agent that others call): Read `docs/guides/BUILD-AN-AGENT.md` and `docs/migration-5.x-to-6.x.md`. v6 recommended path:
+SDK 14 requires Node.js `^20.19.0 || >=22.12.0`; install the newest v14 prerelease with `@adcp/sdk@^14.0.0-0`.
+
+SDK 14 is compact-lifecycle first: `list_products → buy_products → control_media_buy`, with `request_proposals → refine_proposals → accept_proposal` when terms need negotiation.
+
+- **Buyer** (calling a seller): read `docs/guides/BUYER-QUICKSTART-3.2.md` first.
+- **Seller** (implementing an agent that others call): read `docs/guides/SELLER-QUICKSTART-3.2.md` first, then `docs/guides/BUILD-AN-AGENT.md` for the complete framework surface.
+- **Upgrading an existing application:** read `docs/migration-13-to-14.md`; established 3.0/3.1 tools remain supported as an explicit compatibility path.
+
+## Server framework reference
 
 ```typescript
 import { serve } from '@adcp/sdk';
@@ -82,9 +89,10 @@ Lower-level option: `createAdcpServer({ signals: { getSignals: ... } })` from `@
 
 **Don't put credentials in `ctx_metadata`.** Wire-strip protects buyer responses but not server-side log lines, error envelopes, heap dumps, or adopter-generated strings. Re-derive bearers per request from `ctx.authInfo` + your token cache; embed only non-secret upstream IDs in `ctx_metadata`. See [`docs/guides/CTX-METADATA-SAFETY.md`](./guides/CTX-METADATA-SAFETY.md).
 
-## Quick Start (Client)
+## Quick Start (Buyer)
 
 ```typescript
+import { randomUUID } from 'node:crypto';
 import { ADCPMultiAgentClient } from '@adcp/sdk';
 
 const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {
@@ -92,19 +100,33 @@ const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {
 });
 const agent = client.agent('default-agent');
 
-// Discover products
-const products = await agent.getProducts({ buying_mode: 'brief', brief: 'coffee brands' });
-if (products.status === 'completed') console.log(products.data.products);
-
-// Create a media buy
-const buy = await agent.createMediaBuy({
-  account: { account_id: 'acct_1' },
-  brand: { domain: 'coffee.example.com' },
-  start_time: 'asap',
-  end_time: '2026-06-01T00:00:00Z',
-  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod_1', pricing_option_id: 'cpm_1', budget: 5000 }],
+const account = { account_id: 'seller-issued-account-id' };
+const listed = await agent.listProducts({
+  account,
+  brand: { domain: 'advertiser.example' },
 });
+if (!listed.success || listed.status !== 'completed') throw new Error(listed.error ?? listed.status);
+
+const product = listed.data!.products[0];
+const pricing = product?.pricing_options?.[0];
+if (!product || !pricing) throw new Error('Seller returned no purchasable products');
+
+const purchaseIdempotencyKey = randomUUID(); // Persist before sending; reuse after an ambiguous timeout.
+const endTime = new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000).toISOString();
+const bought = await agent.buyProducts({
+  idempotency_key: purchaseIdempotencyKey,
+  account,
+  brand: { domain: 'advertiser.example' },
+  feed_version: listed.data!.feed_version,
+  start_time: 'asap',
+  end_time: endTime,
+  purchases: [{ product_id: product.product_id, pricing_option_id: pricing.pricing_option_id, budget: 5000 }],
+});
+const completed = bought.status === 'submitted' ? await bought.submitted!.waitForCompletion() : bought;
+if (!completed.success || completed.status !== 'completed') throw new Error(completed.error ?? completed.status);
 ```
+
+A submitted mutation must settle before it can be controlled; retain the task handle or configure `push_notification_config`. The buyer quick start shows completion, revision-aware control, readback, and correction paths.
 
 ## Canonical Reference Resolver
 
@@ -1891,10 +1913,11 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `WebhooksConfig.tenantScope` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |
 | `PostgresTaskSettlementCoordinator` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |
 | `PostgresTaskSettlementIntentQueue` | Commits an exact terminal intent with application state, then recovers idempotent SDK task settlement after a crash |
+| `PostgresWebhookRuntime` | Opinionated PostgreSQL webhook emitter, ready-to-wire server config, durable stores, migrations, probes, and bounded recovery |
 
 Production webhook publishers may construct an unbound emitter and call `forTenantScope(trustedTenant)` before every delivery. Direct unbound `emit()` fails before checkpointing or network access. `createAdcpServer` derives scope from trusted request context; configure `webhooks.tenantScope` only for a genuinely single-tenant factory.
 Push-enabled decisioning tasks settled by another process must return `ctx.handoffToTask(producer, { settlement: 'external' })`; the framework withholds `submitted` until the producer durably queues the complete scoped handle and encrypted route. Workers use `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()` / `failScopedPushTask()`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for `applied` or compatible `already_terminal`; retry or dead-letter scope misses and conflicts.
-When application state commits before SDK task settlement, call `createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })` in the same domain transaction. Acknowledgement discards the payload and retains an immutable fingerprint tombstone through the configured idempotency horizon; `pruneAcknowledged()` removes expired tombstones in bounded batches. Recovery callbacks are at-least-once and must prove the exact terminal artifact before returning `settled`; polling tasks compare the scoped registry record, while push tasks use the PostgreSQL settlement coordinator. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for copyable handlers and scoped dead-letter operations.
+When application state commits before SDK task settlement, call `createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })` in the same domain transaction. Acknowledgement discards the payload and retains an immutable fingerprint tombstone through the configured idempotency horizon; `pruneAcknowledged()` removes expired tombstones in bounded batches. Recovery callbacks are at-least-once. Use `applyTaskSettlementIntent()` to apply and prove the exact polling or push terminal artifact before returning `settled`. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for the supported workflow and scoped dead-letter operations.
 
 ## Task Statuses
 
@@ -1914,7 +1937,7 @@ Every tool call returns a `TaskResult` with one of these statuses:
 
 AdCP tools are served over MCP (Model Context Protocol) or A2A (Agent-to-Agent). The client auto-detects based on `AgentConfig.protocol`. MCP endpoints end with `/mcp/`. Bearer auth uses `Authorization: Bearer <token>`; SDK clients also send the legacy `x-adcp-auth` header for compatibility, and servers accept it as a fallback.
 
-**Deep dive:** docs/development/PROTOCOL_DIFFERENCES.md
+**Deep dive:** [protocol differences](development/PROTOCOL_DIFFERENCES.md)
 
 ## Discovery
 
@@ -1927,6 +1950,10 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Need | Local path | Hosted |
 |------|-----------|--------|
 | Full type signatures | docs/TYPE-SUMMARY.md | [link](https://adcontextprotocol.github.io/adcp-client/TYPE-SUMMARY.md) |
+| Buyer quick start (AdCP 3.2) | docs/guides/BUYER-QUICKSTART-3.2.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/BUYER-QUICKSTART-3.2.md) |
+| Seller quick start (AdCP 3.2) | docs/guides/SELLER-QUICKSTART-3.2.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/SELLER-QUICKSTART-3.2.md) |
+| Production durability checklist | docs/guides/PRODUCTION-DURABILITY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/PRODUCTION-DURABILITY.md) |
+| Migrating SDK 13 → 14 | docs/migration-13-to-14.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-13-to-14.md) |
 | Getting started / install | docs/getting-started.md | [link](https://adcontextprotocol.github.io/adcp-client/getting-started.md) |
 | Build a server-side agent | docs/guides/BUILD-AN-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/BUILD-AN-AGENT.md) |
 | Migrating 6.7 → 6.9 (skips deprecated 6.8.0; 13 additive recipes; 2 breaking) | docs/migration-6.7-to-6.9.md | [link](https://adcontextprotocol.github.io/adcp-client/migration-6.7-to-6.9.md) |
@@ -1950,7 +1977,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Testing strategy | docs/guides/TESTING-STRATEGY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/TESTING-STRATEGY.md) |
 | Testing `composeMethod`-wrapped handlers | docs/recipes/composeMethod-testing.md | [link](https://adcontextprotocol.github.io/adcp-client/recipes/composeMethod-testing.md) |
 | Protocol differences (MCP vs A2A) | docs/development/PROTOCOL_DIFFERENCES.md | [link](https://adcontextprotocol.github.io/adcp-client/development/PROTOCOL_DIFFERENCES.md) |
-| TypeDoc API reference | docs/api/index.html | [link](https://adcontextprotocol.github.io/adcp-client/api/index.html) |
+| TypeDoc API reference | hosted only | [link](https://adcontextprotocol.github.io/adcp-client/api/index.html) |
 
 JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 
@@ -1959,4 +1986,4 @@ JSON schemas (source of truth): `schemas/cache/latest/index.json` (local only)
 - Documentation: https://adcontextprotocol.github.io/adcp-client/
 - npm: https://www.npmjs.com/package/@adcp/sdk
 - Spec: https://adcontextprotocol.org
-- CLI: `npx @adcp/sdk@adcp-3.1` for the 8.1 / AdCP 3.1 beta line
+- SDK 14 CLI: `npx --package '@adcp/sdk@^14.0.0-0' adcp --help`; use the `adcp-3.1` tag only for the maintained 3.1 compatibility line

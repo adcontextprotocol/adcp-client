@@ -162,6 +162,8 @@ export interface CreateWebhookDeliveryRecoveryOptions {
   backend: WebhookDeliveryRecoveryBackend;
   /** Required when a snapshot carries bearer or HMAC credentials. */
   authenticationAdapter?: WebhookAuthenticationAdapter;
+  /** Protect top-level payload tokens on every live checkpoint. Generic recovery defaults to false. */
+  protectPayloadToken?: boolean;
   defaultLeaseMs?: number;
   /** Maximum serialized durable snapshot size. Defaults to 2 MiB. */
   maxSnapshotBytes?: number;
@@ -299,7 +301,7 @@ export function createWebhookDeliveryRecovery(
         snapshot,
         key,
         options.authenticationAdapter,
-        prepareOptions?.protectPayloadToken === true
+        prepareOptions?.protectPayloadToken ?? options.protectPayloadToken === true
       );
       assertStoredSnapshotSize(stored, maxSnapshotBytes);
       return {
@@ -310,7 +312,12 @@ export function createWebhookDeliveryRecovery(
     },
     async checkpoint(key, snapshot): Promise<void | WebhookDeliveryRecoveryClaim> {
       assertDeliveryKey(key);
-      const stored = await protectSnapshot(snapshot, key, options.authenticationAdapter, false);
+      const stored = await protectSnapshot(
+        snapshot,
+        key,
+        options.authenticationAdapter,
+        options.protectPayloadToken === true
+      );
       assertStoredSnapshotSize(stored, maxSnapshotBytes);
       const fingerprint = snapshotFingerprint(stored);
       const storageFingerprint = canonicalJsonSha256(stored);
