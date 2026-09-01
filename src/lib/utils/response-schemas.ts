@@ -150,8 +150,6 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   get_task_status: schemas.GetTaskStatusResponseSchema,
   list_tasks: schemas.ListTasksResponseSchema,
   sync_agent_notification_configs: schemas.SyncAgentNotificationConfigsResponseSchema,
-  sync_principal: schemas.SyncPrincipalResponseSchema,
-  get_principal: schemas.GetPrincipalResponseSchema,
 
   // Principal configuration
   get_principal: schemas.GetPrincipalResponseSchema,
