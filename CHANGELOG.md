@@ -1,5 +1,22 @@
 # Changelog
 
+## 14.0.0-beta.26
+
+### Minor Changes
+
+- a239627: Make SDK 14 adoption 3.2-first: ship a compact seller starter and persona-based
+  documentation, verify packed docs and examples, export exact task-settlement
+  intent application, provide an opinionated PostgreSQL webhook runtime with
+  normalized recovery outcomes and ready-to-wire server configuration, and add a
+  secret-safe `adcp init seller` plus catalog- and migration-aware `adcp doctor`.
+- 8446c55: Make the structured-content text fallback a marked, per-client transport-edge decoration while keeping canonical cached responses and A2A artifacts clean.
+
+### Patch Changes
+
+- f6ada8e: Expose placement presentation reference and document validators from the package root, publish their types from the root, schemas, and types entrypoints, and document secure digest-pinned validation.
+- 1d42629: Prevent capability-gated storyboard phases from dispatching dependent requests with unavailable context and keep those applicability skips neutral in compliance bundle scoring.
+- b0cf238: Adopt the signed AdCP 3.2.0-beta.10 bundle, including principal discovery, reporting-delivery contracts and server handler wiring, and DOOH schema updates.
+
 ## 14.0.0-beta.25
 
 ### Patch Changes
