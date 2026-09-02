@@ -1,7 +1,7 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-08-16
-> Library: @adcp/sdk v13.0.0-rc.26
+> Generated at: 2026-09-02
+> Library: @adcp/sdk v13.0.1
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
 > Note: the `Library` stamp reflects the package.json version at doc-generation time. The narrative below describes the surface that lands on the next-published minor — including any 6.7 helpers documented here ahead of the release tag.
@@ -1107,13 +1107,13 @@ Flow: `get_adcp_capabilities → get_products → create_media_buy → update_me
 **Seller rejects illegal state transitions and unknown references** — Validates that the seller returns structured AdCP errors (MEDIA_BUY_NOT_FOUND, PACKAGE_NOT_FOUND, NOT_CANCELLABLE) rather than 500s or undefined behavior when the buyer references missing entities or attempts forbidden state transitions.
 Flow: `update_media_buy → get_products → create_media_buy → update_media_buy`
 
-**Seller handles property_list / collection_list references that match zero inventory** — Verifies a seller returns a zero-forecast product or a clear error — not a crash — when a buyer references inventory lists that resolve to nothing in the seller's catalog.
+**Seller handles a property_list reference that matches zero inventory** — Verifies a seller preserves a no-match property list on an accepted buy or returns a structured error.
 Flow: `get_products → create_media_buy`
 
-**Seller honors property_list and collection_list targeting on create and update** — Verifies that a seller accepts PropertyListReference and CollectionListReference in package targeting on create_media_buy AND update_media_buy, with parity between both paths.
+**Seller honors property_list targeting on create and update** — Verifies that a seller accepts PropertyListReference in package targeting on create_media_buy AND update_media_buy, with parity between both paths.
 Flow: `get_products → create_media_buy → get_media_buys → update_media_buy → get_media_buys`
 
-**Seller rejects unworkable measurement_terms** — Buyer proposes measurement_terms the seller will not accept; seller returns TERMS_REJECTED; buyer retries with seller-compatible terms.
+**Seller rejects unworkable measurement_terms** — Buyer proposes unworkable measurement_terms and the seller returns TERMS_REJECTED.
 Flow: `get_products → create_media_buy`
 
 **Legacy package correlation fallback without product_id** — Models the mixed-seller compatibility path where a legacy package response omits product_id and buyers correlate by package context.buyer_ref.

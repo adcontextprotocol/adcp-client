@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.1.15
-// Generated at: 2026-08-16T22:04:32.882Z
+// Generated AdCP core types from official schemas v3.1.20
+// Generated at: 2026-09-02T13:12:08.033Z
 
 // MEDIA-BUY SCHEMA
 /**
@@ -5131,7 +5131,7 @@ export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus
  */
 export type TMPResponseType = 'activation' | 'catalog_items' | 'creative' | 'deal';
 /**
- * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver which identity graph to resolve against.
+ * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver how to interpret and resolve the identifier; some types, including PAIR, are publisher-scoped rather than universal identity-graph tokens.
  */
 export type UIDType =
   | 'rampid'
@@ -20605,7 +20605,7 @@ export interface MediaBuyFeatures {
    */
   inline_creative_management?: boolean;
   /**
-   * Honors property_list parameter in get_products to filter results to buyer-approved properties
+   * Honors property_list references in get_products filtering and in targeting_overlay on create_media_buy and update_media_buy
    */
   property_list_filtering?: boolean;
   /**

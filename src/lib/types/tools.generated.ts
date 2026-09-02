@@ -1227,7 +1227,7 @@ export interface MediaBuyFeatures {
    */
   inline_creative_management?: boolean;
   /**
-   * Honors property_list parameter in get_products to filter results to buyer-approved properties
+   * Honors property_list references in get_products filtering and in targeting_overlay on create_media_buy and update_media_buy
    */
   property_list_filtering?: boolean;
   /**
@@ -2893,7 +2893,7 @@ export type TalentRole =
  */
 export type DerivativeType = 'clip' | 'highlight' | 'recap' | 'trailer' | 'bonus';
 /**
- * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver which identity graph to resolve against.
+ * Type of user identifier. Used in audience sync, event logging, and TMP identity match requests to tell the receiver how to interpret and resolve the identifier; some types, including PAIR, are publisher-scoped rather than universal identity-graph tokens.
  */
 export type UIDType =
   | 'rampid'
