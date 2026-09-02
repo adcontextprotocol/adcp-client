@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.0.2
+
+### Patch Changes
+
+- 5775471: Pin the signed AdCP 3.1.20 bundle, including the corrected creative-format pagination compliance schema selection.
+
 ## 13.0.1
 
 ### Patch Changes
