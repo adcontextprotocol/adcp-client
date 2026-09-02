@@ -728,6 +728,14 @@ export interface StoryboardStep {
   /** When true, the step passes if the task returns an error */
   expect_error?: boolean;
   /**
+   * Classifies an expected rejection as either an intentionally malformed
+   * request (`schema_invalid`) or a schema-valid request rejected by seller
+   * policy/state (`payload_well_formed`). The distinction lets the runner
+   * treat an SDK-local request-schema rejection as `INVALID_REQUEST` without
+   * masking seller-side validation on well-formed negative paths.
+   */
+  negative_path?: 'schema_invalid' | 'payload_well_formed';
+  /**
    * Per-step invariant opt-out. See `StepInvariantsObject`. Use when a
    * specific step deliberately trips a default invariant (e.g. a
    * `check_governance` 200 `status: denied` that is the setup for a
