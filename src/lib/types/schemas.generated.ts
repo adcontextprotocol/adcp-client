@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-02T01:24:14.988Z
+// Generated at: 2026-09-02T02:27:10.155Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1813,13 +1813,40 @@ export const CanonicalFormatVASTAudioSchema = z.object({
     vast_versions: z.array(VASTVersionSchema).optional(),
     vast_version: VASTVersionSchema.optional(),
     media_file_requirements: VASTMediaFileRequirementsSchema.optional(),
-    duration_ms_range: z.array(z.number()).optional(),
+    duration_ms_range: z.array(z.number().int().min(0)).length(2).optional(),
     duration_ms_exact: z.int().min(1).optional(),
     skippable_after_ms: z.int().min(0).optional(),
     max_wrapper_depth: z.int().min(0).optional(),
     ssl_required: z.boolean().optional(),
     companion_image_required: z.boolean().optional()
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+    if (value.vast_version !== undefined && value.vast_versions !== undefined) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "audio VAST declarations cannot combine vast_version and vast_versions"
+        });
+    }
+    const requirements = value.media_file_requirements;
+    requirements?.mime_types?.forEach((mimeType, index) => {
+        if (!/^audio\//i.test(mimeType)) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["media_file_requirements", "mime_types", index],
+                message: "audio VAST media MIME types must use the audio/* family"
+            });
+        }
+    });
+    for (const dimension of ["min_width", "max_width", "min_height", "max_height"] as const) {
+        if (requirements?.[dimension] !== undefined) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["media_file_requirements", dimension],
+                message: "audio VAST media requirements cannot declare visual dimensions"
+            });
+        }
+    }
+});
 
 export const CanonicalFormatDAASTAudioSchema = z.object({
     experimental: z.boolean().optional(),
