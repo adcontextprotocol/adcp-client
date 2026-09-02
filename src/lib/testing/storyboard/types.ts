@@ -1600,6 +1600,8 @@ export interface TrustedMatchPublisherAuthRunner {
 }
 
 export interface StoryboardRunOptions extends TestOptions {
+  /** Caller-selected compliance cache root for bundle-scoped test kits. */
+  complianceDir?: string;
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
   /**
