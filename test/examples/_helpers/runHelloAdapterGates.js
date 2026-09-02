@@ -164,6 +164,10 @@ function runHelloAdapterGates(config) {
         ? `${extra.label} (${extra.id})`
         : `additional storyboard ${extra.id} passes with zero failed steps`;
       it(label, async () => {
+        // Each entry is an independent compliance run. Clear renders,
+        // idempotency records, scripted responses, and traffic from the
+        // primary run so repeated storyboard ids cannot inherit mock state.
+        await mockHandle.scenario.reset();
         const grader = await runGrader(
           `http://127.0.0.1:${agentPort}/mcp`,
           extra.id,

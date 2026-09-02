@@ -600,7 +600,7 @@ test('modern serving returns structured AdCP validation errors while advertising
       createAdcpServer({
         name: 'modern-validation-test',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.10',
+        adcpVersion: '3.2.0-beta.11',
         mcpToolProfile: 'all',
         stateStore: new InMemoryStateStore(),
         validation: { requests: 'off', responses: 'off' },
@@ -685,7 +685,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
         createAdcpServer({
           name: 'modern-profile-test',
           version: '1.0.0',
-          adcpVersion: '3.2.0-beta.10',
+          adcpVersion: '3.2.0-beta.11',
           idempotency: 'disabled',
           ...(mcpToolProfile !== undefined && { mcpToolProfile }),
           stateStore: new InMemoryStateStore(),
@@ -750,6 +750,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   const compactNames = compact.tools.map(tool => tool.name);
   assert.ok(compactNames.includes('list_products'));
   assert.ok(compactNames.includes('buy_products'));
+  assert.ok(compactNames.includes('get_principal'));
   assert.ok(compactNames.includes('sync_principal'));
   assert.ok(compactNames.includes('get_reporting_status'));
   assert.ok(compactNames.includes('sync_reporting_receipts'));
@@ -765,7 +766,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     compactNames.every(name => MEDIA_BUY_MCP_TOOL_PROFILE.includes(name)),
     compactNames.join(', ')
   );
-  assert.equal(compact._meta.adcp_version, '3.2.0-beta.10');
+  assert.equal(compact._meta.adcp_version, '3.2.0-beta.11');
   assert.equal(compact._meta.adcp_profile, 'media-buy');
   assert.equal(
     compact.tools.find(tool => tool.name === 'list_products').description,
@@ -810,7 +811,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     'https://json-schema.org/draft/2020-12/schema'
   );
   assert.doesNotMatch(all.tools.find(tool => tool.name === 'request_proposals').inputSchema.$id, /\/profiles\//);
-  assert.equal(all._meta.adcp_version, '3.2.0-beta.10');
+  assert.equal(all._meta.adcp_version, '3.2.0-beta.11');
   assert.equal(all._meta.adcp_profile, 'all');
 });
 
@@ -882,7 +883,7 @@ test('modern serving preserves explicitly registered custom schemas and descript
       return { content: [{ type: 'text', text: 'unused' }] };
     }
   );
-  const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.0-beta.10'));
+  const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.0-beta.11'));
   const httpServer = createServer((req, res) => void adapter.handle(req, res));
   const url = await listen(httpServer);
   const client = new Client(
