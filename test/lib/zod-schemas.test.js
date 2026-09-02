@@ -460,6 +460,43 @@ describe('Zod Schema Validation', () => {
     }
   });
 
+  test('audio VAST preserves source-schema exclusions and duration item constraints', async () => {
+    if (!schemas) {
+      schemas = await import('../../dist/lib/types/schemas.generated.js');
+    }
+    const schema = schemas.CanonicalFormatVASTAudioSchema.strict();
+    const valid = {
+      vast_versions: ['4.1'],
+      media_file_requirements: {
+        mime_types: ['audio/mpeg', 'Audio/AAC'],
+        min_bitrate_kbps: 64,
+      },
+      duration_ms_range: [0, 30_000],
+    };
+
+    assert.equal(schema.safeParse(valid).success, true);
+    for (const invalid of [
+      { vast_version: '4.1', vast_versions: ['4.1'] },
+      { media_file_requirements: { mime_types: ['video/mp4'] } },
+      { media_file_requirements: { mime_types: ['audio/mpeg', 'video/mp4'] } },
+      { media_file_requirements: { min_width: 1 } },
+      { media_file_requirements: { max_width: 1 } },
+      { media_file_requirements: { min_height: 1 } },
+      { media_file_requirements: { max_height: 1 } },
+      { duration_ms_range: [-1, 1000] },
+      { duration_ms_range: [1.5, 1000] },
+      { duration_ms_range: [0] },
+      { duration_ms_range: [0, 1000, 2000] },
+    ]) {
+      assert.equal(
+        schemas.CanonicalFormatVASTAudioSchema.safeParse(invalid).success,
+        false,
+        `passthrough audio VAST must reject ${JSON.stringify(invalid)}`
+      );
+      assert.equal(schema.safeParse(invalid).success, false, `audio VAST must reject ${JSON.stringify(invalid)}`);
+    }
+  });
+
   test('placement presentation documents preserve their closed declarative boundary', async () => {
     if (!schemas) {
       schemas = await import('../../dist/lib/types/schemas.generated.js');

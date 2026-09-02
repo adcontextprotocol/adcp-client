@@ -6,6 +6,7 @@ import { jsonSchemaToZod } from 'json-schema-to-zod';
 import ts from 'typescript';
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
+import { isDeepStrictEqual } from 'util';
 
 /**
  * Generate Zod v4 schemas from TypeScript types
@@ -2006,6 +2007,139 @@ function postProcessCanonicalPrimitiveConstraints(content: string): string {
     content = content.slice(0, exportStart) + block + content.slice(exportEnd);
   }
   return content;
+}
+
+/**
+ * Preserve the audio-VAST constraints that cannot survive the JSON Schema ->
+ * TypeScript intermediary. The source schema uses a root `not.anyOf` for the
+ * singular/plural VAST-version XOR and audio-only MediaFile requirements, while
+ * the duration bounds live on the array's item schema. Guard the authoritative
+ * shape before refining the generated validator so a protocol change cannot be
+ * silently accepted under stale hand-written assumptions.
+ */
+function postProcessCanonicalVastAudioConstraints(content: string): string {
+  const source = JSON.parse(
+    readFileSync(path.join(__dirname, '../schemas/cache/latest/formats/canonical/audio_vast.json'), 'utf8')
+  ) as Record<string, unknown>;
+  const requireRecord = (value: unknown, label: string): Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`postProcessCanonicalVastAudioConstraints: canonical ${label} is missing.`);
+    }
+    return value as Record<string, unknown>;
+  };
+  const requireExact = (actual: unknown, expected: unknown, label: string): void => {
+    if (!isDeepStrictEqual(actual, expected)) {
+      throw new Error(`postProcessCanonicalVastAudioConstraints: canonical ${label} changed.`);
+    }
+  };
+
+  const properties = requireRecord(source.properties, 'properties');
+  const durationRange = requireRecord(properties.duration_ms_range, 'duration_ms_range');
+  requireExact(
+    {
+      type: durationRange.type,
+      items: durationRange.items,
+      minItems: durationRange.minItems,
+      maxItems: durationRange.maxItems,
+    },
+    {
+      type: 'array',
+      items: { type: 'integer', minimum: 0 },
+      minItems: 2,
+      maxItems: 2,
+    },
+    'duration_ms_range constraints'
+  );
+  requireExact(
+    requireRecord(source.not, 'not').anyOf,
+    [
+      { required: ['vast_version', 'vast_versions'] },
+      {
+        properties: {
+          media_file_requirements: {
+            properties: {
+              mime_types: {
+                contains: { not: { pattern: '^[Aa][Uu][Dd][Ii][Oo]/' } },
+              },
+            },
+            required: ['mime_types'],
+          },
+        },
+        required: ['media_file_requirements'],
+      },
+      {
+        properties: {
+          media_file_requirements: {
+            anyOf: [
+              { required: ['min_width'] },
+              { required: ['max_width'] },
+              { required: ['min_height'] },
+              { required: ['max_height'] },
+            ],
+          },
+        },
+        required: ['media_file_requirements'],
+      },
+    ],
+    'not.anyOf exclusions'
+  );
+
+  const schemaName = 'CanonicalFormatVASTAudioSchema';
+  const start = content.indexOf(`export const ${schemaName} = `);
+  if (start < 0) throw new Error(`postProcessCanonicalVastAudioConstraints: ${schemaName} not found.`);
+  const endCandidate = content.indexOf('\n\nexport const ', start + 1);
+  const end = endCandidate < 0 ? content.length : endCandidate;
+  let block = content.slice(start, end);
+  const unconstrainedDuration = 'duration_ms_range: z.array(z.number()).optional()';
+  const constrainedDuration = 'duration_ms_range: z.array(z.number().int().min(0)).length(2).optional()';
+  if (!block.includes(constrainedDuration)) {
+    const occurrences = block.split(unconstrainedDuration).length - 1;
+    if (occurrences !== 1) {
+      throw new Error(
+        `postProcessCanonicalVastAudioConstraints: expected one unconstrained duration_ms_range, found ${occurrences}.`
+      );
+    }
+    block = block.replace(unconstrainedDuration, constrainedDuration);
+  }
+
+  const refinementMarker = 'audio VAST declarations cannot combine vast_version and vast_versions';
+  if (!block.includes(refinementMarker)) {
+    const refinement = `.superRefine((value, ctx) => {
+    if (value.vast_version !== undefined && value.vast_versions !== undefined) {
+        ctx.addIssue({
+            code: "custom",
+            path: [],
+            message: "${refinementMarker}"
+        });
+    }
+    const requirements = value.media_file_requirements;
+    requirements?.mime_types?.forEach((mimeType, index) => {
+        if (!/^audio\\//i.test(mimeType)) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["media_file_requirements", "mime_types", index],
+                message: "audio VAST media MIME types must use the audio/* family"
+            });
+        }
+    });
+    for (const dimension of ["min_width", "max_width", "min_height", "max_height"] as const) {
+        if (requirements?.[dimension] !== undefined) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["media_file_requirements", dimension],
+                message: "audio VAST media requirements cannot declare visual dimensions"
+            });
+        }
+    }
+})`;
+    const refined = block.replace(/;\s*$/, `${refinement};`);
+    if (refined === block) {
+      throw new Error(`postProcessCanonicalVastAudioConstraints: unable to append ${schemaName} refinement.`);
+    }
+    block = refined;
+  }
+
+  return content.slice(0, start) + block + content.slice(end);
 }
 
 /**
@@ -4284,6 +4418,7 @@ async function generateZodSchemas() {
     // Reconcile canonical primitive constraints last, after structural and
     // exact-schema rewrites that may replace earlier generated blocks.
     zodSchemas = postProcessCanonicalPrimitiveConstraints(zodSchemas);
+    zodSchemas = postProcessCanonicalVastAudioConstraints(zodSchemas);
     zodSchemas = postProcessPricingOptionConstraints(zodSchemas);
     zodSchemas = postProcessJsonSchemaUriFormats(zodSchemas);
 
