@@ -120,30 +120,18 @@ function runHelloAdapterGates(config) {
       // and reports cleanly.
       agentPort = await pickFreePort();
       mockHandle = await bootMockServer({ specialism, port: 0, ...mockOptions });
-      agent = spawn('npx', ['tsx', exampleFile], {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          PORT: String(agentPort),
-          UPSTREAM_URL: mockHandle.url,
-          ADCP_AUTH_TOKEN: adcpAuthToken,
-          NODE_ENV: 'development',
-          ...extraEnv,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
+      agent = spawnAgent(exampleFile, {
+        PORT: String(agentPort),
+        UPSTREAM_URL: mockHandle.url,
+        ADCP_AUTH_TOKEN: adcpAuthToken,
+        NODE_ENV: 'development',
+        ...extraEnv,
       });
-      // Drain stdio so the kernel pipe buffers don't fill and block the child.
-      agent.stdout.on('data', () => {});
-      agent.stderr.on('data', () => {});
       await waitForPort('127.0.0.1', agentPort, 30_000);
     });
 
     after(async () => {
-      if (agent && agent.exitCode === null) {
-        agent.kill('SIGTERM');
-        await new Promise(r => setTimeout(r, 500));
-        if (agent.exitCode === null) agent.kill('SIGKILL');
-      }
+      await stopAgent(agent);
       if (mockHandle) await mockHandle.close();
     });
 
@@ -153,6 +141,15 @@ function runHelloAdapterGates(config) {
 
     it(passLabel, async () => {
       const grader = await runGrader(`http://127.0.0.1:${agentPort}/mcp`, storyboardId, adcpAuthToken);
+      // A storyboard that skips every step reports zero failures and would
+      // pass the assertion below without exercising the adapter at all. That
+      // is what grading the wrong process looks like (e.g. a stale agent from
+      // another suite answering on this port), so treat it as a failure.
+      assert.ok(
+        (grader.summary?.steps_passed ?? 0) > 0,
+        `storyboard ${storyboardId} ran zero passing steps (${grader.summary?.steps_skipped ?? '?'} skipped) — ` +
+          `is the agent on port ${agentPort} the one under test?\n${JSON.stringify(grader.summary, null, 2)}`
+      );
       const failures = filterFailures ? filterFailures(grader) : (grader.failures || []).filter(f => !f.skipped);
       assert.equal(
         failures.length,
@@ -208,6 +205,59 @@ function runHelloAdapterGates(config) {
       );
     });
   });
+}
+
+/**
+ * Boot an example adapter as a child process. `npx tsx <file>` is a three-deep
+ * process tree (npx → tsx → node); `detached: true` puts the whole tree in its
+ * own process group so `stopAgent` can signal the group rather than only the
+ * npx parent. Killing npx alone can orphan the node grandchild, which keeps
+ * listening on the agent port after the suite's `after` hook returns — the
+ * next suite's `waitForPort` then connects to the stale agent and grades the
+ * wrong process (storyboard passes with every step skipped, façade gate sees
+ * zero upstream hits, controller tool is missing).
+ */
+function spawnAgent(exampleFile, env) {
+  const agent = spawn('npx', ['tsx', exampleFile], {
+    cwd: REPO_ROOT,
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  });
+  // Drain stdio so the kernel pipe buffers don't fill and block the child.
+  agent.stdout.on('data', () => {});
+  agent.stderr.on('data', () => {});
+  return agent;
+}
+
+function signalAgentTree(agent, signal) {
+  if (!agent || agent.pid == null) return;
+  try {
+    // Negative pid targets the process group created by `detached: true`.
+    process.kill(-agent.pid, signal);
+  } catch {
+    try {
+      agent.kill(signal);
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * Terminate the agent's whole process tree and wait for the parent to exit.
+ * SIGTERM first so `serve()` can shut down cleanly; SIGKILL the group if the
+ * parent is still alive after a grace period.
+ */
+async function stopAgent(agent, { graceMs = 1_000 } = {}) {
+  if (!agent || agent.exitCode !== null || agent.signalCode !== null) return;
+  const exited = new Promise(resolve => agent.once('exit', resolve));
+  signalAgentTree(agent, 'SIGTERM');
+  const graceful = await Promise.race([exited.then(() => true), new Promise(r => setTimeout(() => r(false), graceMs))]);
+  if (!graceful) {
+    signalAgentTree(agent, 'SIGKILL');
+    await Promise.race([exited, new Promise(r => setTimeout(r, graceMs))]);
+  }
 }
 
 function waitForPort(host, port, timeoutMs) {
@@ -305,4 +355,4 @@ function formatFailures(failures) {
   );
 }
 
-module.exports = { runHelloAdapterGates };
+module.exports = { runHelloAdapterGates, spawnAgent, stopAgent, waitForPort, pickFreePort };

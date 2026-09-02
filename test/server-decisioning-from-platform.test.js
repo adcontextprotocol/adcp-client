@@ -6871,6 +6871,31 @@ describe('ContentStandardsPlatform (M1)', () => {
   });
 });
 
+describe('sales-dooh specialism wiring (AdCP 3.1.19, adcp#6619)', () => {
+  const doohCapabilities = {
+    specialisms: ['sales-dooh'],
+    creative_agents: [],
+    channels: ['dooh'],
+    pricingModels: ['cpm'],
+    config: {},
+  };
+
+  it('validatePlatform accepts a sales-dooh claimer that implements platform.sales', () => {
+    const platform = buildPlatform({ capabilities: doohCapabilities });
+    assert.doesNotThrow(() => validatePlatform(platform));
+  });
+
+  it('validatePlatform rejects a sales-dooh claimer with neither sales nor mediaBuyLifecycle', () => {
+    const platform = buildPlatform({ capabilities: doohCapabilities });
+    delete platform.sales;
+    delete platform.mediaBuyLifecycle;
+    assert.throws(
+      () => validatePlatform(platform),
+      /sales-dooh requires platform\.sales or platform\.mediaBuyLifecycle/
+    );
+  });
+});
+
 describe('Merge-seam collision warning (M3)', () => {
   it('warns when opts handler is shadowed by platform-derived handler', () => {
     const warnings = [];
