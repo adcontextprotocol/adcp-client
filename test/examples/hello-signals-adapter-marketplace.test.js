@@ -26,36 +26,21 @@ const { spawn, spawnSync } = require('node:child_process');
 // in their own integration tests.
 const { bootMockServer } = require('@adcp/sdk/mock-server');
 const { createMCPClient } = require('../../dist/lib/protocols');
+const { spawnAgent, stopAgent, waitForPort, pickFreePort } = require('./_helpers/runHelloAdapterGates');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const EXAMPLE_FILE = path.join(REPO_ROOT, 'examples', 'hello_signals_adapter_marketplace.ts');
 const CLI = path.join(REPO_ROOT, 'bin', 'adcp.js');
 
-// Use high ports that won't collide with dev defaults (3001, 4150).
-const AGENT_PORT = 35001;
-const UPSTREAM_PORT = 41500;
+// Ports are picked per-run (see `before` below). A hardcoded 35001 sat inside
+// the kernel's ephemeral range, so a sibling suite's `pickFreePort` could hand
+// out the same number and a not-yet-dead agent from that suite would answer
+// this suite's `waitForPort`.
+let AGENT_PORT;
 const ADCP_AUTH_TOKEN = 'sk_harness_do_not_use_in_prod';
 const UPSTREAM_API_KEY = 'mock_signal_market_key_do_not_use_in_prod';
 
 const EXPECTED_ROUTES = ['GET /_lookup/operator', 'GET /v2/cohorts', 'POST /v2/activations'];
-
-function waitForPort(host, port, timeoutMs) {
-  const { connect } = require('node:net');
-  const deadline = Date.now() + timeoutMs;
-  return new Promise((resolve, reject) => {
-    const tick = () => {
-      const s = connect(port, host, () => {
-        s.end();
-        resolve();
-      });
-      s.on('error', () => {
-        if (Date.now() >= deadline) reject(new Error(`timed out waiting for ${host}:${port}`));
-        else setTimeout(tick, 100);
-      });
-    };
-    tick();
-  });
-}
 
 describe('examples/hello_signals_adapter_marketplace', () => {
   // -------------------------------------------------------------------------
@@ -96,38 +81,37 @@ describe('examples/hello_signals_adapter_marketplace', () => {
   let agent;
 
   before(async () => {
+    AGENT_PORT = await pickFreePort();
     mockHandle = await bootMockServer({
       specialism: 'signal-marketplace',
-      port: UPSTREAM_PORT,
+      port: 0,
       apiKey: UPSTREAM_API_KEY,
     });
     // Boot the example as a child process — it calls `serve()` at module
     // load and runs forever. Async spawn keeps the test's event loop alive
     // (same lesson as #1250's runGrader fix: spawnSync would deadlock).
-    agent = spawn('npx', ['tsx', EXAMPLE_FILE], {
-      cwd: REPO_ROOT,
-      env: {
-        ...process.env,
-        PORT: String(AGENT_PORT),
-        UPSTREAM_URL: mockHandle.url,
-        UPSTREAM_API_KEY,
-        ADCP_AUTH_TOKEN,
-        NODE_ENV: 'development',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
+    agent = spawnAgent(EXAMPLE_FILE, {
+      PORT: String(AGENT_PORT),
+      UPSTREAM_URL: mockHandle.url,
+      UPSTREAM_API_KEY,
+      ADCP_AUTH_TOKEN,
+      NODE_ENV: 'development',
     });
-    // Drain stdio so the kernel pipe buffers don't fill and block the child.
-    agent.stdout.on('data', () => {});
-    agent.stderr.on('data', () => {});
     await waitForPort('127.0.0.1', AGENT_PORT, 30_000);
+    // Confirm the process answering on AGENT_PORT is the adapter this suite
+    // booted, not a stale agent from another suite. Without this, a wrong
+    // process makes Gate 2 pass vacuously (every step skipped) and Gates 3+
+    // fail with misleading façade / missing-tool errors.
+    const caps = await callMcpTool('get_adcp_capabilities', {});
+    const specialisms = caps?.structuredContent?.specialisms ?? [];
+    assert.ok(
+      specialisms.includes('signal-marketplace'),
+      `agent on port ${AGENT_PORT} does not claim signal-marketplace: ${JSON.stringify(caps?.structuredContent ?? caps)}`
+    );
   });
 
   after(async () => {
-    if (agent && agent.exitCode === null) {
-      agent.kill('SIGTERM');
-      await new Promise(r => setTimeout(r, 500));
-      if (agent.exitCode === null) agent.kill('SIGKILL');
-    }
+    await stopAgent(agent);
     if (mockHandle) await mockHandle.close();
   });
 
@@ -137,6 +121,11 @@ describe('examples/hello_signals_adapter_marketplace', () => {
       grader.summary.steps_failed,
       0,
       `storyboard reported ${grader.summary.steps_failed} failed steps:\n` + formatFailures(grader)
+    );
+    assert.ok(
+      grader.summary.steps_passed > 0,
+      `storyboard ran zero passing steps (${grader.summary.steps_skipped} skipped) — wrong agent on port ${AGENT_PORT}?\n` +
+        JSON.stringify(grader.summary, null, 2)
     );
     // Allow `partial` overall_status when no steps failed — that's the
     // runner's "silent track" classification (issue #1209). What we
