@@ -1,5 +1,12 @@
 # Changelog
 
+## 14.0.0-beta.29
+
+### Patch Changes
+
+- 13b374b: Adopt the signed AdCP 3.2.0-beta.11 bundle, including `get_principal` in the media-buy MCP profile.
+- 04bc269: Wire the `sales-dooh` specialism (AdCP 3.1.19, adcp#6619) into the decisioning platform contract. `RequiredPlatformsFor<'sales-dooh'>` now resolves to the core sales requirement, and `validatePlatform` enforces `platform.sales` or a compact `mediaBuyLifecycle` for `sales-dooh` claimers, matching `sales-guaranteed` / `sales-non-guaranteed` / `sales-broadcast-tv`. Previously the enum value was accepted but carried no compile-time or runtime platform-shape enforcement.
+
 ## 14.0.0-beta.28
 
 ### Minor Changes
