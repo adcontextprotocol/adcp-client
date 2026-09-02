@@ -72,8 +72,14 @@ type ManagedReportingRevision = Omit<ReportingRevision, 'canonical_content_diges
 };
 
 export interface ReportingReconciliationClient {
-  getReportingStatus(params: GetReportingStatusRequest): Promise<GetReportingStatusResponse>;
-  syncReportingReceipts(params: SyncReportingReceiptsRequest): Promise<SyncReportingReceiptsResponse>;
+  getReportingStatus(
+    params: GetReportingStatusRequest,
+    options?: { signal?: AbortSignal }
+  ): Promise<GetReportingStatusResponse>;
+  syncReportingReceipts(
+    params: SyncReportingReceiptsRequest,
+    options?: { signal?: AbortSignal }
+  ): Promise<SyncReportingReceiptsResponse>;
 }
 
 export interface ReportingLedger {
@@ -243,6 +249,30 @@ export class ReportingReconciliationError extends Error {
   ) {
     super(message);
     this.name = 'ReportingReconciliationError';
+  }
+}
+
+async function callBeforeDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  deadline: number,
+  code: string,
+  message: string
+): Promise<T> {
+  const remainingMs = deadline - Date.now();
+  if (remainingMs <= 0) throw new ReportingReconciliationError(code, message);
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new ReportingReconciliationError(code, message));
+    }, remainingMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -563,11 +593,20 @@ export async function loadReportingLedger(
         if (pageCount > maxPages || Date.now() > deadline) {
           throw new ReportingReconciliationError('LEDGER_LIMIT_EXCEEDED', 'reporting ledger exceeded load limits');
         }
-        const response = await client.getReportingStatus({
-          ...request,
-          view: 'periods',
-          ...(cursor ? { pagination: { cursor } } : {}),
-        });
+        const response = await callBeforeDeadline(
+          signal =>
+            client.getReportingStatus(
+              {
+                ...request,
+                view: 'periods',
+                ...(cursor ? { pagination: { cursor } } : {}),
+              },
+              { signal }
+            ),
+          deadline,
+          'LEDGER_LIMIT_EXCEEDED',
+          'get_reporting_status exceeded the reporting ledger load deadline'
+        );
         if (response.status !== 'completed' || response.view !== 'periods') {
           throw new ReportingReconciliationError(
             'STATUS_READ_FAILED',
@@ -1375,11 +1414,21 @@ export async function reconcileReporting<TCredential = unknown>(
   }
 
   for (const submission of pendingSubmissions) {
-    const response = await options.client.syncReportingReceipts({
-      account: options.request.account,
-      idempotency_key: submission.idempotencyKey,
-      receipts: [submission.receipt],
-    });
+    const receiptDeadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
+    const response = await callBeforeDeadline(
+      signal =>
+        options.client.syncReportingReceipts(
+          {
+            account: options.request.account,
+            idempotency_key: submission.idempotencyKey,
+            receipts: [submission.receipt],
+          },
+          { signal }
+        ),
+      receiptDeadline,
+      'RECEIPT_WRITE_FAILED',
+      'sync_reporting_receipts exceeded the reporting request deadline'
+    );
     const results = response.status === 'completed' && Array.isArray(response.results) ? response.results : [];
     const result = results[0] as { result?: string; receipt?: ReportingReceipt } | undefined;
     const acknowledgedReceipt = result?.receipt;

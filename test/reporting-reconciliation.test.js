@@ -439,6 +439,71 @@ test('rejects unbounded ledger loading and snapshot restart policies', async () 
   }
 });
 
+test('aborts a hung reporting-status request at the ledger deadline', async () => {
+  let aborted = false;
+  const client = {
+    async getReportingStatus(_request, options) {
+      return await new Promise((_resolve, reject) => {
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            reject(new Error('seller request aborted'));
+          },
+          { once: true }
+        );
+      });
+    },
+  };
+
+  await assert.rejects(
+    loadReportingLedger(client, { account: { account_id: 'account-1' } }, 0, { maxLoadMs: 20 }),
+    error => error.code === 'LEDGER_LIMIT_EXCEEDED'
+  );
+  assert.equal(aborted, true);
+});
+
+test('aborts a hung receipt write at the reporting request deadline', async () => {
+  let aborted = false;
+  const client = {
+    async getReportingStatus() {
+      return response([]);
+    },
+    async syncReportingReceipts(_request, options) {
+      return await new Promise((_resolve, reject) => {
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            aborted = true;
+            reject(new Error('seller request aborted'));
+          },
+          { once: true }
+        );
+      });
+    },
+  };
+
+  await assert.rejects(
+    reconcileReporting({
+      client,
+      request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+      expectedPeriods: [expectedPeriod()],
+      ledgerLimits: { maxLoadMs: 20 },
+      now: new Date('2026-09-03T00:00:00Z'),
+      async inspect() {
+        return {
+          rowCount: 7,
+          controlTotals: totals,
+          canonicalContentDigest: digest,
+          consumerCommitRef: 'buyer-ledger-timeout',
+        };
+      },
+    }),
+    error => error.code === 'RECEIPT_WRITE_FAILED'
+  );
+  assert.equal(aborted, true);
+});
+
 test('reconciles a closed billing period, retries inspection, and records a matching receipt', async () => {
   let recordedReceipt;
   let inspections = 0;
