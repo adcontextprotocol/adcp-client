@@ -64,6 +64,7 @@ const FAN_OUT_REQUEST_BASENAMES = new Set([
   'log-event-request',
   'report-usage-request',
   'report-plan-outcome-request',
+  'sync-reporting-receipts-request',
   // Brand rights mutating
   'acquire-rights-request',
   'update-rights-request',
@@ -86,6 +87,7 @@ const FAN_OUT_REQUEST_BASENAMES = new Set([
   'si-send-message-request',
   // Read paths fan-out callers also need
   'get-media-buy-delivery-request',
+  'get-reporting-status-request',
 ]);
 
 function walk(dir: string, suffix: string): string[] {

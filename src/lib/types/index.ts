@@ -99,6 +99,20 @@ export type {
   GetAccountFinancialsError,
 } from './tools.generated';
 
+// Experimental managed-reporting ledger and receipt tools.
+export type {
+  GetReportingStatusRequest,
+  GetReportingStatusResponse,
+  SyncReportingReceiptsRequest,
+  SyncReportingReceiptsResponse,
+  ReportingCanonicalContentDigest,
+  ReportingControlTotal,
+  ReportingMaterialization,
+  ReportingObligation,
+  ReportingReceipt,
+  ReportingRevision,
+} from './tools.generated';
+
 // Capabilities
 export type { AdCPSpecialism, GetAdCPCapabilitiesRequest, GetAdCPCapabilitiesResponse } from './tools.generated';
 

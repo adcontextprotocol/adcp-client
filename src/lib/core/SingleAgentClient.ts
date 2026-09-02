@@ -966,6 +966,8 @@ const PRIMARY_ADCP_TASK_NAMES = {
   list_creatives: true,
   get_media_buys: true,
   get_media_buy_delivery: true,
+  get_reporting_status: true,
+  sync_reporting_receipts: true,
   get_creative_delivery: true,
   provide_performance_feedback: true,
   get_signals: true,

@@ -789,6 +789,9 @@ export * from './negotiation';
 // from `@adcp/sdk/types`; the root keeps its richer negotiation helper types.
 export type { RefineProposalsRequest, RefineProposalsResponse } from './negotiation';
 
+// ====== RELIABLE REPORTING RECONCILIATION (AdCP 3.2 experimental) ======
+export * from './reporting';
+
 // ====== CORE TYPES ======
 export * from './types';
 
