@@ -12,6 +12,29 @@ describe('Zod Schema Validation', () => {
     assert.ok(schemas, 'Schemas should be importable');
   });
 
+  test('reporting delivery uses the reporting file-transfer schema', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+
+    const reportingTransfer = {
+      pattern: 'file_transfer',
+      transport: 'sftp',
+      orchestration: 'producer_managed',
+      destination: {
+        mode: 'existing',
+        destination_ref: 'reporting-destination-1',
+      },
+      format: 'parquet',
+    };
+    const audienceTransfer = {
+      pattern: 'file_transfer',
+      transport: 's3',
+      vendor: { domain: 'storage.example' },
+    };
+
+    assert.equal(schemas.ReportingDeliveryMethodSchema.safeParse(reportingTransfer).success, true);
+    assert.equal(schemas.ReportingDeliveryMethodSchema.safeParse(audienceTransfer).success, false);
+  });
+
   test('ESM package entry can be imported', async () => {
     const sdk = await import('../../dist/lib/index.mjs');
     assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');

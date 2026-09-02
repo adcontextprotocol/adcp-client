@@ -276,6 +276,7 @@ const CORE_AUTHORED_TOOL_SHARED_TYPES = new Set([
   'ProtocolEnvelope',
   'PurchaseType',
   'RequestProposalsResponse',
+  'ReportingDeliveryMethod',
   'RightsConstraint',
   'SignalDefinitionEnrichment',
   'SignalTargetingExpression',
