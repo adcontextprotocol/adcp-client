@@ -1,5 +1,16 @@
 # Changelog
 
+## 14.0.0-beta.28
+
+### Minor Changes
+
+- 9636cad: Add buyer-side reporting ledger reconciliation with stable pagination, SDK-managed manifest and file inspection, expected-period completeness checks, durable receipt submission, and revision-deduplicated totals. Generate operational wire allowlists from canonical schemas rather than security-reduced MCP projections.
+
+### Patch Changes
+
+- 956a61b: Preserve audio VAST exclusions and non-negative integer duration bounds in the generated runtime schema.
+- 8f53265: Normalize SDK-local request-schema rejections for explicitly schema-invalid storyboard steps to synthetic `INVALID_REQUEST` results.
+
 ## 14.0.0-beta.27
 
 ### Patch Changes
