@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.27
+
+### Patch Changes
+
+- ee8cfa8: Fix the reporting delivery Zod union to use the reporting file-transfer schema instead of the audience-activation file-transfer schema.
+
 ## 14.0.0-beta.26
 
 ### Minor Changes
