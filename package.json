@@ -652,7 +652,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.1.15",
+  "adcp_version": "3.1.20",
   "sideEffects": [
     "**/default-invariants.*"
   ]
