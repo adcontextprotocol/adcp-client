@@ -5555,10 +5555,28 @@ async function executeStep(
     };
   }
 
-  // For expect_error steps where TaskResult has no data but has an error string,
-  // wrap the error string so validations have something to check against.
-  if (step.expect_error && !taskResult?.data && taskResult?.error) {
-    taskResult = { ...taskResult, data: { error: taskResult.error } };
+  // An intentionally schema-invalid vector can be rejected by the SDK before
+  // transport. That is protocol-equivalent to INVALID_REQUEST, but the local
+  // validation path only carries a string. Normalize that narrow case so the
+  // authored error_code check can grade it while retaining a synthetic marker
+  // that makes clear the seller did not produce this envelope.
+  const unstructuredStepError = taskResult?.error ?? (taskResult === undefined ? stepResult.error : undefined);
+  if (step.expect_error && !taskResult?.data && unstructuredStepError) {
+    const localSchemaRejection =
+      step.negative_path === 'schema_invalid' &&
+      /^(?:Request validation failed for\b|Validation failed for field\b)/.test(unstructuredStepError);
+    if (taskResult || localSchemaRejection) {
+      taskResult = {
+        ...(taskResult ?? { success: false }),
+        error: unstructuredStepError,
+        data: localSchemaRejection
+          ? {
+              errors: [{ code: 'INVALID_REQUEST', message: unstructuredStepError }],
+              synthetic: true,
+            }
+          : { error: unstructuredStepError },
+      };
+    }
   }
 
   const responseDerivedSkip = detectResponseDerivedNotApplicable(
