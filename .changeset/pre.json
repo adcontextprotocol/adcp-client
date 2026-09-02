@@ -88,6 +88,7 @@
     "quiet-signals-migrate",
     "quiet-tasks-prove",
     "quiet-versioned-schema-advisories",
+    "reporting-file-transfer-schema",
     "safe-settlement-upgrades",
     "secure-operators-structure-errors",
     "secure-postgres-boundaries",
