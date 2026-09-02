@@ -1,0 +1,5 @@
+---
+'@adcp/sdk': patch
+---
+
+storyboard runner: resolve a storyboard's declared `prerequisites.test_kit` from a caller-selected or trusted-loader compliance cache into `options.test_kit` (caller-supplied kits win), and hard-fail steps whose `auth.from_test_kit` resolves no credential instead of silently sending an unauthenticated probe (adcontextprotocol/adcp#6735). Previously the declaration was decorative: runs without an explicit kit degraded credential-keyed steps (comply_controller_mode_gate) to no-auth probes, grading conformant sellers FAIL. Ad-hoc `--file` runs authorize cache-relative kits only with an explicit `--compliance-dir`; `--compliance-version` selects protocol/schema data without granting credential-read authority, and callers can instead pass `--test-kit`. Targeted `storyboard step --test-kit` reruns now preserve the same explicit override. Declared kit paths are containment-checked against the cache root; a declared kit missing from the cache is tolerated at load time (only steps that actually need the credential fail, with an explicit configuration error).

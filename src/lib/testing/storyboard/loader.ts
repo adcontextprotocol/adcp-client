@@ -29,6 +29,11 @@ export function parseStoryboard(yamlContent: string): Storyboard {
   if (!parsed?.id || !parsed?.phases) {
     throw new Error('Invalid storyboard YAML: missing required fields (id, phases)');
   }
+  if (Object.prototype.hasOwnProperty.call(parsed, 'compliance_dir')) {
+    throw new Error(
+      'Invalid storyboard YAML: compliance_dir is loader-owned runtime provenance; select an external cache with runner options instead.'
+    );
+  }
   for (const phase of parsed.phases) {
     // Specialism YAMLs may declare a phase with no `steps:` — the steps are
     // synthesized at runtime from fixtures (see request-signing/synthesize.ts).

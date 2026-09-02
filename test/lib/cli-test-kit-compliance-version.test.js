@@ -326,6 +326,78 @@ describe('storyboard run --test-kit compliance-line selection', () => {
     }
   });
 
+  test('malformed test-kit YAML never echoes source credentials', () => {
+    const fixture = createTestKitCache('3.1.15');
+    const secret = 'sk-cli-secret-that-must-not-reach-stderr';
+    writeFileSync(fixture.testKitPath, `auth: [${secret}`);
+    try {
+      const result = runCli([
+        'storyboard',
+        'run',
+        'https://127.0.0.1:1/mcp',
+        '--protocol',
+        'mcp',
+        '--test-kit',
+        fixture.testKitPath,
+      ]);
+
+      assert.strictEqual(result.status, 2);
+      assert.match(result.stderr, /failed to parse test-kit.*as YAML/);
+      assert.equal(result.stderr.includes(secret), false);
+    } finally {
+      rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('a falsy parsed --test-kit is forwarded and rejected instead of falling back to disk', () => {
+    const fixture = createTestKitCache('3.1.15');
+    writeFileSync(fixture.testKitPath, 'null\n');
+    try {
+      const result = runCli([
+        'storyboard',
+        'run',
+        'https://127.0.0.1:1/mcp',
+        '--protocol',
+        'mcp',
+        '--test-kit',
+        fixture.testKitPath,
+        '--file',
+        fixture.storyboardPath,
+      ]);
+
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /test_kit must be a YAML mapping/);
+      assert.doesNotMatch(result.stderr, /ECONNREFUSED|Failed to detect protocol/);
+    } finally {
+      rmSync(fixture.tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('storyboard step forwards an explicit test-kit override instead of silently ignoring it', () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'adcp-step-test-kit-'));
+    const testKitPath = path.join(tempRoot, 'override.yaml');
+    writeFileSync(testKitPath, 'null\n');
+    try {
+      const result = runCli([
+        'storyboard',
+        'step',
+        'https://127.0.0.1:1/mcp',
+        'comply_controller_mode_gate',
+        'deny_live_caller',
+        '--protocol',
+        'mcp',
+        '--test-kit',
+        testKitPath,
+      ]);
+
+      assert.strictEqual(result.status, 1);
+      assert.match(result.stderr, /test_kit must be a YAML mapping/);
+      assert.doesNotMatch(result.stderr, /ECONNREFUSED|Failed to detect protocol/);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test('help documents --test-kit and its relationship to --compliance-version', () => {
     const result = runCli(['storyboard', 'run', '--help']);
     assert.strictEqual(result.status, 0, result.stderr);

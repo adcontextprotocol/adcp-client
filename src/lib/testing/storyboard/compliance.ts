@@ -16,6 +16,7 @@ import { ADCPError } from '../../errors';
 import { isAdcpVersionSupported } from '../../utils/adcp-version-config';
 import { hasSchemaBundle, resolveBundleKey } from '../../validation/schema-loader';
 import { synthesizeRequestSigningSteps } from './request-signing/synthesize';
+import { markStoryboardComplianceRoot } from './provenance';
 import type { RunnerSelectionResult, Storyboard } from './types';
 
 /**
@@ -533,11 +534,23 @@ function loadStoryboardsFromDir(dir: string): Storyboard[] {
 /** Load storyboards for a single bundle (universal YAML file, domain dir, or specialism dir). */
 export function loadBundleStoryboards(ref: BundleRef): Storyboard[] {
   const raw = ref.kind === 'universal' ? safeLoadUniversal(ref.path) : loadStoryboardsFromDir(ref.path);
-  return raw.map(sb => annotateStoryboardVersion(postProcessStoryboard(sb), ref.adcp_version));
+  const complianceDir = dirname(dirname(ref.path));
+  return raw.map(sb => annotateStoryboardVersion(postProcessStoryboard(sb), ref.adcp_version, complianceDir));
 }
 
-function annotateStoryboardVersion(storyboard: Storyboard, adcpVersion: string | undefined): Storyboard {
-  return adcpVersion === undefined ? storyboard : { ...storyboard, adcp_version: adcpVersion };
+function annotateStoryboardVersion(
+  storyboard: Storyboard,
+  adcpVersion: string | undefined,
+  complianceDir: string
+): Storyboard {
+  return markStoryboardComplianceRoot(
+    {
+      ...storyboard,
+      ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
+      compliance_dir: complianceDir,
+    },
+    complianceDir
+  );
 }
 
 function safeLoadUniversal(path: string): Storyboard[] {

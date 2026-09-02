@@ -587,6 +587,8 @@ export interface ComplyOptions extends TestOptions {
   complianceDir?: string;
   /** Explicit schema bundle root to pair with the selected compliance cache. */
   schemaRoot?: string;
+  /** CLI source path for an explicit test kit, preserved in generated fix commands. */
+  testKitPath?: string;
   /** Scoped hosted stable-line alias for prerelease-backed compliance caches. */
   hostedStableLineAlias?: string;
 }
@@ -1004,6 +1006,7 @@ export function extractFailures(
     complianceDir?: string;
     schemaRoot?: string;
     hostedStableLineAlias?: string;
+    testKitPath?: string;
   } = {}
 ): ComplianceFailure[] {
   const failures: ComplianceFailure[] = [];
@@ -1098,6 +1101,7 @@ function buildFixCommand(
     complianceDir?: string;
     schemaRoot?: string;
     hostedStableLineAlias?: string;
+    testKitPath?: string;
   }
 ): string {
   const parts = ['adcp', 'storyboard', 'step', agentRef, storyboardId, stepId, '--json'];
@@ -1105,6 +1109,7 @@ function buildFixCommand(
   if (options.complianceDir) parts.push('--compliance-dir', options.complianceDir);
   if (options.schemaRoot) parts.push('--schema-root', options.schemaRoot);
   if (options.hostedStableLineAlias) parts.push('--hosted-stable-line-alias', options.hostedStableLineAlias);
+  if (options.testKitPath) parts.push('--test-kit', options.testKitPath);
   return parts.map(shellArg).join(' ');
 }
 
@@ -1479,6 +1484,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ...(complianceDir !== undefined && { complianceDir }),
       ...(schemaRoot !== undefined && { schemaRoot }),
       ...(hostedStableLineAlias !== undefined && { hostedStableLineAlias }),
+      ...(options.testKitPath !== undefined && { testKitPath: options.testKitPath }),
     });
 
     // Aggregate notices from all storyboard runs. Dedup is by `code`, or by
@@ -1760,6 +1766,7 @@ async function runWithDegradedProfile(
     ...(options.complianceDir !== undefined && { complianceDir: options.complianceDir }),
     ...(options.schemaRoot !== undefined && { schemaRoot: options.schemaRoot }),
     ...(options.hostedStableLineAlias !== undefined && { hostedStableLineAlias: options.hostedStableLineAlias }),
+    ...(options.testKitPath !== undefined && { testKitPath: options.testKitPath }),
   });
 
   // Scenario detail is canonical under `tracks`; `tested_tracks` is a

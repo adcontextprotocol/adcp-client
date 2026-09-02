@@ -18,6 +18,9 @@
  */
 
 import type { TestOptions } from '../types';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { join, resolve, sep } from 'node:path';
+import { parse } from 'yaml';
 
 /**
  * AdCP tasks safe to call with unauth / invalid-key credentials during the
@@ -68,9 +71,27 @@ export class TestKitValidationError extends Error {
  * import this directly to reject malformed kits at file-load time.
  */
 export function validateTestKit(testKit: TestOptions['test_kit']): void {
-  if (!testKit) return;
-  const auth = testKit.auth;
-  if (!auth || typeof auth !== 'object') return;
+  const value: unknown = testKit;
+  if (value === undefined) return;
+  if (!isPlainMapping(value)) {
+    throw new TestKitValidationError('test_kit', 'test_kit must be a YAML mapping.');
+  }
+  const auth = value.auth;
+  if (auth === undefined) return;
+  if (!isPlainMapping(auth)) {
+    throw new TestKitValidationError('test_kit.auth', 'test_kit.auth must be a YAML mapping.');
+  }
+
+  const apiKey = auth.api_key;
+  if (
+    apiKey !== undefined &&
+    (typeof apiKey !== 'string' || apiKey.trim().length === 0 || /[^\x20-\x7E]/u.test(apiKey))
+  ) {
+    throw new TestKitValidationError(
+      'test_kit.auth.api_key',
+      'test_kit.auth.api_key must be a non-empty string containing only printable ASCII characters.'
+    );
+  }
 
   const probeTask = auth.probe_task;
   if (probeTask === undefined) {
@@ -84,22 +105,142 @@ export function validateTestKit(testKit: TestOptions['test_kit']): void {
   if (typeof probeTask !== 'string' || probeTask.length === 0) {
     throw new TestKitValidationError(
       'test_kit.auth.probe_task',
-      `test_kit.auth.probe_task must be a non-empty string; got ${JSON.stringify(probeTask)}.`
+      'test_kit.auth.probe_task must be a non-empty string selected from the allowlist.'
     );
   }
   if (!PROBE_TASK_ALLOWLIST.includes(probeTask)) {
-    // Truncate + JSON-escape the echoed value so a hostile kit can't poison
-    // the rendered compliance report with control chars, ANSI escapes, or
-    // megabyte strings. Kits are operator-supplied, so this is defensive,
-    // not adversarial — but the error message ends up in shareable reports.
-    const safe = JSON.stringify(probeTask.slice(0, 120));
     throw new TestKitValidationError(
       'test_kit.auth.probe_task',
-      `test_kit.auth.probe_task ${safe} is not in the allowlist. ` +
+      `test_kit.auth.probe_task is not in the allowlist. ` +
         `Allowed tasks (auth-required, read-only, accept empty body): ` +
         `${PROBE_TASK_ALLOWLIST.join(', ')}. ` +
         `Tasks outside this list can 400 on schema validation before auth is evaluated, ` +
         `which would misreport as an agent auth failure.`
     );
   }
+}
+
+function isPlainMapping(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function filesystemErrorCode(err: unknown): string | undefined {
+  return isPlainMapping(err) && typeof err.code === 'string' ? err.code : undefined;
+}
+
+function safeLabel(value: unknown): string {
+  return JSON.stringify(String(value ?? '<unknown>').slice(0, 120));
+}
+
+/**
+ * Resolve a storyboard's declared `prerequisites.test_kit` into
+ * `options.test_kit` (adcontextprotocol/adcp#6735).
+ *
+ * Historically the declaration was decorative: `from_test_kit` / `$test_kit.*`
+ * references read only the caller-supplied `options.test_kit`, so a run
+ * without an explicit kit silently degraded credentialed steps to
+ * unauthenticated probes — grading conformant sellers FAIL on
+ * credential-keyed storyboards (`comply_controller_mode_gate`). This loader
+ * makes the declaration real:
+ *
+ *   - No-op when the storyboard declares no kit, or when the caller already
+ *     supplied `options.test_kit` (caller/hosted-engine configuration wins;
+ *     the hosted engine pre-populates the declared kit itself — see the
+ *     server-side half of adcp#6735).
+ *   - Otherwise loads `<compliance cache>/<declared path>`, validates it
+ *     with the same invariants as a caller-supplied kit, and returns amended
+ *     options. Loading requires an explicit caller-selected complianceDir or
+ *     loader-attached trusted provenance (which the runner promotes to that
+ *     option); a storyboard-authored version alone grants no filesystem
+ *     authority.
+ *   - A genuinely absent kit is tolerated because external bundles may omit
+ *     kits that none of their steps use. Other filesystem faults, invalid
+ *     YAML, and invalid kit shapes throw instead of degrading silently.
+ */
+export function resolveDeclaredTestKit<
+  O extends { test_kit?: TestOptions['test_kit']; adcpVersion?: string; complianceDir?: string },
+>(storyboard: { id?: string; prerequisites?: { test_kit?: string } }, options: O): O {
+  const declared = storyboard.prerequisites?.test_kit;
+  if (declared === undefined || options.test_kit !== undefined) return options;
+  if (typeof declared !== 'string' || declared.trim().length === 0) {
+    throw new Error(
+      `storyboard ${safeLabel(storyboard.id)} declares an invalid prerequisites.test_kit path; expected a non-empty string.`
+    );
+  }
+  // Storyboard YAML is data, not authority to read credentials from the SDK's
+  // packaged cache (or ADCP_COMPLIANCE_DIR). Only the caller or the trusted
+  // compliance loader may select a filesystem root.
+  if (options.complianceDir === undefined) return options;
+  if (typeof options.complianceDir !== 'string' || options.complianceDir.trim().length === 0) {
+    throw new Error(
+      `storyboard ${safeLabel(storyboard.id)} received an invalid complianceDir for its declared test kit; expected a non-empty string.`
+    );
+  }
+
+  const sbId = safeLabel(storyboard.id);
+  const declaredLabel = safeLabel(declared);
+  const cacheDir = resolve(options.complianceDir);
+  const kitPath = resolve(join(cacheDir, declared));
+  // Containment: the declared path comes from cache-shipped YAML; never let
+  // it escape the cache root.
+  if (kitPath !== cacheDir && !kitPath.startsWith(cacheDir + sep)) {
+    throw new Error(
+      `storyboard ${sbId} declares prerequisites.test_kit ${declaredLabel} ` +
+        `which resolves outside the compliance cache root — refusing to load it.`
+    );
+  }
+
+  let physicalCacheDir: string;
+  try {
+    physicalCacheDir = realpathSync(cacheDir);
+  } catch (err) {
+    if (filesystemErrorCode(err) === 'ENOENT') return options;
+    throw new Error(
+      `storyboard ${sbId} could not resolve the compliance cache for declared test kit ${declaredLabel} ` +
+        `(${filesystemErrorCode(err) ?? 'filesystem error'}).`
+    );
+  }
+
+  let physicalKitPath: string;
+  try {
+    physicalKitPath = realpathSync(kitPath);
+  } catch (err) {
+    // A declared kit that genuinely isn't present is tolerated at load time:
+    // storyboards may declare a kit whose auth no step uses. Steps that do
+    // require it hard-fail individually before any request reaches the agent.
+    if (filesystemErrorCode(err) === 'ENOENT') return options;
+    throw new Error(
+      `storyboard ${sbId} could not resolve declared test kit ${declaredLabel} ` +
+        `(${filesystemErrorCode(err) ?? 'filesystem error'}).`
+    );
+  }
+  if (physicalKitPath !== physicalCacheDir && !physicalKitPath.startsWith(physicalCacheDir + sep)) {
+    throw new Error(
+      `storyboard ${sbId} declares prerequisites.test_kit ${declaredLabel} ` +
+        `which resolves outside the physical compliance cache root — refusing to load it.`
+    );
+  }
+
+  let raw: string;
+  try {
+    if (!statSync(physicalKitPath).isFile()) {
+      throw new Error('not a regular file');
+    }
+    raw = readFileSync(physicalKitPath, 'utf8');
+  } catch (err) {
+    throw new Error(
+      `storyboard ${sbId} could not read declared test kit ${declaredLabel} ` +
+        `(${filesystemErrorCode(err) ?? 'not a regular file'}).`
+    );
+  }
+  let kit: TestOptions['test_kit'];
+  try {
+    kit = parse(raw) as TestOptions['test_kit'];
+  } catch {
+    throw new Error(
+      `storyboard ${sbId} declares prerequisites.test_kit ${declaredLabel}, but the file is not valid YAML.`
+    );
+  }
+  validateTestKit(kit);
+  return { ...options, test_kit: kit };
 }
