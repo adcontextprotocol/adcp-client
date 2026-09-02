@@ -49,7 +49,7 @@ const validDocument = {
   schema_version: 1,
   source_repository: 'adcontextprotocol/adcp',
   source_commit: commit,
-  published_version: '3.2.0-beta.10',
+  published_version: '3.2.0-beta.11',
   bundle_sha256: digest,
   bundle_url: url,
 };
@@ -66,14 +66,14 @@ const mismatchedCacheProvenancePath = ${JSON.stringify(path.join(directory, 'mis
 writeFileSync(mismatchedCacheProvenancePath, JSON.stringify({ ...validDocument, bundle_sha256: 'c'.repeat(64) }));
 
 const fixtureRoot = ${JSON.stringify(path.join(directory, 'fixture'))};
-const bundleRootName = 'adcp-3.2.0-beta.10';
+const bundleRootName = 'adcp-3.2.0-beta.11';
 const bundleRoot = path.join(fixtureRoot, bundleRootName);
 mkdirSync(path.join(bundleRoot, 'schemas'), { recursive: true });
 mkdirSync(path.join(bundleRoot, 'compliance'), { recursive: true });
-writeFileSync(path.join(bundleRoot, 'schemas/index.json'), JSON.stringify({ adcp_version: '3.2.0-beta.10', schemas: {} }));
-writeFileSync(path.join(bundleRoot, 'compliance/index.json'), JSON.stringify({ adcp_version: '3.2.0-beta.10' }));
+writeFileSync(path.join(bundleRoot, 'schemas/index.json'), JSON.stringify({ adcp_version: '3.2.0-beta.11', schemas: {} }));
+writeFileSync(path.join(bundleRoot, 'compliance/index.json'), JSON.stringify({ adcp_version: '3.2.0-beta.11' }));
 writeFileSync(path.join(bundleRoot, 'manifest.json'), JSON.stringify({
-  published_version: '3.2.0-beta.10',
+  published_version: '3.2.0-beta.11',
   source: { repository: 'adcontextprotocol/adcp', commit_sha: commit },
 }));
 const bundlePath = ${JSON.stringify(path.join(directory, 'latest.tgz'))};
@@ -82,7 +82,7 @@ const bundleBytes = readFileSync(bundlePath);
 const fixtureDigest = createHash('sha256').update(bundleBytes).digest('hex');
 const installRoot = ${JSON.stringify(path.join(directory, 'install'))};
 const installedProvenance = await installProtocolBundle({
-  version: '3.2.0-beta.10',
+  version: '3.2.0-beta.11',
   tgzBuf: bundleBytes,
   expectedSha256: fixtureDigest,
   source: bundlePath,
@@ -112,7 +112,7 @@ const results = {
   ].map(isSafeProtocolSkillName),
   localPath: officialBundleUrlForCommit('/tmp/latest.tgz', commit),
   parsedFlags: parseSyncCommandLine([
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     '--bundle', url,
     '--bundle-sha256=sha256:' + digest,
     '--protocol-commit', commit,
@@ -124,48 +124,48 @@ const results = {
   }),
   rejectedExplicitSideBundle: capture(() => resolveCustomBundleRequest(
     '3.1.18',
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     { bundle: url, bundleSha256: digest, protocolCommit: commit }
   )),
   ignoredEnvironmentSideBundle: resolveCustomBundleRequest(
     '3.1.18',
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     { bundle: url, bundleSha256: digest, protocolCommit: commit },
     provenancePath,
     'environment'
   ),
   readProvenance: readCodegenProvenance(provenancePath),
   resolvedDeclaration: resolveCustomBundleRequest(
-    '3.2.0-beta.10',
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
+    '3.2.0-beta.11',
     undefined,
     provenancePath,
     'environment'
   ),
   ignoredForSideBundle: resolveCustomBundleRequest(
     '3.1.18',
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     undefined,
     provenancePath
   ),
   wrongDeclaredVersion: capture(() => resolveCustomBundleRequest(
-    '3.2.0-beta.10',
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
+    '3.2.0-beta.11',
     undefined,
     wrongVersionProvenancePath
   )),
   localDeclaration: capture(() => resolveCustomBundleRequest(
-    '3.2.0-beta.10',
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
+    '3.2.0-beta.11',
     undefined,
     localProvenancePath
   )),
   createdProvenance: createProtocolBundleProvenance(
     {
-      published_version: '3.2.0-beta.10',
+      published_version: '3.2.0-beta.11',
       source: { repository: 'adcontextprotocol/adcp', commit_sha: commit },
     },
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     commit,
     digest,
     url
@@ -190,10 +190,10 @@ const results = {
   queryString: capture(() => officialBundleUrlForCommit(url + '?download=1', commit)),
   wrongManifestCommit: capture(() => createProtocolBundleProvenance(
     {
-      published_version: '3.2.0-beta.10',
+      published_version: '3.2.0-beta.11',
       source: { repository: 'adcontextprotocol/adcp', commit_sha: 'c'.repeat(40) },
     },
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     commit,
     digest,
     url
@@ -203,33 +203,33 @@ const results = {
       published_version: '3.2.0-beta.8',
       source: { repository: 'adcontextprotocol/adcp', commit_sha: commit },
     },
-    '3.2.0-beta.10',
+    '3.2.0-beta.11',
     commit,
     digest,
     url
   )),
   installedProvenance,
-  installedIndex: JSON.parse(readFileSync(path.join(installRoot, 'schemas/3.2.0-beta.10/index.json'), 'utf8')),
+  installedIndex: JSON.parse(readFileSync(path.join(installRoot, 'schemas/3.2.0-beta.11/index.json'), 'utf8')),
   installedCacheProvenance: JSON.parse(readFileSync(
-    path.join(installRoot, 'schemas/3.2.0-beta.10/_provenance.json'),
+    path.join(installRoot, 'schemas/3.2.0-beta.11/_provenance.json'),
     'utf8'
   )),
   matchingCacheProvenance: cacheMatchesCodegenProvenance(
     matchingDeclarationPath,
-    path.join(installRoot, 'schemas/3.2.0-beta.10/_provenance.json')
+    path.join(installRoot, 'schemas/3.2.0-beta.11/_provenance.json')
   ),
   missingDeclaredCacheProvenance: cacheMatchesCodegenProvenance(provenancePath, noCacheProvenancePath),
   mismatchedCacheProvenance: cacheMatchesCodegenProvenance(provenancePath, mismatchedCacheProvenancePath),
   staleCustomCacheWithoutDeclaration: cacheMatchesCodegenProvenance(
     noDeclarationPath,
-    path.join(installRoot, 'schemas/3.2.0-beta.10/_provenance.json')
+    path.join(installRoot, 'schemas/3.2.0-beta.11/_provenance.json')
   ),
   publishedCacheWithoutDeclaration: cacheMatchesCodegenProvenance(noDeclarationPath, noCacheProvenancePath),
-  discoveredSchemaFiles: discoverAllSchemaFiles(path.join(installRoot, 'schemas/3.2.0-beta.10')),
+  discoveredSchemaFiles: discoverAllSchemaFiles(path.join(installRoot, 'schemas/3.2.0-beta.11')),
   wrongFixtureDigest: await (async () => {
     try {
       await installProtocolBundle({
-        version: '3.2.0-beta.10',
+        version: '3.2.0-beta.11',
         tgzBuf: bundleBytes,
         expectedSha256: 'd'.repeat(64),
         source: bundlePath,
@@ -245,7 +245,7 @@ const results = {
   })(),
   missingLocalBundle: await (async () => {
     try {
-      await syncFromCustomBundle('3.2.0-beta.10', {
+      await syncFromCustomBundle('3.2.0-beta.11', {
         bundle: path.join(installRoot, 'missing.tgz'),
         bundleSha256: digest,
         protocolCommit: commit,
@@ -257,7 +257,7 @@ const results = {
   })(),
   signatureRequired: await (async () => {
     try {
-      await syncFromCustomBundle('3.2.0-beta.10', {
+      await syncFromCustomBundle('3.2.0-beta.11', {
         bundle: bundlePath,
         bundleSha256: fixtureDigest,
         protocolCommit: commit,
@@ -303,7 +303,7 @@ test('custom schema bundles are immutable, commit-addressed, and reproducible', 
   assert.deepEqual(results.unsafeSkillNames, [false, false, false, false, false, false, false, false]);
   assert.equal(results.localPath, undefined);
   assert.deepEqual(results.parsedFlags, {
-    version: '3.2.0-beta.10',
+    version: '3.2.0-beta.11',
     bundle: { bundle: url, bundleSha256: digest, protocolCommit: commit },
     bundleSource: 'arguments',
   });
@@ -333,7 +333,7 @@ test('custom schema bundles are immutable, commit-addressed, and reproducible', 
   assert.match(results.wrongManifestVersion.error, /manifest version mismatch/);
   assert.equal(results.installedProvenance.source_commit, commit);
   assert.equal(results.installedProvenance.bundle_sha256, results.installedCacheProvenance.bundle_sha256);
-  assert.equal(results.installedIndex.adcp_version, '3.2.0-beta.10');
+  assert.equal(results.installedIndex.adcp_version, '3.2.0-beta.11');
   assert.equal(results.matchingCacheProvenance, true);
   assert.equal(results.missingDeclaredCacheProvenance, false);
   assert.equal(results.mismatchedCacheProvenance, false);
