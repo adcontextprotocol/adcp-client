@@ -56,6 +56,7 @@ const SPECIALISM_REQUIREMENTS: Partial<Record<AdCPSpecialism, ReadonlyArray<keyo
   'sales-non-guaranteed': [],
   'sales-guaranteed': [],
   'sales-broadcast-tv': [],
+  'sales-dooh': [],
   'sales-social': ['sales'],
   'sales-catalog-driven': ['sales'],
   'sales-proposal-mode': [],
@@ -123,6 +124,7 @@ export function validatePlatform(
       specialism === 'sales-non-guaranteed' ||
       specialism === 'sales-guaranteed' ||
       specialism === 'sales-broadcast-tv' ||
+      specialism === 'sales-dooh' ||
       specialism === 'sales-proposal-mode';
     if (acceptsCompactLifecycle && platform.sales == null && platform.mediaBuyLifecycle == null) {
       errors.push(`${specialism} requires platform.sales or platform.mediaBuyLifecycle`);
