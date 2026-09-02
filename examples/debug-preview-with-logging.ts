@@ -4,9 +4,7 @@
  * Debug with detailed logging
  */
 
-import { AdCPClient } from '../src/lib/core/AdCPClient';
-import { batchPreviewProducts } from '../src/lib/utils/preview-utils';
-import type { Product } from '../src/lib/types/tools.generated';
+import { AdCPClient, batchPreviewProducts, type Product } from '@adcp/sdk';
 
 const CREATIVE_AGENT_URL = process.env.CREATIVE_AGENT_URL || 'https://creative.adcontextprotocol.org/mcp';
 

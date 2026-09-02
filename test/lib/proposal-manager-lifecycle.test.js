@@ -683,6 +683,11 @@ test('maybeReserveProposalForCreateMediaBuy + finalize + release', async t => {
       }),
       err => err.code === 'INVALID_REQUEST'
     );
+    assert.strictEqual(
+      store.get('p1', { expectedAccountId: 'acct_1' }).state,
+      'committed',
+      'post-reservation validation failure must release the proposal for retry'
+    );
   });
 });
 

@@ -225,6 +225,45 @@ test('generic recovery preserves a non-secret payload.token without requiring an
   assert.equal(recovered.snapshot.payload.token, 'ordinary-domain-value');
 });
 
+test('task recovery mode protects payload.token on live checkpoints', async () => {
+  const delegate = memoryWebhookDeliveryRecoveryBackend();
+  let persisted;
+  const backend = {
+    ...delegate,
+    durability: 'durable',
+    checkpoint(key, snapshot, ...rest) {
+      persisted = structuredClone(snapshot);
+      return delegate.checkpoint(key, snapshot, ...rest);
+    },
+  };
+  const recovery = createWebhookDeliveryRecovery({
+    backend,
+    protectPayloadToken: true,
+    authenticationAdapter: {
+      protect(authentication, context) {
+        assert.equal(context.purpose, 'payload_token');
+        return { protectedValue: { ref: 'secret://task-token' }, fingerprint: 'task-token-fingerprint' };
+      },
+      resolve() {
+        return { type: 'bearer', token: 'restored-task-token' };
+      },
+    },
+  });
+  const key = { publisherScope: 'publisher', tenantScope: 'tenant', deliveryId: 'protected-live-token' };
+  const claim = await recovery.checkpoint(key, {
+    url: 'https://buyer.invalid/hook',
+    payload: { task_id: 'task-1', token: 'cleartext-task-token' },
+    authentication: null,
+    retries: { maxAttempts: 1, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+  });
+  assert.ok(claim);
+  assert.equal(persisted.payload.token, undefined);
+  assert.equal(persisted.payloadToken.kind, 'protected');
+  await claim.release(0);
+  const [lease] = await recovery.claimPending({ ownerToken: 'recovery-worker', limit: 1 });
+  assert.equal(lease.snapshot.payload.token, 'restored-task-token');
+});
+
 test('recovery rejects adapters that return cleartext as protected durable state', async () => {
   const backend = { ...memoryWebhookDeliveryRecoveryBackend(), durability: 'durable' };
   const recovery = createWebhookDeliveryRecovery({
@@ -916,6 +955,27 @@ test('PostgreSQL recovery claims use SKIP LOCKED and fenced owner/version predic
     /outside the configured claim scope/
   );
   assert.strictEqual(queries.length, 2, 'out-of-scope mutation fails before reaching PostgreSQL');
+});
+
+test('PostgreSQL recovery can fence all tenants under one publisher', async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const backend = pgWebhookDeliveryRecoveryBackend(db, {
+    claimScope: { publisherScope: 'publisher-a' },
+  });
+  await backend.claimPending({ ownerToken: 'owner-token', leaseMs: 1000, limit: 10 });
+  assert.match(queries[0].sql, /publisher_scope = \$4/);
+  assert.doesNotMatch(queries[0].sql, /tenant_scope = \$5/);
+  assert.deepStrictEqual(queries[0].params, ['owner-token', 1000, 10, 'publisher-a']);
+  await assert.rejects(
+    backend.settle({ publisherScope: 'publisher-b', tenantScope: 'tenant-a', deliveryId: 'foreign' }, 'terminal'),
+    /outside the configured claim scope/
+  );
 });
 
 test('Redis and PostgreSQL backends require deployment isolation in production', () => {

@@ -47,12 +47,28 @@ jobs:
         id: schema-sync
         run: npm run sync-schemas:all
 
+      - name: Report immutable protocol bundle provenance
+        if: steps.schema-sync.outputs.primary_schema_source == 'bundle'
+        env:
+          PROTOCOL_COMMIT: ${{ steps.schema-sync.outputs.protocol_commit }}
+          BUNDLE_SHA256: ${{ steps.schema-sync.outputs.bundle_sha256 }}
+          BUNDLE_VERSION: ${{ steps.schema-sync.outputs.bundle_version }}
+        run: |
+          {
+            echo '### Immutable protocol PR bundle'
+            echo
+            echo "- Published version: \`${BUNDLE_VERSION}\`"
+            echo "- Protocol commit: \`${PROTOCOL_COMMIT}\`"
+            echo "- Bundle SHA-256: \`${BUNDLE_SHA256}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Validate generated files are in sync
         env:
           ADCP_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           ADCP_PRIMARY_SCHEMA_SOURCE: ${{ steps.schema-sync.outputs.primary_schema_source }}
         run: |
           generated_paths=(
+            schemas/codegen-provenance.json
             ':(glob)src/lib/types/*.generated.ts'
             src/lib/types/v2-5/tools.generated.ts
             src/lib/agents/index.generated.ts
@@ -108,12 +124,12 @@ jobs:
           npm run generate-types:v2.5
           npm run generate-registry-types -- --sync
 
-          if ! git diff --exit-code -I '// Generated at:' "${generated_paths[@]}" 2>/dev/null; then
+          if ! git diff --exit-code -I '// Generated at:' -- "${generated_paths[@]}" 2>/dev/null; then
             echo ""
             echo "❌ Generated TypeScript files are out of sync with AdCP schemas or registry OpenAPI!"
             echo ""
             echo "📋 Changes detected in:"
-            git diff --name-only "${generated_paths[@]}" 2>/dev/null || true
+            git diff --name-only -- "${generated_paths[@]}" 2>/dev/null || true
             echo ""
             echo "🔧 To fix, run locally:"
             echo "  npm run sync-schemas:all"
@@ -180,6 +196,9 @@ jobs:
 
       - name: Build library
         run: npm run build:lib
+
+      - name: Guard public Zod OpenAPI portability
+        run: npm run test:zod-openapi-portability
 
       - name: Enforce publish-size budgets
         run: npm run check:package-size
@@ -453,11 +472,22 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: node --test test/lib/webhook-delivery-durability.test.js
 
-      - name: Run PostgreSQL decisioning task-registry contract
+      - name: Run durable webhook registration backend contract
         env:
           NODE_ENV: test
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
-        run: node --test --test-timeout=120000 test/server-decisioning-postgres-task-registry.test.js
+          REDIS_URL: redis://127.0.0.1:6379
+        run: node --test --test-timeout=120000 test/lib/webhook-registration-durability.test.js
+
+      - name: Run PostgreSQL decisioning backend contracts
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+        run: >-
+          node --test --test-timeout=120000
+          test/server-decisioning-postgres-task-registry.test.js
+          test/server-decisioning-postgres-task-settlement-intents.test.js
+          test/lib/postgres-proposal-store.test.js
 
   eslint-plugin-tests:
     name: ESLint Plugin Tests

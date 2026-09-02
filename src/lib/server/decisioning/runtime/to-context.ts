@@ -40,6 +40,101 @@ import {
 } from '../async-outcome';
 import type { CtxMetadataStore, ResourceKind, CtxMetadataRef } from '../../ctx-metadata';
 
+const abortSignalAbortedGetter =
+  typeof AbortSignal === 'undefined'
+    ? undefined
+    : Object.getOwnPropertyDescriptor(AbortSignal.prototype, 'aborted')?.get;
+
+function isNativeAbortSignal(value: object): value is AbortSignal {
+  if (abortSignalAbortedGetter === undefined) return false;
+  try {
+    abortSignalAbortedGetter.call(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type AuthValuePosition = 'root' | 'extra' | 'abort-signal' | 'other';
+type SeenAuthValues = WeakMap<object, Map<AuthValuePosition, unknown>>;
+
+function nestedAuthValuePosition(position: AuthValuePosition, key: PropertyKey): AuthValuePosition {
+  if (position === 'root' && key === 'extra') return 'extra';
+  if (position === 'extra' && key === 'signal') return 'abort-signal';
+  return 'other';
+}
+
+function authValueCachePosition(object: object, position: AuthValuePosition, root: object): AuthValuePosition {
+  if (position === 'root' || object === root) return 'root';
+  if (position !== 'extra') return 'other';
+  const signalDescriptor = Object.getOwnPropertyDescriptor(object, 'signal');
+  return signalDescriptor &&
+    'value' in signalDescriptor &&
+    signalDescriptor.value !== null &&
+    (typeof signalDescriptor.value === 'object' || typeof signalDescriptor.value === 'function') &&
+    isNativeAbortSignal(signalDescriptor.value)
+    ? 'extra'
+    : 'other';
+}
+
+function rememberAuthValueClone(
+  seen: SeenAuthValues,
+  object: object,
+  position: AuthValuePosition,
+  clone: unknown
+): void {
+  const clonesByPosition = seen.get(object) ?? new Map<AuthValuePosition, unknown>();
+  clonesByPosition.set(position, clone);
+  seen.set(object, clonesByPosition);
+}
+
+function cloneAndFreezeAuthValue<T>(
+  value: T,
+  seen: SeenAuthValues = new WeakMap(),
+  position: AuthValuePosition = 'root',
+  rootObject?: object
+): T {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
+  // AbortSignal is a live, request-local capability rather than a data
+  // record. Cloning its prototype and own properties creates an object that
+  // fails the native brand check and is disconnected from future aborts.
+  // Preserve the verified host signal by reference so provider work observes
+  // cancellation after dispatch has begun.
+  const object = value as unknown as object;
+  const root = rootObject ?? object;
+  if (position === 'abort-signal' && object !== root && isNativeAbortSignal(object)) return value;
+  const cachePosition = authValueCachePosition(object, position, root);
+  const clonesByPosition = seen.get(object);
+  if (clonesByPosition?.has(cachePosition)) return clonesByPosition.get(cachePosition) as T;
+  if (value instanceof Date) return Object.freeze(new Date(value.getTime())) as T;
+  if (value instanceof Map) {
+    const clone = new Map();
+    rememberAuthValueClone(seen, object, cachePosition, clone);
+    for (const [key, entry] of value)
+      clone.set(cloneAndFreezeAuthValue(key, seen, 'other', root), cloneAndFreezeAuthValue(entry, seen, 'other', root));
+    return Object.freeze(clone) as T;
+  }
+  if (value instanceof Set) {
+    const clone = new Set();
+    rememberAuthValueClone(seen, object, cachePosition, clone);
+    for (const entry of value) clone.add(cloneAndFreezeAuthValue(entry, seen, 'other', root));
+    return Object.freeze(clone) as T;
+  }
+  const clone = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value));
+  rememberAuthValueClone(seen, object, cachePosition, clone);
+  for (const key of Reflect.ownKeys(object)) {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    if (!descriptor) continue;
+    if ('value' in descriptor) {
+      descriptor.value = cloneAndFreezeAuthValue(descriptor.value, seen, nestedAuthValuePosition(position, key), root);
+      descriptor.writable = false;
+    }
+    descriptor.configurable = false;
+    Object.defineProperty(clone, key, descriptor);
+  }
+  return Object.freeze(clone) as T;
+}
+
 /**
  * Build an account-scoped CtxMetadataAccessor for a single request.
  *
@@ -156,6 +251,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
 
   return {
     account,
+    ...(handlerCtx.authInfo != null && { authInfo: cloneAndFreezeAuthValue(handlerCtx.authInfo) }),
     ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
     ...(handlerCtx.callerMutationScope != null && {
       callerMutationScope: Object.freeze({ ...handlerCtx.callerMutationScope }),

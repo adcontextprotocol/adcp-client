@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type {
   GetReportingStatusRequest,
   GetReportingStatusResponse,
@@ -20,9 +21,9 @@ import {
   type ReportingResourceReader,
 } from './inspection';
 
-// Kept local until the experimental reporting schemas ship in the next protocol
-// bundle consumed by this SDK. Optionality preserves compatibility with the prior
-// generated types while reconciliation fails closed when the evidence is absent.
+// Runtime guards keep these evidence-bearing fields optional at the boundary so
+// malformed or older seller payloads fail with reconciliation diagnostics rather
+// than an unchecked property access.
 type ManagedReportingObligation = ReportingObligation & {
   scope_resolved_at?: string;
   coverage?: ReportingCoverageEvidence;
@@ -156,6 +157,8 @@ export interface ReportingCheckpointKey {
 export interface ReportingCheckpoint {
   receipt: ReportingReceipt;
   receiptSyncIdempotencyKey: string;
+  /** SHA-256 of the exact obligation, revision, materialization, and consumer expectation inspected. */
+  contextFingerprint: string;
 }
 
 export interface ReportingCheckpointStore {
@@ -514,10 +517,32 @@ export async function loadReportingLedger(
   maxSnapshotRestarts = 2,
   limits: ReportingLedgerLimits = {}
 ): Promise<ReportingLedger> {
+  if (!Number.isSafeInteger(maxSnapshotRestarts) || maxSnapshotRestarts < 0 || maxSnapshotRestarts > 10) {
+    throw new ReportingReconciliationError(
+      'INVALID_LEDGER_LIMITS',
+      'maxSnapshotRestarts must be an integer from 0 through 10'
+    );
+  }
   const requestedAccountId = (request.account as { account_id?: unknown }).account_id;
   const maxPages = limits.maxPages ?? 1_000;
   const maxRecords = limits.maxRecords ?? 100_000;
-  const deadline = Date.now() + (limits.maxLoadMs ?? 60_000);
+  const maxLoadMs = limits.maxLoadMs ?? 60_000;
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 10_000) {
+    throw new ReportingReconciliationError('INVALID_LEDGER_LIMITS', 'maxPages must be an integer from 1 through 10000');
+  }
+  if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > 1_000_000) {
+    throw new ReportingReconciliationError(
+      'INVALID_LEDGER_LIMITS',
+      'maxRecords must be an integer from 1 through 1000000'
+    );
+  }
+  if (!Number.isSafeInteger(maxLoadMs) || maxLoadMs < 1 || maxLoadMs > 3_600_000) {
+    throw new ReportingReconciliationError(
+      'INVALID_LEDGER_LIMITS',
+      'maxLoadMs must be an integer from 1 through 3600000'
+    );
+  }
+  const deadline = Date.now() + maxLoadMs;
   for (let restart = 0; restart <= maxSnapshotRestarts; restart += 1) {
     try {
       const obligations = new Map<string, ManagedReportingObligation>();
@@ -1165,6 +1190,7 @@ export function buildReportingReceipt(
   if (profile === 'native_commit' && observation.nativeVersionRef !== materialization.resource.native_version_ref) {
     rejectionCodes.push('NATIVE_VERSION_MISMATCH');
   }
+  const [firstRejectionCode, ...remainingRejectionCodes] = rejectionCodes;
 
   return {
     reporting_receipt_id: reportingReceiptId,
@@ -1181,7 +1207,7 @@ export function buildReportingReceipt(
     ...(observation.manifestSha256 ? { observed_manifest_sha256: observation.manifestSha256 } : {}),
     ...(observation.nativeVersionRef ? { observed_native_version_ref: observation.nativeVersionRef } : {}),
     ...(observation.consumerCommitRef ? { consumer_commit_ref: observation.consumerCommitRef } : {}),
-    ...(rejectionCodes.length ? { rejection_codes: rejectionCodes } : {}),
+    ...(firstRejectionCode !== undefined ? { rejection_codes: [firstRejectionCode, ...remainingRejectionCodes] } : {}),
     observed_at: observedAt,
   };
 }
@@ -1231,12 +1257,17 @@ function checkpointMatchesContext(checkpoint: ReportingCheckpoint, context: Repo
   const { receipt } = checkpoint;
   return Boolean(
     checkpoint.receiptSyncIdempotencyKey &&
+    checkpoint.contextFingerprint === checkpointContextFingerprint(context) &&
     context.materialization.verification &&
     receipt.reporting_obligation_id === context.obligation.reporting_obligation_id &&
     receipt.reporting_revision_id === context.revision.reporting_revision_id &&
     receipt.reporting_materialization_id === context.materialization.reporting_materialization_id &&
     receipt.verification_profile === context.materialization.verification.verification_profile
   );
+}
+
+function checkpointContextFingerprint(context: ReportingInspectionContext): string {
+  return createHash('sha256').update(canonical(context)).digest('hex');
 }
 
 export async function reconcileReporting<TCredential = unknown>(
@@ -1332,7 +1363,11 @@ export async function reconcileReporting<TCredential = unknown>(
         receipt = buildReportingReceipt(context, error.observation);
         if (receipt.status !== 'rejected') throw error;
       }
-      checkpoint = { receipt, receiptSyncIdempotencyKey: generateIdempotencyKey() };
+      checkpoint = {
+        receipt,
+        receiptSyncIdempotencyKey: generateIdempotencyKey(),
+        contextFingerprint: checkpointContextFingerprint(context),
+      };
       await options.checkpointStore?.put(checkpointKey, checkpoint);
     }
     newReceipts.push(checkpoint.receipt);

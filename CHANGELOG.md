@@ -1,5 +1,92 @@
 # Changelog
 
+## 14.0.0-beta.25
+
+### Patch Changes
+
+- b50aff2: Mirror final MCP `structuredContent` into a serialized text block so text-only clients retain complete AdCP results.
+
+## 14.0.0-beta.24
+
+### Patch Changes
+
+- 3826420: Preserve canonical currency, price, CPV threshold, and DOOH bounds in generated runtime schemas.
+
+## 14.0.0-beta.23
+
+### Patch Changes
+
+- da2e818: Route `sync_creatives` task lifecycle records through the spec-defined media-buy protocol domain.
+
+## 14.0.0-beta.22
+
+### Patch Changes
+
+- 3cc739d: Keep legacy `get_products` responses usable when a canonical catalog also contains formats that have no legacy representation. The server now omits only unrepresentable products and reports their projection diagnostics in `errors[]` instead of failing the entire catalog response.
+
+## 14.0.0-beta.21
+
+### Patch Changes
+
+- f654876: Fix generated `SignalTargetingExpression` types and validators so categorical values remain non-empty, numeric bounds remain required and ordered, and unrelated objects cannot satisfy the union.
+
+## 14.0.0-beta.20
+
+### Minor Changes
+
+- c61a8df: Support private development-network server URLs, container-reachable storyboard webhook receivers with optional direct TLS, and a public bounded brand.json fetch helper with typed HTTP status errors. Plain-HTTP proxy receiver URLs now require the explicit `allowHttp` or `--allow-http` local-development opt-in.
+- d4daa92: Expose a scoped proof that a terminal push task has its deterministic durable
+  webhook checkpoint, allowing adopters to recover safely after deleting secrets.
+
+## 14.0.0-beta.19
+
+### Patch Changes
+
+- 73bddbb: Make task-settlement intent migrations upgrade queues created by earlier SDK betas, use a statement-stable tombstone expiry boundary, and keep task identifiers out of conflict errors.
+
+## 14.0.0-beta.18
+
+### Minor Changes
+
+- 6dd9d45: Add a durable PostgreSQL task-settlement intent queue for atomically recording application outcomes before SDK task and webhook settlement. The queue provides immutable scoped bindings, caller-owned transaction participation, leased and fenced recovery, bounded retries and dead letters, payload sanitization, startup probing, and an explicit idempotent settlement callback.
+
+### Patch Changes
+
+- 1801914: Deduplicate repeated Product format and placement validators so adopter OpenAPI documents stay compact when extending `ProductSchema`.
+- 1e01639: Preserve live `AbortSignal` identity in native decisioning request authentication context so provider work observes host cancellation after dispatch begins.
+
+## 14.0.0-beta.17
+
+### Minor Changes
+
+- 7fb42cb: Expose verified request authentication to native decisioning handlers, preserve resolved account generics across legacy migration handlers, and add framework-owned per-tool AdCP version availability across MCP, A2A, dispatch, validation, projection, and capability discovery.
+
+  Ship a durable PostgreSQL proposal lifecycle store with scoped atomic transitions, bounded database-time cleanup, readiness probing, and migration helpers. Align generated creative asset schemas with their public TypeScript interfaces, including nested provenance-bearing image assets.
+
+- 508d669: Fix public Zod array projection so complex `minItems: 1` arrays no longer render as tuples with an incorrect OpenAPI `minItems: 2`, and collapse bounded homogeneous tuple unions that caused `ProductSchema` OpenAPI documents to grow to roughly 99 MB. Generated public array inference is widened from tuple types to ordinary arrays in line with the documented relaxed-cardinality contract.
+
+### Patch Changes
+
+- 10a7eb3: Exclude MCP prompt projections from generated wire-field allowlists so intentionally reduced model-context schemas cannot conflict with canonical request contracts.
+- 1172a01: Support digest-verified, commit-addressed protocol PR bundles in schema sync and generated-code CI.
+
+## 14.0.0-beta.16
+
+### Minor Changes
+
+- 47e7958: Return authoritative compliance bundle verdicts and expose structured versions on unsupported compliance-cache errors.
+- 381920d: Add a schema-bundle-derived buyer verifier for proposal commercial terms. It checks the proposal digest before recursively comparing every binding field, returns typed JSON Pointer mismatches, and fails closed for unavailable or unsupported schema bundles.
+- 796ca0e: Fix public Zod schema portability and restore protocol-authored integer, numeric-bound, string-length, pattern, and date-time validation on canonical shared schemas.
+- fd9958b: Add first-party Redis and PostgreSQL webhook registration stores for restart-safe, multi-replica callback verification, with atomic provenance binding, backend-clock expiry, durable settlement markers, migration/probe helpers, cleanup, deployment-isolation safeguards, and method/URL binding for registered legacy HMAC callbacks.
+- e3342af: Expose framework-resolved account, agent, authentication, and task scope to comply-controller adapters, and keep webhook secret protection outside PostgreSQL settlement transactions.
+
+### Patch Changes
+
+- 5ee3ecf: Allow `list_accounts` as the lowest-priority security-baseline authentication probe, and skip ordinary storyboard tool calls whose required test-kit contract is not configured.
+- 00f6ba6: Adopt the signed AdCP 3.2.0-beta.9 bundle and package the corrected sales-guaranteed and sales-non-guaranteed compliance tracks.
+- d70b652: Preserve primitive string validation for generated macro-bearing URL aliases used by creative asset schemas.
+- cc267d2: Keep framework-resolved account authority stable across async storyboard operations, controller directives, and task reconciliation while preserving authored natural operators.
+
 ## 14.0.0-beta.15
 
 ### Minor Changes

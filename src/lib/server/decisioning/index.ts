@@ -351,6 +351,7 @@ export {
   getHydratedLegacyFormatIds,
   getAllAdcpMigrations,
   type CreateAdcpServerFromPlatformOptions,
+  type AccountOf,
   type LegacyDecisioningHandlerGroups,
   type RequiredOptsFor,
   type DecisioningAdcpServer,
@@ -393,6 +394,28 @@ export {
   type TaskPushSettlementConfig,
   type TaskPushSettlementOutcome,
 } from './runtime/postgres-task-settlement';
+export {
+  canonicalizeTaskSettlementIntent,
+  createPostgresTaskSettlementIntentQueue,
+  getTaskSettlementIntentMigration,
+  TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,
+  TaskSettlementIntentConflictError,
+  type CreatePostgresTaskSettlementIntentQueueOptions,
+  type DurableTaskSettlementRef,
+  type PostgresTaskSettlementIntentQueue,
+  type PruneTaskSettlementIntentAcknowledgementsOptions,
+  type RecoverTaskSettlementIntentsOptions,
+  type TaskSettlementIntent,
+  type TaskSettlementIntentCheckpoint,
+  type TaskSettlementIntentRecoveryContext,
+  type TaskSettlementIntentRecoveryErrorContext,
+  type TaskSettlementIntentRecoveryMetrics,
+  type TaskSettlementIntentWriteOptions,
+} from './runtime/postgres-task-settlement-intents';
+export {
+  applyTaskSettlementIntent,
+  type ApplyTaskSettlementIntentOptions,
+} from './runtime/apply-task-settlement-intent';
 
 // Multi-tenant deployment helper — wraps createAdcpServerFromPlatform with
 // per-tenant config, health states (healthy/unverified/disabled), and JWKS
@@ -490,11 +513,17 @@ export type {
   ProposalRecord,
   ProposalStore,
   InMemoryProposalStoreOptions,
+  ProposalPgQueryable,
+  PostgresProposalStoreOptions,
+  ProposalStoreMigrationOptions,
   MockProposalManagerOptions,
 } from './proposal';
 export {
   validateProposalCapabilities,
   InMemoryProposalStore,
+  PostgresProposalStore,
+  createPostgresProposalStore,
+  getProposalStoreMigration,
   MockProposalManager,
   enforceProposalExpiry,
   validateCapabilityOverlap,

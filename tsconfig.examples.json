@@ -13,8 +13,11 @@
   },
   "include": [
     "examples/comply-controller-seller.ts",
+    "examples/seller-3.2-starter.ts",
     "examples/seller-test-controller.ts",
     "examples/gcp-kms-signing-provider.ts",
+    "examples/error-compliant-server.ts",
+    "examples/signals-agent.ts",
     "examples/decisioning-platform-mock-seller.ts",
     "examples/decisioning-platform-broadcast-tv.ts",
     "examples/decisioning-platform-identity-graph.ts",
@@ -30,6 +33,8 @@
     "examples/proxy-seller-snap/index.ts",
     "examples/hello_seller_adapter_guaranteed.ts",
     "examples/hello_seller_adapter_non_guaranteed.ts",
+    "examples/hello_seller_adapter_multi_tenant.ts",
+    "examples/hello_seller_adapter_proposal_mode.ts",
     "examples/hello_si_adapter_brand.ts"
   ],
   "exclude": ["node_modules", "dist"]

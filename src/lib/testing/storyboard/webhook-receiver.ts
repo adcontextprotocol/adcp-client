@@ -16,9 +16,10 @@
  *     proxy-URL mode swaps in an operator-supplied public base.
  */
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { randomUUID } from 'node:crypto';
-import type { AddressInfo } from 'node:net';
+import { isIP, type AddressInfo } from 'node:net';
 import { getSchemaValidatorByRef } from '../../validation/schema-loader';
 
 /**
@@ -68,7 +69,7 @@ const SECRET_HEADER_PATTERN =
  * advertise an `http://169.254.169.254`, `file://…`, or header-splitting
  * URL that would then be embedded in outbound `push_notification_config.url`.
  */
-function validateProxyUrl(raw: string): string {
+function validateProxyUrl(raw: string, allowHttp: boolean): string {
   if (/[\r\n\x00]/.test(raw)) {
     throw new Error('webhook_receiver.public_url must not contain CR/LF/NUL');
   }
@@ -81,10 +82,16 @@ function validateProxyUrl(raw: string): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`webhook_receiver.public_url must be http(s); got ${parsed.protocol}`);
   }
+  if (parsed.protocol === 'http:' && !allowHttp) {
+    throw new Error('webhook_receiver.public_url must use https (set allowHttp only for controlled local development)');
+  }
   if (parsed.username || parsed.password) {
     throw new Error('webhook_receiver.public_url must not include userinfo');
   }
-  return raw.replace(/\/$/, '');
+  if (parsed.search || parsed.hash) {
+    throw new Error('webhook_receiver.public_url must not include a query string or fragment');
+  }
+  return raw.replace(/\/+$/, '');
 }
 
 export interface CapturedWebhook {
@@ -153,6 +160,8 @@ export interface WebhookReceiver {
   readonly base_url: string;
   /** Whether the receiver is in loopback-mock or proxy-url mode. */
   readonly mode: 'loopback_mock' | 'proxy_url';
+  /** Local address the listener is bound to. */
+  readonly bind_host?: string;
   /** All webhooks captured so far, in arrival order. */
   all(): CapturedWebhook[];
   /** Schema-valid proof-of-control challenges, kept separate from event deliveries. */
@@ -185,6 +194,19 @@ export interface CreateWebhookReceiverOptions {
   port?: number;
   /** Public URL to advertise when `mode: 'proxy_url'`. */
   public_url?: string;
+  /**
+   * Permit an HTTP public URL for controlled local-development topologies.
+   */
+  allowHttp?: boolean;
+  /**
+   * TLS material for serving HTTPS directly. Omit when HTTPS terminates at a
+   * tunnel or reverse proxy in front of this listener.
+   */
+  tls?: {
+    cert: string | Buffer;
+    key: string | Buffer;
+    passphrase?: string;
+  };
 }
 
 interface RetryKey {
@@ -203,17 +225,23 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
   }
 
   const host = options.host ?? '127.0.0.1';
-  // A loopback_mock receiver bound on 0.0.0.0 is publicly reachable from any
-  // interface — which would turn a CI runner into an open POST endpoint.
-  // Operators who genuinely want public exposure use mode=proxy_url.
-  if (mode === 'loopback_mock' && (host === '0.0.0.0' || host === '::')) {
+  // Keep loopback_mock literal: aliases for wildcard addresses (including
+  // expanded IPv6 forms) must not turn a CI runner into an open POST endpoint.
+  // Operators who genuinely want non-loopback exposure use mode=proxy_url.
+  if (mode === 'loopback_mock' && !isLoopbackHost(host)) {
     throw new Error(
       `webhook_receiver host ${host} is not permitted in loopback_mock mode. ` +
         'Use mode=proxy_url with an explicit public_url for publicly-reachable runs.'
     );
   }
   const port = options.port ?? 0;
-  const proxyBase = mode === 'proxy_url' ? validateProxyUrl(options.public_url!) : undefined;
+  const proxyBase =
+    mode === 'proxy_url' ? validateProxyUrl(options.public_url!, options.allowHttp === true) : undefined;
+  if (options.tls && proxyBase && new URL(proxyBase).protocol !== 'https:') {
+    throw new Error('webhook_receiver.public_url must use https when local TLS is configured');
+  }
+  const publicRouteSuffix = mode === 'proxy_url' ? `/_adcp_receiver/${randomUUID()}` : '';
+  const routePrefix = proxyBase ? `${new URL(proxyBase).pathname.replace(/\/+$/, '')}${publicRouteSuffix}` : '';
 
   const captured: CapturedWebhook[] = [];
   const challenges: CapturedWebhookChallenge[] = [];
@@ -232,9 +260,26 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
   const challengeCounts = new Map<string, number>();
   let closed = false;
 
-  const server = createServer((req, res) =>
-    handleRequest(req, res, { captured, challenges, waiters, retryPolicies, deliveryCounts, challengeCounts })
-  );
+  const requestListener = (req: IncomingMessage, res: ServerResponse) =>
+    handleRequest(req, res, {
+      captured,
+      challenges,
+      waiters,
+      retryPolicies,
+      deliveryCounts,
+      challengeCounts,
+      routePrefix,
+    });
+  const server = options.tls
+    ? createHttpsServer(
+        {
+          cert: options.tls.cert,
+          key: options.tls.key,
+          ...(options.tls.passphrase !== undefined && { passphrase: options.tls.passphrase }),
+        },
+        requestListener
+      )
+    : createServer(requestListener);
   // Transport-level hardening — trim Node's generous defaults so a slow /
   // hostile publisher can't wedge the runner.
   server.headersTimeout = HEADERS_TIMEOUT_MS;
@@ -253,11 +298,14 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
   });
 
   const bound = server.address() as AddressInfo;
-  const base_url = proxyBase ?? `http://${formatHost(bound.address)}:${bound.port}`;
+  const base_url = proxyBase
+    ? `${proxyBase}${publicRouteSuffix}`
+    : `${options.tls ? 'https' : 'http'}://${formatHost(bound.address)}:${bound.port}`;
 
   return {
     base_url,
     mode,
+    bind_host: host,
     all: () => captured.slice(),
     challenges: () => challenges.slice(),
     matching: filter => captured.filter(w => matchesFilter(w, filter)),
@@ -280,6 +328,14 @@ export async function createWebhookReceiver(options: CreateWebhookReceiverOption
   };
 }
 
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  if (normalized === 'localhost') return true;
+  if (isIP(host) === 4) return /^127(?:\.\d{1,3}){3}$/.test(host);
+  if (isIP(host) === 6) return normalized === '::1' || /^(?:0:){7}1$/.test(normalized);
+  return false;
+}
+
 // ────────────────────────────────────────────────────────────
 // Request handling
 // ────────────────────────────────────────────────────────────
@@ -295,6 +351,7 @@ interface HandlerState {
   retryPolicies: Map<string, { policy: RetryReplayPolicy; delivered: number }>;
   deliveryCounts: Map<string, number>;
   challengeCounts: Map<string, number>;
+  routePrefix: string;
 }
 
 function handleRequest(req: IncomingMessage, res: ServerResponse, state: HandlerState): void {
@@ -304,13 +361,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, state: Handler
     return;
   }
 
-  const pathParts = parseStepPath(req.url ?? '');
+  const pathParts = parseStepPath(req.url ?? '', state.routePrefix);
   if (!pathParts) {
     res.statusCode = 404;
     res.end();
     return;
   }
-  const { step_id, operation_id } = pathParts;
+  const { step_id, operation_id, logical_path } = pathParts;
 
   let size = 0;
   const chunks: Buffer[] = [];
@@ -373,7 +430,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, state: Handler
         operation_id,
         received_at: Date.now(),
         method: req.method ?? 'POST',
-        path: req.url ?? '/',
+        path: logical_path,
         headers: redactHeaders(headers),
         raw_body: raw,
         body: parsedBody.body as Record<string, unknown>,
@@ -410,7 +467,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, state: Handler
       delivery_index: deliveryIndex,
       received_at: Date.now(),
       method: req.method ?? 'POST',
-      path: req.url ?? '/',
+      path: logical_path,
       headers: redactHeaders(headers),
       raw_body: raw,
       ...parsedBody,
@@ -457,10 +514,18 @@ function requestPathname(reqUrl: string): string {
   return q === -1 ? reqUrl : reqUrl.slice(0, q);
 }
 
-function parseStepPath(reqUrl: string): { step_id: string; operation_id: string } | undefined {
-  const match = STEP_PATH_RE.exec(requestPathname(reqUrl));
+function parseStepPath(
+  reqUrl: string,
+  routePrefix: string
+): { step_id: string; operation_id: string; logical_path: string } | undefined {
+  const pathname = requestPathname(reqUrl);
+  if (routePrefix && !pathname.startsWith(`${routePrefix}/`)) return undefined;
+  const logicalPath = routePrefix ? pathname.slice(routePrefix.length) : pathname;
+  const match = STEP_PATH_RE.exec(logicalPath);
   if (!match) return undefined;
-  return { step_id: match[1]!, operation_id: match[2]! };
+  const queryIndex = reqUrl.indexOf('?');
+  const query = queryIndex === -1 ? '' : reqUrl.slice(queryIndex);
+  return { step_id: match[1]!, operation_id: match[2]!, logical_path: `${logicalPath}${query}` };
 }
 
 function normalizeHeaders(raw: IncomingMessage['headers']): Record<string, string> {
@@ -627,7 +692,7 @@ function waitAll(
 // ────────────────────────────────────────────────────────────
 
 function closeServer(
-  server: Server,
+  server: HttpServer | HttpsServer,
   captured: CapturedWebhook[],
   waiters: Array<{ filter: WebhookFilter; resolve: (r: WebhookWaitResult) => void; timer: NodeJS.Timeout }>,
   waitAllTimers: Array<{

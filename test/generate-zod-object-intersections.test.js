@@ -54,8 +54,20 @@ function postProcessRecordSizeConstraints(input) {
   return runPostProcess('postProcessRecordSizeConstraints', input, '.zod-record-size-');
 }
 
+function relaxArrayCardinalityTypes(input) {
+  return runPostProcess('relaxArrayCardinalityTypes', input, '.zod-array-cardinality-');
+}
+
+function postProcessTupleRestArrays(input) {
+  return runPostProcess('postProcessTupleRestArrays', input, '.zod-tuple-rest-');
+}
+
 function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
+}
+
+function postProcessRepeatedProductIntersections(input) {
+  return runPostProcess('postProcessRepeatedProductIntersections', input, '.zod-product-intersections-');
 }
 
 function postProcessObjectUnionIntersections(input) {
@@ -174,6 +186,50 @@ export const ArraySchema = z.array(z.string()).max(5);
   assert.match(output, /ArraySchema = z\.array\(z\.string\(\)\)\.max\(5\);/);
 });
 
+test('relaxArrayCardinalityTypes uses source metadata and preserves structural tuples', () => {
+  const output = relaxArrayCardinalityTypes(`
+/** @minItems 1 */
+export type ComplexArray = [{ value: string }, ...{ value: string }[]];
+/**
+ * @minItems 1
+ * @maxItems 3
+ */
+export type BoundedArray =
+  | [{ value: string }]
+  | [{ value: string }, { value: string }]
+  | [{ value: string }, { value: string }, { value: string }];
+/** @minItems 2 @maxItems 2 */
+export type Coordinate = [number, number];
+export type StructuralTupleUnion = [string] | [string, string];
+`);
+
+  assert.match(output, /type ComplexArray = \{\s*value: string;\s*\}\[\]/);
+  assert.match(output, /type BoundedArray = \{\s*value: string;\s*\}\[\]/);
+  assert.match(output, /type Coordinate = \[\s*number,\s*number\s*\]/);
+  assert.match(output, /type StructuralTupleUnion = \[\s*string\s*\] \| \[\s*string,\s*string\s*\]/);
+});
+
+test('postProcessTupleRestArrays handles differently-indented complex items only', () => {
+  const output = postProcessTupleRestArrays(`
+export const ComplexArraySchema = z.tuple([z.object({
+        value: z.string()
+    }).passthrough()]).rest(z.object({
+  value: z.string()
+}).passthrough());
+export const FixedTupleSchema = z.tuple([z.number(), z.number()]);
+export const StructuralUnionSchema = z.union([
+  z.tuple([z.string()]),
+  z.tuple([z.string(), z.string()])
+]);
+export const DistinctRegexSchema = z.tuple([z.string().regex(/a b/)]).rest(z.string().regex(/ab/));
+`);
+
+  assert.match(output, /ComplexArraySchema = z\.array\(z\.object\(/);
+  assert.match(output, /FixedTupleSchema = z\.tuple\(\[z\.number\(\), z\.number\(\)\]\)/);
+  assert.match(output, /StructuralUnionSchema = z\.union\(/);
+  assert.match(output, /DistinctRegexSchema = z\.tuple\(/);
+});
+
 test('postProcessMarkerUnionObjectIntersections keeps unions once markers gain fields', () => {
   const output = postProcessMarkerUnionObjectIntersections(`
 export const V1MarkerSchema = z.object({
@@ -189,6 +245,64 @@ export const FutureProductSchema = z.union([V1MarkerSchema, V2MarkerSchema]).and
 
   assert.match(output, /export const FutureProductSchema = z\.union\(\[V1MarkerSchema, V2MarkerSchema\]\)\.and/);
   assert.doesNotMatch(output, /FutureProductSchema = z\.object\(/);
+});
+
+test('postProcessRepeatedProductIntersections collapses repeated format and placement validators', () => {
+  const output = postProcessRepeatedProductIntersections(`
+export const CommonBFormatSchema = z.object({ value: z.string() }).passthrough();
+export const FormatKindsSchema = z.union([z.object({ format_kind: z.literal("image") })]);
+export const ProductFormatDeclarationSchema = z.object({ id: z.string() }).merge(CommonBFormatSchema)
+  .and(FormatKindsSchema)
+  .and(CommonBFormatSchema)
+  .and(FormatKindsSchema)
+  .and(CommonBFormatSchema)
+  .and(FormatKindsSchema)
+  .and(CommonBFormatSchema)
+  .and(FormatKindsSchema);
+export const PlacementBaseSchema = z.object({ placement_id: z.string() });
+export const PlacementChoiceSchema = z.union([z.object({ required: z.boolean() })]);
+export const PlacementSchema = PlacementBaseSchema
+  .and(PlacementChoiceSchema)
+  .and(CommonBFormatSchema)
+  .and(PlacementChoiceSchema)
+  .and(CommonBFormatSchema);
+`);
+
+  assert.match(
+    output,
+    /ProductFormatDeclarationSchema = z\.object\(\{ id: z\.string\(\) \}\)\.merge\(CommonBFormatSchema\)\.and\(FormatKindsSchema\);/
+  );
+  assert.match(
+    output,
+    /PlacementSchema = PlacementBaseSchema\.and\(PlacementChoiceSchema\)\.and\(CommonBFormatSchema\);/
+  );
+});
+
+test('postProcessRepeatedProductIntersections fails closed when the common Product validator is not contained', () => {
+  assert.throws(
+    () =>
+      postProcessRepeatedProductIntersections(`
+export const ProductFormatDeclarationSchema = z.object({ id: z.string() })
+  .and(z.literal("format"))
+  .and(z.object({ constraint: z.string() }))
+  .and(z.literal("format"))
+  .and(z.object({ constraint: z.string() }))
+  .and(z.literal("format"))
+  .and(z.object({ constraint: z.string() }))
+  .and(z.literal("format"));
+export const PlacementSchema = z.object({ placement_id: z.string() });
+`),
+    /no longer matches the verified repeated allOf projection/
+  );
+});
+
+test('postProcessRepeatedProductIntersections preserves literal whitespace semantics', () => {
+  const output = postProcessRepeatedProductIntersections(`
+export const ProductFormatDeclarationSchema = z.object({ product_id: z.string() });
+export const PlacementSchema = z.literal("a b").and(z.literal("a  b")).and(z.literal("a b"));
+`);
+
+  assert.match(output, /PlacementSchema = z\.literal\("a b"\)\.and\(z\.literal\("a  b"\)\);/);
 });
 
 test('postProcessObjectUnionIntersections distributes object envelope over union arms', () => {

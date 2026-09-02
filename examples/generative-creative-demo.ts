@@ -3,7 +3,7 @@
 // This example shows how to use canonical format_kind and assets for both
 // static and generative creative workflows
 
-import { ADCPMultiAgentClient, imageAsset, textAsset, urlAsset, type SyncCreativesRequest } from '../src/lib';
+import { ADCPMultiAgentClient, imageAsset, textAsset, urlAsset, type SyncCreativesRequest } from '@adcp/sdk';
 
 async function demonstrateGenerativeCreatives() {
   console.log('🎨 Generative Creative Format Demo');

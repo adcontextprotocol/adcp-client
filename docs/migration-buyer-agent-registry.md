@@ -380,8 +380,8 @@ The cache is serving the stale `status: 'suspended'` for up to `ttlSeconds`. Cal
 ## Reference
 
 - **Worked example**: [`examples/hello_signals_adapter_marketplace.ts`](../examples/hello_signals_adapter_marketplace.ts) — full adapter wiring with Addie + sandbox_only + caching.
-- **Framework gate behavior**: [`test/server-buyer-agent-status-and-redaction.test.js`](../test/server-buyer-agent-status-and-redaction.test.js), [`test/server-buyer-agent-sandbox-only.test.js`](../test/server-buyer-agent-sandbox-only.test.js).
-- **Cache decorator behavior**: [`test/lib/buyer-agent-cache.test.js`](../test/lib/buyer-agent-cache.test.js).
+- **Framework gate behavior**: [`server-buyer-agent-status-and-redaction.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/server-buyer-agent-status-and-redaction.test.js), [`server-buyer-agent-sandbox-only.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/server-buyer-agent-sandbox-only.test.js).
+- **Cache decorator behavior**: [`buyer-agent-cache.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/buyer-agent-cache.test.js).
 - **Phase 1 design issue**: [#1269](https://github.com/adcontextprotocol/adcp-client/issues/1269).
 - **Billing enforcement issue**: [#1292](https://github.com/adcontextprotocol/adcp-client/issues/1292).
 - **Spec PR for billing error codes**: [adcontextprotocol/adcp#3831](https://github.com/adcontextprotocol/adcp/pull/3831).

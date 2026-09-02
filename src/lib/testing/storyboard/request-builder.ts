@@ -77,6 +77,9 @@ const FIXTURE_AWARE_ENRICHERS = new Set<string>([
   'comply_test_controller', // forces account.sandbox: true regardless of fixture
   'check_governance', // preserves the authored intent-vs-delivery request shape
   'get_products', // preserves wholesale fixture fields while keeping resolved account scope authoritative
+  'get_signals', // preserves discovery fields while keeping async task account scope authoritative
+  'get_task_status', // preserves task filters while keeping resolved account scope authoritative
+  'list_tasks', // preserves reconciliation filters while keeping resolved account scope authoritative
   'update_media_buy', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buys', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
   'get_media_buy_delivery', // resolves account via resolveAccount(options) so sandbox routing matches create_media_buy
@@ -157,7 +160,7 @@ function runClockMs(runnerVars: RunnerVariables | undefined): number {
   return runnerVars?.runStartMs ?? Date.now();
 }
 
-function resolveMediaBuyReadAccount(fixtureAccount: unknown, contextAccount: unknown, options: TestOptions): unknown {
+function resolveMediaBuyAccount(fixtureAccount: unknown, contextAccount: unknown, options: TestOptions): unknown {
   const resolvedAccount = contextAccount ?? resolveAccount(options);
   // Preserve a fixture-authored natural-key operator: it identifies the
   // buyer acting for the brand and is not interchangeable with brand.domain.
@@ -295,10 +298,13 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const fixtureAccount = fixtureFields.account;
-    const resolvedAccount =
-      fixtureAccount !== undefined && !hasUnresolvedContextReference(fixtureAccount)
+    const fixtureWholesaleAccount =
+      fixtureFields.buying_mode === 'wholesale' &&
+      fixtureAccount !== undefined &&
+      !hasUnresolvedContextReference(fixtureAccount)
         ? fixtureAccount
-        : (context.account ?? resolveAccount(options));
+        : undefined;
+    const resolvedAccount = fixtureWholesaleAccount ?? resolveMediaBuyAccount(fixtureAccount, context.account, options);
 
     if (fixtureFields.buying_mode === 'wholesale') {
       return {
@@ -415,13 +421,13 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // allocation.
     //
     // Spread the fixture (after $context injection) so proposal-mode-
-    // required fields like `total_budget` flow through. Prefer the
-    // fixture's account/brand when supplied — proposal-mode storyboards
-    // author a non-default brand (e.g. `acmeoutdoor.example`) that the
-    // adapter resolves end-to-end through brief/refine/finalize, and
-    // the harness-default `test.example` would fail account resolution
-    // at the accept step (adcp-client#1600). Dates and proposal_id
-    // are still normalised by the enricher.
+    // required fields like `total_budget` flow through. Resolve the account
+    // with the same authority rules as package mode: a trusted context wins,
+    // fixture-authored natural keys retain their operator, and opaque fixture
+    // account IDs cannot override the harness scope. Proposal-mode storyboards
+    // may still author a non-default brand that must survive the complete
+    // brief/refine/finalize flow (adcp-client#1600). Dates and proposal_id are
+    // still normalised by the enricher.
     const fixture =
       step.sample_request !== undefined
         ? (injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>)
@@ -448,7 +454,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
       const { packages: _droppedPackages, ...fixtureWithoutPackages } = fixtureBody;
       return {
         ...fixtureWithoutPackages,
-        account: fixtureWithoutPackages.account ?? context.account ?? resolveAccount(options),
+        account: resolveMediaBuyAccount(fixtureWithoutPackages.account, context.account, options),
         brand: fixtureWithoutPackages.brand ?? resolveBrand(options),
         start_time: startTime,
         end_time: endTime,
@@ -469,7 +475,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
     // with `runnerVars` so mustache tokens expand correctly.
     return {
       ...fixtureBody,
-      account: context.account ?? resolveAccount(options),
+      account: resolveMediaBuyAccount(fixtureBody.account, context.account, options),
       brand: resolveBrand(options),
       start_time: startTime,
       end_time: endTime,
@@ -480,11 +486,10 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   update_media_buy(step, context, options) {
     // Fixture-aware: spread the storyboard's sample_request first so hand-authored
     // intent (targeting_overlay swaps, creative assignments, pause/resume/cancel)
-    // is preserved verbatim, then force `account` to the harness-resolved value so
-    // sandbox routing matches create_media_buy's namespace on every round-trip
-    // (otherwise the fixture's account silently routes update writes to a different
-    // partition than the create wrote to, and a subsequent get_media_buys reading
-    // from the create-time partition surfaces stale data — see adcp-client#1505).
+    // is preserved verbatim. Account resolution matches create_media_buy: context
+    // and opaque harness scope remain authoritative, while an authored natural-key
+    // operator is retained and only sandbox routing is normalized. Otherwise an
+    // update can silently land in a different partition from the create/read chain.
     // Envelope fields are dropped from the local spread; the outer enrichRequest
     // re-injects them with `runnerVars` so mustache substitutions expand.
     const fixtureFields = step.sample_request
@@ -493,7 +498,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const request: Record<string, unknown> = { ...fixtureFields };
-    request.account = context.account ?? resolveAccount(options);
+    request.account = resolveMediaBuyAccount(fixtureFields.account, context.account, options);
     if (request.media_buy_id === undefined) {
       request.media_buy_id = context.media_buy_id ?? 'unknown';
     }
@@ -522,17 +527,17 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   get_media_buys(step, context, options) {
     // Spread fixture fields so storyboards can author filters, status, pagination, etc.
-    // account is always overridden by the harness-resolved value so sandbox routing
-    // matches create_media_buy's namespace on every round-trip. Envelope fields are
-    // dropped from the local spread so the outer enrichRequest re-injects them with
-    // `runnerVars` (mustache substitutions expand against the runner's webhook base).
+    // Account resolution matches create_media_buy: trusted context wins, while a
+    // fixture-authored natural key retains its operator. Envelope fields are dropped
+    // from the local spread so the outer enrichRequest re-injects them with `runnerVars`
+    // (mustache substitutions expand against the runner's webhook base).
     const fixtureFields = step.sample_request
       ? omitEnvelopeFields(
           injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
         )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
-    result.account = resolveMediaBuyReadAccount(fixtureFields.account, context.account, options);
+    result.account = resolveMediaBuyAccount(fixtureFields.account, context.account, options);
     if (context.media_buy_id != null && result.media_buy_ids === undefined) {
       result.media_buy_ids = [context.media_buy_id];
     }
@@ -541,7 +546,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   get_media_buy_delivery(step, context, options) {
     // Same account-resolution rule as get_media_buys — fixture fields preserved,
-    // account overridden by harness so sandbox routing matches create_media_buy.
+    // with trusted context authoritative and authored natural operators preserved.
     // Envelope fields dropped from the local spread; outer enrichRequest re-applies
     // them with `runnerVars` so mustache substitutions expand.
     const fixtureFields = step.sample_request
@@ -550,11 +555,39 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         )
       : {};
     const result: Record<string, unknown> = { ...fixtureFields };
-    result.account = resolveMediaBuyReadAccount(fixtureFields.account, context.account, options);
+    result.account = resolveMediaBuyAccount(fixtureFields.account, context.account, options);
     if (context.media_buy_id != null && result.media_buy_ids === undefined) {
       result.media_buy_ids = [context.media_buy_id];
     }
     return result;
+  },
+
+  get_task_status(step, context, options) {
+    // Task handles are account-scoped. Preserve authored query fields while applying
+    // the exact authority rule used by the operation that created the task.
+    const fixtureFields = step.sample_request
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
+      : {};
+    return {
+      ...fixtureFields,
+      account: resolveMediaBuyAccount(fixtureFields.account, context.account, options),
+      task_id: fixtureFields.task_id ?? context.task_id ?? 'unknown',
+    };
+  },
+
+  list_tasks(step, context, options) {
+    // Reconciliation must query the same account partition as point reads.
+    const fixtureFields = step.sample_request
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
+      : {};
+    return {
+      ...fixtureFields,
+      account: resolveMediaBuyAccount(fixtureFields.account, context.account, options),
+    };
   },
 
   // provide_performance_feedback intentionally has no builder — storyboard
@@ -736,16 +769,43 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
   // ── Signals ────────────────────────────────────────────
 
   get_signals(step, context, options) {
-    if (options.brief) return { signal_spec: options.brief };
-    if (step.sample_request?.signal_ids) {
-      return injectContext({ signal_ids: step.sample_request.signal_ids }, context);
+    const fixtureFields = step.sample_request
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
+      : {};
+    const fixtureAccount = fixtureFields.account;
+    const fixtureWholesaleAccount =
+      fixtureFields.discovery_mode === 'wholesale' &&
+      fixtureAccount !== undefined &&
+      !hasUnresolvedContextReference(fixtureAccount)
+        ? fixtureAccount
+        : undefined;
+    const account = fixtureWholesaleAccount ?? resolveMediaBuyAccount(fixtureAccount, context.account, options);
+
+    if (fixtureFields.discovery_mode === 'wholesale') {
+      return { ...fixtureFields, account };
+    }
+    if (options.brief) {
+      return {
+        signal_spec: options.brief,
+        ...fixtureFields,
+        account,
+      };
+    }
+    if (
+      fixtureFields.signal_spec !== undefined ||
+      fixtureFields.signal_refs !== undefined ||
+      fixtureFields.signal_ids !== undefined
+    ) {
+      return { ...fixtureFields, account };
     }
     // `anyOf: [{required: [signal_spec]}, {required: [signal_ids]}]` — the
     // schema rejects an empty object. Default to a discovery-style
     // `signal_spec` so storyboards that omit `options.brief` still send a
     // conforming request. A real test should author sample_request or pass
     // options.brief; this is the minimally valid fallback.
-    return { signal_spec: 'E2E fallback signal discovery' };
+    return { signal_spec: 'E2E fallback signal discovery', account };
   },
 
   activate_signal(step, context, _options) {
@@ -1021,8 +1081,24 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
 
   comply_test_controller(step, context, options) {
     // The test controller requires account.sandbox: true to be set.
+    // Task-lifecycle directives must target the same complete natural account
+    // as the operation/poll calls they coordinate. Other controller scenarios
+    // retain the historical harness-authoritative account behavior.
+    const controllerFields = step.sample_request
+      ? omitEnvelopeFields(
+          injectContext({ ...(step.sample_request as Record<string, unknown>) }, context) as Record<string, unknown>
+        )
+      : undefined;
+    const controllerScenario = controllerFields?.scenario;
+    const accountScope =
+      controllerScenario === 'force_create_media_buy_arm' ||
+      controllerScenario === 'force_get_products_arm' ||
+      controllerScenario === 'force_get_signals_arm' ||
+      controllerScenario === 'force_task_completion'
+        ? resolveMediaBuyAccount(controllerFields?.account, context.account, options)
+        : (context.account ?? resolveAccount(options));
     const account: Record<string, unknown> = {
-      ...(context.account ?? resolveAccount(options)),
+      ...(accountScope as Record<string, unknown>),
       sandbox: true,
     };
     // Natural-key arm of AccountReference requires `operator` per the spec
@@ -1035,11 +1111,11 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         account.operator = brand.domain;
       }
     }
-    if (step.sample_request) {
+    if (controllerFields) {
       // Drop envelope fields; outer enrichRequest re-applies them with
       // `runnerVars` so mustache substitutions expand correctly.
       return {
-        ...omitEnvelopeFields(injectContext({ ...step.sample_request }, context) as Record<string, unknown>),
+        ...controllerFields,
         account,
       };
     }

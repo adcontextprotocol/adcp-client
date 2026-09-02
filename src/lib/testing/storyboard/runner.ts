@@ -2651,6 +2651,10 @@ async function executeStoryboardPass(
   const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
   const stepRequestStarts = new Map<string, string>();
   const responseDerivedNotApplicableContextKeys = new Map<string, string>();
+  // Context outputs by capability-gated phase. The per-step execution state
+  // receives only keys from phases it actually depends on, preserving the
+  // declared depends_on / any_of branch-set topology.
+  const capabilityUnavailableContextKeysByPhase = new Map<string, Set<string>>();
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
@@ -2684,6 +2688,8 @@ async function executeStoryboardPass(
     stepId: string;
     reason: RunnerSkipReason | RunnerDetailedSkipReason;
     substitution_chain?: string;
+    /** The trigger is an explicit phase capability gate, not a failed setup. */
+    capabilityUnavailable?: boolean;
   };
   const phaseStatefulCascades = new Map<string, CascadeTrigger | null>();
   // Phase IDs in declaration order, accumulated as we iterate so the
@@ -2734,6 +2740,19 @@ async function executeStoryboardPass(
     }
     return { tripped: false };
   };
+  const capabilityUnavailableContextKeysForPhase = (
+    phase: { id: string; depends_on?: string[] },
+    prior: readonly string[]
+  ): Set<string> => {
+    const keys = new Set<string>();
+    const ownSpec = branchSetsByPhaseId.get(phase.id);
+    const ownAnyOfBranchSet = ownSpec?.semantics === 'any_of' ? ownSpec.id : undefined;
+    for (const depId of effectiveDependsOn(phase, prior)) {
+      if (ownAnyOfBranchSet !== undefined && branchSetsByPhaseId.get(depId)?.id === ownAnyOfBranchSet) continue;
+      for (const key of capabilityUnavailableContextKeysByPhase.get(depId) ?? []) keys.add(key);
+    }
+    return keys;
+  };
   // Step results whose failures the main loop added to failedCount. The
   // branch-set post-pass decrements only for entries that were actually
   // counted, so an optional phase that hit `presenceDetected` (a PRM 2xx
@@ -2750,6 +2769,8 @@ async function executeStoryboardPass(
         ...(options.webhook_receiver.host !== undefined && { host: options.webhook_receiver.host }),
         ...(options.webhook_receiver.port !== undefined && { port: options.webhook_receiver.port }),
         ...(options.webhook_receiver.public_url !== undefined && { public_url: options.webhook_receiver.public_url }),
+        allowHttp: options.allow_http === true,
+        ...(options.webhook_receiver.tls !== undefined && { tls: options.webhook_receiver.tls }),
       })
     : undefined;
   const runnerVars = createRunnerVariables({
@@ -3094,6 +3115,26 @@ async function executeStoryboardPass(
       });
       skippedCount += skippedSteps.length;
       phaseCapabilitySkippedIds.add(phase.id);
+      // A capability-gated phase can make downstream state unavailable either
+      // through an explicitly stateful setup step or an author-declared
+      // context output on an otherwise stateless step. Preserve the existing
+      // depends_on / any_of branch-set cascade semantics for stateful
+      // consumers, while executeStep handles non-stateful consumers that
+      // directly reference one of these keys.
+      const unavailableKeys = new Set<string>();
+      for (const step of phase.steps) {
+        for (const output of step.context_outputs ?? []) {
+          if (output.key) unavailableKeys.add(output.key);
+        }
+      }
+      capabilityUnavailableContextKeysByPhase.set(phase.id, unavailableKeys);
+      if (phase.steps.some(s => s.stateful)) {
+        phaseStatefulCascades.set(phase.id, {
+          stepId: phase.steps.find(s => s.stateful)!.id,
+          reason: 'not_applicable',
+          capabilityUnavailable: true,
+        });
+      }
       priorPhaseIds.push(phase.id);
       continue;
     }
@@ -3382,24 +3423,25 @@ async function executeStoryboardPass(
             ? `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); ${trigger.substitution_chain}; state never materialized.`
             : `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
+        const capabilityUnavailable = trigger?.capabilityUnavailable === true;
         stepResults.push({
           storyboard_id: storyboard.id,
           step_id: step.id,
           phase_id: phase.id,
           title: step.title,
           task: step.task,
-          passed: false,
+          passed: capabilityUnavailable,
           skipped: true,
-          skip_reason: 'prerequisite_failed',
-          skip: buildSkip('prerequisite_failed', detail),
+          skip_reason: capabilityUnavailable ? 'capability_prerequisite_unavailable' : 'prerequisite_failed',
+          skip: buildSkip(capabilityUnavailable ? 'not_applicable' : 'prerequisite_failed', detail),
           duration_ms: 0,
           validations: [],
           context,
-          error: detail,
+          ...(!capabilityUnavailable && { error: detail }),
           extraction: { path: 'none' },
         });
         skippedCount++;
-        phasePassed = false;
+        if (!capabilityUnavailable) phasePassed = false;
         continue;
       }
 
@@ -3435,6 +3477,10 @@ async function executeStoryboardPass(
         continue;
       }
       const stepExecutionState = buildExecutionState(assignment.agentUrl, assignment.profile);
+      stepExecutionState.capabilityUnavailableContextKeys = capabilityUnavailableContextKeysForPhase(
+        phase,
+        priorPhaseIds
+      );
       const rawResult = await executeStep(
         assignment.client,
         step,
@@ -3889,10 +3935,13 @@ async function executeStoryboardPass(
   }
 
   // Overall pass requires (a) no required-phase failures, (b) either an
-  // executed pass or every required phase grading canonically not_applicable,
+  // executed pass, every required phase grading canonically not_applicable,
+  // or every required step being gated by an unavailable test-kit contract,
   // and (c) no assertion failures. Without (b), a storyboard where every phase
   // is optional or every required step is skipped for another reason (for
-  // example, missing_tool) would pass vacuously.
+  // example, missing_tool) would pass vacuously. Contract-gated storyboards
+  // are the deliberate exception: the runner has positively established that
+  // their opt-in adapter is out of scope, so the result is non-failing.
   // (c) makes assertions gating — a run with all validations green but a
   // cross-step invariant broken is not conformant.
   // When no phases had executable steps the storyboard result is a skip, not a
@@ -3918,6 +3967,17 @@ async function executeStoryboardPass(
         phaseResult.steps.every(step => step.skipped && step.skip?.reason === 'not_applicable')
       );
     });
+  const requiredPhasesContractGated =
+    requiredPhaseDefs.length > 0 &&
+    requiredPhaseDefs.every(phaseDef => {
+      const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
+      return (
+        !!phaseResult &&
+        phaseResult.passed &&
+        phaseResult.steps.length > 0 &&
+        phaseResult.steps.every(step => step.skipped && step.skip_reason === 'missing_test_kit_contract')
+      );
+    });
   const requiredPhasesCoveredByCapabilityGates =
     phaseCapabilitySkippedIds.size > 0 &&
     requiredPhaseDefs.length > 0 &&
@@ -3930,6 +3990,7 @@ async function executeStoryboardPass(
     !hasExecutableSteps ||
     requiredPhaseHasExecutedPass ||
     requiredPhasesNotApplicable ||
+    requiredPhasesContractGated ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
   const storyboardWideFixtureUnavailable =
     (seedingUnsupported || fixtureUnsatisfied || creativeAssetFixtureGap !== undefined) && failedCount === 0;
@@ -4477,6 +4538,8 @@ async function runStoryboardStepBody(
           ...(options.webhook_receiver.public_url !== undefined && {
             public_url: options.webhook_receiver.public_url,
           }),
+          allowHttp: options.allow_http === true,
+          ...(options.webhook_receiver.tls !== undefined && { tls: options.webhook_receiver.tls }),
         })
       : undefined);
   const ownsWebhookReceiver = !injectedReceiver && !!webhookReceiver;
@@ -4552,6 +4615,8 @@ interface ExecutionState {
    * rather than prerequisite_failed.
    */
   responseDerivedNotApplicableContextKeys?: Map<string, string>;
+  /** Context keys from capability-gated phases this step depends on. */
+  capabilityUnavailableContextKeys?: Set<string>;
   /** Shared ephemeral webhook receiver, when the run has one enabled. */
   webhookReceiver?: WebhookReceiver;
   /** Shared runner-variable bag for `{{runner.*}}` substitution. */
@@ -4619,6 +4684,7 @@ async function executeStep(
     contextProvenance: new Map(),
     stepRequestStarts: new Map(),
     responseDerivedNotApplicableContextKeys: new Map(),
+    capabilityUnavailableContextKeys: new Set(),
   };
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
@@ -4646,6 +4712,30 @@ async function executeStep(
   // a seller tool call.
   if (step.task === REPLAY_WEBHOOK_VECTOR_TASK) {
     return executeReplayWebhookVectorStep(step, phaseId, context, allSteps, options, runState);
+  }
+
+  // Ordinary MCP/A2A steps honor the same opt-in contract boundary as the
+  // runner-native probe and replay paths above. Gate before resolving a
+  // dynamic task name, inspecting tool availability, building a request, or
+  // dispatching so an out-of-scope adapter is never invoked accidentally.
+  if (step.requires_contract && !new Set(options.contracts ?? []).has(step.requires_contract)) {
+    const detail = `Test-kit contract "${step.requires_contract}" is not configured on this runner.`;
+    const reason: RunnerDetailedSkipReason = 'missing_test_kit_contract';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: reason,
+      skip: buildSkip(DETAILED_SKIP_TO_CANONICAL[reason], detail),
+      duration_ms: 0,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      extraction: { path: 'none', note: 'test-kit contract not configured' },
+    };
   }
 
   // Resolve $test_kit.* task references before any downstream dispatch / skip checks.
@@ -4801,6 +4891,35 @@ async function executeStep(
     request = applyContextInputs(request, step.context_inputs, context);
   }
 
+  // applyContextInputs intentionally leaves absent keys alone. When such a
+  // key belongs to an unavailable capability-gated dependency, stop before
+  // dispatch rather than letting an expect_error vector accidentally test the
+  // runner's missing state.
+  const unavailableContextInputs = (step.context_inputs ?? []).filter(
+    input => !(input.key in context) && runState.capabilityUnavailableContextKeys?.has(input.key) === true
+  );
+  if (unavailableContextInputs.length > 0) {
+    const detail =
+      'Skipped: context required by a capability-gated phase is unavailable: ' +
+      unavailableContextInputs.map(input => input.key).join(', ') +
+      '.';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'capability_prerequisite_unavailable',
+      skip: buildSkip('not_applicable', detail),
+      duration_ms: 0,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      extraction: { path: 'none' },
+    };
+  }
+
   // Brand/account is a storyboard-run-scoped invariant: every step in a run
   // targets the same brand, so every outgoing request's brand context must
   // match the options. Enforcing this here (after builder + sample_request)
@@ -4889,24 +5008,38 @@ async function executeStep(
     token: BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
   }));
   const unresolvedVars = [...unresolvedContextVars, ...unresolvedAssetDirectives];
-  // expect_error steps may intentionally preserve invalid $context tokens, but
-  // runner-only creative directives must never cross the wire.
-  if (unresolvedAssetDirectives.length > 0 || (unresolvedContextVars.length > 0 && !step.expect_error)) {
+  // Keep expect_error's intentional malformed-vector behavior, except when
+  // the unresolved token belongs to a capability-gated phase this step
+  // depends on. That token is runner state that cannot materialize and must
+  // never cross the wire.
+  const hasCapabilityUnavailableContext = unresolvedContextVars.some(
+    v => runState.capabilityUnavailableContextKeys?.has(v.key) === true
+  );
+  if (
+    unresolvedAssetDirectives.length > 0 ||
+    (unresolvedContextVars.length > 0 && (!step.expect_error || hasCapabilityUnavailableContext))
+  ) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const responseDerivedDetails = unresolvedVars
       .map(v => runState.responseDerivedNotApplicableContextKeys?.get(v.key))
       .filter((d): d is string => typeof d === 'string');
     const allResponseDerived =
       responseDerivedDetails.length === unresolvedVars.length && responseDerivedDetails.length > 0;
+    const allCapabilityUnavailable =
+      unresolvedContextVars.length === unresolvedVars.length &&
+      unresolvedContextVars.length > 0 &&
+      unresolvedContextVars.every(v => runState.capabilityUnavailableContextKeys?.has(v.key) === true);
     const detail = allResponseDerived
       ? [...new Set(responseDerivedDetails)].join('; ')
-      : `Skipped: unresolved context variables from prior steps: ${unresolvedVars.map(v => v.key).join(', ')}.`;
+      : allCapabilityUnavailable
+        ? `Skipped: context required by a capability-gated phase is unavailable: ${unresolvedVars.map(v => v.key).join(', ')}.`
+        : `Skipped: unresolved context variables from prior steps: ${unresolvedVars.map(v => v.key).join(', ')}.`;
     // Normal unresolved substitutions carry one validation result per missing
     // token. Response-derived terminal-page skips are already successful
     // not_applicable rows, so their downstream cursor consumers stay validation
     // empty to avoid inventing a failing-looking check for an expected skip.
     const synthesized: ValidationResult[] = [];
-    if (!allResponseDerived) {
+    if (!allResponseDerived && !allCapabilityUnavailable) {
       const seenTokens = new Set<string>();
       for (const v of unresolvedVars) {
         if (seenTokens.has(v.token)) continue;
@@ -4931,15 +5064,22 @@ async function executeStep(
       phase_id: phaseId,
       title: step.title,
       task: step.task,
-      passed: allResponseDerived,
+      passed: allResponseDerived || allCapabilityUnavailable,
       skipped: true,
-      skip_reason: allResponseDerived ? 'not_applicable' : 'prerequisite_failed',
-      skip: buildSkip(allResponseDerived ? 'not_applicable' : 'prerequisite_failed', detail),
+      skip_reason: allCapabilityUnavailable
+        ? 'capability_prerequisite_unavailable'
+        : allResponseDerived
+          ? 'not_applicable'
+          : 'prerequisite_failed',
+      skip: buildSkip(
+        allResponseDerived || allCapabilityUnavailable ? 'not_applicable' : 'prerequisite_failed',
+        detail
+      ),
       duration_ms: 0,
       validations: synthesized,
       context,
       ...responseDerivedContextResult(runState),
-      ...(!allResponseDerived && { error: detail }),
+      ...(!allResponseDerived && !allCapabilityUnavailable && { error: detail }),
       next,
       extraction: { path: 'none' },
     };

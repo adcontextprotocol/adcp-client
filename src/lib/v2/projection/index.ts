@@ -85,6 +85,7 @@ export {
   CanonicalFormat,
   audioDaastFormatDeclaration,
   audioHostedFormatDeclaration,
+  audioVastFormatDeclaration,
   agentPlacementFormatDeclaration,
   canonicalFormatDeclaration,
   customFormatDeclaration,

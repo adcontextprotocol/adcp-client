@@ -80,7 +80,13 @@ import type {
 import type { Request, RequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { redactSecrets } from '../utils/redact-secrets';
-import { getSdkServer, listRegisteredToolNames, type AdcpAuthInfo, type AdcpServer } from './adcp-server';
+import {
+  getSdkServer,
+  isToolAvailableForVersion,
+  listRegisteredToolNames,
+  type AdcpAuthInfo,
+  type AdcpServer,
+} from './adcp-server';
 import type { McpToolResponse } from './responses';
 import type { AdcpLogger } from './create-adcp-server';
 
@@ -504,6 +510,7 @@ class AdcpA2AAgentExecutor implements AgentExecutor {
               toolName,
               args: invocation.input,
               ...(authInfo && { authInfo }),
+              responseContext: { transport: 'a2a' },
             });
             break;
           } catch (err) {
@@ -802,9 +809,24 @@ function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): A
   if (overrides.preferredTransport && overrides.preferredTransport.toUpperCase() !== 'JSONRPC') {
     throw new Error('createA2AAdapter: only the JSONRPC A2A transport is supported');
   }
-  const tools = listRegisteredTools(server);
+  const registeredTools = listRegisteredTools(server);
+  const tools = registeredTools.filter(toolName =>
+    isToolAvailableForVersion(server, toolName, server.getAdcpVersion())
+  );
+  const availableTools = new Set(tools);
+  const registeredToolSet = new Set(registeredTools);
   const skills = filterPublicAgentCardSkills(
-    overrides.skills ? normalizeAgentCardSkills(overrides.skills) : deriveSkills(tools)
+    (overrides.skills ? normalizeAgentCardSkills(overrides.skills) : deriveSkills(tools)).filter(skill => {
+      const normalizedId = typeof skill.id === 'string' ? a2aSkillToServerToolNames(skill.id)[0] : undefined;
+      const normalizedName = typeof skill.name === 'string' ? a2aSkillToServerToolNames(skill.name)[0] : undefined;
+      const registeredName =
+        normalizedId !== undefined && registeredToolSet.has(normalizedId)
+          ? normalizedId
+          : normalizedName !== undefined && registeredToolSet.has(normalizedName)
+            ? normalizedName
+            : undefined;
+      return registeredName === undefined || availableTools.has(registeredName);
+    })
   );
   // Capability discovery is an invocable AdCP skill and is required for safe
   // version/lifecycle selection. Keep it visible even when sellers override

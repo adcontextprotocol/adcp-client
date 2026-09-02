@@ -12,7 +12,7 @@ function clientForSellerVersion(version) {
       protocol: 'mcp',
     },
     {
-      adcpVersion: '3.2.0-beta.9',
+      adcpVersion: '3.2.0-beta.10',
       validateFeatures: false,
       validation: { requests: 'off', responses: 'off' },
     }

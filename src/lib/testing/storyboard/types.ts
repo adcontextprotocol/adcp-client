@@ -1873,6 +1873,12 @@ export interface StoryboardRunOptions extends TestOptions {
      * validate reachability.
      */
     public_url?: string;
+    /** TLS material for direct HTTPS serving; omit behind a TLS-terminating proxy. */
+    tls?: {
+      cert: string | Buffer;
+      key: string | Buffer;
+      passphrase?: string;
+    };
   };
   /**
    * Target receiver for `replay_webhook_vector` storyboards. This is separate
@@ -2131,6 +2137,13 @@ export type RunnerDetailedSkipReason =
    */
   | 'capability_unsupported'
   /**
+   * A preceding phase was skipped because the agent explicitly does not
+   * support its required capability, so this step's prerequisite state cannot
+   * exist. This is a neutral applicability outcome, unlike an ordinary
+   * `prerequisite_failed` skip which remains actionable.
+   */
+  | 'capability_prerequisite_unavailable'
+  /**
    * A `comply_test_controller` step targeted a `force_*` scenario that the
    * agent advertised the controller for but did not implement. Detected by
    * the tuple (step.task === 'comply_test_controller', resolved
@@ -2161,6 +2174,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   fixture_seed_unsupported: 'not_applicable',
   fixture_unsatisfied: 'not_applicable',
   capability_unsupported: 'not_applicable',
+  capability_prerequisite_unavailable: 'not_applicable',
   rate_abuse_opt_out: 'unsatisfied_contract',
   missing_test_kit_contract: 'unsatisfied_contract',
   live_side_effect_opt_in_required: 'unsatisfied_contract',

@@ -193,6 +193,7 @@ export async function maybeInterceptFinalize<TRecipe extends Recipe, TCtxMeta>(a
     await store.commit(finalizeProposalId, {
       expiresAt: success.expiresAt,
       proposalPayload: success.proposal,
+      expectedAccountId: accountId,
     });
     logFinalizeSucceeded({
       proposalId: finalizeProposalId,
@@ -402,19 +403,26 @@ export async function maybeReserveProposalForCreateMediaBuy<TRecipe extends Reci
     ...(now && { now }),
   });
 
+  const current = now ?? new Date();
   const reserved = await store.tryReserveConsumption(proposalId, {
     expectedAccountId: ctx.account.id,
+    expiresAtCutoff: new Date(current.getTime() - graceSeconds * 1000),
   });
 
   // Capability-overlap gate per D4. Buyer's packages may be empty when
   // proposal_id is set (the spec allows the seller to derive packages
   // from allocations); skip the gate in that case.
   const packages = request.packages;
-  if (packages && Array.isArray(packages) && packages.length > 0) {
-    validateCapabilityOverlap({
-      packages: packages as never,
-      recipes: reserved.recipes,
-    });
+  try {
+    if (packages && Array.isArray(packages) && packages.length > 0) {
+      validateCapabilityOverlap({
+        packages: packages as never,
+        recipes: reserved.recipes,
+      });
+    }
+  } catch (error) {
+    await store.releaseConsumption(proposalId, { expectedAccountId: ctx.account.id });
+    throw error;
   }
 
   return reserved;

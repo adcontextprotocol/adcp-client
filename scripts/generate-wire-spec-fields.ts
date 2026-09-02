@@ -33,7 +33,8 @@ function getAdcpVersion(): string {
 //   convenience. Field sets diverge from the canonical schemas, which
 //   would produce false-positive collisions.
 // - `mcp/` contains model-facing projections. Security-sensitive fields can
-//   be intentionally omitted there, so these are not canonical wire shapes.
+//   intentionally be omitted from those prompt schemas, so they are not wire
+//   contracts and must not participate in the request allowlist.
 // - underscore-prefixed dirs are codegen scratch.
 const SKIP_DIRS = new Set(['bundled', 'mcp']);
 
@@ -133,35 +134,6 @@ interface SchemaEntry {
   source: string;
 }
 
-// Temporary overlay while the SDK reporting stack is based on the protocol
-// reporting PR and the pinned beta bundle does not yet contain these schemas.
-// Remove when the next synced bundle supplies the canonical request files.
-const REPORTING_REQUEST_OVERLAY: readonly SchemaEntry[] = [
-  {
-    typeName: 'GetReportingStatusRequest',
-    fields: [
-      'account',
-      'context',
-      'delivery_config_ids',
-      'ext',
-      'feed_purposes',
-      'finality',
-      'health',
-      'media_buy_ids',
-      'pagination',
-      'period',
-      'reporting_revision_id',
-      'view',
-    ],
-    source: 'protocol reporting overlay: media-buy/get-reporting-status-request.json',
-  },
-  {
-    typeName: 'SyncReportingReceiptsRequest',
-    fields: ['account', 'adcp_major_version', 'adcp_version', 'context', 'ext', 'idempotency_key', 'receipts'],
-    source: 'protocol reporting overlay: media-buy/sync-reporting-receipts-request.json',
-  },
-];
-
 function loadSchema(file: string, schemaDir: string): SchemaEntry | null {
   const json = JSON.parse(readFileSync(file, 'utf8')) as RequestSchemaDocument;
   const fields = [...collectTopLevelFields(json, schemaDir, new Set([file]))].sort();
@@ -182,9 +154,6 @@ function main(): void {
   for (const file of requestFiles) {
     const entry = loadSchema(file, schemaDir);
     if (entry) entries.push(entry);
-  }
-  for (const overlay of REPORTING_REQUEST_OVERLAY) {
-    if (!entries.some(entry => entry.typeName === overlay.typeName)) entries.push(overlay);
   }
 
   // Dedupe by typeName — schemas may appear in multiple subdirectories

@@ -14,6 +14,12 @@
 const { describe, test, afterEach } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
+const https = require('node:https');
+const net = require('node:net');
+const { mkdtempSync, readFileSync, rmSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { setTimeout: delay } = require('node:timers/promises');
 
 const { createWebhookReceiver } = require('../../dist/lib/testing/storyboard/webhook-receiver.js');
@@ -33,6 +39,37 @@ async function post(url, body, headers) {
     headers: { 'content-type': 'application/json', ...(headers ?? {}) },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
+}
+
+function postWithTestTls(url, body) {
+  const payload = JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      url,
+      {
+        method: 'POST',
+        rejectUnauthorized: false,
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+      },
+      res => {
+        res.resume();
+        res.once('end', () => resolve(res));
+      }
+    );
+    req.once('error', reject);
+    req.end(payload);
+  });
+}
+
+async function getFreePort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
 }
 
 describe('createWebhookReceiver', () => {
@@ -309,7 +346,7 @@ describe('createWebhookReceiver', () => {
     const rec = await createWebhookReceiver({ mode: 'proxy_url', public_url: 'https://tunnel.example' });
     try {
       assert.strictEqual(rec.mode, 'proxy_url');
-      assert.strictEqual(rec.base_url, 'https://tunnel.example');
+      assert.match(rec.base_url, /^https:\/\/tunnel\.example\/_adcp_receiver\/[0-9a-f-]+$/);
     } finally {
       await rec.close();
     }
@@ -325,11 +362,117 @@ describe('createWebhookReceiver', () => {
       () => createWebhookReceiver({ mode: 'proxy_url', public_url: 'https://example.com\r\nX-Evil: 1' }),
       /CR\/LF/
     );
+    await assert.rejects(
+      () => createWebhookReceiver({ mode: 'proxy_url', public_url: 'https://example.com?redirect=1' }),
+      /query string or fragment/
+    );
+  });
+
+  test('requires an explicit local-development opt-in for an HTTP proxy URL', async () => {
+    await assert.rejects(
+      () => createWebhookReceiver({ mode: 'proxy_url', public_url: 'http://tests:9999' }),
+      /must use https/
+    );
+    const receiver = await createWebhookReceiver({
+      mode: 'proxy_url',
+      public_url: 'http://tests:9999',
+      allowHttp: true,
+    });
+    await receiver.close();
   });
 
   test('rejects 0.0.0.0 in loopback_mock mode', async () => {
     await assert.rejects(() => createWebhookReceiver({ host: '0.0.0.0' }), /not permitted/);
+    await assert.rejects(() => createWebhookReceiver({ host: '0:0:0:0:0:0:0:0' }), /not permitted/);
   });
+
+  test('binds on all interfaces in proxy mode and protects the route with an unguessable prefix', async () => {
+    const port = await getFreePort();
+    const receiver = await createWebhookReceiver({
+      mode: 'proxy_url',
+      host: '0.0.0.0',
+      port,
+      public_url: `http://tests:${port}/hooks`,
+      allowHttp: true,
+    });
+    try {
+      const routePrefix = new URL(receiver.base_url).pathname;
+      const accepted = await post(`http://127.0.0.1:${port}${routePrefix}/step/container/op-1`, {
+        idempotency_key: 'evt_x1234567890abcdef',
+      });
+      assert.strictEqual(accepted.status, 204);
+      assert.strictEqual(receiver.all().length, 1);
+      assert.strictEqual(receiver.all()[0].path, '/step/container/op-1');
+
+      const unscoped = await post(`http://127.0.0.1:${port}/step/container/op-2`, {
+        idempotency_key: 'evt_x1234567890abcdef',
+      });
+      assert.strictEqual(unscoped.status, 404);
+      assert.strictEqual(receiver.all().length, 1);
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  test('requires an HTTPS public URL when direct TLS is configured', async () => {
+    await assert.rejects(
+      () =>
+        createWebhookReceiver({
+          mode: 'proxy_url',
+          public_url: 'http://tests:9999',
+          allowHttp: true,
+          tls: { cert: 'invalid', key: 'invalid' },
+        }),
+      /must use https when local TLS is configured/
+    );
+  });
+
+  test(
+    'serves and captures webhooks over direct TLS',
+    { skip: spawnSync('openssl', ['version'], { stdio: 'ignore' }).status !== 0 },
+    async () => {
+      const certDir = mkdtempSync(path.join(tmpdir(), 'adcp-webhook-tls-'));
+      const certPath = path.join(certDir, 'cert.pem');
+      const keyPath = path.join(certDir, 'key.pem');
+      let receiver;
+      try {
+        const generated = spawnSync(
+          'openssl',
+          [
+            'req',
+            '-x509',
+            '-newkey',
+            'rsa:2048',
+            '-nodes',
+            '-keyout',
+            keyPath,
+            '-out',
+            certPath,
+            '-days',
+            '1',
+            '-subj',
+            '/CN=127.0.0.1',
+            '-addext',
+            'subjectAltName=IP:127.0.0.1',
+          ],
+          { stdio: 'ignore' }
+        );
+        assert.strictEqual(generated.status, 0, 'failed to generate test TLS certificate');
+        receiver = await createWebhookReceiver({
+          tls: { cert: readFileSync(certPath), key: readFileSync(keyPath) },
+        });
+        assert.match(receiver.base_url, /^https:\/\//);
+        const response = await postWithTestTls(`${receiver.base_url}/step/tls/op-1`, {
+          idempotency_key: 'evt_x1234567890abcdef',
+        });
+        assert.strictEqual(response.statusCode, 204);
+        assert.strictEqual(receiver.all().length, 1);
+      } finally {
+        if (receiver) await receiver.close();
+        rmSync(certDir, { recursive: true, force: true });
+      }
+    }
+  );
 
   test('redacts sensitive headers in captured webhooks', async () => {
     const receiver = await createWebhookReceiver();

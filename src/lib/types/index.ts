@@ -48,6 +48,8 @@ export type {
   CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven,
   CanonicalFormatVASTVideo,
   ExtensionObject,
+  PlacementPresentationDocument,
+  PlacementPresentationReference,
 } from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
 export type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';

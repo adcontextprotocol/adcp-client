@@ -46,7 +46,10 @@ export { HttpsJwksResolver, type HttpsJwksResolverOptions } from './jwks-https';
 export {
   BrandJsonJwksResolver,
   BrandJsonResolverError,
+  fetchBrandJson,
   type BrandAgentType,
+  type FetchedBrandJson,
+  type FetchBrandJsonOptions,
   type BrandJsonJwksResolverOptions,
   type BrandJsonResolverErrorCode,
 } from './brand-jwks';

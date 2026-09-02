@@ -127,8 +127,10 @@ import type {
   ListTasksResponse,
   SyncAgentNotificationConfigsRequest,
   SyncAgentNotificationConfigsResponse,
-  SyncAgentConfigurationRequest,
-  SyncAgentConfigurationResponse,
+  SyncPrincipalRequest,
+  SyncPrincipalResponse,
+  GetPrincipalRequest,
+  GetPrincipalResponse,
   ListAccountChangesRequest,
   ListAccountChangesResponse,
   ListAccountsRequest,
@@ -630,10 +632,17 @@ export class Agent {
   }
 
   /**
-   * Official AdCP sync_agent_configuration tool schema
+   * Official AdCP sync_principal tool schema
    */
-  async syncAgentConfiguration(params: MutatingRequestInput<SyncAgentConfigurationRequest>): Promise<SyncAgentConfigurationResponse> {
-    return this.callTool<SyncAgentConfigurationResponse>('sync_agent_configuration', params);
+  async syncPrincipal(params: MutatingRequestInput<SyncPrincipalRequest>): Promise<SyncPrincipalResponse> {
+    return this.callTool<SyncPrincipalResponse>('sync_principal', params);
+  }
+
+  /**
+   * Official AdCP get_principal tool schema
+   */
+  async getPrincipal(params: GetPrincipalRequest): Promise<GetPrincipalResponse> {
+    return this.callTool<GetPrincipalResponse>('get_principal', params);
   }
 
   /**
@@ -1060,10 +1069,17 @@ export class AgentCollection {
   }
 
   /**
-   * Official AdCP sync_agent_configuration tool schema (across multiple agents)
+   * Official AdCP sync_principal tool schema (across multiple agents)
    */
-  async syncAgentConfiguration(params: MutatingRequestInput<SyncAgentConfigurationRequest>): Promise<SyncAgentConfigurationResponse[]> {
-    return this.callToolOnAll<SyncAgentConfigurationResponse>('sync_agent_configuration', params);
+  async syncPrincipal(params: MutatingRequestInput<SyncPrincipalRequest>): Promise<SyncPrincipalResponse[]> {
+    return this.callToolOnAll<SyncPrincipalResponse>('sync_principal', params);
+  }
+
+  /**
+   * Official AdCP get_principal tool schema (across multiple agents)
+   */
+  async getPrincipal(params: GetPrincipalRequest): Promise<GetPrincipalResponse[]> {
+    return this.callToolOnAll<GetPrincipalResponse>('get_principal', params);
   }
 
   /**

@@ -126,6 +126,11 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/business-entity.json',
   'core/property-id.json',
   'core/signal-ref.json',
+  // The numeric branch carries an `anyOf` minimum/maximum constraint. When
+  // first reached through the aggregate targeting schema, jsts can claim the
+  // union as two open empty objects and make every object validate. Compile
+  // the authoritative discriminator before aggregate roots.
+  'core/signal-targeting-expression.json',
   'core/pagination-request.json',
   'core/forecast-point.json',
   'core/delivery-forecast.json',
@@ -138,6 +143,11 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/canonical-format-option.json',
   'core/delivery-metric-aggregate.json',
   'core/cancellation-policy.json',
+  // These two independent protocols both name a branch "File transfer" but
+  // publish incompatible shapes. Own both declarations before aggregate
+  // media-buy schemas can let traversal order collapse them to one type.
+  'core/audience-activation-method.json',
+  'core/reporting-delivery-method.json',
   'media-buy/package-update.json',
   'core/creative-approval-scope.json',
   'core/warning-resource.json',
@@ -152,6 +162,7 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'formats/canonical/video_hosted.json',
   'formats/canonical/video_vast.json',
   'formats/canonical/audio_hosted.json',
+  'formats/canonical/audio_vast.json',
   'formats/canonical/audio_daast.json',
   'formats/canonical/sponsored_placement.json',
   'formats/canonical/native_in_feed.json',
@@ -226,6 +237,7 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalFormatHostedVideo',
   'CanonicalFormatVASTVideo',
   'CanonicalFormatHostedAudio',
+  'CanonicalFormatVASTAudio',
   'CanonicalFormatDAASTAudio',
   'CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven',
   'CanonicalFormatNativeInFeed',
@@ -1051,6 +1063,7 @@ export function enforceStrictSchema(schema: any): any {
     return schema;
   }
 
+  schema = normalizeSignalTargetingForCodegen(schema);
   schema = normalizePostalAreaForCodegen(schema);
   schema = nameVendorMetricValueQualifierForCodegen(schema);
   schema = normalizeCanonicalFormatOptionKindsForCodegen(schema);
@@ -1419,6 +1432,49 @@ export function enforceStrictSchema(schema: any): any {
   }
 
   return flattenMutualExclusiveOneOf(strictSchema);
+}
+
+/**
+ * Preserve signal-expression cardinality that the general compatibility pass
+ * intentionally relaxes for less strict schema families.
+ *
+ * The categorical branch cannot be meaningful with zero values. In the
+ * numeric branch, jsts treats the branch-local required-only `anyOf` as the
+ * whole object and emits two open `{}` arms. Give that branch an exact
+ * TypeScript union so TypeScript and Zod retain the presence guard.
+ */
+function normalizeSignalTargetingForCodegen(schema: any): any {
+  if (schema?.title !== 'Signal Targeting Expression' || !Array.isArray(schema.oneOf)) {
+    return schema;
+  }
+
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((branch: any) => {
+      const valueType = branch?.properties?.value_type;
+      if (valueType?.const === 'categorical' && branch.properties?.values) {
+        return {
+          ...branch,
+          properties: {
+            ...branch.properties,
+            values: {
+              ...branch.properties.values,
+              tsType: '[string, ...string[]]',
+            },
+          },
+        };
+      }
+      if (valueType?.const !== 'numeric' || !Array.isArray(branch.anyOf)) return branch;
+
+      if (!branch.anyOf.every(isRequirednessOnlySchema)) return branch;
+      return {
+        description: branch.description,
+        tsType:
+          "{ signal_ref: SignalRef; value_type: 'numeric'; min_value: number; max_value?: number } | " +
+          "{ signal_ref: SignalRef; value_type: 'numeric'; min_value?: number; max_value: number }",
+      };
+    }),
+  };
 }
 
 function canonicalCodegenJson(value: unknown, keyHint?: string): string {
@@ -1961,6 +2017,41 @@ function isolateGetMediaBuyDeliveryCompatBreakdowns(schema: any): any {
 }
 
 /**
+ * Keep the established audience-activation `FileTransfer` public type distinct
+ * from the reporting-delivery method introduced in AdCP 3.2 beta.10.
+ */
+function nameReportingFileTransferForCodegen(schema: any): any {
+  if (Array.isArray(schema)) {
+    let changed = false;
+    const transformed = schema.map(value => {
+      const next = nameReportingFileTransferForCodegen(value);
+      changed ||= next !== value;
+      return next;
+    });
+    return changed ? transformed : schema;
+  }
+  if (!schema || typeof schema !== 'object') return schema;
+
+  let changed = false;
+  const transformedEntries = Object.entries(schema).map(([key, value]) => {
+    const next = nameReportingFileTransferForCodegen(value);
+    changed ||= next !== value;
+    return [key, next];
+  });
+  const transformed = changed ? Object.fromEntries(transformedEntries) : schema;
+  if (transformed.title !== 'Reporting Delivery Method' || !Array.isArray(transformed.oneOf)) {
+    return transformed;
+  }
+
+  const oneOf = transformed.oneOf.map((branch: any) =>
+    branch?.title === 'File transfer' && branch?.properties?.pattern?.const === 'file_transfer'
+      ? { ...branch, title: 'Reporting file transfer' }
+      : branch
+  );
+  return { ...transformed, oneOf };
+}
+
+/**
  * Targeted schema normalizations for the TypeScript/Zod emit path.
  *
  * These do not edit the cached JSON schemas and should only remove constraints
@@ -1971,6 +2062,8 @@ export function applyCodegenSchemaWorkarounds(schema: any, schemaName: string): 
   if (!schema || typeof schema !== 'object') return schema;
 
   schema = coalesceDefinitionKeywords(schema);
+
+  schema = nameReportingFileTransferForCodegen(schema);
 
   if (
     schemaName === 'RequestProposalsResponse' ||
@@ -3289,7 +3382,7 @@ const JSTS_UNDER_RESOLUTION_ALIASES: Array<{ numbered: string; base: string }> =
   { numbered: 'None2', base: 'None' },
   { numbered: 'DeliveryForecast1', base: 'DeliveryForecast' },
   { numbered: 'DeliveryForecast2', base: 'DeliveryForecast' },
-  { numbered: 'TaskType1', base: 'TaskType' },
+  { numbered: 'ExistingBinding1', base: 'ExistingBinding' },
 ];
 
 const JSTS_REPEATED_UNDER_RESOLUTION_BASES = [
@@ -3820,7 +3913,7 @@ function discoverAllSchemaFiles(dir: string, base: string = dir): string[] {
       const relativeDirectory = path.relative(base, fullPath);
       if (entry === 'tmp' || relativeDirectory === 'mcp' || relativeDirectory === 'bundled') continue;
       results.push(...discoverAllSchemaFiles(fullPath, base));
-    } else if (entry.endsWith('.json') && entry !== 'index.json') {
+    } else if (entry.endsWith('.json') && entry !== 'index.json' && entry !== '_provenance.json') {
       results.push(path.relative(base, fullPath));
     }
   }
@@ -4345,4 +4438,4 @@ if (require.main === module) {
   })();
 }
 
-export { generateTypes };
+export { discoverAllSchemaFiles, generateTypes };

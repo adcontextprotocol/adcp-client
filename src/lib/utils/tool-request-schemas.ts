@@ -180,6 +180,8 @@ export type KnownToolRequestSchemas = {
   si_terminate_session: typeof schemas.SITerminateSessionRequestSchema;
   get_adcp_capabilities: typeof schemas.GetAdCPCapabilitiesRequestSchema;
   sync_agent_notification_configs: typeof schemas.SyncAgentNotificationConfigsRequestSchema;
+  get_principal: typeof schemas.GetPrincipalRequestSchema;
+  sync_principal: typeof schemas.SyncPrincipalRequestSchema;
   comply_test_controller: typeof schemas.ComplyTestControllerRequestSchema;
   validate_input: typeof schemas.ValidateInputRequestSchema;
   get_brand_identity: typeof schemas.GetBrandIdentityRequestSchema;
@@ -283,6 +285,8 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   get_task_status: schemas.GetTaskStatusRequestSchema,
   list_tasks: schemas.ListTasksRequestSchema,
   sync_agent_notification_configs: schemas.SyncAgentNotificationConfigsRequestSchema,
+  get_principal: schemas.GetPrincipalRequestSchema,
+  sync_principal: schemas.SyncPrincipalRequestSchema,
 
   // Creative preflight
   validate_input: schemas.ValidateInputRequestSchema,

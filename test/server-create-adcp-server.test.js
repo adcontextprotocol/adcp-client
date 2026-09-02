@@ -11,6 +11,9 @@ const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
 const { adcpError } = require('../dist/lib/server/errors');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
+const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } = require('../dist/lib/server/structured-content-fallback');
+const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
+const { InMemoryTransport } = require('@modelcontextprotocol/sdk/inMemory.js');
 
 // These tests exercise envelope wrapping, state-store propagation, and
 // idempotency middleware using deliberately sparse handler fixtures
@@ -65,6 +68,12 @@ function registeredTool(server, toolName) {
   return sdk._registeredTools[toolName];
 }
 
+function mirroredBlocks(result) {
+  return result.content.filter(
+    block => block.type === 'text' && block._meta?.[ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY] === true
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -87,6 +96,153 @@ describe('createAdcpServer', () => {
     assert.strictEqual(typeof sdk._registeredTools, 'object');
   });
 
+  it('applies per-tool version ranges consistently to discovery, dispatch, and capabilities', async () => {
+    const calls = [];
+    const server = createAdcpServer({
+      name: 'Mixed-version seller',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      mcpToolProfile: 'all',
+      capabilities: {
+        supported_versions: ['3.0.25', '3.1.18'],
+        specialisms: [
+          'signal-marketplace',
+          'governance-spend-authority',
+          'governance-delivery-monitor',
+          'measurement-verification',
+        ],
+      },
+      toolVersions: {
+        get_signals: { min: '3.1' },
+        create_property_list: { min: '3.1' },
+      },
+      mediaBuy: {
+        getProducts: async params => {
+          calls.push(`products:${params.adcp_version}`);
+          return { products: [], cache_scope: 'public' };
+        },
+      },
+      signals: {
+        getSignals: async params => {
+          calls.push(`signals:${params.adcp_version}`);
+          return { signals: [] };
+        },
+      },
+      governance: {
+        createPropertyList: async params => {
+          calls.push(`property-list:${params.adcp_version}`);
+          return { property_list_id: 'properties-1' };
+        },
+      },
+    });
+
+    const list30 = await server.dispatchTestRequest({
+      method: 'tools/list',
+      params: { _meta: { adcp_version: '3.0.25' } },
+    });
+    assert.ok(list30.tools.some(tool => tool.name === 'get_products'));
+    assert.ok(!list30.tools.some(tool => tool.name === 'get_signals'));
+
+    const products30 = await callTool(server, 'get_products', { adcp_version: '3.0.25' });
+    assert.strictEqual(products30.adcp_error, undefined);
+    const signals30 = await callTool(server, 'get_signals', { adcp_version: '3.0.25' });
+    assert.strictEqual(signals30.adcp_error.code, 'VERSION_UNSUPPORTED');
+    assert.deepStrictEqual(signals30.adcp_error.details.supported_versions, ['3.1.18']);
+    assert.deepStrictEqual(calls, ['products:3.0.25'], 'unavailable signals handler must not run');
+
+    const capabilities30 = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.0.25' });
+    assert.deepStrictEqual(capabilities30.supported_protocols, ['media_buy']);
+    assert.strictEqual(capabilities30.signals, undefined);
+    assert.strictEqual(capabilities30.governance, undefined);
+    assert.deepStrictEqual(capabilities30.specialisms, []);
+
+    const list31 = await server.dispatchTestRequest({
+      method: 'tools/list',
+      params: { _meta: { adcp_version: '3.1.18' } },
+    });
+    assert.ok(list31.tools.some(tool => tool.name === 'get_products'));
+    assert.ok(list31.tools.some(tool => tool.name === 'get_signals'));
+    const signals31 = await callTool(server, 'get_signals', { adcp_version: '3.1.18' });
+    assert.strictEqual(signals31.adcp_error, undefined);
+    assert.deepStrictEqual(calls, ['products:3.0.25', 'signals:3.1.18']);
+    const capabilities31 = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.1.18' });
+    assert.deepStrictEqual(capabilities31.specialisms, [
+      'signal-marketplace',
+      'governance-spend-authority',
+      'governance-delivery-monitor',
+      'measurement-verification',
+    ]);
+  });
+
+  it('rejects invalid and unknown per-tool version configuration at construction', () => {
+    assert.throws(
+      () =>
+        createAdcpServer({
+          name: 'Bad range',
+          version: '1.0.0',
+          toolVersions: { get_products: { min: '3.1', max: '3.0' } },
+          mediaBuy: { getProducts: async () => ({ products: [] }) },
+        }),
+      /min must not be newer than max/
+    );
+    assert.throws(
+      () =>
+        createAdcpServer({
+          name: 'Unknown tool',
+          version: '1.0.0',
+          toolVersions: { get_singals: { min: '3.1' } },
+          signals: { getSignals: async () => ({ signals: [] }) },
+        }),
+      /does not name a registered tool/
+    );
+    assert.throws(
+      () =>
+        createAdcpServer({
+          name: 'No overlap',
+          version: '1.0.0',
+          adcpVersion: '3.1.18',
+          capabilities: { supported_versions: ['3.1.18'] },
+          toolVersions: { get_products: { min: '4.0' } },
+          mediaBuy: { getProducts: async () => ({ products: [] }) },
+        }),
+      /get_products range.*does not overlap.*3\.1\.18/
+    );
+  });
+
+  it('rejects an invalid structured-content fallback policy at construction', () => {
+    assert.throws(
+      () =>
+        createAdcpServer({
+          name: 'Bad fallback',
+          version: '1.0.0',
+          structuredContentTextFallback: 'sometimes',
+        }),
+      /structuredContentTextFallback must be/
+    );
+  });
+
+  it('removes a sales specialism when its baseline discovery tool is unavailable', async () => {
+    const server = createAdcpServer({
+      name: 'Partially versioned sales seller',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      capabilities: {
+        supported_versions: ['3.0.25', '3.1.18'],
+        specialisms: ['sales-non-guaranteed'],
+      },
+      toolVersions: { get_products: { min: '3.1' } },
+      mediaBuy: {
+        getProducts: async () => ({ products: [], cache_scope: 'public' }),
+        createMediaBuy: async () => ({ media_buy_id: 'mb-1' }),
+      },
+    });
+    const capabilities30 = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.0.25' });
+    assert.ok(capabilities30.supported_protocols.includes('media_buy'));
+    assert.deepStrictEqual(capabilities30.specialisms, []);
+    const capabilities31 = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.1.18' });
+    assert.deepStrictEqual(capabilities31.specialisms, ['sales-non-guaranteed']);
+  });
+
   describe('MCP media-buy tool profile', () => {
     const compactHandlers = {
       listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1', cache_scope: 'public' }),
@@ -96,6 +252,31 @@ describe('createAdcpServer', () => {
       acceptProposal: async () => ({ media_buy_id: 'mb-proposal' }),
       controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
     };
+
+    it('projects classic tools/list profile, schemas, and metadata to the requested legacy release', async () => {
+      const server = createAdcpServer({
+        name: 'Profile projection seller',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-beta.10',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.10'] },
+        mediaBuy: {
+          ...compactHandlers,
+          getProducts: async () => ({ products: [], cache_scope: 'public' }),
+          createMediaBuy: async () => ({ media_buy_id: 'mb-legacy' }),
+        },
+      });
+      const listed = await server.dispatchTestRequest({
+        method: 'tools/list',
+        params: { _meta: { adcp_version: '3.1.18' } },
+      });
+      const names = listed.tools.map(tool => tool.name);
+      assert.ok(names.includes('get_products'));
+      assert.ok(names.includes('create_media_buy'));
+      assert.ok(!names.includes('list_products'));
+      assert.ok(!names.includes('buy_products'));
+      assert.equal(listed._meta.adcp_version, '3.1.18');
+      assert.equal(listed._meta.adcp_profile, 'all');
+    });
 
     it('stays exactly aligned with the checked-in AdCP 3.2 media-buy manifest', () => {
       const manifest = JSON.parse(
@@ -109,8 +290,8 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Profile seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.9',
-        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.9'] },
+        adcpVersion: '3.2.0-beta.10',
+        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.10'] },
         mediaBuy: {
           ...compactHandlers,
           getProducts: async params => {
@@ -147,10 +328,10 @@ describe('createAdcpServer', () => {
       assert.ok(!names.includes('update_media_buy'), 'deprecated update alias should not be advertised');
       assert.ok(!names.includes('build_creative'), 'creative-builder tools are outside the media-buy role profile');
       assert.deepStrictEqual(listed._meta, {
-        adcp_version: '3.2.0-beta.9',
+        adcp_version: '3.2.0-beta.10',
         adcp_profile: 'media-buy',
       });
-      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-beta.9');
+      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-beta.10');
       const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
       const officialRequestSchema = JSON.parse(
         readFileSync(
@@ -203,7 +384,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Migration seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.9',
+        adcpVersion: '3.2.0-beta.10',
         mcpToolProfile: 'all',
         mediaBuy: {
           ...compactHandlers,
@@ -237,6 +418,159 @@ describe('createAdcpServer', () => {
     assert.deepStrictEqual(sawParams, { brief: 'premium' });
     assert.ok(result.content, 'CallToolResult should carry content');
     assert.ok(result.structuredContent, 'CallToolResult should carry structuredContent');
+    assert.strictEqual(result.content[0].text, 'Found 0 products');
+    assert.strictEqual(mirroredBlocks(result).length, 1);
+    assert.strictEqual(mirroredBlocks(result)[0].text, JSON.stringify(result.structuredContent));
+  });
+
+  it('preserves the human summary and appends one final structured-content fallback', async () => {
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      responseEnhancer: response => {
+        response.structuredContent.enhanced = true;
+      },
+      mediaBuy: {
+        getProducts: async () => ({
+          products: [
+            {
+              product_id: 'p1',
+              name: 'CTV package',
+              pricing_options: [{ pricing_model: 'cpm', rate: 12, currency: 'USD' }],
+            },
+          ],
+          cache_scope: 'public',
+        }),
+      },
+    });
+
+    const result = await callToolRaw(server, 'get_products', {});
+    const serialized = JSON.stringify(result.structuredContent);
+
+    assert.strictEqual(result.content[0].text, 'Found 1 products');
+    assert.strictEqual(result.content.filter(block => block.text === serialized).length, 1);
+    assert.strictEqual(mirroredBlocks(result).length, 1);
+    assert.strictEqual(JSON.parse(result.content.at(-1).text).products[0].name, 'CTV package');
+    assert.strictEqual(JSON.parse(result.content.at(-1).text).enhanced, true);
+  });
+
+  it('supports deployment and per-client opt-out without changing the canonical summary', async () => {
+    const contexts = [];
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: context => {
+        contexts.push(context);
+        return context.clientInfo?.name !== 'capable-host';
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+
+    const capable = await callToolRaw(
+      server,
+      'get_products',
+      {},
+      {
+        responseContext: {
+          transport: 'mcp',
+          clientInfo: { name: 'capable-host', version: '1.0.0' },
+          clientCapabilities: { experimental: { structuredResults: true } },
+        },
+      }
+    );
+    const unknown = await callToolRaw(server, 'get_products', {});
+    const direct = await server.invoke({ toolName: 'get_products', args: {} });
+
+    assert.strictEqual(capable.content[0].text, 'Found 0 products');
+    assert.strictEqual(mirroredBlocks(capable).length, 0);
+    assert.strictEqual(mirroredBlocks(unknown).length, 1, 'unknown client should follow the fail-safe predicate path');
+    assert.strictEqual(mirroredBlocks(direct).length, 1, 'direct embedding without client facts should fail safe');
+    assert.deepStrictEqual(contexts[0], {
+      transport: 'mcp',
+      clientInfo: { name: 'capable-host', version: '1.0.0' },
+      clientCapabilities: { experimental: { structuredResults: true } },
+    });
+    assert.strictEqual(contexts.length, 1, 'unknown clients should mirror without invoking the deployment predicate');
+
+    const never = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: 'never',
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    assert.strictEqual(mirroredBlocks(await callToolRaw(never, 'get_products', {})).length, 0);
+  });
+
+  it('deduplicates an adopter-authored exact JSON fallback and fails safe when a predicate throws', async () => {
+    const exact = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      responseEnhancer: response => {
+        response.content.push({ type: 'text', text: JSON.stringify(response.structuredContent) });
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    const exactResult = await callToolRaw(exact, 'get_products', {});
+    const serialized = JSON.stringify(exactResult.structuredContent);
+    assert.strictEqual(exactResult.content.filter(block => block.text === serialized).length, 1);
+    assert.strictEqual(mirroredBlocks(exactResult).length, 0, 'adopter-authored blocks must not be relabeled');
+
+    const throwing = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: () => {
+        throw new Error('bad deployment predicate');
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    const throwingResult = await callToolRaw(
+      throwing,
+      'get_products',
+      {},
+      {
+        responseContext: {
+          transport: 'mcp',
+          clientInfo: { name: 'known-host', version: '1.0.0' },
+        },
+      }
+    );
+    assert.strictEqual(mirroredBlocks(throwingResult).length, 1);
+  });
+
+  it('passes negotiated legacy MCP client facts to the transport-edge predicate', async () => {
+    const contexts = [];
+    const server = createAdcpServer({
+      name: 'Test',
+      version: '1.0.0',
+      adcpVersion: '3.1.18',
+      structuredContentTextFallback: context => {
+        contexts.push(context);
+        return false;
+      },
+      mediaBuy: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client(
+      { name: 'legacy-capable-host', version: '2.3.4' },
+      { capabilities: { experimental: { structuredResults: {} } } }
+    );
+    await client.connect(clientTransport);
+    try {
+      const result = await client.callTool({ name: 'get_products', arguments: {} });
+      assert.strictEqual(mirroredBlocks(result).length, 0);
+      assert.strictEqual(contexts.at(-1).transport, 'mcp');
+      assert.strictEqual(contexts.at(-1).clientInfo.name, 'legacy-capable-host');
+      assert.strictEqual(contexts.at(-1).clientInfo.version, '2.3.4');
+      assert.deepStrictEqual(contexts.at(-1).clientCapabilities.experimental, { structuredResults: {} });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it('dispatchTestRequest throws for unknown tools and methods', async () => {
@@ -505,6 +839,32 @@ describe('createAdcpServer', () => {
 
   describe('customTools', () => {
     const { z } = require('zod');
+
+    it('enforces per-tool version ranges before custom adopter handlers run', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Versioned extension',
+        version: '1.0.0',
+        adcpVersion: '3.1.18',
+        capabilities: { supported_versions: ['3.0.25', '3.1.18'] },
+        toolVersions: { vendor_extension: { min: '3.1' } },
+        customTools: {
+          vendor_extension: {
+            handler: async () => {
+              calls++;
+              return { content: [{ type: 'text', text: 'ok' }], structuredContent: { ok: true } };
+            },
+          },
+        },
+      });
+      const rejected = await callToolRaw(server, 'vendor_extension', { adcp_version: '3.0.25' });
+      assert.strictEqual(rejected.isError, true);
+      assert.strictEqual(rejected.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+      assert.strictEqual(calls, 0);
+      const accepted = await callToolRaw(server, 'vendor_extension', { adcp_version: '3.1.18' });
+      assert.notStrictEqual(accepted.isError, true);
+      assert.strictEqual(calls, 1);
+    });
 
     it('registers a custom tool the handler dispatches through dispatchTestRequest', async () => {
       let seenArgs;
@@ -1001,7 +1361,7 @@ describe('createAdcpServer', () => {
           acceptProposal: async () => ({}),
         },
       });
-      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-beta.9' });
+      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-beta.10' });
       assert.deepStrictEqual(modern.media_buy.lifecycle_tools, [
         'list_products',
         'request_proposals',
@@ -2444,9 +2804,9 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_id, owned.taskId);
       assert.strictEqual(status.status, 'completed');
       assert.strictEqual(status.task_type, 'sync_creatives');
-      assert.strictEqual(status.protocol, 'creative');
+      assert.strictEqual(status.protocol, 'media-buy');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.2-beta.9');
+      assert.strictEqual(status.adcp_version, '3.2-beta.10');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -2483,7 +2843,7 @@ describe('createAdcpServer', () => {
         server,
         'list_tasks',
         {
-          filters: { protocols: ['creative'], statuses: ['completed'], context_contains: 'cr_1', has_webhook: true },
+          filters: { protocols: ['media-buy'], statuses: ['completed'], context_contains: 'cr_1', has_webhook: true },
           pagination: { max_results: 1 },
         },
         buyerOne
@@ -2496,7 +2856,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
-      assert.strictEqual(listed.adcp_version, '3.2-beta.9');
+      assert.strictEqual(listed.adcp_version, '3.2-beta.10');
 
       const buyerTwoList = await callTool(
         server,
@@ -2510,7 +2870,7 @@ describe('createAdcpServer', () => {
       const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
       assert.strictEqual(badCursor.isError, true);
       assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-beta.9');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-beta.10');
 
       const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
       const opaque = await taskRegistry.create({
@@ -3011,12 +3371,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.9');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.10');
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-beta.9');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-beta.10');
 
       const contextLeak = await callToolRaw(
         server,

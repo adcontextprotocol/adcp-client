@@ -22,7 +22,7 @@
  * @public
  */
 
-import type { Account } from './account';
+import type { Account, ResolvedAuthInfo } from './account';
 import type {
   Format,
   FormatReferenceStructuredObject,
@@ -44,6 +44,24 @@ import type { ProposalRefinementScope } from '../../negotiation/seller';
 export interface RequestContext<TAccount = Account> {
   /** Resolved account for this request. */
   account: TAccount;
+
+  /**
+   * Verified incoming request principal, when the transport authenticated
+   * the caller. This is the same request-local value supplied to
+   * `accounts.resolve()`; it is distinct from `ctx.account.authInfo`, which
+   * models an adopter-managed upstream/platform credential.
+   *
+   * The framework omits this key entirely for unauthenticated calls. Treat
+   * tokens and credential material as ephemeral: never copy this value into
+   * `ctx_metadata`, account objects, task results, logs, or durable HITL
+   * state. Background workers must re-resolve credentials; if durable work
+   * only needs identity, snapshot a stable non-secret principal identifier.
+   * A native `AbortSignal` stored as a data property at
+   * `authInfo.extra.signal` retains its identity so later host cancellation
+   * remains observable. Other auth values retain the framework's existing
+   * clone-and-freeze behavior.
+   */
+  authInfo?: Readonly<ResolvedAuthInfo>;
 
   /** Framework-derived caller namespace for authenticated mutations. */
   callerMutationScope?: Readonly<CallerMutationScope>;

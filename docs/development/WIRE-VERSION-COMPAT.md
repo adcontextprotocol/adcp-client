@@ -7,7 +7,7 @@ How `@adcp/sdk` keeps a buyer pinned to one AdCP major version while talking to 
 ## The shape of the problem
 
 The SDK speaks one primary AdCP version on its public surface — `ADCP_VERSION`
-in `src/lib/version.ts`. The SDK 14 beta pin is `3.2.0-beta.9`; maintained side
+in `src/lib/version.ts`. The SDK 14 beta pin is `3.2.0-beta.10`; maintained side
 bundles cover `3.1.18`, `3.0.25`, and v2.5. Every buyer-facing type, helper,
 and example assumes the primary pin.
 
@@ -27,7 +27,7 @@ There is exactly one active legacy compat layer at a time today: `legacy/v2-5/`.
 
 ```
 schemas/cache/
-├── 3.2.0-beta.9/ # current SDK pin
+├── 3.2.0-beta.10/ # current SDK pin
 ├── 3.1.18/       # maintained stable side bundle
 ├── 3.0.25/       # maintained stable side bundle
 ├── latest/       # symlink to the primary pin
@@ -41,6 +41,12 @@ npm run sync-schemas         # SDK pin
 npm run sync-schemas:v2.5    # legacy bundle
 npm run sync-schemas:all     # primary pin plus maintained side bundles
 ```
+
+When the primary types must be generated from an unreleased protocol PR, use
+the immutable bundle workflow in
+[Generate from an unreleased protocol bundle](./PROTOCOL-PR-BUNDLES.md). It
+records the upstream commit and tarball digest in checked-in provenance so the
+normal CI drift check uses the identical input.
 
 `sync-v2-5-schemas.ts` pulls from a pinned `2.5-maintenance` SHA with a sha256 verification — published v2.5 tags are stale (see `adcontextprotocol/adcp#3689` upstream).
 
@@ -447,10 +453,10 @@ const BETA_VERSION = '3.X.0-beta.N';
 await syncSchemas(BETA_VERSION); // inherits cosign + sha256 + tarball extract
 ```
 
-After the wrapped call, **restore two side-effect classes** that `syncSchemas()` overwrites:
-
-- **The `latest/` symlink** in `schemas/cache/` and `compliance/cache/`. `syncSchemas()` points it at whatever it just synced; for an opt-in side-bundle, repoint it back at the primary GA pin (read from `ADCP_VERSION` file). The SDK's runtime loader doesn't consult `latest/` for opt-in resolution (it uses release-precision fuzzy match against the prerelease directory directly), but downstream tooling does.
-- **Tracked side-effect paths.** `syncSchemas()` also extracts `schemas/registry/registry.yaml` and protocol-managed skills from the synced tarball. These track the SDK's primary pin, not the opt-in beta — restore them from `HEAD` with `git checkout HEAD -- <paths>`. Hardcode the list in a `RESTORE_PATHS` constant so the next contributor sees exactly what the wrapper protects.
+`syncSchemas()` recognizes that this is not the primary `ADCP_VERSION` and updates
+only the versioned schema and compliance caches. It leaves the shared `latest/`
+symlinks, registry schema, and protocol-managed skills at the primary pin; the
+wrapper does not need to restore those paths.
 
 Wire into `package.json#scripts`:
 - `sync-schemas:<version>` — direct invocation

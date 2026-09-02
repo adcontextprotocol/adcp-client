@@ -284,6 +284,7 @@ export type {
   VerifyAndParseWebhookOptions,
   WebhookHandlerAdapter,
   WebhookHandlerRequest,
+  WebhookRequestContext,
   WebhookParseErrorCode,
   WebhookParseFailure,
   WebhookParseResult,
@@ -297,6 +298,18 @@ export {
   type WebhookRegistration,
   type WebhookRegistrationStore,
 } from './core/webhook-registration';
+export {
+  pgWebhookRegistrationStore,
+  getWebhookRegistrationMigration,
+  WEBHOOK_REGISTRATION_MIGRATION,
+  cleanupExpiredWebhookRegistrations,
+  type PgWebhookRegistrationStoreOptions,
+  type CleanupExpiredWebhookRegistrationsOptions,
+} from './core/postgres-webhook-registration-store';
+export {
+  redisWebhookRegistrationStore,
+  type RedisWebhookRegistrationStoreOptions,
+} from './core/redis-webhook-registration-store';
 export type { DelegatedOperatorAuthorizationContext } from './signing/agent-resolver';
 export {
   AgentClient,
@@ -1174,6 +1187,15 @@ export type {
 export type { BrandJson, AdagentsJson } from './types/wellknown-schemas.generated';
 export { BrandJsonSchema, AdagentsJsonSchema } from './types/wellknown-schemas.generated';
 
+// ====== PLACEMENT PRESENTATION ======
+// These boundary validators are explicit root-level exceptions to the general
+// @adcp/sdk/schemas-only policy below. Consumers fetch presentation_ref from a
+// publisher-controlled URL, so keeping the canonical validation path visible
+// alongside ssrfSafeFetch and resolvePreviewAuthority avoids unsupported deep
+// imports or locally copied schemas.
+export type { PlacementPresentationDocument, PlacementPresentationReference } from './types/core.generated';
+export { PlacementPresentationDocumentSchema, PlacementPresentationReferenceSchema } from './types/schemas.generated';
+
 // ====== ERROR CODES ======
 // Standard error code vocabulary for programmatic error handling
 export type { Error as TaskErrorDetail } from './types/core.generated';
@@ -1283,6 +1305,7 @@ export {
   createA2AAdapter,
   A2AInvocationError,
   MCP_APP_RESOURCE_MIME_TYPE,
+  ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY,
 } from './server';
 export type {
   AdcpErrorOptions,
@@ -1342,6 +1365,10 @@ export type {
   AdcpTestRequest,
   AdcpTestToolsCallRequest,
   AdcpTestResponse,
+  AdcpInvokeOptions,
+  StructuredContentFallbackTransport,
+  StructuredContentTextFallback,
+  StructuredContentTextFallbackContext,
   CheckGovernanceOptions,
   GovernanceCallResult,
   GovernanceApproved,

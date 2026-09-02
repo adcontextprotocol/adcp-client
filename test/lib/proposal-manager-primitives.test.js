@@ -89,6 +89,28 @@ test('InMemoryProposalStore — putDraft overwrites in DRAFT state', () => {
   assert.strictEqual(got.proposalPayload.v, 2);
 });
 
+test('InMemoryProposalStore — duplicate public ids remain isolated by account', () => {
+  const store = new InMemoryProposalStore();
+  for (const [accountId, sku] of [
+    ['acct_1', 'one'],
+    ['acct_2', 'two'],
+  ]) {
+    store.putDraft({
+      proposalId: 'shared-id',
+      accountId,
+      recipes: new Map([['prod_a', recipe('mock', { sku })]]),
+      proposalPayload: { proposal_id: 'shared-id', sku },
+    });
+  }
+  assert.strictEqual(store.get('shared-id', { expectedAccountId: 'acct_1' }).recipes.get('prod_a').sku, 'one');
+  assert.strictEqual(store.get('shared-id', { expectedAccountId: 'acct_2' }).recipes.get('prod_a').sku, 'two');
+  assert.strictEqual(store.get('shared-id', { expectedAccountId: 'acct_3' }), null);
+  assert.throws(
+    () => store.commit('shared-id', { expiresAt: new Date(Date.now() + 60_000), proposalPayload: {} }),
+    /multiple tenant scopes/
+  );
+});
+
 test('InMemoryProposalStore — putDraft rejected on COMMITTED', () => {
   const store = new InMemoryProposalStore();
   store.putDraft({

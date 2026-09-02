@@ -13,7 +13,7 @@ import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../t
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
 import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
-import { checkAccountDiscoveryGate } from './spec-conformance';
+import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
 
 // Side-effect import: registers default assertion stubs for invariant ids that
 // upstream storyboards (e.g., `universal/idempotency.yaml` after adcp#2639)
@@ -30,8 +30,9 @@ import {
   loadComplianceIndex,
   isComplianceVersionSupported,
   getExternalSchemaRootForCompliance,
+  getStoryboardVersionGateReason,
 } from '../storyboard/compliance';
-import type { NotApplicableStoryboard, ResolveOptions } from '../storyboard/compliance';
+import type { NotApplicableStoryboard, ResolveOptions, ResolvedBundle } from '../storyboard/compliance';
 import type {
   RunnerSelectionReason,
   RunnerSkipReason,
@@ -44,6 +45,7 @@ import type {
 } from '../storyboard/types';
 import type {
   ComplianceNotSelectedRecord,
+  ComplianceBundleResult,
   ComplianceTrack,
   ComplianceFailure,
   TrackResult,
@@ -721,10 +723,15 @@ function resolveFromCapabilities(
   profile: AgentProfile,
   resolveOptions: ResolveOptions = {}
 ): {
+  bundles: ResolvedBundle[];
   storyboards: Storyboard[];
   not_applicable: NotApplicableStoryboard[];
 } {
-  const { storyboards, not_applicable } = resolveStoryboardsForCapabilities(
+  const {
+    bundles,
+    storyboards: selectedStoryboards,
+    not_applicable: selectedNotApplicable,
+  } = resolveStoryboardsForCapabilities(
     {
       supported_protocols: profile.supported_protocols,
       specialisms: profile.specialisms,
@@ -733,7 +740,159 @@ function resolveFromCapabilities(
     },
     resolveOptions
   );
-  return { storyboards, not_applicable };
+  const notApplicable = [...selectedNotApplicable];
+  const notApplicableIds = new Set(notApplicable.map(storyboard => storyboard.storyboard_id));
+  const storyboards = expandScenarios(selectedStoryboards, resolveOptions).filter(storyboard => {
+    const gate = getStoryboardVersionGateReason(storyboard, profile.adcp_major_versions);
+    if (!gate) return true;
+    if (!notApplicableIds.has(storyboard.id)) {
+      notApplicableIds.add(storyboard.id);
+      notApplicable.push({
+        storyboard_id: storyboard.id,
+        storyboard_title: storyboard.title,
+        track: storyboard.track,
+        reason: gate,
+        selection_result: { reason: 'version_excluded', detail: gate },
+      });
+    }
+    return false;
+  });
+  return {
+    bundles: bundles.map(bundle => ({
+      ...bundle,
+      storyboards: expandScenarios(bundle.storyboards, resolveOptions, notApplicableIds),
+    })),
+    storyboards,
+    not_applicable: notApplicable,
+  };
+}
+
+export interface ComplianceBundleAssessmentOptions {
+  /** Storyboards excluded because the seller's declared version predates them. */
+  notApplicable?: readonly NotApplicableStoryboard[];
+  /** Storyboards selected for the bundle but unavailable from tool discovery. */
+  missingTools?: readonly NotApplicableStoryboard[];
+  /** Bundle ids failed by cross-storyboard synthetic conformance gates. */
+  failingBundleIds?: readonly string[];
+}
+
+const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>([
+  'peer_branch_taken',
+  'peer_substituted',
+  // The runner emits this only when an explicit phase capability gate made
+  // the prerequisite state unavailable. Ordinary prerequisite_failed skips
+  // remain coverage gaps and therefore keep the bundle partial.
+  'capability_prerequisite_unavailable',
+]);
+
+/**
+ * Aggregate the exact cache bundles selected for a capability-driven run.
+ * A bundle passes only when every storyboard satisfies its required
+ * conformance checks. Required failures take precedence, while every form of
+ * missing coverage remains visible as partial, untested, or not_applicable.
+ */
+export function buildComplianceBundleResults(
+  bundles: readonly ResolvedBundle[],
+  storyboardResults: readonly StoryboardResult[],
+  options: ComplianceBundleAssessmentOptions = {}
+): ComplianceBundleResult[] {
+  const resultByStoryboard = new Map(storyboardResults.map(result => [result.storyboard_id, result]));
+  const notApplicableIds = new Set((options.notApplicable ?? []).map(storyboard => storyboard.storyboard_id));
+  const missingToolIds = new Set((options.missingTools ?? []).map(storyboard => storyboard.storyboard_id));
+  const failingBundleIds = new Set(options.failingBundleIds ?? []);
+
+  return bundles.map(bundle => {
+    const storyboardIds = bundle.storyboards.map(storyboard => storyboard.id);
+    const statuses = bundle.storyboards.map(storyboard => {
+      const storyboardId = storyboard.id;
+      if (notApplicableIds.has(storyboardId)) return 'not_applicable' as const;
+      if (missingToolIds.has(storyboardId)) return 'partial' as const;
+      if (storyboard.phases.length === 0) return 'untested' as const;
+      const result = resultByStoryboard.get(storyboardId);
+      if (!result) return 'untested' as const;
+      if (!result.overall_passed && (result.failed_count > 0 || collectDetachedAssertionFailures(result).length > 0)) {
+        return 'failing' as const;
+      }
+      const branchSetPhaseIds = new Set(
+        storyboard.phases.filter(phase => phase.branch_set !== undefined).map(phase => phase.id)
+      );
+      const phaseDefs = new Map(storyboard.phases.map(phase => [phase.id, phase]));
+      const hasCoverageGapSkip = (result.passes?.flatMap(pass => pass.phases) ?? result.phases).some(phase =>
+        phase.steps.some(step => {
+          if (!step.skipped && step.skip === undefined && step.skip_reason === undefined) return false;
+          // A phase-level capability gate deliberately emits the protocol's
+          // canonical not_applicable reason for every step. It is complete
+          // applicability evidence, not a generic coverage gap. Keep this
+          // phase-scoped so an unrelated not_applicable skip remains partial.
+          const phaseDef = phaseDefs.get(phase.phase_id);
+          if (
+            result.overall_passed &&
+            phaseDef?.requires_capability !== undefined &&
+            phase.steps.length > 0 &&
+            phase.steps.every(
+              candidate =>
+                candidate.skipped === true && (candidate.skip?.reason ?? candidate.skip_reason) === 'not_applicable'
+            )
+          ) {
+            return false;
+          }
+          // The output-contract `skip.reason` intentionally canonicalizes
+          // detailed runner reasons. Prefer the detailed field here so a
+          // capability-gated prerequisite can be neutral without making all
+          // canonical not_applicable skips neutral coverage.
+          const detailedReason = step.skip_reason;
+          const canonicalReason = step.skip?.reason ?? detailedReason;
+          if (
+            (detailedReason !== undefined && NEUTRAL_BUNDLE_SKIP_REASONS.has(detailedReason)) ||
+            (canonicalReason !== undefined && NEUTRAL_BUNDLE_SKIP_REASONS.has(canonicalReason))
+          ) {
+            return false;
+          }
+          // A successful authored any-of branch makes its unselected peers
+          // legitimately not applicable; generic not_applicable skips remain
+          // coverage gaps everywhere else.
+          if (canonicalReason === 'not_applicable' && result.overall_passed && branchSetPhaseIds.has(phase.phase_id)) {
+            return false;
+          }
+          return true;
+        })
+      );
+      const observationAssertions = (result.assertions ?? []).filter(
+        assertion => typeof assertion.observation_count === 'number'
+      );
+      const hasNoObservedEvidence =
+        observationAssertions.length > 0 && observationAssertions.every(assertion => assertion.observation_count === 0);
+      if (
+        !result.overall_passed ||
+        result.passed_count === 0 ||
+        (result.validations_not_applicable ?? 0) > 0 ||
+        (result.coverage_gaps?.length ?? 0) > 0 ||
+        hasCoverageGapSkip ||
+        hasNoObservedEvidence
+      ) {
+        return 'partial' as const;
+      }
+      return 'passing' as const;
+    });
+
+    let status: ComplianceBundleResult['status'];
+    if (failingBundleIds.has(bundle.ref.id) || statuses.includes('failing')) status = 'failing';
+    else if (statuses.length > 0 && statuses.every(candidate => candidate === 'passing')) status = 'passing';
+    else if (statuses.length > 0 && statuses.every(candidate => candidate === 'not_applicable')) {
+      status = 'not_applicable';
+    } else if (statuses.length === 0 || statuses.every(candidate => candidate === 'untested')) {
+      status = 'untested';
+    } else {
+      status = 'partial';
+    }
+
+    return {
+      kind: bundle.ref.kind,
+      id: bundle.ref.id,
+      storyboard_ids: storyboardIds,
+      status,
+    };
+  });
 }
 
 export function applyNegotiatedComplianceVersionOptions(
@@ -856,7 +1015,11 @@ function compareAdcpVersionStrings(a: string, b: string): number {
  * bundle (e.g., `sales-guaranteed` → `media_buy_seller/governance_approved`),
  * so the lookup spans every cached storyboard — not just the declared set.
  */
-function expandScenarios(storyboards: Storyboard[], resolveOptions: ResolveOptions = {}): Storyboard[] {
+function expandScenarios(
+  storyboards: Storyboard[],
+  resolveOptions: ResolveOptions = {},
+  skipDependencyExpansionFor: ReadonlySet<string> = new Set()
+): Storyboard[] {
   const seen = new Set(storyboards.map(s => s.id));
   const expanded: Storyboard[] = [];
   let allStoryboardsCache: Storyboard[] | null = null;
@@ -866,7 +1029,7 @@ function expandScenarios(storyboards: Storyboard[], resolveOptions: ResolveOptio
   };
 
   for (const sb of storyboards) {
-    if (sb.requires_scenarios?.length) {
+    if (!skipDependencyExpansionFor.has(sb.id) && sb.requires_scenarios?.length) {
       for (const scenarioId of sb.requires_scenarios) {
         if (seen.has(scenarioId)) continue;
         const scenario = lookupById(scenarioId);
@@ -1406,15 +1569,19 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     // Resolve storyboards: explicit IDs override capability-driven selection.
     let initialStoryboards: Storyboard[];
     let notApplicable: NotApplicableStoryboard[] = [];
+    let resolvedBundles: ResolvedBundle[] | undefined;
     const missingToolStoryboards: NotApplicableStoryboard[] = [];
     if (explicitStoryboards?.length) {
       initialStoryboards = resolveExplicitStoryboards(explicitStoryboards, resolveOptions);
     } else {
       const resolved = resolveFromCapabilities(profile, resolveOptions);
+      resolvedBundles = resolved.bundles;
       initialStoryboards = resolved.storyboards;
       notApplicable = resolved.not_applicable;
     }
-    const applicableStoryboards = expandScenarios(initialStoryboards, resolveOptions);
+    const applicableStoryboards = explicitStoryboards?.length
+      ? expandScenarios(initialStoryboards, resolveOptions)
+      : initialStoryboards;
 
     // For capability-resolved runs, exclude storyboards and injected scenarios whose
     // required_tools are absent from the agent's discovered toolset. These are
@@ -1617,6 +1784,15 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       observations: allObservations,
       failures: failures.length > 0 ? failures : undefined,
       storyboards_executed: executedStoryboards.map(sb => sb.id),
+      ...(resolvedBundles !== undefined && {
+        bundle_results: buildComplianceBundleResults(resolvedBundles, storyboardResults, {
+          notApplicable,
+          missingTools: missingToolStoryboards,
+          failingBundleIds: accountDiscoveryFailure
+            ? (profile.specialisms ?? []).filter(isAccountBearingSpecialism)
+            : [],
+        }),
+      }),
       ...(notApplicable.length > 0 && { storyboards_not_applicable: notApplicable.map(na => na.storyboard_id) }),
       ...(missingToolStoryboards.length > 0 && {
         storyboards_missing_tools: missingToolStoryboards.map(na => na.storyboard_id),

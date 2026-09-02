@@ -99,7 +99,12 @@ import type {
  */
 export interface McpToolResponse {
   [key: string]: unknown;
-  content: Array<{ type: 'text'; text: string }>;
+  content: Array<{
+    type: 'text';
+    text: string;
+    /** Optional MCP content-block metadata. */
+    _meta?: Record<string, unknown>;
+  }>;
   structuredContent?: Record<string, unknown>;
 }
 

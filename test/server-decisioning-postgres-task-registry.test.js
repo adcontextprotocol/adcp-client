@@ -135,6 +135,39 @@ describe('decisioning task registry schema management', () => {
     );
   });
 
+  test('terminal checkpoint proof attributes database failures to its read-only operation', async () => {
+    const {
+      createPostgresTaskRegistry,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const databaseError = new Error('private database host unavailable');
+    const pool = {
+      async query() {
+        throw databaseError;
+      },
+      async connect() {
+        throw new Error('checkpoint proof must not acquire a transaction client');
+      },
+    };
+    const registry = createPostgresTaskRegistry({ namespace: NAMESPACE, storageId: 'proof-error', pool });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    await assert.rejects(
+      coordinator.hasTerminalCheckpoint({
+        taskId: 'task_proof_error',
+        accountId: 'acc_1',
+        ownerScope: 'account:acc_1',
+        registryId: registry.registryId,
+      }),
+      error =>
+        error.message === 'PostgresTaskSettlementCoordinator.hasTerminalCheckpoint: query failed' &&
+        error.cause === databaseError
+    );
+  });
+
   test('push settlement finishes secret protection before acquiring a transaction client', async () => {
     const {
       createPostgresTaskRegistry,
@@ -597,6 +630,164 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     }
   });
 
+  test('push settlement rejects malformed UTF-16 before hashing or querying', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-unicode',
+    });
+    const loneSurrogate = String.fromCharCode(0xd800);
+    assert.throws(
+      () =>
+        createPostgresTaskSettlementCoordinator({
+          registry,
+          publisherScope: `test-seller-${loneSurrogate}`,
+          outbox: { tableName: SETTLEMENT_OUTBOX },
+        }),
+      /well-formed Unicode/
+    );
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-unicode',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'unicode-op' };
+
+    await assert.rejects(
+      completeScopedPushTask(coordinator, { ...ref, taskId: `${ref.taskId}${loneSurrogate}` }, push, {
+        media_buy_id: 'never-queried',
+      }),
+      /well-formed Unicode/
+    );
+    await assert.rejects(
+      completeScopedPushTask(
+        coordinator,
+        ref,
+        { ...push, token: `0123456789abcdef${loneSurrogate}` },
+        {
+          media_buy_id: 'never-protected',
+        }
+      ),
+      /serializable JSON/
+    );
+    await assert.rejects(
+      completeScopedPushTask(
+        coordinator,
+        ref,
+        {
+          ...push,
+          authentication: { type: 'hmac_sha256', secret: `${'x'.repeat(32)}${loneSurrogate}` },
+        },
+        { media_buy_id: 'never-protected' }
+      ),
+      /serializable JSON/
+    );
+    assert.deepStrictEqual(
+      await completeScopedPushTask(coordinator, ref, push, {
+        media_buy_id: 'utf8-collision',
+        value: '\ufffd',
+      }),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    await assert.rejects(
+      completeScopedPushTask(coordinator, ref, push, {
+        media_buy_id: 'utf8-collision',
+        value: loneSurrogate,
+      }),
+      /serializable JSON/
+    );
+  });
+
+  test('push settlement snapshots every caller-owned input before its first await', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    let gateReads = false;
+    let blocked = false;
+    let releaseRead;
+    let readStarted;
+    const started = new Promise(resolve => {
+      readStarted = resolve;
+    });
+    const readGate = new Promise(resolve => {
+      releaseRead = resolve;
+    });
+    const gatedPool = {
+      async query(sql, values) {
+        if (gateReads && !blocked && sql.includes('SELECT tool, status, result, error, has_webhook')) {
+          blocked = true;
+          readStarted();
+          await readGate;
+        }
+        return pool.query(sql, values);
+      },
+      connect: () => pool.connect(),
+    };
+    const registry = createPostgresTaskRegistry({
+      pool: gatedPool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-input-snapshot',
+    });
+    const firstRef = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      ownerScope: 'api_key:snapshot',
+      hasWebhook: true,
+    });
+    const secondRef = await registry.create({
+      tool: 'create_media_buy',
+      accountId: 'acc_1',
+      ownerScope: 'api_key:snapshot',
+      hasWebhook: true,
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-snapshot',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const mutableRef = { ...firstRef };
+    const mutablePush = {
+      url: 'https://buyer.example/webhooks/original',
+      operationId: 'snapshot-original',
+    };
+    const mutableTerminal = { media_buy_id: 'snapshot-original' };
+    gateReads = true;
+    const settlement = completeScopedPushTask(coordinator, mutableRef, mutablePush, mutableTerminal);
+    await started;
+    Object.assign(mutableRef, secondRef);
+    mutablePush.url = 'https://buyer.example/webhooks/changed';
+    mutablePush.operationId = 'snapshot-changed';
+    mutablePush.token = `0123456789abcdef${String.fromCharCode(0xd800)}`;
+    mutableTerminal.media_buy_id = 'snapshot-changed';
+    registry.registryId = 'mutated-registry-id';
+    releaseRead();
+
+    assert.deepStrictEqual(await settlement, { outcome: 'applied', delivery: 'durably_bound' });
+    assert.deepStrictEqual((await registry.getTask(firstRef.taskId, firstRef)).result, {
+      media_buy_id: 'snapshot-original',
+    });
+    assert.strictEqual((await registry.getTask(secondRef.taskId, secondRef)).status, 'submitted');
+    const outbox = await pool.query(
+      `SELECT snapshot->>'url' AS url,
+              snapshot->'payload'->>'task_id' AS task_id,
+              snapshot->'payload'->>'operation_id' AS operation_id
+         FROM ${SETTLEMENT_OUTBOX}`
+    );
+    assert.deepStrictEqual(outbox.rows, [
+      {
+        url: 'https://buyer.example/webhooks/original',
+        task_id: firstRef.taskId,
+        operation_id: 'snapshot-original',
+      },
+    ]);
+  });
+
   test('create + getTask roundtrips a submitted task', async () => {
     const registry = createPostgresTaskRegistry({ pool, namespace: NAMESPACE });
     const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
@@ -1028,6 +1219,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     });
     const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
     const result = { media_buy_id: 'mb_preterminal' };
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), false);
     assert.deepStrictEqual(await registry.complete(ref.taskId, ref, result), { outcome: 'applied' });
 
     await assert.rejects(
@@ -1042,6 +1234,37 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
         /no atomic webhook delivery checkpoint/.test(error.message)
     );
     assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 0);
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), false);
+  });
+
+  test('push settlement proves a terminal checkpoint without retaining push configuration', async () => {
+    const {
+      completeScopedPushTask,
+      createPostgresTaskSettlementCoordinator,
+    } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:terminal-checkpoint-proof',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-terminal-checkpoint-proof',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1', hasWebhook: true });
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), false);
+    assert.deepStrictEqual(
+      await completeScopedPushTask(
+        coordinator,
+        ref,
+        { url: 'https://buyer.example/terminal-checkpoint-proof', operationId: 'checkpoint-proof-operation' },
+        { media_buy_id: 'mb_checkpoint_proof' }
+      ),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), true);
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint({ ...ref, ownerScope: 'account:wrong-owner' }), false);
   });
 
   test('a separate Node process reconstructs the registry and atomically settles a push task', async () => {
@@ -1615,6 +1838,97 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     assert.strictEqual(lease.snapshot.payload.status, 'failed');
     assert.strictEqual(lease.snapshot.payload.message, 'Approval declined');
     assert.deepStrictEqual(lease.snapshot.payload.result, { errors: [error] });
+  });
+
+  test('push settlement accepts a pre-upgrade terminal artifact after current-wire normalization', async () => {
+    const { createPostgresTaskSettlementCoordinator, failScopedPushTask } = require('../dist/lib/server/decisioning');
+    const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-upgrade-retry',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-upgrade',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'sync_creatives', accountId: 'acc_1', hasWebhook: true });
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'approval-op-upgrade' };
+    const legacyError = {
+      code: 'IDEMPOTENCY_CONFLICT',
+      recovery: 'terminal',
+      message: 'legacy conflict',
+      field: 'removed-by-current-sanitizer',
+    };
+    assert.deepStrictEqual(await failScopedPushTask(coordinator, ref, push, legacyError), {
+      outcome: 'applied',
+      delivery: 'durably_bound',
+    });
+
+    const storedOutbox = await pool.query(`SELECT snapshot FROM ${SETTLEMENT_OUTBOX} WHERE publisher_scope = $1`, [
+      'test-seller-upgrade',
+    ]);
+    const legacySnapshot = structuredClone(storedOutbox.rows[0].snapshot);
+    legacySnapshot.payload.result = { errors: [legacyError] };
+    const { timestamp: _timestamp, ...payloadWithoutTimestamp } = legacySnapshot.payload;
+    const comparableSnapshot = {
+      url: legacySnapshot.url,
+      payload: legacySnapshot.payload,
+      retries: legacySnapshot.retries,
+      authentication: { kind: 'none' },
+    };
+    const legacyIntentFingerprint = canonicalJsonSha256({
+      ...comparableSnapshot,
+      payload: payloadWithoutTimestamp,
+    });
+    await pool.query(
+      `UPDATE ${SETTLEMENT_OUTBOX}
+          SET snapshot = $1::jsonb, snapshot_fingerprint = $2,
+              storage_fingerprint = $3, intent_fingerprint = $4
+        WHERE publisher_scope = $5`,
+      [
+        JSON.stringify(legacySnapshot),
+        canonicalJsonSha256(comparableSnapshot),
+        canonicalJsonSha256(legacySnapshot),
+        legacyIntentFingerprint,
+        'test-seller-upgrade',
+      ]
+    );
+    await pool.query(
+      `UPDATE ${TABLE}
+          SET status = 'failed', error = $1::jsonb, result = $2::jsonb, status_message = $3
+        WHERE task_id = $4 AND registry_namespace = $5 AND account_id = $6 AND owner_scope = $7`,
+      [
+        JSON.stringify(legacyError),
+        JSON.stringify({ errors: [legacyError] }),
+        legacyError.message,
+        ref.taskId,
+        NAMESPACE,
+        ref.accountId,
+        ref.ownerScope,
+      ]
+    );
+
+    assert.deepStrictEqual(await failScopedPushTask(coordinator, ref, push, legacyError), {
+      outcome: 'already_terminal',
+      status: 'failed',
+      compatibility: 'compatible',
+      delivery: 'recoverable',
+    });
+    await pool.query(
+      `UPDATE ${SETTLEMENT_OUTBOX}
+          SET state = 'settled', disposition = 'delivered', snapshot = '{}'::jsonb
+        WHERE publisher_scope = $1`,
+      ['test-seller-upgrade']
+    );
+    assert.strictEqual(await coordinator.hasTerminalCheckpoint(ref), true);
+    assert.deepStrictEqual(await failScopedPushTask(coordinator, ref, push, legacyError), {
+      outcome: 'already_terminal',
+      status: 'failed',
+      compatibility: 'compatible',
+      delivery: 'delivered',
+    });
   });
 
   test('push settlement keeps wrong scoped refs non-enumerating and creates no outbox row', async () => {

@@ -15,6 +15,7 @@ import type {
   SellerRenderedStatefulDisplayFormatDeclaration,
   SponsoredPlacementFormatDeclaration,
   CoordinatedPlacementsFormatDeclaration,
+  VASTAudioFormatDeclaration,
   VASTVideoFormatDeclaration,
 } from '../../types/tools.generated';
 import type { CanonicalFormatDeclaration as CanonicalBaseFormatDeclaration } from './legacy-metadata';
@@ -32,6 +33,7 @@ interface CanonicalFormatDeclarationMap {
   video_hosted: WithCommonDeclaration<HostedVideoFormatDeclaration>;
   video_vast: WithCommonDeclaration<VASTVideoFormatDeclaration>;
   audio_hosted: WithCommonDeclaration<HostedAudioFormatDeclaration>;
+  audio_vast: WithCommonDeclaration<VASTAudioFormatDeclaration>;
   audio_daast: WithCommonDeclaration<DAASTAudioFormatDeclaration>;
   sponsored_placement: WithCommonDeclaration<SponsoredPlacementFormatDeclaration>;
   native_in_feed: WithCommonDeclaration<NativeInFeedFormatDeclaration>;
@@ -154,6 +156,13 @@ export function audioHostedFormatDeclaration(
   return canonicalFormatDeclaration('audio_hosted', params, fields);
 }
 
+export function audioVastFormatDeclaration(
+  params: CanonicalFormatParams<'audio_vast'>,
+  fields: CanonicalFormatDeclarationFields<'audio_vast'> = {}
+): CanonicalFormatDeclaration<'audio_vast'> {
+  return canonicalFormatDeclaration('audio_vast', params, fields);
+}
+
 export function audioDaastFormatDeclaration(
   params: CanonicalFormatParams<'audio_daast'>,
   fields: CanonicalFormatDeclarationFields<'audio_daast'> = {}
@@ -237,6 +246,7 @@ export const CanonicalFormat = {
   videoHosted: videoHostedFormatDeclaration,
   videoVast: videoVastFormatDeclaration,
   audioHosted: audioHostedFormatDeclaration,
+  audioVast: audioVastFormatDeclaration,
   audioDaast: audioDaastFormatDeclaration,
   sponsoredPlacement: sponsoredPlacementFormatDeclaration,
   nativeInFeed: nativeInFeedFormatDeclaration,

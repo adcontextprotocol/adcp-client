@@ -8,13 +8,8 @@
 import { Client as MCPClient } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
-import {
-  createCLIOAuthProvider,
-  hasValidOAuthTokens,
-  clearOAuthTokens,
-  getEffectiveAuthToken,
-} from '../src/lib/auth/oauth';
-import type { AgentConfig } from '../src/lib/types/adcp';
+import { createCLIOAuthProvider, hasValidOAuthTokens, clearOAuthTokens } from '@adcp/sdk/auth';
+import type { AgentConfig } from '@adcp/sdk';
 
 // Example: Agent configured for OAuth
 const agent: AgentConfig = {

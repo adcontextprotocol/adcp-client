@@ -110,6 +110,18 @@ function loadIndex(): SchemaIndex {
   return JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
 }
 
+function resolveSchemaFragment(schema: any, fragment: string): any {
+  if (!fragment.startsWith('#/')) return schema;
+
+  let resolved = schema;
+  for (const rawSegment of fragment.slice(2).split('/')) {
+    const segment = decodeURIComponent(rawSegment).replaceAll('~1', '/').replaceAll('~0', '~');
+    resolved = resolved?.[segment];
+    if (resolved === undefined) return null;
+  }
+  return resolved;
+}
+
 function loadSchema(ref: string): any {
   // Indexes may use either root-relative or absolute canonical schema URLs.
   // Resolve both to a cache-relative path before stripping the version.
@@ -135,16 +147,9 @@ function loadSchema(ref: string): any {
     }
   }
   const filePath = path.join(SCHEMA_CACHE_DIR, rel);
-  if (!existsSync(filePath)) return null;
-  let schema = JSON.parse(readFileSync(filePath, 'utf8'));
-  if (fragment.startsWith('#/')) {
-    for (const rawSegment of fragment.slice(2).split('/')) {
-      const segment = decodeURIComponent(rawSegment).replaceAll('~1', '/').replaceAll('~0', '~');
-      schema = schema?.[segment];
-      if (schema === undefined) return null;
-    }
-  }
-  return schema;
+  if (!existsSync(filePath) || !statSync(filePath).isFile()) return null;
+  const schema = JSON.parse(readFileSync(filePath, 'utf8'));
+  return resolveSchemaFragment(schema, fragment);
 }
 
 function kebabToSnake(s: string): string {
@@ -168,7 +173,7 @@ function summarizeFields(schema: any): { required: string[]; optional: string[] 
     // Skip protocol-level fields that appear on every request
     if (name === 'adcp_major_version' || name === 'ext') continue;
 
-    const typeHint = fieldType(prop);
+    const typeHint = fieldType(prop, schema);
     const entry = typeHint ? `${name}: ${typeHint}` : name;
 
     if (req.has(name)) {
@@ -229,19 +234,20 @@ function summarizeResponseFields(schema: any): { required: string[]; optional: s
   return summarizeFields(schema);
 }
 
-function fieldType(prop: any): string {
+function fieldType(prop: any, rootSchema?: any): string {
   if (!prop) return '';
   if (prop.enum) return prop.enum.map((v: string) => `'${v}'`).join(' | ');
   if (prop.const) return `'${prop.const}'`;
   if (prop.type === 'array') {
-    const itemType = fieldType(prop.items) || 'object';
+    const itemType = fieldType(prop.items, rootSchema) || 'object';
     return itemType.includes(' | ') ? `(${itemType})[]` : `${itemType}[]`;
   }
   if (prop.type === 'object' && prop.title) return prop.title;
   if (prop.$ref) {
-    if (prop.$ref.includes('#')) {
-      const resolved = loadSchema(prop.$ref);
-      if (resolved) return fieldType(resolved);
+    const isLocalRef = prop.$ref.startsWith('#');
+    if (isLocalRef || prop.$ref.includes('#')) {
+      const resolved = isLocalRef ? resolveSchemaFragment(rootSchema, prop.$ref) : loadSchema(prop.$ref);
+      if (resolved) return fieldType(resolved, isLocalRef ? rootSchema : resolved);
     }
     // Extract type name from $ref path
     const parts = prop.$ref.split('#')[0].split('/');
@@ -252,7 +258,7 @@ function fieldType(prop: any): string {
     const variants = prop.oneOf || prop.anyOf;
     if (variants.length <= 3) {
       return variants
-        .map((v: any) => v.title || v.const || fieldType(v))
+        .map((v: any) => v.title || v.const || fieldType(v, rootSchema))
         .filter(Boolean)
         .join(' | ');
     }
@@ -590,12 +596,25 @@ function generateLlmsTxt(
   ln();
 
   // --- Client vs. server routing ---
-  ln(`## Are you building a client or a server?`);
+  ln(`## Start here: SDK 14 and AdCP 3.2`);
   ln();
-  ln(`- **Client** (calling existing agents): Continue reading — the Quick Start below is for you.`);
   ln(
-    `- **Server** (implementing an agent that others call): Read \`docs/guides/BUILD-AN-AGENT.md\` and \`docs/migration-5.x-to-6.x.md\`. v6 recommended path:`
+    `SDK 14 requires Node.js \`^20.19.0 || >=22.12.0\`; install the newest v14 prerelease with \`@adcp/sdk@^14.0.0-0\`.`
   );
+  ln();
+  ln(
+    `SDK 14 is compact-lifecycle first: \`list_products → buy_products → control_media_buy\`, with \`request_proposals → refine_proposals → accept_proposal\` when terms need negotiation.`
+  );
+  ln();
+  ln(`- **Buyer** (calling a seller): read \`docs/guides/BUYER-QUICKSTART-3.2.md\` first.`);
+  ln(
+    `- **Seller** (implementing an agent that others call): read \`docs/guides/SELLER-QUICKSTART-3.2.md\` first, then \`docs/guides/BUILD-AN-AGENT.md\` for the complete framework surface.`
+  );
+  ln(
+    `- **Upgrading an existing application:** read \`docs/migration-13-to-14.md\`; established 3.0/3.1 tools remain supported as an explicit compatibility path.`
+  );
+  ln();
+  ln(`## Server framework reference`);
   ln();
   ln('```typescript');
   ln(`import { serve } from '@adcp/sdk';`);
@@ -697,9 +716,10 @@ function generateLlmsTxt(
   ln();
 
   // --- Quick start ---
-  ln(`## Quick Start (Client)`);
+  ln(`## Quick Start (Buyer)`);
   ln();
   ln('```typescript');
+  ln(`import { randomUUID } from 'node:crypto';`);
   ln(`import { ADCPMultiAgentClient } from '@adcp/sdk';`);
   ln();
   ln(`const client = ADCPMultiAgentClient.simple('https://agent.example.com/mcp/', {`);
@@ -707,19 +727,37 @@ function generateLlmsTxt(
   ln(`});`);
   ln(`const agent = client.agent('default-agent');`);
   ln();
-  ln(`// Discover products`);
-  ln(`const products = await agent.getProducts({ buying_mode: 'brief', brief: 'coffee brands' });`);
-  ln(`if (products.status === 'completed') console.log(products.data.products);`);
-  ln();
-  ln(`// Create a media buy`);
-  ln(`const buy = await agent.createMediaBuy({`);
-  ln(`  account: { account_id: 'acct_1' },`);
-  ln(`  brand: { domain: 'coffee.example.com' },`);
-  ln(`  start_time: 'asap',`);
-  ln(`  end_time: '2026-06-01T00:00:00Z',`);
-  ln(`  packages: [{ buyer_ref: 'pkg-1', product_id: 'prod_1', pricing_option_id: 'cpm_1', budget: 5000 }],`);
+  ln(`const account = { account_id: 'seller-issued-account-id' };`);
+  ln(`const listed = await agent.listProducts({`);
+  ln(`  account,`);
+  ln(`  brand: { domain: 'advertiser.example' },`);
   ln(`});`);
+  ln(`if (!listed.success || listed.status !== 'completed') throw new Error(listed.error ?? listed.status);`);
+  ln();
+  ln(`const product = listed.data!.products[0];`);
+  ln(`const pricing = product?.pricing_options?.[0];`);
+  ln(`if (!product || !pricing) throw new Error('Seller returned no purchasable products');`);
+  ln();
+  ln(`const purchaseIdempotencyKey = randomUUID(); // Persist before sending; reuse after an ambiguous timeout.`);
+  ln(`const endTime = new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000).toISOString();`);
+  ln(`const bought = await agent.buyProducts({`);
+  ln(`  idempotency_key: purchaseIdempotencyKey,`);
+  ln(`  account,`);
+  ln(`  brand: { domain: 'advertiser.example' },`);
+  ln(`  feed_version: listed.data!.feed_version,`);
+  ln(`  start_time: 'asap',`);
+  ln(`  end_time: endTime,`);
+  ln(`  purchases: [{ product_id: product.product_id, pricing_option_id: pricing.pricing_option_id, budget: 5000 }],`);
+  ln(`});`);
+  ln(`const completed = bought.status === 'submitted' ? await bought.submitted!.waitForCompletion() : bought;`);
+  ln(
+    `if (!completed.success || completed.status !== 'completed') throw new Error(completed.error ?? completed.status);`
+  );
   ln('```');
+  ln();
+  ln(
+    `A submitted mutation must settle before it can be controlled; retain the task handle or configure \`push_notification_config\`. The buyer quick start shows completion, revision-aware control, readback, and correction paths.`
+  );
   ln();
 
   ln(`## Canonical Reference Resolver`);
@@ -1165,12 +1203,21 @@ function generateLlmsTxt(
   ln(
     `| \`PostgresTaskSettlementCoordinator\` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |`
   );
+  ln(
+    `| \`PostgresTaskSettlementIntentQueue\` | Commits an exact terminal intent with application state, then recovers idempotent SDK task settlement after a crash |`
+  );
+  ln(
+    `| \`PostgresWebhookRuntime\` | Opinionated PostgreSQL webhook emitter, ready-to-wire server config, durable stores, migrations, probes, and bounded recovery |`
+  );
   ln();
   ln(
     `Production webhook publishers may construct an unbound emitter and call \`forTenantScope(trustedTenant)\` before every delivery. Direct unbound \`emit()\` fails before checkpointing or network access. \`createAdcpServer\` derives scope from trusted request context; configure \`webhooks.tenantScope\` only for a genuinely single-tenant factory.`
   );
   ln(
     `Push-enabled decisioning tasks settled by another process must return \`ctx.handoffToTask(producer, { settlement: 'external' })\`; the framework withholds \`submitted\` until the producer durably queues the complete scoped handle and encrypted route. Workers use \`createPostgresTaskSettlementCoordinator()\` with \`completeScopedPushTask()\` / \`failScopedPushTask()\`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for \`applied\` or compatible \`already_terminal\`; retry or dead-letter scope misses and conflicts.`
+  );
+  ln(
+    `When application state commits before SDK task settlement, call \`createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })\` in the same domain transaction. Acknowledgement discards the payload and retains an immutable fingerprint tombstone through the configured idempotency horizon; \`pruneAcknowledged()\` removes expired tombstones in bounded batches. Recovery callbacks are at-least-once. Use \`applyTaskSettlementIntent()\` to apply and prove the exact polling or push terminal artifact before returning \`settled\`. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for the supported workflow and scoped dead-letter operations.`
   );
   ln();
 
@@ -1201,7 +1248,7 @@ function generateLlmsTxt(
     `AdCP tools are served over MCP (Model Context Protocol) or A2A (Agent-to-Agent). The client auto-detects based on \`AgentConfig.protocol\`. MCP endpoints end with \`/mcp/\`. Bearer auth uses \`Authorization: Bearer <token>\`; SDK clients also send the legacy \`x-adcp-auth\` header for compatibility, and servers accept it as a fallback.`
   );
   ln();
-  ln(`**Deep dive:** docs/development/PROTOCOL_DIFFERENCES.md`);
+  ln(`**Deep dive:** [protocol differences](development/PROTOCOL_DIFFERENCES.md)`);
   ln();
 
   // --- Discovery ---
@@ -1220,6 +1267,10 @@ function generateLlmsTxt(
 
   const docLinks: [string, string][] = [
     ['Full type signatures', 'TYPE-SUMMARY.md'],
+    ['Buyer quick start (AdCP 3.2)', 'guides/BUYER-QUICKSTART-3.2.md'],
+    ['Seller quick start (AdCP 3.2)', 'guides/SELLER-QUICKSTART-3.2.md'],
+    ['Production durability checklist', 'guides/PRODUCTION-DURABILITY.md'],
+    ['Migrating SDK 13 → 14', 'migration-13-to-14.md'],
     ['Getting started / install', 'getting-started.md'],
     ['Build a server-side agent', 'guides/BUILD-AN-AGENT.md'],
     ['Migrating 6.7 → 6.9 (skips deprecated 6.8.0; 13 additive recipes; 2 breaking)', 'migration-6.7-to-6.9.md'],
@@ -1234,6 +1285,7 @@ function generateLlmsTxt(
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
+    ['Durable task settlement intents', 'guides/DURABLE-TASK-SETTLEMENT.md'],
     ['Input handler patterns', 'guides/HANDLER-PATTERNS-GUIDE.md'],
     ['Webhook configuration', 'guides/PUSH-NOTIFICATION-CONFIG.md'],
     ['Real-world code examples', 'guides/REAL-WORLD-EXAMPLES.md'],
@@ -1242,7 +1294,6 @@ function generateLlmsTxt(
     ['Testing strategy', 'guides/TESTING-STRATEGY.md'],
     ['Testing `composeMethod`-wrapped handlers', 'recipes/composeMethod-testing.md'],
     ['Protocol differences (MCP vs A2A)', 'development/PROTOCOL_DIFFERENCES.md'],
-    ['TypeDoc API reference', 'api/index.html'],
   ];
 
   ln(`| Need | Local path | Hosted |`);
@@ -1250,6 +1301,7 @@ function generateLlmsTxt(
   for (const [need, docPath] of docLinks) {
     ln(`| ${need} | docs/${docPath} | [link](${DOCS_BASE_URL}/${docPath}) |`);
   }
+  ln(`| TypeDoc API reference | hosted only | [link](${DOCS_BASE_URL}/api/index.html) |`);
   ln();
   ln(`JSON schemas (source of truth): \`schemas/cache/latest/index.json\` (local only)`);
   ln();
@@ -1260,7 +1312,9 @@ function generateLlmsTxt(
   ln(`- Documentation: ${DOCS_BASE_URL}/`);
   ln(`- npm: https://www.npmjs.com/package/@adcp/sdk`);
   ln(`- Spec: https://adcontextprotocol.org`);
-  ln(`- CLI: \`npx @adcp/sdk@adcp-3.1\` for the 8.1 / AdCP 3.1 beta line`);
+  ln(
+    `- SDK 14 CLI: \`npx --package '@adcp/sdk@^14.0.0-0' adcp --help\`; use the \`adcp-3.1\` tag only for the maintained 3.1 compatibility line`
+  );
   ln();
 
   return lines.join('\n');
@@ -1460,6 +1514,113 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln('```');
   ln();
 
+  ln(`## Durable Task Settlement Intent Queue`);
+  ln();
+  ln('```typescript');
+  ln(`interface PgQueryable {`);
+  ln(
+    `  query(text: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }>;`
+  );
+  ln(`}`);
+  ln();
+  ln(`interface AdcpStructuredError {`);
+  ln(`  code: string;`);
+  ln(`  recovery: 'transient' | 'correctable' | 'terminal';`);
+  ln(`  message: string;`);
+  ln(`  field?: string;`);
+  ln(`  suggestion?: string;`);
+  ln(`  retry_after?: number;`);
+  ln(`  details?: Record<string, unknown>;`);
+  ln(`}`);
+  ln();
+  ln(`interface DurableTaskSettlementRef {`);
+  ln(`  taskId: string;`);
+  ln(`  accountId: string;`);
+  ln(`  registryId: string;`);
+  ln(`  ownerScope: string;`);
+  ln(`}`);
+  ln();
+  ln(`type TaskSettlementIntent =`);
+  ln(`  | { taskRef: DurableTaskSettlementRef; action: 'complete'; result: unknown }`);
+  ln(`  | { taskRef: DurableTaskSettlementRef; action: 'fail'; error: AdcpStructuredError; result?: unknown };`);
+  ln();
+  ln(`interface TaskSettlementIntentCheckpoint extends DurableTaskSettlementRef {`);
+  ln(`  queueNamespace: string;`);
+  ln(`  intentFingerprint: string;`);
+  ln(`}`);
+  ln();
+  ln(`function canonicalizeTaskSettlementIntent(intent: TaskSettlementIntent): TaskSettlementIntent;`);
+  ln(`function applyTaskSettlementIntent(`);
+  ln(`  intent: TaskSettlementIntent,`);
+  ln(
+    `  options: { registry: TaskRegistry } | { coordinator: PostgresTaskSettlementCoordinator; push: TaskPushSettlementConfig }`
+  );
+  ln(`): Promise<'settled'>;`);
+  ln();
+  ln(`interface TaskSettlementIntentRecoveryContext {`);
+  ln(`  attemptCount: number;`);
+  ln(`  extendLease(): Promise<boolean>;`);
+  ln(`}`);
+  ln();
+  ln(`interface TaskSettlementIntentRecoveryMetrics {`);
+  ln(`  claimed: number;`);
+  ln(`  settled: number;`);
+  ln(`  retried: number;`);
+  ln(`  deadLettered: number;`);
+  ln(`  leaseLost: number;`);
+  ln(`}`);
+  ln();
+  ln(`interface TaskSettlementIntentRecoveryErrorContext {`);
+  ln(`  attemptCount: number;`);
+  ln(`  taskRef: DurableTaskSettlementRef;`);
+  ln(`  action: 'complete' | 'fail';`);
+  ln(`  disposition: 'retry' | 'dead_letter' | 'lease_lost';`);
+  ln(`}`);
+  ln();
+  ln(`interface RecoverTaskSettlementIntentsOptions {`);
+  ln(`  settle(intent: TaskSettlementIntent, context: TaskSettlementIntentRecoveryContext): Promise<'settled'>;`);
+  ln(`  batchSize?: number;`);
+  ln(`  leaseMs?: number;`);
+  ln(`  retryAfterMs?: number;`);
+  ln(`  maxRetryAfterMs?: number;`);
+  ln(`  maxAttempts?: number;`);
+  ln(`  workerId?: string;`);
+  ln(`  onError?(error: unknown, context: TaskSettlementIntentRecoveryErrorContext): void | Promise<void>;`);
+  ln(`}`);
+  ln();
+  ln(`interface CreatePostgresTaskSettlementIntentQueueOptions {`);
+  ln(`  db: PgQueryable;`);
+  ln(`  namespace: string;`);
+  ln(`  tableName?: string;`);
+  ln(`  idempotencyHorizonMs?: number; // defaults to seven days`);
+  ln(`}`);
+  ln();
+  ln(`interface PostgresTaskSettlementIntentQueue {`);
+  ln(`  readonly durability: 'durable';`);
+  ln(
+    `  enqueue(intent: TaskSettlementIntent, options?: { db?: PgQueryable }): Promise<TaskSettlementIntentCheckpoint>;`
+  );
+  ln(`  acknowledge(checkpoint: TaskSettlementIntentCheckpoint, options?: { db?: PgQueryable }): Promise<boolean>;`);
+  ln(`  pruneAcknowledged(options?: { db?: PgQueryable; limit?: number }): Promise<number>;`);
+  ln(`  recover(options: RecoverTaskSettlementIntentsOptions): Promise<TaskSettlementIntentRecoveryMetrics>;`);
+  ln(`  probe(): Promise<void>;`);
+  ln(`}`);
+  ln();
+  ln(`const TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS: number; // seven days`);
+  ln();
+  ln(`const settlementIntents = createPostgresTaskSettlementIntentQueue({`);
+  ln(`  db: pool,`);
+  ln(`  namespace: 'seller-prod',`);
+  ln(`  tableName: 'seller_task_settlement_intents',`);
+  ln(`  idempotencyHorizonMs: TASK_SETTLEMENT_INTENT_IDEMPOTENCY_HORIZON_MS,`);
+  ln(`});`);
+  ln('```');
+  ln();
+  ln(
+    `The queue requires a complete \`DurableTaskSettlementRef\`, including non-empty \`registryId\`. Use \`canonicalizeTaskSettlementIntent()\` for the immediate path so it compares the same cloned, validated, wire-safe artifact that \`enqueue\` persists. Pass the active transaction client to \`enqueue(..., { db: tx })\` so the domain outcome and immutable intent commit together. Acknowledgement compacts the payload and retains the exact fingerprint for \`idempotencyHorizonMs\` (seven days by default), preventing a conflicting artifact from rebinding the scoped task during the replay window. Schedule bounded \`pruneAcknowledged()\` calls when recovery traffic can be idle. Recovery is at least once: call \`applyTaskSettlementIntent()\` and acknowledge only after it returns \`settled\`. See \`docs/guides/DURABLE-TASK-SETTLEMENT.md\` for the complete workflow plus scoped dead-letter SQL.`
+  );
+  ln();
+
   ln(`## Crash-Safe Push Task Settlement`);
   ln();
   ln('```typescript');
@@ -1487,10 +1648,41 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`});`);
   ln(`await completeScopedPushTask(settlements, scopedTaskRef, push, result);`);
   ln(`await failScopedPushTask(settlements, scopedTaskRef, push, structuredError);`);
+  ln(`// Recovery after task + outbox commit and intentional push-config deletion:`);
+  ln(`// First compare the stored terminal result/error with the intended artifact.`);
+  ln(`if (await settlements.hasTerminalCheckpoint(scopedTaskRef)) {`);
+  ln(`  // The scoped terminal task still has its durable checkpoint.`);
+  ln(`}`);
   ln('```');
   ln();
   ln(
-    `The registry and outbox must share one PostgreSQL pool. Run the task-registry and webhook-recovery migrations, return \`ctx.handoffToTask(producer, { settlement: 'external' })\`, and persist the complete \`ScopedTaskRef\` plus encrypted push route before the producer returns. The framework waits for that durable producer commit before returning \`submitted\`; rejection fails the initial invocation. Poll \`settlements.recovery\` from a worker. See \`docs/migration-task-registry-scoping.md\`.`
+    `The registry and outbox must share one PostgreSQL pool. Run the task-registry and webhook-recovery migrations, return \`ctx.handoffToTask(producer, { settlement: 'external' })\`, and persist the complete \`ScopedTaskRef\` plus encrypted push route before the producer returns. The framework waits for that durable producer commit before returning \`submitted\`; rejection fails the initial invocation. Poll \`settlements.recovery\` from a worker. After intentionally deleting a settled task's push config, first compare the stored terminal result/error with the intended artifact; then \`hasTerminalCheckpoint()\` proves that the scoped task still has its deterministic durable webhook checkpoint without reconstructing the secret route. It does not prove artifact compatibility or delivery. Reconstructed coordinators must retain the same publisher scope, registry storage ID/namespace, and outbox table, and checkpoint tombstones must remain through the intent replay horizon. See \`docs/migration-task-registry-scoping.md\`.`
+  );
+  ln();
+
+  ln(`## PostgreSQL Webhook Runtime`);
+  ln();
+  ln('```typescript');
+  ln(`const webhooks = createPostgresWebhookRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  publisherScope: 'seller-production',`);
+  ln(`  deliveries: { tableName: 'seller_webhook_deliveries' },`);
+  ln(`  outbox: { tableName: 'seller_webhook_outbox' },`);
+  ln(`  signerProvider,`);
+  ln(`  authenticationAdapter,`);
+  ln(`});`);
+  ln(`for (const sql of webhooks.migrations.all) await pool.query(sql);`);
+  ln(`await webhooks.probe();`);
+  ln(`const server = createAdcpServerFromPlatform(platform, {`);
+  ln(`  name: 'seller-production', version: '1.0.0', webhooks: webhooks.serverConfig,`);
+  ln(`});`);
+  ln(`const instanceId = process.env.INSTANCE_ID;`);
+  ln(`if (!instanceId) throw new Error('Set INSTANCE_ID to a stable worker identity');`);
+  ln(`await webhooks.recoverOnce({ ownerToken: instanceId });`);
+  ln('```');
+  ln();
+  ln(
+    `\`createPostgresWebhookRuntime()\` assembles the durable delivery store, encrypted recovery outbox, emitter, ready-to-pass server configuration, probes, migrations, fenced poller, and \`WebhookEmitResult\`-to-disposition mapping. Pass \`webhooks.serverConfig\` as the framework's \`webhooks\` option and schedule bounded \`recoverOnce()\` calls. Direct multi-tenant sends bind with \`webhooks.emitter.forTenantScope(trustedTenant)\`.`
   );
   ln();
 
@@ -1590,7 +1782,11 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
 
     for (const tool of domainTools) {
       const tsDesc = tool.reqDescription.split('.')[0].trim();
-      ln(`**\`${tool.name}\`**${tsDesc ? ` — ${tsDesc}.` : ''}`);
+      ln(`#### \`${tool.name}\``);
+      if (tsDesc) {
+        ln();
+        ln(`${tsDesc}.`);
+      }
       ln();
 
       const reqFields = [

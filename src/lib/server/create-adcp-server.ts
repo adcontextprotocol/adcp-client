@@ -67,6 +67,7 @@ import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
+import { applyStructuredContentTextFallback, type StructuredContentTextFallback } from './structured-content-fallback';
 import {
   ADCP_CAPABILITIES,
   ADCP_STATE_STORE,
@@ -74,6 +75,8 @@ import {
   setSdkServerInstructions,
   setMcpAppResources,
   setMcpToolProfile,
+  setDiscoveryVersionResolver,
+  setToolVersionAvailabilityResolver,
   wrapInitializeHandler,
   wrapSdkRequestHandler,
   type AdcpServer,
@@ -249,10 +252,14 @@ import type {
   UpdateMediaBuyRequestSchema,
   GetMediaBuysRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
+  GetReportingStatusRequestSchema,
+  SyncReportingReceiptsRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
   GetTaskStatusRequestSchema,
   ListTasksRequestSchema,
   SyncAgentNotificationConfigsRequestSchema,
+  GetPrincipalRequestSchema,
+  SyncPrincipalRequestSchema,
   ListCreativeFormatsRequestSchema,
   ListTransformersRequestSchema,
   BuildCreativeRequestSchema,
@@ -328,9 +335,13 @@ import type {
   UpdateMediaBuyResponse,
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
+  GetReportingStatusResponse,
+  SyncReportingReceiptsResponse,
   GetTaskStatusResponse,
   ListTasksResponse,
   SyncAgentNotificationConfigsResponse,
+  GetPrincipalResponse,
+  SyncPrincipalResponse,
   ListAccountsResponse,
   ListCreativeFormatsResponse,
   ListTransformersResponse,
@@ -684,6 +695,16 @@ export interface AdcpToolMap {
     result: ServerPayload<GetMediaBuyDeliveryResponse>;
     response: GetMediaBuyDeliveryResponse;
   };
+  get_reporting_status: {
+    params: z.input<typeof GetReportingStatusRequestSchema>;
+    result: ServerPayload<GetReportingStatusResponse>;
+    response: GetReportingStatusResponse;
+  };
+  sync_reporting_receipts: {
+    params: z.input<typeof SyncReportingReceiptsRequestSchema>;
+    result: ServerPayload<SyncReportingReceiptsResponse>;
+    response: SyncReportingReceiptsResponse;
+  };
   provide_performance_feedback: {
     params: z.input<typeof ProvidePerformanceFeedbackRequestSchema>;
     result: ServerPayload<ProvidePerformanceFeedbackSuccess>;
@@ -703,6 +724,16 @@ export interface AdcpToolMap {
     params: z.input<typeof SyncAgentNotificationConfigsRequestSchema>;
     result: ServerPayload<SyncAgentNotificationConfigsResponse>;
     response: SyncAgentNotificationConfigsResponse;
+  };
+  get_principal: {
+    params: z.input<typeof GetPrincipalRequestSchema>;
+    result: ServerPayload<GetPrincipalResponse>;
+    response: GetPrincipalResponse;
+  };
+  sync_principal: {
+    params: z.input<typeof SyncPrincipalRequestSchema>;
+    result: ServerPayload<SyncPrincipalResponse>;
+    response: SyncPrincipalResponse;
   };
   list_creative_formats: {
     params: z.input<typeof ListCreativeFormatsRequestSchema>;
@@ -1031,6 +1062,8 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   updateMediaBuy?: DomainHandler<'update_media_buy', TAccount>;
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
   getMediaBuyDelivery?: DomainHandler<'get_media_buy_delivery', TAccount>;
+  getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
+  syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;
   providePerformanceFeedback?: DomainHandler<'provide_performance_feedback', TAccount>;
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
   syncCreatives?: DomainHandler<'sync_creatives', TAccount>;
@@ -1106,6 +1139,8 @@ export interface ProtocolHandlers<TAccount = unknown> {
     params: AdcpToolMap['sync_agent_notification_configs']['params']
   ) => CallerMutationScope | Promise<CallerMutationScope>;
   syncAgentNotificationConfigs?: DomainHandler<'sync_agent_notification_configs', TAccount>;
+  getPrincipal?: DomainHandler<'get_principal', TAccount>;
+  syncPrincipal?: DomainHandler<'sync_principal', TAccount>;
 }
 
 export interface AccountHandlers<TAccount = unknown> {
@@ -1226,6 +1261,14 @@ export interface AdcpCapabilitiesConfig {
    * them via their dedicated fields on {@link AdcpCapabilitiesConfig}.
    */
   overrides?: AdcpCapabilitiesOverrides;
+}
+
+/** Inclusive AdCP release range in which a registered tool is available. */
+export interface AdcpToolVersionRange {
+  /** Oldest release that can truthfully execute and project this tool. */
+  min?: AdcpVersion | (string & {});
+  /** Newest release that can truthfully execute and project this tool. */
+  max?: AdcpVersion | (string & {});
 }
 
 /**
@@ -1507,6 +1550,7 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'get_adcp_capabilities',
   'get_media_buy_delivery',
   'get_media_buys',
+  'get_reporting_status',
   'get_task_status',
   'list_accounts',
   'list_creatives',
@@ -1518,12 +1562,13 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'report_usage',
   'request_proposals',
   'sync_accounts',
-  'sync_agent_notification_configs',
+  'sync_principal',
   'sync_audiences',
   'sync_catalogs',
   'sync_creatives',
   'sync_event_sources',
   'sync_governance',
+  'sync_reporting_receipts',
 ] as const;
 
 export type AdcpMcpToolProfile = 'auto' | 'media-buy' | 'all';
@@ -1686,6 +1731,14 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * accepting forward-compatible strings.
    */
   adcpVersion?: AdcpVersion | (string & {});
+
+  /**
+   * Per-tool inclusive protocol-release availability. This narrows, but does
+   * not replace, the server-wide releases declared through capabilities.
+   * Discovery and dispatch use the same range, so an unavailable tool is
+   * hidden and returns VERSION_UNSUPPORTED without reaching adopter code.
+   */
+  toolVersions?: Readonly<Record<string, AdcpToolVersionRange>>;
 
   /**
    * Resolve an account from an AccountReference.
@@ -1936,6 +1989,26 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * responses registered by `createAdcpServer`.
    */
   responseEnhancer?: (response: McpToolResponse) => void;
+  /**
+   * Mirror final MCP `structuredContent` into a marked compact-JSON text block
+   * for hosts that do not expose the structured channel to the model.
+   *
+   * Defaults to `always`, matching MCP's backwards-compatibility guidance.
+   * `never` is a deployment-owned opt-out. `auto` currently behaves like
+   * `always` until MCP defines a client capability for structured-result
+   * consumption. A predicate receives one extensible bag with the negotiated
+   * client facts and transport; missing client facts are legitimate and the
+   * named/default modes fail safe to mirroring. A2A named/default modes do not
+   * mirror because its Task artifact already carries the typed DataPart.
+   * The default legacy `serve()` route is stateless across HTTP requests, so
+   * it cannot safely correlate `initialize` client facts with a later
+   * `tools/call`; predicates therefore take the unknown-client fail-safe path
+   * there. Modern MCP requests and stateful transports expose client facts.
+   *
+   * Decoration happens after response finalization and idempotency caching, so
+   * a replay can be shaped independently for each client session.
+   */
+  structuredContentTextFallback?: StructuredContentTextFallback;
   /**
    * Auto-wire the RFC 9421 request-signature verifier onto the HTTP transport.
    * When set together with `capabilities.specialisms` containing
@@ -2957,12 +3030,16 @@ const TOOL_META: Record<string, ToolMeta> = {
   update_media_buy: { wrap: updateMediaBuyResponse, annotations: MUT },
   get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
+  get_reporting_status: { wrap: null, annotations: RO },
+  sync_reporting_receipts: { wrap: null, annotations: IDEMP },
   provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
 
   // Protocol
   get_task_status: { wrap: null, annotations: RO },
   list_tasks: { wrap: null, annotations: RO },
   sync_agent_notification_configs: { wrap: null, annotations: IDEMP },
+  get_principal: { wrap: null, annotations: RO },
+  sync_principal: { wrap: null, annotations: IDEMP },
 
   // Creative
   list_creative_formats: { wrap: listCreativeFormatsResponse, annotations: RO },
@@ -3238,6 +3315,8 @@ const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'updateMediaBuy', toolName: 'update_media_buy' },
   { handlerKey: 'getMediaBuys', toolName: 'get_media_buys' },
   { handlerKey: 'getMediaBuyDelivery', toolName: 'get_media_buy_delivery' },
+  { handlerKey: 'getReportingStatus', toolName: 'get_reporting_status' },
+  { handlerKey: 'syncReportingReceipts', toolName: 'sync_reporting_receipts' },
   { handlerKey: 'providePerformanceFeedback', toolName: 'provide_performance_feedback' },
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
   { handlerKey: 'syncCreatives', toolName: 'sync_creatives' },
@@ -3300,6 +3379,8 @@ const GOVERNANCE_ENTRIES: HandlerEntry[] = [
 
 const PROTOCOL_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'syncAgentNotificationConfigs', toolName: 'sync_agent_notification_configs' },
+  { handlerKey: 'getPrincipal', toolName: 'get_principal' },
+  { handlerKey: 'syncPrincipal', toolName: 'sync_principal' },
 ];
 
 const ACCOUNT_ENTRIES: HandlerEntry[] = [
@@ -3324,6 +3405,67 @@ const BRAND_RIGHTS_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'acquireRights', toolName: 'acquire_rights' },
   { handlerKey: 'updateRights', toolName: 'update_rights' },
 ];
+
+const PROTOCOL_VERSIONED_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  media_buy: [...MEDIA_BUY_PROTOCOL_ENTRIES, ...PROPOSAL_NEGOTIATION_ENTRIES].map(entry => entry.toolName),
+  signals: SIGNALS_ENTRIES.map(entry => entry.toolName),
+  governance: GOVERNANCE_ENTRIES.map(entry => entry.toolName),
+  creative: CREATIVE_ENTRIES.map(entry => entry.toolName),
+  sponsored_intelligence: SI_ENTRIES.map(entry => entry.toolName),
+  brand: BRAND_RIGHTS_ENTRIES.map(entry => entry.toolName),
+};
+
+function specialismProtocol(specialism: string): string | undefined {
+  if (specialism.startsWith('sales-')) return 'media_buy';
+  if (specialism.startsWith('signal-')) return 'signals';
+  if (specialism.startsWith('creative-')) return 'creative';
+  if (specialism === 'sponsored-intelligence') return 'sponsored_intelligence';
+  if (specialism === 'brand-rights') return 'brand';
+  if (
+    specialism === 'governance-spend-authority' ||
+    specialism === 'governance-delivery-monitor' ||
+    specialism === 'measurement-verification' ||
+    specialism === 'campaign-governance' ||
+    specialism === 'content-standards' ||
+    specialism.endsWith('-lists')
+  ) {
+    return 'governance';
+  }
+  return undefined;
+}
+
+function specialismBaselineTools(specialism: string): readonly string[] {
+  if (specialism.startsWith('sales-')) return ['get_products'];
+  if (specialism.startsWith('signal-')) return ['get_signals'];
+  return [];
+}
+
+function filterCapabilitiesForToolAvailability(
+  data: GetAdCPCapabilitiesResponse,
+  registeredTools: ReadonlySet<string>,
+  release: string,
+  isAvailable: (toolName: string, release: string) => boolean
+): void {
+  const unavailableProtocols = new Set<string>();
+  data.supported_protocols = data.supported_protocols.filter(protocol => {
+    const candidates = (PROTOCOL_VERSIONED_TOOLS[protocol] ?? []).filter(tool => registeredTools.has(tool));
+    const available = candidates.length === 0 || candidates.some(tool => isAvailable(tool, release));
+    if (!available) unavailableProtocols.add(protocol);
+    return available;
+  }) as GetAdCPCapabilitiesResponse['supported_protocols'];
+
+  for (const protocol of unavailableProtocols) {
+    delete (data as unknown as Record<string, unknown>)[protocol];
+  }
+  if (data.specialisms !== undefined) {
+    data.specialisms = data.specialisms.filter(specialism => {
+      const protocol = specialismProtocol(specialism);
+      if (protocol !== undefined && unavailableProtocols.has(protocol)) return false;
+      const baselineTools = specialismBaselineTools(specialism).filter(tool => registeredTools.has(tool));
+      return baselineTools.length === 0 || baselineTools.every(tool => isAvailable(tool, release));
+    }) as GetAdCPCapabilitiesResponse['specialisms'];
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Protocol detection
@@ -4181,10 +4323,12 @@ interface ParsedAdcpRelease {
   minor: number;
   prerelease?: string;
   value: string;
+  exactValue: string;
 }
 
 interface ServedAdcpRelease {
   validationVersion: string;
+  advertisedVersion?: string;
   wireVersion?: string;
 }
 
@@ -4207,6 +4351,7 @@ function parseAdcpRelease(value: unknown): ParsedAdcpRelease | undefined {
     minor: Number(match[2]),
     ...(match[3] !== undefined && { prerelease: match[3] }),
     value: wire,
+    exactValue: value,
   };
 }
 
@@ -4231,6 +4376,72 @@ function compareAdcpRelease(left: ParsedAdcpRelease, right: ParsedAdcpRelease): 
     return leftPart.localeCompare(rightPart);
   }
   return 0;
+}
+
+interface ParsedToolVersionRange {
+  min?: ParsedAdcpRelease;
+  max?: ParsedAdcpRelease;
+}
+
+function parseToolVersionRanges(
+  configured: Readonly<Record<string, AdcpToolVersionRange>> | undefined
+): ReadonlyMap<string, ParsedToolVersionRange> {
+  const parsed = new Map<string, ParsedToolVersionRange>();
+  for (const [toolName, range] of Object.entries(configured ?? {})) {
+    if (!toolName || range == null || typeof range !== 'object' || Array.isArray(range)) {
+      throw new Error(`createAdcpServer: toolVersions.${JSON.stringify(toolName)} must be a version range object`);
+    }
+    const min = range.min === undefined ? undefined : parseAdcpRelease(range.min);
+    const max = range.max === undefined ? undefined : parseAdcpRelease(range.max);
+    if (range.min !== undefined && min === undefined) {
+      throw new Error(`createAdcpServer: toolVersions.${toolName}.min is not a valid AdCP release`);
+    }
+    if (range.max !== undefined && max === undefined) {
+      throw new Error(`createAdcpServer: toolVersions.${toolName}.max is not a valid AdCP release`);
+    }
+    if (min === undefined && max === undefined) {
+      throw new Error(`createAdcpServer: toolVersions.${toolName} must declare min and/or max`);
+    }
+    if (min !== undefined && max !== undefined && compareAdcpRelease(min, max) > 0) {
+      throw new Error(`createAdcpServer: toolVersions.${toolName}.min must not be newer than max`);
+    }
+    parsed.set(toolName, { ...(min !== undefined && { min }), ...(max !== undefined && { max }) });
+  }
+  return parsed;
+}
+
+function toolIsAvailableInRelease(
+  ranges: ReadonlyMap<string, ParsedToolVersionRange>,
+  toolName: string,
+  releaseValue: string
+): boolean {
+  const range = ranges.get(toolName);
+  if (range === undefined) return true;
+  const release = parseAdcpRelease(releaseValue);
+  if (release === undefined) return false;
+  return !(
+    (range.min !== undefined && compareAdcpRelease(release, range.min) < 0) ||
+    (range.max !== undefined && compareAdcpRelease(release, range.max) > 0)
+  );
+}
+
+function supportedVersionsForTool(
+  toolName: string,
+  ranges: ReadonlyMap<string, ParsedToolVersionRange>,
+  capConfig: AdcpCapabilitiesConfig | undefined,
+  serverPin: string
+): string[] {
+  const supported = buildSupportedVersionsList(capConfig, serverPin).filter(version =>
+    toolIsAvailableInRelease(ranges, toolName, version)
+  );
+  if (
+    supported.length === 0 &&
+    !capConfig?.supported_versions?.length &&
+    toolIsAvailableInRelease(ranges, toolName, serverPin)
+  ) {
+    return [serverPin];
+  }
+  return supported;
 }
 
 const PUSH_OPERATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,255}$/;
@@ -4387,6 +4598,7 @@ function selectServedAdcpRelease(
   const validationVersion = selected.value;
   return {
     validationVersion,
+    advertisedVersion: selected.exactValue,
     ...(bundleSupportsAdcpVersionField(resolveBundleKey(validationVersion)) && { wireVersion: validationVersion }),
   };
 }
@@ -4460,6 +4672,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     credentialPolicy,
     testController: testControllerBridge,
     responseEnhancer,
+    structuredContentTextFallback = 'always',
   } = config;
   if (taskRegistry !== undefined && taskRegistry.scopeVersion !== 1) {
     throw new Error(
@@ -4469,6 +4682,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   if (!['auto', 'media-buy', 'all'].includes(mcpToolProfile)) {
     throw new Error(
       `createAdcpServer: mcpToolProfile must be "auto", "media-buy", or "all"; got ${JSON.stringify(mcpToolProfile)}`
+    );
+  }
+  if (
+    typeof structuredContentTextFallback !== 'function' &&
+    !['always', 'never', 'auto'].includes(structuredContentTextFallback)
+  ) {
+    throw new Error(
+      'createAdcpServer: structuredContentTextFallback must be "always", "never", "auto", or a predicate'
     );
   }
   const notificationHandlerConfigured = typeof config.protocol?.syncAgentNotificationConfigs === 'function';
@@ -4554,6 +4775,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const adcpVersion = resolveAdcpVersion(
     configuredAdcpVersion ?? (config.proposalNegotiation ? ADCP_VERSION : undefined)
   );
+  const toolVersionRanges = parseToolVersionRanges(config.toolVersions);
+  const toolAvailableForRelease = (toolName: string, release: string): boolean =>
+    toolIsAvailableInRelease(toolVersionRanges, toolName, release);
   const movingSupportedVersion = capConfig?.supported_versions?.find(isMovingAdcpPrereleaseFamilyAlias);
   if (movingSupportedVersion) {
     throw new Error(
@@ -5095,10 +5319,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   ): McpToolResponse | undefined => {
     const selected = selectServedAdcpRelease(params, capConfig, adcpVersion);
     if (isMcpToolResponse(selected)) return selected;
-    if (!releaseDefinesTool(toolName, selected)) {
+    const defined = releaseDefinesTool(toolName, selected);
+    if (!defined || !toolAvailableForRelease(toolName, selected.validationVersion)) {
       return adcpError('VERSION_UNSUPPORTED', {
-        message: `${toolName} is not defined in the selected AdCP release ${selected.validationVersion}.`,
-        details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+        message: `${toolName} is ${defined ? 'not available' : 'not defined'} in the selected AdCP release ${selected.validationVersion}.`,
+        details: { supported_versions: supportedVersionsForTool(toolName, toolVersionRanges, capConfig, adcpVersion) },
       });
     }
     return undefined;
@@ -5545,11 +5770,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           applyResponseEnhancer(finalizeProtocolEnvelope(response));
 
         if (releaseError) return finalize(releaseError);
-        if (!releaseDefinesTool(toolName, requestRelease)) {
+        const definedForRelease = releaseDefinesTool(toolName, requestRelease);
+        if (!definedForRelease || !toolAvailableForRelease(toolName, requestRelease.validationVersion)) {
           return finalize(
             adcpError('VERSION_UNSUPPORTED', {
-              message: `${toolName} is not defined in the selected AdCP release ${requestRelease.validationVersion}.`,
-              details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+              message: `${toolName} is ${definedForRelease ? 'not available' : 'not defined'} in the selected AdCP release ${requestRelease.validationVersion}.`,
+              details: {
+                supported_versions: supportedVersionsForTool(toolName, toolVersionRanges, capConfig, adcpVersion),
+              },
             })
           );
         }
@@ -7694,17 +7922,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       };
       const wrappedHandler = (async (...args: unknown[]) => {
         const params = isPlainObject(args[0]) ? args[0] : {};
-        let taskRelease: ServedAdcpRelease | undefined;
-        if (customName === 'tasks_get') {
-          const selected = selectServedAdcpRelease(params, capConfig, adcpVersion);
-          if (isMcpToolResponse(selected)) return finalizeCustomResponse(selected);
-          taskRelease = selected;
+        const selectedRelease = selectServedAdcpRelease(params, capConfig, adcpVersion);
+        if (isMcpToolResponse(selectedRelease)) return finalizeCustomResponse(selectedRelease);
+        if (!toolAvailableForRelease(customName, selectedRelease.validationVersion)) {
+          return finalizeCustomResponse(
+            adcpError('VERSION_UNSUPPORTED', {
+              message: `${customName} is not available in the selected AdCP release ${selectedRelease.validationVersion}.`,
+              details: {
+                supported_versions: supportedVersionsForTool(customName, toolVersionRanges, capConfig, adcpVersion),
+              },
+            }),
+            selectedRelease
+          );
         }
         try {
-          return finalizeCustomResponse(await rawHandler(...args), taskRelease);
+          return finalizeCustomResponse(await rawHandler(...args), selectedRelease);
         } catch (err) {
-          if (isThrownAdcpError(err)) return finalizeCustomResponse(err, taskRelease);
-          if (err instanceof AdcpError) return finalizeCustomResponse(projectThrownAdcpError(err), taskRelease);
+          if (isThrownAdcpError(err)) return finalizeCustomResponse(err, selectedRelease);
+          if (err instanceof AdcpError) return finalizeCustomResponse(projectThrownAdcpError(err), selectedRelease);
           throw err;
         }
       }) as Parameters<typeof server.registerTool>[2];
@@ -7971,11 +8206,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (isMcpToolResponse(releaseSelection)) {
         return finalizeCapabilityResponse(releaseSelection);
       }
-      if (!releaseDefinesTool('get_adcp_capabilities', release)) {
+      const capabilitiesDefined = releaseDefinesTool('get_adcp_capabilities', release);
+      if (!capabilitiesDefined || !toolAvailableForRelease('get_adcp_capabilities', release.validationVersion)) {
         return finalizeCapabilityResponse(
           adcpError('VERSION_UNSUPPORTED', {
-            message: `get_adcp_capabilities is not defined in the selected AdCP release ${release.validationVersion}.`,
-            details: { supported_versions: buildSupportedVersionsList(capConfig, adcpVersion) },
+            message: `get_adcp_capabilities is ${capabilitiesDefined ? 'not available' : 'not defined'} in the selected AdCP release ${release.validationVersion}.`,
+            details: {
+              supported_versions: supportedVersionsForTool(
+                'get_adcp_capabilities',
+                toolVersionRanges,
+                capConfig,
+                adcpVersion
+              ),
+            },
           })
         );
       }
@@ -8038,6 +8281,12 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
       }
       let data = structuredClone(capabilitiesData) as GetAdCPCapabilitiesResponse;
+      filterCapabilitiesForToolAvailability(
+        data,
+        registeredToolNames,
+        release.validationVersion,
+        toolAvailableForRelease
+      );
       const selected = parseAdcpRelease(release.validationVersion);
       if (
         selected !== undefined &&
@@ -8129,6 +8378,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   );
   registeredToolNames.add('get_adcp_capabilities');
 
+  for (const toolName of toolVersionRanges.keys()) {
+    if (!registeredToolNames.has(toolName)) {
+      throw new Error(`createAdcpServer: toolVersions.${toolName} does not name a registered tool`);
+    }
+    if (supportedVersionsForTool(toolName, toolVersionRanges, capConfig, adcpVersion).length === 0) {
+      const configuredRange = config.toolVersions?.[toolName];
+      throw new Error(
+        `createAdcpServer: toolVersions.${toolName} range ${JSON.stringify(configuredRange)} does not overlap ` +
+          `the server's advertised releases ${JSON.stringify(buildSupportedVersionsList(capConfig, adcpVersion))}`
+      );
+    }
+  }
+
   const configuredRelease = parseAdcpRelease(protocolBundleKey);
   const serves32OrNewer =
     configuredRelease !== undefined &&
@@ -8147,20 +8409,43 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     const tools = (response as { tools?: unknown }).tools;
     if (!Array.isArray(tools)) return response;
 
+    const listParams = isPlainObject((request as { params?: unknown }).params)
+      ? ((request as { params: Record<string, unknown> }).params ?? {})
+      : {};
+    const listMeta = isPlainObject(listParams._meta) ? listParams._meta : {};
+    const requestedListRelease =
+      typeof listParams.adcp_version === 'string'
+        ? listParams.adcp_version
+        : typeof listMeta.adcp_version === 'string'
+          ? listMeta.adcp_version
+          : adcpVersion;
+    const selectedListRelease = selectServedAdcpRelease({ adcp_version: requestedListRelease }, capConfig, adcpVersion);
+    const listRelease: ServedAdcpRelease = isMcpToolResponse(selectedListRelease)
+      ? { validationVersion: adcpVersion }
+      : selectedListRelease;
+    const parsedListRelease = parseAdcpRelease(listRelease.validationVersion);
+    const listServes32OrNewer =
+      parsedListRelease !== undefined &&
+      (parsedListRelease.major > 3 || (parsedListRelease.major === 3 && parsedListRelease.minor >= 2));
+    const listMcpToolProfile: Exclude<AdcpMcpToolProfile, 'auto'> =
+      activeMcpToolProfile === 'media-buy' && listServes32OrNewer ? 'media-buy' : 'all';
+
     const visibleTools = tools.filter(tool => {
       const toolName = (tool as { name?: unknown } | null)?.name;
       if (typeof toolName !== 'string') return true;
       // Compact lifecycle names do not exist before 3.2. Keep a mistakenly
       // supplied forward handler callable only after the configured server
       // pin advances; never advertise it from a 3.0/3.1 endpoint.
-      if (!serves32OrNewer && COMPACT_MEDIA_BUY_LIFECYCLE_TOOLS.includes(toolName as never)) return false;
-      return activeMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
+      const frameworkAdcpTool = (tool as { _meta?: Record<string, unknown> })._meta?.adcp_version === adcpVersion;
+      if (frameworkAdcpTool && !releaseDefinesTool(toolName, listRelease)) return false;
+      if (!toolAvailableForRelease(toolName, listRelease.validationVersion)) return false;
+      return listMcpToolProfile === 'all' || mediaBuyProfileTools.has(toolName);
     });
     const projectedTools = visibleTools.map(tool => {
-      if (activeMcpToolProfile !== 'media-buy') return tool;
+      if (listMcpToolProfile !== 'media-buy') return tool;
       const toolName = (tool as { name?: unknown } | null)?.name;
       if (typeof toolName !== 'string') return tool;
-      const inputSchema = getMcpProfileInputSchema(toolName, 'media-buy', adcpVersion);
+      const inputSchema = getMcpProfileInputSchema(toolName, 'media-buy', listRelease.validationVersion);
       return inputSchema ? { ...(tool as Record<string, unknown>), inputSchema } : tool;
     });
 
@@ -8169,14 +8454,41 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       tools: projectedTools,
       _meta: {
         ...((response as { _meta?: Record<string, unknown> })._meta ?? {}),
-        adcp_version: adcpVersion,
-        adcp_profile: activeMcpToolProfile,
+        adcp_version: listRelease.advertisedVersion ?? listRelease.validationVersion,
+        adcp_profile: listMcpToolProfile,
       },
     };
   });
   if (!wrappedToolsList) {
     throw new Error(
       'createAdcpServer: failed to install MCP tools/list profile filtering; the MCP SDK request-handler internals may have changed'
+    );
+  }
+
+  // Keep the canonical handler result (and idempotency cache entry) free of
+  // client-specific compatibility decoration. The low-level tools/call seam is
+  // after the registered handler has finalized/cached its response and is the
+  // first point where the legacy MCP SDK exposes negotiated clientInfo.
+  const wrappedToolsCallForStructuredFallback = wrapSdkRequestHandler(
+    server,
+    'tools/call',
+    async (original, request, extra) => {
+      const response = await original(request, extra);
+      const clientInfo = server.server.getClientVersion();
+      const clientCapabilities = server.server.getClientCapabilities();
+      return applyStructuredContentTextFallback(response, structuredContentTextFallback, {
+        transport: 'mcp',
+        ...(clientInfo !== undefined && { clientInfo }),
+        ...(clientCapabilities !== undefined && {
+          clientCapabilities: clientCapabilities as Readonly<Record<string, unknown>>,
+        }),
+      });
+    }
+  );
+  if (!wrappedToolsCallForStructuredFallback) {
+    throw new Error(
+      'createAdcpServer: failed to install MCP structured-content fallback decoration; ' +
+        'the MCP SDK request-handler internals may have changed'
     );
   }
 
@@ -8244,7 +8556,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       if (taskRegistry?.clear) await taskRegistry.clear();
     },
   };
-  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion);
+  const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion, {
+    structuredContentTextFallback,
+  });
+  setToolVersionAvailabilityResolver(wrapped, toolAvailableForRelease);
+  setDiscoveryVersionResolver(wrapped, requestedVersion => {
+    if (requestedVersion === undefined) return adcpVersion;
+    const selected = selectServedAdcpRelease({ adcp_version: requestedVersion }, capConfig, adcpVersion);
+    return isMcpToolResponse(selected) ? adcpVersion : (selected.advertisedVersion ?? selected.validationVersion);
+  });
   setMcpToolProfile(wrapped, activeMcpToolProfile);
   setMcpAppResources(wrapped, mcpAppResources);
 

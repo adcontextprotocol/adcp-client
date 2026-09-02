@@ -1119,3 +1119,81 @@ describe('Storyboard.required_any_of_tools gate (#1642)', () => {
     );
   });
 });
+
+describe('StoryboardStep.requires_contract ordinary-task gate (#2755)', () => {
+  const contract = 'signed_responses_runner';
+  const tools = ['get_adcp_capabilities', 'comply_test_controller'];
+  const storyboard = buildStoryboard({
+    phases: [
+      {
+        id: 'contract_vectors',
+        title: 'Contract vectors',
+        steps: [
+          {
+            id: 'vector_one',
+            title: 'First controller vector',
+            task: 'comply_test_controller',
+            stateful: true,
+            requires_contract: contract,
+            sample_request: { scenario: 'signed_response_vector_one' },
+            validations: [],
+          },
+          {
+            id: 'vector_two',
+            title: 'Dependent controller vector',
+            task: 'comply_test_controller',
+            stateful: true,
+            requires_contract: contract,
+            sample_request: { scenario: 'signed_response_vector_two' },
+            validations: [],
+          },
+        ],
+      },
+    ],
+  });
+
+  function options(calls, contracts) {
+    return {
+      _profile: { name: 'contract-gate-stub', tools, raw_capabilities: {} },
+      agentTools: tools,
+      contracts,
+      _client: {
+        executeTask: async (task, params) => {
+          calls.push({ task, params });
+          return { success: true, data: { status: 'completed', success: true } };
+        },
+      },
+    };
+  }
+
+  test('skips every gated ordinary task without dispatch when the contract is absent', async () => {
+    const calls = [];
+    const result = await runStoryboard('https://contract-gate.example/mcp', storyboard, options(calls, []));
+
+    assert.deepStrictEqual(calls, [], 'no ordinary tool may dispatch outside its declared contract');
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 2);
+    for (const step of result.phases[0].steps) {
+      assert.equal(step.passed, true);
+      assert.equal(step.skipped, true);
+      assert.equal(step.skip_reason, 'missing_test_kit_contract');
+      assert.equal(step.skip.reason, 'unsatisfied_contract');
+      assert.notEqual(step.skip_reason, 'prerequisite_failed');
+    }
+  });
+
+  test('dispatches gated ordinary tasks when the contract is present', async () => {
+    const calls = [];
+    const result = await runStoryboard('https://contract-gate.example/mcp', storyboard, options(calls, [contract]));
+
+    assert.deepStrictEqual(
+      calls.map(call => call.task),
+      ['comply_test_controller', 'comply_test_controller']
+    );
+    assert.equal(result.overall_passed, true, JSON.stringify(result));
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 0);
+    assert.equal(result.passed_count, 2);
+  });
+});

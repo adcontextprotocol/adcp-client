@@ -1,6 +1,6 @@
-# Migrating from 13.x to 14 beta
+# Migrating from 13.x to the 14 prerelease
 
-SDK 14 adopts AdCP `3.2.0-beta.9` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the beta and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
+SDK 14 adopts AdCP `3.2.0-beta.10` while preserving the canonical creative boundary introduced in SDK 13. Most SDK 13 applications can install the prerelease and continue using the established 3.x tools unchanged; adopt the compact 3.2 lifecycle only after the remote agent advertises it.
 
 Legacy signal-discovery adapters may keep supplying `opts.signals.getSignals`
 (or `legacyHandlers.signals.getSignals`) while declaring the truthful
@@ -27,7 +27,7 @@ SDK 14's AdCP 3.2 transport requires `@a2a-js/sdk` 1.x. Upgrade the peer
 alongside the AdCP SDK:
 
 ```bash
-npm install @adcp/sdk@beta @a2a-js/sdk@^1.0.1
+npm install '@adcp/sdk@^14.0.0-0' @a2a-js/sdk@^1.0.1
 ```
 
 The client and server use the official 1.0 Agent Card and JSON-RPC APIs and
@@ -93,6 +93,66 @@ operation to create a versioned registration. A caller-supplied
 `webhookVerification.jwks` may support legacy rows only when it independently
 preserves their original trust boundary.
 
+### Durable webhook registration across replicas
+
+The process-local registration store cannot survive a restart or route a
+callback to another replica. SDK 14 includes first-party PostgreSQL and Redis
+stores with the same atomic create-or-identical contract:
+
+```ts
+import {
+  SingleAgentClient,
+  cleanupExpiredWebhookRegistrations,
+  getWebhookRegistrationMigration,
+  pgWebhookRegistrationStore,
+  redisWebhookRegistrationStore,
+} from '@adcp/sdk';
+import { PostgresReplayStore, getReplayStoreMigration } from '@adcp/sdk/signing/server';
+
+// PostgreSQL deployment bootstrap:
+await pool.query(getWebhookRegistrationMigration({
+  tableName: 'buyer_eu_webhook_registrations',
+}));
+const registrations = pgWebhookRegistrationStore(pool, {
+  tableName: 'buyer_eu_webhook_registrations',
+});
+await registrations.probe();
+await pool.query(getReplayStoreMigration('buyer_eu_webhook_replays'));
+const sharedReplayStore = new PostgresReplayStore(pool, {
+  tableName: 'buyer_eu_webhook_replays',
+});
+
+// Or Redis, using the same deployment-unique prefix on every replica:
+const redisRegistrations = redisWebhookRegistrationStore(redis, {
+  keyPrefix: 'buyer-eu:webhook-registration:v1:',
+});
+await redisRegistrations.probe();
+
+// Construct this identically in outbound workers and inbound HTTP replicas.
+const client = new SingleAgentClient(agentWithStableId, {
+  webhookRegistrationStore: registrations, // or redisRegistrations
+  webhookVerification: { replayStore: sharedReplayStore },
+});
+
+// Schedule for PostgreSQL; expiry checks do not depend on this cleanup.
+await cleanupExpiredWebhookRegistrations(pool, {
+  tableName: 'buyer_eu_webhook_registrations',
+  batchSize: 1_000,
+});
+```
+
+Run migrations and `probe()` before serving traffic. All replicas must use the
+same stable agent id and the same isolated table or key prefix. Redis reads
+must be primary-consistent and the deployment must support Lua. Retain records
+for at least the seller retry horizon; monitor Redis capacity because eviction
+causes fail-closed callback unavailability. RFC 9421 additionally requires a
+shared durable replay store so two replicas cannot accept the same signature.
+
+Existing custom-store rows are not imported automatically. They must preserve
+the complete `authorizationContextVersion` and
+`delegatedOperatorAuthorization` tuple. Drain or re-dispatch legacy/lossy rows
+rather than deriving their original authority from current configuration.
+
 The same options are accepted by `resolveAgent()`, `getAgentJwks()`,
 `createAgentJwksSet()`, and `ResolvedAgentJwksResolver`. A constrained list with
 no corresponding trusted option fails closed. Built-in JWKS caches now expire
@@ -137,7 +197,7 @@ tasks. A failed response may carry both the top-level summary `error` and a
 canonical `result.errors[]`; they describe the same failure.
 
 ```bash
-npm install @adcp/sdk@beta
+npm install '@adcp/sdk@^14.0.0-0'
 ```
 
 The untagged npm install remains SDK 13. Keep that line for production AdCP 3.1 deployments until the 3.2 application and its counterparties have completed beta validation.
@@ -184,7 +244,7 @@ loading; keep using `requires_capability` for a singular predicate.
 12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
 13. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
 14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
-15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or a compatible `already_terminal` outcome with the intended status. Retry or dead-letter scoped misses and conflicting terminal outcomes. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
+15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or after reading back an `already_terminal` task and proving its exact result/error artifact. Matching terminal status alone is insufficient. Retry or dead-letter scoped misses and conflicting terminal outcomes. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
 16. For out-of-process settlement, return `ctx.handoffToTask(producer, { settlement: 'external' })`; the producer must durably queue the complete handle before returning, and the framework withholds `submitted` until that commit succeeds. For a push-enabled task, configure `createPostgresTaskSettlementCoordinator()` on the same PostgreSQL pool as the task registry and use `completeScopedPushTask()` / `failScopedPushTask()`. Run the webhook recovery outbox migration and recovery worker; the polling-only scoped helpers still reject push tasks. See [task registry scope migration](./migration-task-registry-scoping.md#out-of-process-settlement).
 17. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
 
@@ -807,7 +867,7 @@ import { getToolInputSchema, getToolResponseSchema } from '@adcp/sdk/schemas';
 
 const request = getToolInputSchema('create_media_buy', { adcpVersion: '3.0' });
 const response = getToolResponseSchema('create_media_buy', {
-  adcpVersion: '3.2.0-beta.9',
+  adcpVersion: '3.2.0-beta.10',
   variant: 'sync',
 });
 

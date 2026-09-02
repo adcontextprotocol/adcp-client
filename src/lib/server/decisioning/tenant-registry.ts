@@ -25,7 +25,12 @@
  */
 
 import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor } from './platform';
-import type { DecisioningAdcpServer, CreateAdcpServerFromPlatformOptions } from './runtime/from-platform';
+import type {
+  AccountOf,
+  DecisioningAdcpServer,
+  CreateAdcpServerFromPlatformOptions,
+  RequiredOptsFor,
+} from './runtime/from-platform';
 import { createAdcpServerFromPlatform } from './runtime/from-platform';
 import type { SignerKey } from '../../signing/signer';
 import type { AdcpJsonWebKey } from '../../signing/types';
@@ -69,7 +74,7 @@ export interface TenantSigningKey {
   privateJwk: JsonWebKey;
 }
 
-export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatform> {
+export interface TenantConfig<P extends DecisioningPlatform<any, any> = DecisioningPlatform<any, any>> {
   /**
    * Public URL the tenant accepts traffic on (e.g.,
    * `https://acme-tv.example.com`). Used for host-route matching and —
@@ -175,7 +180,7 @@ export interface TenantConfig<P extends DecisioningPlatform = DecisioningPlatfor
   /** Display label for admin / logs. Optional. */
   label?: string;
   /** Per-tenant `createAdcpServerFromPlatform` options override. */
-  serverOptions?: Partial<CreateAdcpServerFromPlatformOptions>;
+  serverOptions?: Partial<CreateAdcpServerFromPlatformOptions<AccountOf<P>>>;
 }
 
 /**
@@ -245,7 +250,7 @@ export interface JwksValidator {
   validate(opts: { agentUrl: string; jwksUrl?: string; signingKey: TenantSigningKey }): Promise<JwksValidationResult>;
 }
 
-export interface TenantRegistryOptions {
+export interface TenantRegistryOptions<TAccount = unknown> {
   /**
    * JWKS validator. Defaults to a fetch-based validator that hits
    * `{agentUrl}/.well-known/brand.json`. Tests can pass a fake.
@@ -255,7 +260,7 @@ export interface TenantRegistryOptions {
    * Per-tenant `createAdcpServerFromPlatform` options applied to every
    * tenant unless overridden by `TenantConfig.serverOptions`.
    */
-  defaultServerOptions: CreateAdcpServerFromPlatformOptions;
+  defaultServerOptions: CreateAdcpServerFromPlatformOptions<TAccount>;
   /**
    * Auto-validate tenants when they're registered. Defaults to `true`.
    *
@@ -270,7 +275,7 @@ export interface TenantRegistryOptions {
   autoValidate?: boolean;
 }
 
-export interface TenantRegistry {
+export interface TenantRegistry<TAccount = unknown> {
   /**
    * Register a tenant. Tenant lands in `'pending'` health initially —
    * `resolveByHost` refuses traffic until the first JWKS validation
@@ -305,9 +310,9 @@ export interface TenantRegistry {
    * on every probe — looking like a transport bug instead of the
    * config bug it is.
    */
-  register<P extends DecisioningPlatform>(
+  register<P extends DecisioningPlatform<any, any>>(
     tenantId: string,
-    config: TenantConfig<P>,
+    config: TenantConfig<P> & (AccountOf<P> extends TAccount ? unknown : never),
     opts?: { awaitFirstValidation?: boolean }
   ): Promise<TenantStatus> | void;
   unregister(tenantId: string): void;
@@ -660,7 +665,7 @@ function tenantKeyToSignerKey(key: TenantSigningKey): SignerKey {
 // ---------------------------------------------------------------------------
 
 interface TenantEntry {
-  config: TenantConfig;
+  config: TenantConfig<DecisioningPlatform<any, any>>;
   server: DecisioningAdcpServer;
   status: TenantStatus;
   /**
@@ -761,7 +766,9 @@ function stripQueryAndFragment(pathname: string): string {
   return cut === pathname.length ? pathname : pathname.slice(0, cut);
 }
 
-export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistry {
+export function createTenantRegistry<TAccount = unknown>(
+  opts: TenantRegistryOptions<TAccount>
+): TenantRegistry<TAccount> {
   const validator = opts.jwksValidator ?? createDefaultJwksValidator();
   const autoValidate = opts.autoValidate ?? true;
   // One-shot footgun guard: developers reaching for `autoValidate: false`
@@ -783,11 +790,11 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
   }
   const tenants = new Map<string, TenantEntry>();
 
-  function buildServer(config: TenantConfig): DecisioningAdcpServer {
-    const merged: CreateAdcpServerFromPlatformOptions = {
+  function buildServer<P extends DecisioningPlatform<any, any>>(config: TenantConfig<P>): DecisioningAdcpServer {
+    const merged = {
       ...opts.defaultServerOptions,
       ...config.serverOptions,
-    };
+    } as RequiredOptsFor<P>;
     // Auto-wire `signingKey` into webhook emission. Adopters set the key
     // once on TenantConfig and outbound webhook deliveries are RFC
     // 9421-signed by default. Skip when:
@@ -811,6 +818,8 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
         signerKey: tenantKeyToSignerKey(config.signingKey),
       };
     }
+    // Tenant entries may carry different opaque account metadata shapes;
+    // registration already keeps each platform/options pair together.
     return createAdcpServerFromPlatform(config.platform, merged);
   }
 
@@ -913,9 +922,9 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
   }
 
   return {
-    register<P extends DecisioningPlatform>(
+    register<P extends DecisioningPlatform<any, any>>(
       tenantId: string,
-      config: TenantConfig<P>,
+      config: TenantConfig<P> & (AccountOf<P> extends TAccount ? unknown : never),
       opts?: { awaitFirstValidation?: boolean }
     ): Promise<TenantStatus> | void {
       if (tenants.has(tenantId)) {
@@ -941,7 +950,7 @@ export function createTenantRegistry(opts: TenantRegistryOptions): TenantRegistr
           }
         }
       }
-      const server = buildServer(config as unknown as TenantConfig);
+      const server = buildServer(config);
       const initialStatus: TenantStatus = {
         tenantId,
         agentUrl: canonicalUrl,

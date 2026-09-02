@@ -183,8 +183,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-and-legacy',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
-      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.9'] },
+      adcpVersion: '3.2.0-beta.10',
+      capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.10'] },
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -210,7 +210,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       method: 'tools/call',
       params: {
         name: 'list_products',
-        arguments: { adcp_version: '3.2.0-beta.9', account: { account_id: 'acc-modern' } },
+        arguments: { adcp_version: '3.2.0-beta.10', account: { account_id: 'acc-modern' } },
       },
     });
     assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
@@ -227,7 +227,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       assert.notStrictEqual(legacy.isError, true, JSON.stringify(legacy.structuredContent));
     }
     assert.deepStrictEqual(calls, [
-      ['list_products', '3.2.0-beta.9', 'acc-modern'],
+      ['list_products', '3.2.0-beta.10', 'acc-modern'],
       ['get_products', '3.1.18', 'acc-3.1.18'],
       ['get_products', '3.0.25', 'acc-3.0.25'],
     ]);
@@ -274,8 +274,8 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'signed-reverse-compatibility',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
-      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.9'] },
+      adcpVersion: '3.2.0-beta.10',
+      capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.10'] },
       validation: { requests: 'off', responses: 'off' },
       legacyCreativeFormatConverter: ({ formatId }) =>
         formatId.id === 'display-300x250'
@@ -329,7 +329,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-only',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
+      adcpVersion: '3.2.0-beta.10',
       validation: { requests: 'off', responses: 'off' },
     });
 
@@ -362,7 +362,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'scoped-compact',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
+      adcpVersion: '3.2.0-beta.10',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -399,7 +399,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'anonymous-session',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
+      adcpVersion: '3.2.0-beta.10',
       resolveSessionKey: () => 'anonymous-session',
       validation: { requests: 'off', responses: 'off' },
     });
@@ -427,7 +427,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'compact-replay-auth',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
+      adcpVersion: '3.2.0-beta.10',
       idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
       resolveIdempotencyPrincipal: () => 'deliberately-shared-principal',
       resolveSessionKey: () => 'deliberately-shared-session',
@@ -476,7 +476,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     const server = createAdcpServerFromPlatform(platform, {
       name: 'refinement-scope',
       version: '1.0.0',
-      adcpVersion: '3.2.0-beta.9',
+      adcpVersion: '3.2.0-beta.10',
       validation: { requests: 'off', responses: 'off' },
     });
     const response = await server.dispatchTestRequest(
@@ -567,6 +567,443 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.ok(sawCtx.account, 'ctx.account should be populated from accounts.resolve');
     assert.strictEqual(typeof sawCtx.state.workflowSteps, 'function');
     assert.strictEqual(typeof sawCtx.resolve.creativeFormat, 'function');
+  });
+
+  it('threads authenticated request principals into native RequestContext without serializing them (#2765)', async () => {
+    const principal = {
+      token: 'incoming-secret-token',
+      clientId: 'buyer-1',
+      scopes: ['read'],
+      credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+    };
+    const resolverAuth = [];
+    const handlerContexts = [];
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      accounts: {
+        ...base.accounts,
+        resolve: async (_ref, ctx) => {
+          resolverAuth.push(ctx.authInfo);
+          return {
+            id: `acct-${ctx.authInfo.credential.key_id}`,
+            name: 'Scoped account',
+            status: 'active',
+            ctx_metadata: {},
+          };
+        },
+      },
+      sales: {
+        ...base.sales,
+        getProducts: async (_req, ctx) => {
+          handlerContexts.push(ctx);
+          return { products: [], cache_scope: 'account' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'native-auth-context',
+      version: '1.0.0',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+      },
+      { authInfo: principal }
+    );
+    const secondPrincipal = {
+      token: 'second-incoming-secret-token',
+      clientId: 'buyer-2',
+      scopes: ['read'],
+      credential: { kind: 'api_key', key_id: 'buyer-key-2' },
+    };
+    const secondResult = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-2' } } },
+      },
+      { authInfo: secondPrincipal }
+    );
+
+    assert.deepStrictEqual(resolverAuth, [principal, secondPrincipal]);
+    assert.notStrictEqual(handlerContexts[0].authInfo, principal);
+    assert.notStrictEqual(handlerContexts[1].authInfo, secondPrincipal);
+    assert.deepStrictEqual(handlerContexts[0].authInfo, principal);
+    assert.deepStrictEqual(handlerContexts[1].authInfo, secondPrincipal);
+    assert.ok(Object.isFrozen(handlerContexts[0].authInfo));
+    assert.ok(Object.isFrozen(handlerContexts[0].authInfo.credential));
+    assert.strictEqual(handlerContexts[0].account.id, 'acct-buyer-key-1');
+    assert.strictEqual(handlerContexts[1].account.id, 'acct-buyer-key-2');
+    assert.strictEqual(
+      handlerContexts[0].account.authInfo,
+      undefined,
+      'incoming principal is not persisted on account'
+    );
+    assert.strictEqual(
+      handlerContexts[1].account.authInfo,
+      undefined,
+      'incoming principal is not persisted on account'
+    );
+    assert.ok(!JSON.stringify(result).includes(principal.token), 'principal credentials never enter the wire response');
+    assert.ok(!JSON.stringify(secondResult).includes(secondPrincipal.token));
+  });
+
+  it('keeps async task ownership bound when a native handler attempts to mutate authInfo', async () => {
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            ctx.authInfo.clientId = 'caller-b';
+            return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+          },
+        },
+      }),
+      {
+        name: 'native-auth-ownership',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+      },
+      { authInfo: { token: 'secret', clientId: 'caller-a', scopes: [] } }
+    );
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTaskUnsafe(taskId);
+    assert.ok(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-a' }));
+    assert.strictEqual(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }), null);
+  });
+
+  it('preserves live AbortSignal cancellation in native authInfo context (#2773)', async () => {
+    const controller = new AbortController();
+    let receivedSignal;
+    let handlerStartedResolve;
+    const handlerStarted = new Promise(resolve => {
+      handlerStartedResolve = resolve;
+    });
+    let continueHandlerResolve;
+    const continueHandler = new Promise(resolve => {
+      continueHandlerResolve = resolve;
+    });
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedSignal = ctx.authInfo.extra.signal;
+            handlerStartedResolve();
+            await continueHandler;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-cancellation',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const request = server.invoke({
+      toolName: 'get_products',
+      args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+      authInfo: {
+        token: 'secret',
+        clientId: 'buyer',
+        scopes: [],
+        extra: { signal: controller.signal },
+      },
+    });
+    await handlerStarted;
+
+    controller.abort(new Error('deadline'));
+    continueHandlerResolve();
+    await request;
+    assert.strictEqual(receivedSignal, controller.signal);
+    assert.strictEqual(receivedSignal.aborted, true);
+  });
+
+  it('does not eagerly invoke accessors while cloning the authInfo signal slot (#2773)', async () => {
+    const controller = new AbortController();
+    let signalReads = 0;
+    const extra = {};
+    Object.defineProperty(extra, 'signal', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        signalReads += 1;
+        return controller.signal;
+      },
+    });
+    let receivedExtra;
+    let receivedSignalDescriptor;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedExtra = ctx.authInfo.extra;
+            receivedSignalDescriptor = Object.getOwnPropertyDescriptor(receivedExtra, 'signal');
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-signal-accessor',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    await server.invoke({
+      toolName: 'get_products',
+      args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+      authInfo: { token: 'secret', clientId: 'buyer', scopes: [], extra },
+    });
+
+    assert.strictEqual(signalReads, 0);
+    assert.notStrictEqual(receivedExtra, extra);
+    assert.ok(Object.isFrozen(receivedExtra));
+    assert.strictEqual(receivedSignalDescriptor.get, Object.getOwnPropertyDescriptor(extra, 'signal').get);
+  });
+
+  it('preserves only extra.signal when auth credential and extra records alias in either key order (#2773)', async () => {
+    const controller = new AbortController();
+    const shared = {
+      kind: 'api_key',
+      key_id: 'caller-a',
+      signal: controller.signal,
+    };
+    const principals = [
+      {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+        credential: shared,
+        extra: shared,
+      },
+      {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+        extra: shared,
+        credential: shared,
+      },
+    ];
+    const receivedAuth = [];
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedAuth.push(ctx.authInfo);
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-signal-alias',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    for (const principal of principals) {
+      await server.invoke({
+        toolName: 'get_products',
+        args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+        authInfo: principal,
+      });
+    }
+    controller.abort(new Error('deadline'));
+
+    for (const authInfo of receivedAuth) {
+      assert.strictEqual(authInfo.extra.signal, controller.signal);
+      assert.strictEqual(authInfo.extra.signal.aborted, true);
+      assert.notStrictEqual(authInfo.credential.signal, controller.signal);
+      assert.notStrictEqual(authInfo.extra, authInfo.credential);
+      assert.ok(Object.isFrozen(authInfo.extra));
+      assert.ok(Object.isFrozen(authInfo.credential));
+    }
+  });
+
+  it('preserves auth record aliases when no live signal requires a path-specific clone (#2773)', async () => {
+    const shared = { kind: 'api_key', key_id: 'caller-a' };
+    let receivedAuthInfo;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedAuthInfo = ctx.authInfo;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-auth-record-alias',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    await server.invoke({
+      toolName: 'get_products',
+      args: { account: { account_id: 'acct-1' }, buying_mode: 'wholesale' },
+      authInfo: {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+        credential: shared,
+        extra: shared,
+      },
+    });
+
+    assert.strictEqual(receivedAuthInfo.credential, receivedAuthInfo.extra);
+    assert.notStrictEqual(receivedAuthInfo.extra, shared);
+    assert.ok(Object.isFrozen(receivedAuthInfo.extra));
+  });
+
+  it('does not let an AbortSignal prototype spoof bypass authInfo snapshotting (#2773)', async () => {
+    const principal = {
+      token: 'secret',
+      clientId: 'caller-a',
+      scopes: [],
+    };
+    Object.setPrototypeOf(principal, AbortSignal.prototype);
+    let receivedAuthInfo;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            receivedAuthInfo = ctx.authInfo;
+            ctx.authInfo.clientId = 'caller-b';
+            return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+          },
+        },
+      }),
+      {
+        name: 'native-auth-signal-spoof',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+      },
+      { authInfo: principal }
+    );
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTaskUnsafe(taskId);
+
+    assert.notStrictEqual(receivedAuthInfo, principal);
+    assert.ok(Object.isFrozen(receivedAuthInfo));
+    assert.strictEqual(receivedAuthInfo.clientId, 'caller-a');
+    assert.ok(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-a' }));
+    assert.strictEqual(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }), null);
+  });
+
+  it('snapshots root auth principals backed by genuine AbortSignals (#2773)', async () => {
+    const inheritedController = new AbortController();
+    const principals = [
+      Object.assign(new AbortController().signal, {
+        token: 'secret',
+        clientId: 'caller-a',
+        scopes: [],
+      }),
+      Object.setPrototypeOf(
+        {
+          token: 'secret',
+          clientId: 'caller-a',
+          scopes: [],
+        },
+        inheritedController.signal
+      ),
+    ];
+
+    for (const [index, principal] of principals.entries()) {
+      let receivedAuthInfo;
+      const base = buildPlatform();
+      const server = createAdcpServerFromPlatform(
+        buildPlatform({
+          sales: {
+            ...base.sales,
+            getProducts: async (_req, ctx) => {
+              receivedAuthInfo = ctx.authInfo;
+              ctx.authInfo.clientId = 'caller-b';
+              return ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' }));
+            },
+          },
+        }),
+        {
+          name: `native-auth-signal-root-${index}`,
+          version: '1.0.0',
+          validation: { requests: 'off', responses: 'off' },
+        }
+      );
+
+      const result = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+        },
+        { authInfo: principal }
+      );
+      const taskId = result.structuredContent.task_id;
+      await server.awaitTaskUnsafe(taskId);
+
+      assert.notStrictEqual(receivedAuthInfo, principal);
+      assert.ok(Object.isFrozen(receivedAuthInfo));
+      assert.strictEqual(receivedAuthInfo.clientId, 'caller-a');
+      assert.ok(await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-a' }));
+      assert.strictEqual(
+        await server.getTaskState(taskId, { accountId: 'acct-1', ownerScope: 'client:caller-b' }),
+        null
+      );
+    }
+  });
+
+  it('omits authInfo from unauthenticated native RequestContext calls (#2765)', async () => {
+    let handlerCtx;
+    const base = buildPlatform();
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({
+        sales: {
+          ...base.sales,
+          getProducts: async (_req, ctx) => {
+            handlerCtx = ctx;
+            return { products: [], cache_scope: 'account' };
+          },
+        },
+      }),
+      {
+        name: 'native-anonymous-context',
+        version: '1.0.0',
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { account: { account_id: 'acct-1' } } },
+    });
+    assert.strictEqual(Object.hasOwn(handlerCtx, 'authInfo'), false);
   });
 
   it('preserves dual format declarations on the AdCP 3.1 canonical product wire (#2440)', async () => {
@@ -1907,19 +2344,62 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     }
   });
 
-  it('errors cleanly when a canonical-only product cannot be represented on a 3.0 server wire', async () => {
+  it('omits a canonical-only product from a 3.0 wire without poisoning representable products', async () => {
     const platform = buildPlatform();
     const getProducts = platform.sales.getProducts;
     platform.sales.getProducts = async (...args) => {
       const response = await getProducts(...args);
       return {
         ...response,
-        products: response.products.map(product => ({
-          ...product,
-          // Inherently canonical-only: unlike the newly mapped 300x250 image,
-          // responsive asset-pool composition has no legacy named-format form.
-          format_options: [{ format_kind: 'responsive_creative', params: {} }],
-        })),
+        errors: [{ code: 'UPSTREAM_WARNING', message: 'A producer warning is preserved.' }],
+        products: [
+          {
+            ...response.products[0],
+            channels: ['display'],
+            publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+            pricing_options: [
+              {
+                pricing_option_id: 'p1-cpm',
+                pricing_model: 'cpm',
+                fixed_price: 5,
+                currency: 'USD',
+              },
+            ],
+            reporting_capabilities: {
+              available_reporting_frequencies: ['daily'],
+              expected_delay_minutes: 60,
+              timezone: 'UTC',
+              supports_webhooks: false,
+              available_metrics: ['impressions', 'spend'],
+              date_range_support: 'date_range',
+            },
+          },
+          {
+            product_id: 'canonical-only-responsive',
+            name: 'Canonical-only responsive product',
+            description: 'Responsive asset-pool composition has no legacy named-format form.',
+            format_options: [{ format_kind: 'responsive_creative', params: {} }],
+            channels: ['display'],
+            delivery_type: 'non_guaranteed',
+            publisher_properties: [{ publisher_domain: 'seller.example', selection_type: 'all' }],
+            pricing_options: [
+              {
+                pricing_option_id: 'canonical-only-responsive-cpm',
+                pricing_model: 'cpm',
+                fixed_price: 5,
+                currency: 'USD',
+              },
+            ],
+            reporting_capabilities: {
+              available_reporting_frequencies: ['daily'],
+              expected_delay_minutes: 60,
+              timezone: 'UTC',
+              supports_webhooks: false,
+              available_metrics: ['impressions', 'spend'],
+              date_range_support: 'date_range',
+            },
+          },
+        ],
       };
     };
 
@@ -1927,7 +2407,7 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       name: 'legacy-wire-unrepresentable-product',
       version: '1.0.0',
       adcpVersion: '3.0.0',
-      validation: { requests: 'off', responses: 'off' },
+      validation: { requests: 'off', responses: 'strict' },
     });
 
     const result = await server.dispatchTestRequest({
@@ -1938,9 +2418,24 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
       },
     });
 
-    assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-    assert.match(result.structuredContent.adcp_error.message, /cannot be represented on the configured legacy wire/);
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepStrictEqual(
+      result.structuredContent.products.map(product => product.product_id),
+      ['p1']
+    );
+    assert.deepStrictEqual(result.structuredContent.products[0].format_ids, [
+      { agent_url: 'https://creative.adcontextprotocol.org/', id: 'display_image' },
+    ]);
+    assert.deepStrictEqual(result.structuredContent.errors[0], {
+      code: 'UPSTREAM_WARNING',
+      message: 'A producer warning is preserved.',
+    });
+    assert.ok(
+      result.structuredContent.errors.some(
+        error =>
+          error.code === 'CANONICAL_NOT_V1_TRANSLATABLE' && error.details?.product_id === 'canonical-only-responsive'
+      )
+    );
   });
 
   it('normalizes legacy creative refs before modern platform handlers run', async () => {
@@ -7017,11 +7512,11 @@ describe('HITL push notification webhook on terminal state', () => {
     };
 
     const platform = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
-    for (const adcpVersion of ['3.2-beta.9']) {
+    for (const adcpVersion of ['3.2-beta.10']) {
       const server = createAdcpServerFromPlatform(platform, {
         name: 'webhook',
         version: '0.0.1',
-        adcpVersion: '3.2.0-beta.9',
+        adcpVersion: '3.2.0-beta.10',
         validation: { requests: 'off', responses: 'off' },
         taskWebhookEmitter: fakeEmitter,
       });
@@ -7502,7 +7997,7 @@ describe('tasks_get wire tool (B9)', () => {
         creatives_processed: 2,
       });
       assert.deepStrictEqual(legacy.structuredContent.progress, canonical.structuredContent.progress);
-      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-beta.9');
+      assert.strictEqual(legacy.structuredContent.adcp_version, '3.2-beta.10');
       assert.strictEqual(legacy.structuredContent.adcp_version, canonical.structuredContent.adcp_version);
 
       const legacyPinned = await server.dispatchTestRequest({
@@ -7595,7 +8090,7 @@ describe('tasks_get wire tool (B9)', () => {
       assert.strictEqual(status.structuredContent.status, 'submitted');
       assert.strictEqual(status.structuredContent.has_webhook, true);
       assert.strictEqual(status.structuredContent.result, undefined);
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.9');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.10');
 
       const listed = await server.dispatchTestRequest({
         method: 'tools/call',
@@ -8526,7 +9021,7 @@ describe('createAdcpServerFromPlatform — default resolveIdempotencyPrincipal',
       {
         name: 'principal-compat',
         version: '0.0.1',
-        adcpVersion: '3.2.0-beta.9',
+        adcpVersion: '3.2.0-beta.10',
         idempotency,
         validation: { requests: 'off', responses: 'off' },
       }

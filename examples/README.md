@@ -2,6 +2,18 @@
 
 This directory contains practical examples of how to use the `@adcp/sdk` library.
 
+## Start here: AdCP 3.2 seller
+
+[`seller-3.2-starter.ts`](./seller-3.2-starter.ts) is the runnable first path:
+under 200 lines, typed, and built around
+`list_products` → `buy_products` → `control_media_buy`. It reads real products
+from `PRODUCT_CATALOG_JSON` and never invents fallback inventory.
+
+The `hello_*` and `decisioning-platform-*` files are advanced integration and
+certification references. They intentionally show complete adapters, durable
+boundaries, and conformance hooks, so many are 700–1,400 lines. Start with the
+compact seller, then open the advanced example matching your backend.
+
 ## Building an AdCP agent — fork-target reference adapters
 
 Pick the example whose AdCP role and specialism most closely matches what you're building, fork it, replace the `// SWAP:` markers, and follow the `FORK CHECKLIST` block for the unmarked but load-bearing constants. The `hello_*_adapter_*` examples are paired with the three-gate CI test (strict tsc / storyboard / upstream-traffic) where a matching mock server exists; examples without one are called out below with the narrower runtime coverage they currently have. `proxy-seller-snap/` is a lighter bridge-pattern fork target: it proves seed-bridge wiring and must be paired with your live-OAuth sandbox runner for upstream health.
@@ -52,14 +64,11 @@ The framework resolves buyer agents, status-gates them, and enforces `sync_accou
 
 ## Examples
 
-### Basic Usage
+### Packaged starting points
 
-- **`basic-mcp.ts`** - Simple MCP protocol client usage
-- **`basic-a2a.ts`** - Simple A2A protocol client usage with multi-agent testing
-- **`env-config.ts`** - Loading agent configuration from environment variables
-- **`conversation-client.ts`** - Conversation-aware client with input handlers
-- **`proposal-negotiation-buyer.ts`** - AdCP 3.2 revision, counteroffer, hold, and acceptance flow
-- **`proposal-negotiation-seller.ts`** - Complete-batch validation and atomic proposal persistence
+- **`seller-3.2-starter.ts`** - Compact AdCP 3.2 seller with direct purchase and lifecycle control
+- **`comply-controller-seller.ts`** - Compliance setup using repository adapters
+- **`decisioning-platform-multi-tenant.ts`** - Host-routed multi-tenant decisioning platform
 
 ### Multi-specialism + multi-tenant (account-routed)
 
@@ -89,22 +98,9 @@ For proxy-shaped sellers where reads go to an upstream platform API, start with 
 
 Run `npm run typecheck:examples` to validate both examples against the built `dist/`.
 
-### Running Examples
+### Running the compact seller
 
-```bash
-# Install dependencies
-npm install
-
-# Set up environment variables
-export A2A_AUTH_TOKEN=your-token
-export MCP_AUTH_TOKEN=your-token
-
-# Run TypeScript examples directly
-npx tsx examples/basic-mcp.ts
-npx tsx examples/basic-a2a.ts
-npx tsx examples/env-config.ts
-npx tsx examples/conversation-client.ts
-```
+Follow the [AdCP 3.2 seller quickstart](../docs/guides/SELLER-QUICKSTART-3.2.md) to configure real inventory and start `seller-3.2-starter.ts`.
 
 ## Environment Configuration
 

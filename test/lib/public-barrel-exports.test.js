@@ -26,6 +26,8 @@ import {
   ensureGetProductsCacheScope,
   getFormatAssets,
   LEGACY_PURCHASE_PUBLICATION_PROOF_RETENTION_MS,
+  PlacementPresentationDocumentSchema,
+  PlacementPresentationReferenceSchema,
   legacyPurchaseSettlementFingerprint,
   resolveTaskState,
   type CanonicalFormatParams,
@@ -36,6 +38,8 @@ import {
   type ManagerRevalidationRequest,
   type ManagerRevalidationResponse,
   type Placement,
+  type PlacementPresentationDocument,
+  type PlacementPresentationReference,
   type ProductFormatDeclaration,
   type ReportingManifestInspectorOptions,
   type ReportingResourceReader,
@@ -54,7 +58,13 @@ import {
   type CanonicalRef,
   type CanonicalReferenceResolutionResult,
 } from '@adcp/sdk/v2/format-schema';
-import { CreateMediaBuyRequestSchema } from '@adcp/sdk/schemas';
+import {
+  CreateMediaBuyRequestSchema,
+  PlacementPresentationDocumentSchema as SubpathPlacementPresentationDocumentSchema,
+  PlacementPresentationReferenceSchema as SubpathPlacementPresentationReferenceSchema,
+  type PlacementPresentationDocument as SubpathPlacementPresentationDocument,
+  type PlacementPresentationReference as SubpathPlacementPresentationReference,
+} from '@adcp/sdk/schemas';
 import {
   AuthInvalidError,
   AuthMissingError,
@@ -64,6 +74,8 @@ import {
 import type {
   ProductFormatDeclaration as TypesProductFormatDeclaration,
   Placement as TypesPlacement,
+  PlacementPresentationDocument as TypesPlacementPresentationDocument,
+  PlacementPresentationReference as TypesPlacementPresentationReference,
   RequireCacheScopeWhenProducts,
 } from '@adcp/sdk/types';
 
@@ -80,6 +92,16 @@ const built = CanonicalFormat.nativeInFeed(
 );
 const builtKind: 'native_in_feed' = built.format_kind;
 const mediaBuyShape = CreateMediaBuyRequestSchema.shape;
+const parsePlacementPresentationDocument = PlacementPresentationDocumentSchema.safeParse;
+const parsePlacementPresentationReference = PlacementPresentationReferenceSchema.safeParse;
+const sameDocumentSchema = PlacementPresentationDocumentSchema === SubpathPlacementPresentationDocumentSchema;
+const sameReferenceSchema = PlacementPresentationReferenceSchema === SubpathPlacementPresentationReferenceSchema;
+const acceptsPresentationDocument = (
+  _document: PlacementPresentationDocument | SubpathPlacementPresentationDocument | TypesPlacementPresentationDocument
+) => {};
+const acceptsPresentationReference = (
+  _reference: PlacementPresentationReference | SubpathPlacementPresentationReference | TypesPlacementPresentationReference
+) => {};
 
 const formatAssetsInput: FormatAssetsInput = {
   assets: [FormatAsset.image({ asset_id: 'hero', required: true })],
@@ -217,6 +239,12 @@ const acceptsTypesPlacement = (_placement: TypesPlacement) => {};
 void typedNative;
 void builtKind;
 void mediaBuyShape;
+void parsePlacementPresentationDocument;
+void parsePlacementPresentationReference;
+void sameDocumentSchema;
+void sameReferenceSchema;
+void acceptsPresentationDocument;
+void acceptsPresentationReference;
 void inspectedAssets;
 void serverSyncError;
 void authErrors;
@@ -285,7 +313,92 @@ test('root barrel exports webhook dedup error classes', () => {
   assert.ok(new root.WebhookDedupConflictError() instanceof Error);
 });
 
-test('schema exports stay behind @adcp/sdk/schemas', () => {
+test('placement presentation validators resolve through root and schemas package exports', async () => {
+  const root = require('@adcp/sdk');
+  const schemas = require('@adcp/sdk/schemas');
+
+  for (const name of ['PlacementPresentationReferenceSchema', 'PlacementPresentationDocumentSchema']) {
+    assert.strictEqual(typeof root[name]?.safeParse, 'function', `${name} missing from @adcp/sdk`);
+    assert.strictEqual(typeof schemas[name]?.safeParse, 'function', `${name} missing from @adcp/sdk/schemas`);
+    assert.strictEqual(root[name], schemas[name], `${name} must be the same instance from both entrypoints`);
+  }
+
+  const esmRoot = await import('@adcp/sdk');
+  const esmSchemas = await import('@adcp/sdk/schemas');
+  assert.strictEqual(esmRoot.PlacementPresentationReferenceSchema, esmSchemas.PlacementPresentationReferenceSchema);
+  assert.strictEqual(esmRoot.PlacementPresentationDocumentSchema, esmSchemas.PlacementPresentationDocumentSchema);
+});
+
+test('placement presentation declarations resolve through CJS and ESM package export conditions', () => {
+  const contextDir = path.resolve(__dirname, '../../.context');
+  fs.mkdirSync(contextDir, { recursive: true });
+
+  const source = `
+import {
+  PlacementPresentationDocumentSchema,
+  PlacementPresentationReferenceSchema,
+  type PlacementPresentationDocument,
+  type PlacementPresentationReference,
+} from '@adcp/sdk';
+import {
+  PlacementPresentationDocumentSchema as SubpathDocumentSchema,
+  PlacementPresentationReferenceSchema as SubpathReferenceSchema,
+  type PlacementPresentationDocument as SubpathDocument,
+  type PlacementPresentationReference as SubpathReference,
+} from '@adcp/sdk/schemas';
+import type {
+  PlacementPresentationDocument as TypesDocument,
+  PlacementPresentationReference as TypesReference,
+} from '@adcp/sdk/types';
+
+const schemas = [
+  PlacementPresentationDocumentSchema,
+  PlacementPresentationReferenceSchema,
+  SubpathDocumentSchema,
+  SubpathReferenceSchema,
+];
+const acceptDocuments = (_value: PlacementPresentationDocument | SubpathDocument | TypesDocument) => {};
+const acceptReferences = (_value: PlacementPresentationReference | SubpathReference | TypesReference) => {};
+void schemas;
+void acceptDocuments;
+void acceptReferences;
+`;
+
+  const sourceFiles = ['placement-presentation-consumer.cts', 'placement-presentation-consumer.mts'];
+  for (const file of sourceFiles) {
+    fs.writeFileSync(path.join(contextDir, file), source, 'utf8');
+  }
+
+  const tsconfigPath = path.join(contextDir, 'placement-presentation-exports-tsconfig.json');
+  fs.writeFileSync(
+    tsconfigPath,
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: 'ES2022',
+          module: 'NodeNext',
+          moduleResolution: 'NodeNext',
+          strict: true,
+          skipLibCheck: true,
+          noEmit: true,
+        },
+        files: sourceFiles,
+      },
+      null,
+      2
+    ),
+    'utf8'
+  );
+
+  const result = spawnSync('npx', ['tsc', '-p', tsconfigPath], {
+    cwd: contextDir,
+    encoding: 'utf8',
+  });
+
+  assert.strictEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+});
+
+test('general generated schema exports stay behind @adcp/sdk/schemas', () => {
   const root = require('../../dist/lib/index.js');
   const types = require('../../dist/lib/types/index.js');
   const schemas = require('../../dist/lib/schemas/index.js');

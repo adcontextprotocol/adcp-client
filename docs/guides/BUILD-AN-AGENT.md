@@ -176,6 +176,34 @@ serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', versi
 - **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; the inline result is authoritative. Adopters write the business decisions.
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing. Throw a typed error class (see § "Returning errors from handlers") to surface a structured envelope.
 
+When one tool cannot truthfully project across the server's entire release
+window, narrow that tool with `toolVersions`. The framework applies the same
+inclusive range to MCP discovery (legacy and modern), A2A skills, direct
+dispatch, validation/projection, and capability discovery:
+
+```typescript
+const platform = definePlatform({
+  capabilities: {
+    specialisms: ['sales-non-guaranteed', 'signal-marketplace'] as const,
+    supported_versions: ['3.0.25', '3.1.18'],
+    // ...
+  },
+  // ...
+});
+
+createAdcpServerFromPlatform(platform, {
+  name: 'My Publisher',
+  version: '1.0.0',
+  toolVersions: {
+    get_signals: { min: '3.1' },
+  },
+});
+```
+
+This keeps compatible media-buy tools available to 3.0 buyers while hiding
+and rejecting only `get_signals` at 3.0. Unknown tool names, invalid releases,
+empty ranges, and `min > max` fail during server construction.
+
 ### Customizing human-readable MCP response text
 
 Native platform handlers normally return only structured domain payloads, and
@@ -420,7 +448,7 @@ const platform = definePlatform({
 Three resolution modes:
 
 - **`'explicit'`** (default) — buyer passes `{account_id}` inline on every request. Snap, Meta, GAM-style sellers. The framework calls `resolve(ref, ctx)` with the inline ref.
-- **`'implicit'`** — buyer must call `sync_accounts` first; subsequent requests resolve from the auth-principal linkage your `upsert` populated. LinkedIn-shaped sellers. The framework refuses inline `{account_id}` references with `INVALID_REQUEST` (post-6.7 — pre-6.7 the docstring claimed this but nothing checked it). Use [`InMemoryImplicitAccountStore`](../../src/lib/adapters/implicit-account-store.ts) for the reference shape.
+- **`'implicit'`** — buyer must call `sync_accounts` first; subsequent requests resolve from the auth-principal linkage your `upsert` populated. LinkedIn-shaped sellers. The framework refuses inline `{account_id}` references with `INVALID_REQUEST` (post-6.7 — pre-6.7 the docstring claimed this but nothing checked it). Use [`InMemoryImplicitAccountStore`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/adapters/implicit-account-store.ts) for the reference shape.
 - **`'derived'`** — single-tenant agents where the auth principal alone identifies the tenant. Self-hosted broadcasters, retail-media operators in proxy mode. `resolve(undefined, ctx)` returns the singleton.
 
 **Stateless BYOK provider adapters.** For single-account API-key or
@@ -538,6 +566,45 @@ key before issuing a new intent. Optional idempotency on non-mutating handlers
 may still release its claim after a thrown error because no mutation was
 admitted.
 
+### Durable proposal lifecycle state
+
+Production sellers using the proposal manager should keep proposal recipes
+and consumption fences in PostgreSQL alongside the durable task registry and
+task-settlement coordinator:
+
+```ts
+import {
+  createPostgresProposalStore,
+  getProposalStoreMigration,
+  serve,
+} from '@adcp/sdk/server';
+
+// Run this migration once from deployment tooling, not in every server replica.
+await pool.query(getProposalStoreMigration({ tableName: 'seller_adcp_proposals' }));
+pool.on('error', err => logger.error({ err }, 'PostgreSQL pool error'));
+const proposalStore = createPostgresProposalStore({
+  db: pool,
+  namespace: 'seller-prod',
+  tableName: 'seller_adcp_proposals',
+});
+serve(() => createAdcpServerFromPlatform(platform, {
+  name: 'Seller', version: '1.0.0', proposalStore,
+}), {
+  readinessCheck: () => proposalStore.probe(),
+});
+```
+
+The store scopes every read and CAS transition by deployment namespace and
+account, persists exact JSON-safe proposal/recipe documents, and atomically
+enforces `draft → committed → consuming → consumed`. Run bounded
+`proposalStore.cleanupExpired()` from an operations worker; expiry uses the
+database clock. Never place credentials in proposal recipes or payloads—the
+store rejects credential-shaped fields and oversized documents.
+`expectedAccountId` is required by durable store mutations; the framework
+supplies it automatically. The process-local store retains unscoped
+`commit`/`discard` only as a deprecated source-compatibility path for preview
+adopters, and refuses ambiguous duplicate IDs across accounts.
+
 ### Schema-Driven Validation (opt-in)
 
 `createAdcpServerFromPlatform` can validate every inbound request and handler response against the bundled AdCP JSON schemas for the SDK's declared version. Catches field-name drift (e.g. a handler emits `targeting_overlay` where the spec expects `targeting`) before the response leaves your agent.
@@ -634,6 +701,13 @@ createAdcpServerFromPlatform(platform, {
 **Production key storage.** For outbound request or webhook signing, prefer a KMS-backed `SigningProvider` over in-process JWKs. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Production webhook servers must provide a shared durable `deliveryStore` plus `deliveryRecovery`, a durable outbox that checkpoints the exact destination, payload/timestamp, authentication reference, and retry policy before delivery and recovers unsettled snapshots after restart. The SDK supplies PostgreSQL and Redis delivery stores, recovery backends, migrations, and a bounded recovery polling API; applications supply the KMS/secret adapter and operational scheduler. Tenant namespaces are derived from trusted resolved request context.
 
 See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.
+
+When a human approval or provider callback commits before the application can
+settle its SDK task, use the PostgreSQL settlement-intent queue to close that
+earlier crash window. See [Durable task settlement](./DURABLE-TASK-SETTLEMENT.md)
+for the domain transaction → task/webhook transaction → webhook recovery
+sequence, copyable polling and push settlement handlers, and scoped dead-letter
+operations.
 
 ### Portable MCP Apps for custom tools
 
@@ -978,6 +1052,6 @@ See [`examples/error-compliant-server.ts`](../../examples/error-compliant-server
 
 ## Related
 
-- [`registerAdcpTaskTool()`](../../src/lib/server/tasks.ts) — for async tools that need background processing
+- [`registerAdcpTaskTool()`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/server/tasks.ts) — for async tools that need background processing
 - [`examples/error-compliant-server.ts`](../../examples/error-compliant-server.ts) — media buy agent with multiple tools and error handling
 - [AdCP specification](https://adcontextprotocol.org) — full protocol reference

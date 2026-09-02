@@ -402,9 +402,11 @@ export const ACCOUNT_TOOLS = ['list_accounts', 'sync_accounts'] as const;
 
 export const PROTOCOL_TOOLS = [
   'get_adcp_capabilities',
+  'get_principal',
   'get_task_status',
   'list_tasks',
   'sync_agent_notification_configs',
+  'sync_principal',
 ] as const;
 
 /**

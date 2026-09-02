@@ -16,6 +16,7 @@ import type {
   WebhookHandlerAdapter,
   WebhookHandlerRequest,
   WebhookParseResult,
+  WebhookRequestContext,
 } from './SingleAgentClient';
 import { ADCP_VERSION, type AdcpVersion } from '../version';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
@@ -1032,6 +1033,8 @@ export class ADCPMultiAgentClient {
    * @param operationId - Operation id (e.g used for client app to track the operation) from the param or url part of the webhook delivery
    * @param signature - Optional signature for verification (X-ADCP-Signature)
    * @param timestamp - Optional timestamp for verification (X-ADCP-Timestamp)
+   * @param rawBody - Raw request body bytes used for HMAC verification
+   * @param requestContext - Trusted method and public URL. Required for registered callbacks.
    * @returns Whether webhook was handled successfully
    *
    * @example
@@ -1055,7 +1058,8 @@ export class ADCPMultiAgentClient {
     operationId: string,
     signature?: WebhookHeaderValue,
     timestamp?: WebhookHeaderValue,
-    rawBody?: string | Buffer | Uint8Array
+    rawBody?: string | Buffer | Uint8Array,
+    requestContext?: WebhookRequestContext
   ): Promise<boolean> {
     // Extract agent ID from payload
     // Webhook payloads include agent_id or we can infer from operation_id pattern
@@ -1066,7 +1070,7 @@ export class ADCPMultiAgentClient {
     }
 
     const agent = this.getAgent(agentId);
-    return agent.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody);
+    return agent.handleWebhook(payload, taskType, operationId, signature, timestamp, rawBody, requestContext);
   }
 
   /**

@@ -483,14 +483,20 @@ test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t =>
   const { serve, InMemoryStateStore } = require('../../dist/lib/index.js');
   const { createAdcpServer } = require('../../dist/lib/server/legacy/v5/index.js');
   const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+  const fallbackContexts = [];
 
   const httpServer = serve(
     () =>
       createAdcpServer({
         name: 'modern-adcp-test',
         version: '1.0.0',
+        adcpVersion: '3.1.18',
         stateStore: new InMemoryStateStore(),
         instructions: async () => 'Use AdCP tools with explicit account context.',
+        structuredContentTextFallback: context => {
+          fallbackContexts.push(context);
+          return context.clientInfo?.name !== 'pinned-modern-test';
+        },
       }),
     { port: 0, onListening: () => {} }
   );
@@ -529,6 +535,15 @@ test('serve exposes AdCP tools to a client pinned to MCP 2026-07-28', async t =>
   const result = await client.callTool({ name: 'get_adcp_capabilities', arguments: {} });
   assert.equal(result.isError, undefined);
   assert.ok(result.structuredContent, 'AdCP response should retain structured content on the modern route');
+  assert.equal(
+    result.content.some(block => block._meta?.['adcp/mirrored-structured-content'] === true),
+    false,
+    'modern client predicate should suppress the compatibility text block'
+  );
+  assert.equal(fallbackContexts.at(-1).transport, 'mcp');
+  assert.equal(fallbackContexts.at(-1).clientInfo.name, 'pinned-modern-test');
+  assert.equal(fallbackContexts.at(-1).clientInfo.version, '1.0.0');
+  assert.ok(fallbackContexts.at(-1).clientCapabilities);
 
   const endpoint = `http://127.0.0.1:${address.port}/mcp`;
   const malformed = await fetch(endpoint, {
@@ -585,7 +600,7 @@ test('modern serving returns structured AdCP validation errors while advertising
       createAdcpServer({
         name: 'modern-validation-test',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.9',
+        adcpVersion: '3.2.0-beta.10',
         mcpToolProfile: 'all',
         stateStore: new InMemoryStateStore(),
         validation: { requests: 'off', responses: 'off' },
@@ -670,7 +685,8 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
         createAdcpServer({
           name: 'modern-profile-test',
           version: '1.0.0',
-          adcpVersion: '3.2.0-beta.9',
+          adcpVersion: '3.2.0-beta.10',
+          idempotency: 'disabled',
           ...(mcpToolProfile !== undefined && { mcpToolProfile }),
           stateStore: new InMemoryStateStore(),
           validation: { requests: 'off', responses: 'off' },
@@ -681,6 +697,8 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
             buyProducts: async () => ({ media_buy_id: 'mb-buy' }),
             acceptProposal: async () => ({ media_buy_id: 'mb-accept' }),
             controlMediaBuy: async () => ({ media_buy_id: 'mb-control', revision: 2 }),
+            getReportingStatus: async () => ({}),
+            syncReportingReceipts: async () => ({}),
             getProducts: async () => {
               legacyCalls++;
               return { products: [], cache_scope: 'public' };
@@ -688,6 +706,10 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
           },
           creative: {
             buildCreative: async () => ({ creative_manifest: { manifest_id: 'mf-1', assets: [] } }),
+          },
+          protocol: {
+            getPrincipal: async () => ({}),
+            syncPrincipal: async () => ({}),
           },
         }),
       { port: 0, onListening: () => {} }
@@ -728,6 +750,9 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   const compactNames = compact.tools.map(tool => tool.name);
   assert.ok(compactNames.includes('list_products'));
   assert.ok(compactNames.includes('buy_products'));
+  assert.ok(compactNames.includes('sync_principal'));
+  assert.ok(compactNames.includes('get_reporting_status'));
+  assert.ok(compactNames.includes('sync_reporting_receipts'));
   assert.ok(!compactNames.includes('get_products'));
   assert.ok(!compactNames.includes('build_creative'));
   assert.equal(compactResult.legacyCalls, 1, 'a legacy tool hidden from discovery must remain directly callable');
@@ -740,7 +765,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
     compactNames.every(name => MEDIA_BUY_MCP_TOOL_PROFILE.includes(name)),
     compactNames.join(', ')
   );
-  assert.equal(compact._meta.adcp_version, '3.2.0-beta.9');
+  assert.equal(compact._meta.adcp_version, '3.2.0-beta.10');
   assert.equal(compact._meta.adcp_profile, 'media-buy');
   assert.equal(
     compact.tools.find(tool => tool.name === 'list_products').description,
@@ -779,13 +804,61 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   assert.ok(allNames.includes('list_products'));
   assert.ok(allNames.includes('get_products'));
   assert.ok(allNames.includes('build_creative'));
+  assert.ok(allNames.includes('get_principal'));
   assert.equal(
     all.tools.find(tool => tool.name === 'request_proposals').inputSchema.$schema,
     'https://json-schema.org/draft/2020-12/schema'
   );
   assert.doesNotMatch(all.tools.find(tool => tool.name === 'request_proposals').inputSchema.$id, /\/profiles\//);
-  assert.equal(all._meta.adcp_version, '3.2.0-beta.9');
+  assert.equal(all._meta.adcp_version, '3.2.0-beta.10');
   assert.equal(all._meta.adcp_profile, 'all');
+});
+
+test('modern discovery and direct calls apply the requested per-tool version availability', async t => {
+  const { Client, StreamableHTTPClientTransport } = require('@modelcontextprotocol/client');
+  const { createAdcpServer } = require('../../dist/lib/server/create-adcp-server.js');
+  const { createModernMcpServerAdapter } = require('../../dist/lib/server/mcp-modern-server.js');
+
+  const server = createAdcpServer({
+    name: 'modern-version-range-test',
+    version: '1.0.0',
+    adcpVersion: '3.1.18',
+    capabilities: { supported_versions: ['3.0.25', '3.1.18'] },
+    validation: { requests: 'off', responses: 'off' },
+    toolVersions: { get_signals: { min: '3.1' } },
+    mediaBuy: { getProducts: async () => ({ products: [] }) },
+    signals: {
+      getSignals: async () => {
+        throw new Error('version-unavailable handler must not run');
+      },
+    },
+  });
+  const adapter = createModernMcpServerAdapter(server);
+  const httpServer = createServer((req, res) => void adapter.handle(req, res));
+  const url = await listen(httpServer);
+  const client = new Client(
+    { name: 'modern-version-range-client', version: '1.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } }
+  );
+  t.after(async () => {
+    await client.close().catch(() => {});
+    await adapter.close();
+    await closeServer(httpServer);
+  });
+
+  await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+  const listed31 = await client.listTools();
+  assert.ok(listed31.tools.some(tool => tool.name === 'get_signals'));
+  const listed30 = await client.listTools({ _meta: { adcp_version: '3.0.25' } });
+  const names30 = listed30.tools.map(tool => tool.name);
+  assert.ok(names30.includes('get_products'));
+  assert.ok(!names30.includes('get_signals'));
+  assert.equal(listed30._meta.adcp_version, '3.0.25');
+
+  const rejected = await client.callTool({ name: 'get_signals', arguments: { adcp_version: '3.0.25' } });
+  assert.equal(rejected.isError, true);
+  assert.equal(rejected.structuredContent.adcp_error.code, 'VERSION_UNSUPPORTED');
+  assert.deepEqual(rejected.structuredContent.adcp_error.details.supported_versions, ['3.1.18']);
 });
 
 test('modern serving preserves explicitly registered custom schemas and descriptions', async t => {
@@ -809,7 +882,7 @@ test('modern serving preserves explicitly registered custom schemas and descript
       return { content: [{ type: 'text', text: 'unused' }] };
     }
   );
-  const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.0-beta.9'));
+  const adapter = createModernMcpServerAdapter(wrapMcpServer(legacy, undefined, '3.2.0-beta.10'));
   const httpServer = createServer((req, res) => void adapter.handle(req, res));
   const url = await listen(httpServer);
   const client = new Client(

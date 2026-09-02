@@ -23,7 +23,7 @@ if (process.argv.includes('--allow-http')) {
 }
 
 const { AdCPClient, detectProtocol, usesDeprecatedAssetsField } = require('../dist/lib/index.js');
-const { readFileSync, statSync } = require('fs');
+const { readFileSync, statSync, openSync, fstatSync, readSync, closeSync, constants: fsConstants } = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const net = require('net');
@@ -51,7 +51,8 @@ const {
 } = require('./adcp-storyboard-summary.js');
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
-const { LIBRARY_VERSION } = require('../dist/lib/version.js');
+const { ADCP_VERSION, LIBRARY_VERSION } = require('../dist/lib/version.js');
+const { isAdcpVersionSupported } = require('../dist/lib/utils/adcp-version-config.js');
 const { appendBuiltInVersionUnsupportedHint } = require('./adcp-version-unsupported-hint.js');
 const { sandboxRunOptions } = require('./adcp-storyboard-sandbox.js');
 const {
@@ -1130,12 +1131,33 @@ function parseAgentOptions(args) {
     !args[webhookReceiverPortIdx + 1].startsWith('--')
       ? args[webhookReceiverPortIdx + 1]
       : null;
+  const webhookReceiverHostIdx = args.indexOf('--webhook-receiver-host');
+  const webhookReceiverHostValue =
+    webhookReceiverHostIdx !== -1 &&
+    webhookReceiverHostIdx + 1 < args.length &&
+    !args[webhookReceiverHostIdx + 1].startsWith('--')
+      ? args[webhookReceiverHostIdx + 1]
+      : null;
   const webhookReceiverPublicUrlIdx = args.indexOf('--webhook-receiver-public-url');
   const webhookReceiverPublicUrlValue =
     webhookReceiverPublicUrlIdx !== -1 &&
     webhookReceiverPublicUrlIdx + 1 < args.length &&
     !args[webhookReceiverPublicUrlIdx + 1].startsWith('--')
       ? args[webhookReceiverPublicUrlIdx + 1]
+      : null;
+  const webhookReceiverTlsCertIdx = args.indexOf('--webhook-receiver-tls-cert');
+  const webhookReceiverTlsCertValue =
+    webhookReceiverTlsCertIdx !== -1 &&
+    webhookReceiverTlsCertIdx + 1 < args.length &&
+    !args[webhookReceiverTlsCertIdx + 1].startsWith('--')
+      ? args[webhookReceiverTlsCertIdx + 1]
+      : null;
+  const webhookReceiverTlsKeyIdx = args.indexOf('--webhook-receiver-tls-key');
+  const webhookReceiverTlsKeyValue =
+    webhookReceiverTlsKeyIdx !== -1 &&
+    webhookReceiverTlsKeyIdx + 1 < args.length &&
+    !args[webhookReceiverTlsKeyIdx + 1].startsWith('--')
+      ? args[webhookReceiverTlsKeyIdx + 1]
       : null;
 
   const invariantsIdx = args.indexOf('--invariants');
@@ -1212,7 +1234,10 @@ function parseAgentOptions(args) {
     multiInstanceStrategyValue,
     webhookReceiverModeValue,
     webhookReceiverPortValue,
+    webhookReceiverHostValue,
     webhookReceiverPublicUrlValue,
+    webhookReceiverTlsCertValue,
+    webhookReceiverTlsKeyValue,
     invariantsValue,
     localAgentValue,
     formatValue,
@@ -1922,6 +1947,8 @@ USAGE:
   adcp <command> [args]
 
 COMMANDS:
+  init seller [options]       Scaffold a compact AdCP 3.2 seller
+  doctor [options]            Check project secrets, SDK drift, and migrations
   storyboard <subcommand>     Test agent flows (run, list, show, step)
   specialism <subcommand>     Inspect a compliance specialism (list, show)
   grade <subject> <url>       Conformance graders (e.g. request-signing)
@@ -2111,11 +2138,19 @@ WEBHOOK OPTIONS:
                                   the webhook-emission and idempotency bundles
                                   to produce grades instead of skips.
   --webhook-receiver-port PORT    Force a bind port (default: auto-assign).
+  --webhook-receiver-host HOST    Bind address for the local listener (default:
+                                  127.0.0.1). Use 0.0.0.0 or :: with proxy mode
+                                  for container-to-container callbacks.
   --webhook-receiver-public-url URL
-                                  Public HTTPS base URL for proxy mode. Implies
+                                  Public HTTPS base URL for proxy mode. HTTP is
+                                  accepted only with --allow-http. Implies
                                   --webhook-receiver proxy when used alone.
                                   Incompatible with --multi-instance-strategy
                                   multi-pass (receiver URL is per-pass).
+  --webhook-receiver-tls-cert FILE
+  --webhook-receiver-tls-key FILE Serve HTTPS directly with this certificate
+                                  and private key. Both flags are required.
+                                  Omit when a tunnel or ingress terminates TLS.
   --webhook-receiver-auto-tunnel  Autodetect a tunnel binary on PATH (ngrok or
                                   cloudflared; override with $ADCP_WEBHOOK_TUNNEL),
                                   spawn it against the receiver, and plug its
@@ -2923,6 +2958,7 @@ async function handleStoryboardRun(args) {
     ...(fileComplianceOptions.adcpVersion && { adcpVersion: fileComplianceOptions.adcpVersion }),
     ...(fileComplianceOptions.schemaRoot && { schemaRoot: fileComplianceOptions.schemaRoot }),
     ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
+    ...(opts.allowHttp && { allow_http: true }),
     ...sandboxRunOptions(opts),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
@@ -3031,8 +3067,8 @@ async function handleStoryboardRun(args) {
  * transport and land in attribution output.
  */
 /**
- * Parse `--webhook-receiver [mode]`, `--webhook-receiver-port <port>`, and
- * `--webhook-receiver-public-url <url>`. Returns a `{ webhook_receiver, contracts }`
+ * Parse `--webhook-receiver [mode]` and its host, port, public-URL, and TLS
+ * flags. Returns a `{ webhook_receiver, contracts }`
  * pair suitable for spreading into `runStoryboard` / `comply` options, or
  * `null` if no webhook-receiver flag is set.
  *
@@ -3046,8 +3082,13 @@ function extractWebhookReceiverOptions(args) {
   const idx = args.indexOf('--webhook-receiver');
   const publicUrlIdx = args.indexOf('--webhook-receiver-public-url');
   const portIdx = args.indexOf('--webhook-receiver-port');
+  const hostIdx = args.indexOf('--webhook-receiver-host');
+  const tlsCertIdx = args.indexOf('--webhook-receiver-tls-cert');
+  const tlsKeyIdx = args.indexOf('--webhook-receiver-tls-key');
 
-  if (idx === -1 && publicUrlIdx === -1 && portIdx === -1) return null;
+  if (idx === -1 && publicUrlIdx === -1 && portIdx === -1 && hostIdx === -1 && tlsCertIdx === -1 && tlsKeyIdx === -1) {
+    return null;
+  }
 
   let mode = 'loopback_mock';
   if (idx !== -1) {
@@ -3071,6 +3112,29 @@ function extractWebhookReceiverOptions(args) {
       process.exit(2);
     }
     publicUrl = val;
+    let parsedPublicUrl;
+    try {
+      parsedPublicUrl = new URL(publicUrl);
+    } catch {
+      console.error(`ERROR: --webhook-receiver-public-url is not a valid URL: "${publicUrl}"`);
+      process.exit(2);
+    }
+    if (parsedPublicUrl.protocol !== 'http:' && parsedPublicUrl.protocol !== 'https:') {
+      console.error(`ERROR: --webhook-receiver-public-url must use http or https, got ${parsedPublicUrl.protocol}`);
+      process.exit(2);
+    }
+    if (parsedPublicUrl.username || parsedPublicUrl.password) {
+      console.error('ERROR: --webhook-receiver-public-url must not include userinfo');
+      process.exit(2);
+    }
+    if (parsedPublicUrl.search || parsedPublicUrl.hash) {
+      console.error('ERROR: --webhook-receiver-public-url must not include a query string or fragment');
+      process.exit(2);
+    }
+    if (parsedPublicUrl.protocol === 'http:' && !args.includes('--allow-http')) {
+      console.error('ERROR: an http:// webhook receiver public URL requires --allow-http (local development only)');
+      process.exit(2);
+    }
     // --webhook-receiver-public-url without --webhook-receiver implies proxy mode.
     // With explicit `--webhook-receiver loopback`, the combination is a user
     // error — loopback mode ignores public_url.
@@ -3105,14 +3169,91 @@ function extractWebhookReceiverOptions(args) {
     port = parsed;
   }
 
+  let host;
+  if (hostIdx !== -1) {
+    host = args[hostIdx + 1];
+    if (host === undefined || host.startsWith('--')) {
+      console.error('ERROR: --webhook-receiver-host requires a hostname or bind address');
+      process.exit(2);
+    }
+    if (host.length === 0 || /[\s/\\\r\n\x00]/.test(host)) {
+      console.error(`ERROR: --webhook-receiver-host is not a valid bind address: "${host}"`);
+      process.exit(2);
+    }
+  }
+
+  const tlsCertPath = tlsCertIdx === -1 ? undefined : args[tlsCertIdx + 1];
+  const tlsKeyPath = tlsKeyIdx === -1 ? undefined : args[tlsKeyIdx + 1];
+  if (tlsCertPath === undefined && tlsCertIdx !== -1) {
+    console.error('ERROR: --webhook-receiver-tls-cert requires a file path');
+    process.exit(2);
+  }
+  if (tlsKeyPath === undefined && tlsKeyIdx !== -1) {
+    console.error('ERROR: --webhook-receiver-tls-key requires a file path');
+    process.exit(2);
+  }
+  if (tlsCertPath?.startsWith('--')) {
+    console.error('ERROR: --webhook-receiver-tls-cert requires a file path');
+    process.exit(2);
+  }
+  if (tlsKeyPath?.startsWith('--')) {
+    console.error('ERROR: --webhook-receiver-tls-key requires a file path');
+    process.exit(2);
+  }
+  if ((tlsCertPath === undefined) !== (tlsKeyPath === undefined)) {
+    console.error('ERROR: --webhook-receiver-tls-cert and --webhook-receiver-tls-key must be provided together');
+    process.exit(2);
+  }
+  let tls;
+  if (tlsCertPath !== undefined && tlsKeyPath !== undefined) {
+    try {
+      tls = {
+        cert: readBoundedRegularFile(path.resolve(tlsCertPath), 'TLS certificate'),
+        key: readBoundedRegularFile(path.resolve(tlsKeyPath), 'TLS private key'),
+      };
+    } catch (err) {
+      console.error(`ERROR: unable to read webhook receiver TLS files: ${err.message}`);
+      process.exit(2);
+    }
+  }
+  if (tls && publicUrl && new URL(publicUrl).protocol !== 'https:') {
+    console.error('ERROR: direct webhook receiver TLS requires an https:// public URL');
+    process.exit(2);
+  }
+
   return {
     webhook_receiver: {
       mode,
+      ...(host !== undefined && { host }),
       ...(port !== undefined && { port }),
       ...(publicUrl !== undefined && { public_url: publicUrl }),
+      ...(tls !== undefined && { tls }),
     },
     contracts: ['webhook_receiver_runner'],
   };
+}
+
+const MAX_WEBHOOK_TLS_FILE_BYTES = 1_048_576;
+
+function readBoundedRegularFile(filePath, label) {
+  const fd = openSync(filePath, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) throw new Error(`${label} must be a regular file`);
+    if (stat.size > MAX_WEBHOOK_TLS_FILE_BYTES) {
+      throw new Error(`${label} exceeds the 1 MiB size limit`);
+    }
+    const buffer = Buffer.alloc(stat.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const count = readSync(fd, buffer, offset, buffer.length - offset, null);
+      if (count === 0) break;
+      offset += count;
+    }
+    return offset === buffer.length ? buffer : buffer.subarray(0, offset);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -3466,6 +3607,11 @@ function validateAutoTunnelArgs(args, base) {
     console.error('       Pick one — auto-tunnel mints a URL for you, public-url supplies your own.');
     process.exit(2);
   }
+  if (base?.webhook_receiver.tls) {
+    console.error('ERROR: --webhook-receiver-auto-tunnel cannot be combined with direct TLS certificate flags.');
+    console.error('       The tunnel terminates HTTPS and forwards plain HTTP to the local receiver.');
+    process.exit(2);
+  }
   // Auto-tunnel implies proxy mode and mints the URL itself. A coexisting
   // `--webhook-receiver [mode]` flag is always wrong: `loopback` contradicts
   // the minted URL, `proxy` without public-url is caught earlier in
@@ -3488,7 +3634,12 @@ async function resolveWebhookReceiverOptions(args, { jsonOutput } = {}) {
   const { publicUrl } = await spawnAutoTunnel({ port, timeoutMs, jsonOutput });
 
   return {
-    webhook_receiver: { mode: 'proxy_url', port, public_url: publicUrl },
+    webhook_receiver: {
+      mode: 'proxy_url',
+      ...(base?.webhook_receiver.host !== undefined && { host: base.webhook_receiver.host }),
+      port,
+      public_url: publicUrl,
+    },
     contracts: ['webhook_receiver_runner'],
   };
 }
@@ -5397,6 +5548,33 @@ async function main() {
   if (args[0] === 'registry') {
     const code = await handleRegistryCommand(args.slice(1));
     process.exitCode = code;
+    return;
+  }
+
+  if (args[0] === 'init') {
+    const { handleInitCommand } = require('./adcp-project.js');
+    await handleInitCommand(
+      args.slice(1).filter(arg => arg !== '--allow-v2' && arg !== '--allow-http'),
+      { libraryVersion: LIBRARY_VERSION }
+    );
+    return;
+  }
+
+  if (args[0] === 'doctor') {
+    const { handleDoctorCommand } = require('./adcp-project.js');
+    await handleDoctorCommand(
+      args.slice(1).filter(arg => arg !== '--allow-v2' && arg !== '--allow-http'),
+      {
+        libraryVersion: LIBRARY_VERSION,
+        adcpVersion: ADCP_VERSION,
+        AdCPClient,
+        detectProtocol,
+        isAdcpVersionSupported,
+        resolveAgent(name) {
+          return BUILT_IN_AGENTS[name] ?? getAgent(name) ?? { url: name };
+        },
+      }
+    );
     return;
   }
 

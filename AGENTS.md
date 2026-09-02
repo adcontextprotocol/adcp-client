@@ -263,7 +263,7 @@ npm run generate-zod-schemas  # Generate runtime validation
 
 ### Wire-version compat (v3 SDK ↔ legacy sellers)
 
-The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.0.1`) on its public surface and adapts to legacy sellers underneath. v2.5 is the only active legacy shim; the recipe for adding a new one (e.g. v3 when the SDK pin moves to v4) lives in [`docs/development/WIRE-VERSION-COMPAT.md`](./docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
+The SDK speaks one AdCP major (`ADCP_VERSION` in `src/lib/version.ts`, currently `3.0.1`) on its public surface and adapts to legacy sellers underneath. v2.5 is the only active legacy shim; the recipe for adding a new one (e.g. v3 when the SDK pin moves to v4) lives in [`docs/development/WIRE-VERSION-COMPAT.md`](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/development/WIRE-VERSION-COMPAT.md). Touch that doc whenever you add to `src/lib/adapters/legacy/`, `src/lib/types/v*-*/`, or `schemas/cache/<version>/`.
 
 ## Testing Strategies
 

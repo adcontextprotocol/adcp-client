@@ -415,6 +415,30 @@ test('rejects out-of-scope and orphan records before evaluating ledger completen
   }
 });
 
+test('rejects unbounded ledger loading and snapshot restart policies', async () => {
+  const client = {
+    async getReportingStatus() {
+      throw new Error('must reject limits before transport');
+    },
+  };
+  const request = { account: { account_id: 'account-1' } };
+  const cases = [
+    { restarts: -1, limits: {} },
+    { restarts: 11, limits: {} },
+    { restarts: 0, limits: { maxPages: 0 } },
+    { restarts: 0, limits: { maxPages: Number.POSITIVE_INFINITY } },
+    { restarts: 0, limits: { maxRecords: 1_000_001 } },
+    { restarts: 0, limits: { maxLoadMs: Number.NaN } },
+  ];
+
+  for (const testCase of cases) {
+    await assert.rejects(
+      loadReportingLedger(client, request, testCase.restarts, testCase.limits),
+      error => error.code === 'INVALID_LEDGER_LIMITS'
+    );
+  }
+});
+
 test('reconciles a closed billing period, retries inspection, and records a matching receipt', async () => {
   let recordedReceipt;
   let inspections = 0;
@@ -1674,6 +1698,63 @@ test('portable inspection fixture: checkpoint avoids rereading after a receipt w
   assert.equal(result.submittedReceipts.length, 1);
   assert.equal(syncAttempts, 2);
   assert.equal(new Set(syncIdempotencyKeys).size, 1);
+});
+
+test('portable inspection fixture: checkpoint is invalidated when immutable evidence changes', async () => {
+  let checkpoint;
+  let changedLocation = false;
+  let recordedReceipt;
+  let syncAttempts = 0;
+  const reader = fixtureReader();
+  const checkpointStore = {
+    async get() {
+      return checkpoint;
+    },
+    async put(_key, value) {
+      checkpoint = structuredClone(value);
+    },
+  };
+  const client = {
+    async getReportingStatus() {
+      const raw = fixtureLedgerResponse(recordedReceipt ? [recordedReceipt] : []);
+      if (changedLocation) raw.materializations[0].resource.location = 'https://files.fixture.example.net/moved.json';
+      return raw;
+    },
+    async syncReportingReceipts(request) {
+      syncAttempts += 1;
+      if (syncAttempts === 1) {
+        changedLocation = true;
+        throw new Error('simulated ambiguous receipt transport failure');
+      }
+      recordedReceipt = { ...request.receipts[0], received_at: '2026-09-02T00:01:00Z' };
+      return { status: 'completed', results: [{ result: 'recorded', receipt: recordedReceipt }] };
+    },
+  };
+  const options = {
+    client,
+    request: { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } },
+    expectedPeriods: [fixtureExpectedPeriod()],
+    checkpointStore,
+    checkpointScope: 'seller.example.net:buyer-principal-1',
+    resourceReader: reader,
+    credentialProvider: {
+      async getCredentials() {
+        return { token: 'fixture-reader-token' };
+      },
+    },
+    manifestInspectorOptions: {
+      referenceResolver: fixtureResolver(),
+      referenceAllowedOrigins: ['https://schemas.fixture.example.net'],
+    },
+  };
+
+  await assert.rejects(reconcileReporting(options), /simulated ambiguous receipt transport failure/);
+  const readsBeforeMutation = reader.attempts;
+  await reconcileReporting(options);
+
+  assert.match(checkpoint.contextFingerprint, /^[a-f0-9]{64}$/);
+  assert.ok(reader.attempts > readsBeforeMutation, 'changed immutable context must be inspected again');
+  assert.equal(syncAttempts, 2);
 });
 
 test('portable inspection fixture: observed row mismatch submits one exact rejected receipt', async () => {

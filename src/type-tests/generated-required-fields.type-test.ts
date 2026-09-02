@@ -4,6 +4,7 @@ import type {
   GeoDeliveryMetrics,
   KeywordDeliveryMetrics,
   PostalCountrySystem,
+  SignalTargetingExpression,
   SyncCreativesSuccess as CoreSyncCreativesSuccess,
   TasksGetResponse,
 } from '../lib/types/core.generated';
@@ -77,6 +78,26 @@ type _ToolAdCPVersionEnvelopeExport = ToolAdCPVersionEnvelope;
 type _ToolCanonicalFormatBaseExport = ToolCanonicalFormatBase;
 type _ToolSignalDefinitionEnrichmentExport = ToolSignalDefinitionEnrichment;
 type _ToolSignalTargetingExpressionExport = ToolSignalTargetingExpression;
+
+const validLowerBoundedSignal: SignalTargetingExpression = {
+  signal_ref: { scope: 'product', signal_id: 'age' },
+  value_type: 'numeric',
+  min_value: 25,
+};
+const invalidEmptyCategoricalSignal: SignalTargetingExpression = {
+  signal_ref: { scope: 'product', signal_id: 'segment' },
+  value_type: 'categorical',
+  // @ts-expect-error categorical targeting expressions require at least one value.
+  values: [],
+};
+// @ts-expect-error numeric targeting expressions require at least one bound.
+const invalidUnboundedSignal: SignalTargetingExpression = {
+  signal_ref: { scope: 'product', signal_id: 'age' },
+  value_type: 'numeric',
+};
+void validLowerBoundedSignal;
+void invalidEmptyCategoricalSignal;
+void invalidUnboundedSignal;
 
 // Refine result branches narrow CanonicalProposal; they do not replace it.
 // Keep every canonical continuation field plus branch-specific lineage/status

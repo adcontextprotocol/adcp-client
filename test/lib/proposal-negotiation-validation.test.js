@@ -1,17 +1,25 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const {
   ProposalNegotiator,
+  ProposalCommercialTermsVerificationError,
   ProposalRefinementValidationError,
+  assertProposalCommercialTerms,
   buildRefineProposalsRequest,
   canonicalize,
   extractProposalRefinementSupport,
   proposalTermsDigest,
   validateRefineProposalsRequest,
   validateRefineProposalsResponseShape,
+  verifyProposalCommercialTerms,
   verifyRefineProposalsResponse,
 } = require('../../dist/lib/index.js');
+const { withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
 const KEY = 'refine-validation-0001';
 
@@ -69,6 +77,408 @@ function shapeIssues(req, payload) {
   return verifyRefineProposalsResponse(req, payload).issues.filter(issue => issue.code === 'shape');
 }
 
+function clone(value) {
+  return structuredClone(value);
+}
+
+test('commercial-terms verifier accepts a digest-bound exact reviewed snapshot', () => {
+  const terms = commercialTerms({
+    purchase_order_ref: 'PO-2027-001',
+    change_terms: [
+      {
+        term_id: 'term-budget-1',
+        action: 'increase_budget',
+        service_mode: 'self_serve',
+        constraints: { kind: 'budget', max_delta_amount: { amount: 1000, currency: 'USD' } },
+        terms_ref: 'contract-2027-001',
+      },
+    ],
+  });
+  const result = verifyProposalCommercialTerms(
+    proposal('proposal-terms', 'source-1', { commercial_terms: terms }),
+    terms,
+    { adcpVersion: '3.2-beta.10' }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.schemaVersion, ADCP_VERSION);
+  assert.deepEqual(result.mismatches, []);
+  assert.doesNotThrow(() =>
+    assertProposalCommercialTerms(proposal('proposal-terms', 'source-1', { commercial_terms: terms }), terms)
+  );
+});
+
+test('commercial-terms verifier checks terms_digest before producing field comparisons', () => {
+  const reviewed = commercialTerms();
+  const offered = commercialTerms({ total_budget: { amount: 9000, currency: 'USD' } });
+  const tampered = proposal('proposal-tampered', 'source-1', {
+    commercial_terms: offered,
+    terms_digest: proposalTermsDigest(reviewed),
+  });
+
+  const result = verifyProposalCommercialTerms(tampered, reviewed);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.mismatches, [
+    {
+      kind: 'digest_mismatch',
+      path: '/terms_digest',
+      message: 'proposal terms_digest does not match commercial_terms',
+    },
+  ]);
+});
+
+test('commercial-terms verifier enforces schema-declared pricing integrity', () => {
+  const pricingIdentity = commercialTerms();
+  pricingIdentity.purchases[0].pricing.pricing_option_id = 'different-price';
+
+  const mixedCurrencies = commercialTerms();
+  mixedCurrencies.purchases.push({
+    ...clone(mixedCurrencies.purchases[0]),
+    product_id: 'product-2',
+    pricing_option_id: 'price-2',
+    pricing: {
+      ...clone(mixedCurrencies.purchases[0].pricing),
+      pricing_option_id: 'price-2',
+      currency: 'EUR',
+    },
+  });
+
+  const budgetCurrency = commercialTerms({ total_budget: { amount: 8000, currency: 'GBP' } });
+  for (const [terms, expectedPath] of [
+    [pricingIdentity, '/commercial_terms/purchases/0/pricing/pricing_option_id'],
+    [mixedCurrencies, '/commercial_terms/purchases/1/pricing/currency'],
+    [budgetCurrency, '/commercial_terms/total_budget/currency'],
+  ]) {
+    const result = verifyProposalCommercialTerms(
+      proposal('proposal-invalid-pricing', 'source-1', { commercial_terms: terms }),
+      terms
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.mismatches[0].kind, 'invalid_terms');
+    assert.equal(result.mismatches[0].keyword, 'x-adcp-validation');
+    assert.equal(result.mismatches[0].path, expectedPath);
+  }
+});
+
+test('commercial-terms verifier enforces schema-declared change-term invariants', () => {
+  const duplicateActions = commercialTerms({
+    change_terms: [
+      { term_id: 'pause-1', action: 'pause', service_mode: 'self_serve' },
+      { term_id: 'pause-2', action: 'pause', service_mode: 'seller_managed' },
+    ],
+  });
+  const incompatibleKind = commercialTerms({
+    change_terms: [
+      {
+        term_id: 'pause-budget',
+        action: 'pause',
+        service_mode: 'self_serve',
+        constraints: { kind: 'budget', max_delta_amount: { amount: 100, currency: 'USD' } },
+      },
+    ],
+  });
+  const wrongCurrency = commercialTerms({
+    change_terms: [
+      {
+        term_id: 'increase-eur',
+        action: 'increase_budget',
+        service_mode: 'self_serve',
+        constraints: { kind: 'budget', max_delta_amount: { amount: 100, currency: 'EUR' } },
+      },
+    ],
+  });
+  const inconsistentRange = commercialTerms({
+    change_terms: [
+      {
+        term_id: 'increase-range',
+        action: 'increase_budget',
+        service_mode: 'self_serve',
+        constraints: {
+          kind: 'budget',
+          min_result_amount: { amount: 1000, currency: 'USD' },
+          max_result_amount: { amount: 500, currency: 'USD' },
+        },
+      },
+    ],
+  });
+
+  for (const [terms, expectedPath] of [
+    [duplicateActions, '/commercial_terms/change_terms/1/action'],
+    [incompatibleKind, '/commercial_terms/change_terms/0/constraints/kind'],
+    [wrongCurrency, '/commercial_terms/change_terms/0/constraints/max_delta_amount/currency'],
+    [inconsistentRange, '/commercial_terms/change_terms/0/constraints'],
+  ]) {
+    const result = verifyProposalCommercialTerms(
+      proposal('proposal-invalid-change-term', 'source-1', { commercial_terms: terms }),
+      terms
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.mismatches[0].kind, 'invalid_terms');
+    assert.equal(result.mismatches[0].keyword, 'x-adcp-validation');
+    assert.equal(result.mismatches[0].path, expectedPath);
+  }
+});
+
+test('commercial-terms verifier recursively reports binding changes with JSON Pointer paths', () => {
+  const reviewed = commercialTerms({
+    purchase_order_ref: 'PO-ORIGINAL',
+    change_terms: [
+      {
+        term_id: 'term-flight-1',
+        action: 'extend_flight',
+        service_mode: 'self_serve',
+        allowed_statuses: ['active'],
+        terms_ref: 'contract-original',
+      },
+    ],
+  });
+  const offered = clone(reviewed);
+  offered.purchases[0].pricing.fixed_price = 9;
+  offered.purchases[0].product_id = 'product-2';
+  offered.end_time = '2027-03-01T00:00:00Z';
+  offered.total_budget.amount = 9000;
+  offered.purchase_order_ref = 'PO-CHANGED';
+  offered.change_terms[0].service_mode = 'seller_managed';
+  offered.change_terms[0].terms_ref = 'contract-changed';
+
+  const result = verifyProposalCommercialTerms(
+    proposal('proposal-changed', 'source-1', { commercial_terms: offered }),
+    reviewed
+  );
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.mismatches.map(mismatch => [mismatch.kind, mismatch.path]),
+    [
+      ['changed', '/commercial_terms/change_terms/0/service_mode'],
+      ['changed', '/commercial_terms/change_terms/0/terms_ref'],
+      ['changed', '/commercial_terms/end_time'],
+      ['changed', '/commercial_terms/purchase_order_ref'],
+      ['changed', '/commercial_terms/purchases/0/pricing/fixed_price'],
+      ['changed', '/commercial_terms/purchases/0/product_id'],
+      ['changed', '/commercial_terms/total_budget/amount'],
+    ]
+  );
+  assert.throws(
+    () =>
+      assertProposalCommercialTerms(proposal('proposal-changed', 'source-1', { commercial_terms: offered }), reviewed),
+    ProposalCommercialTermsVerificationError
+  );
+});
+
+test('commercial-terms verifier rejects fields outside the selected schema', () => {
+  const terms = commercialTerms({ unrecognized_binding: 'must-not-pass' });
+  const result = verifyProposalCommercialTerms(
+    proposal('proposal-unknown', 'source-1', { commercial_terms: terms }),
+    terms
+  );
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.mismatches.map(({ kind, subject, path, keyword }) => ({ kind, subject, path, keyword })),
+    [
+      {
+        kind: 'invalid_terms',
+        subject: 'proposal',
+        path: '/commercial_terms/unrecognized_binding',
+        keyword: 'additionalProperties',
+      },
+    ]
+  );
+});
+
+test('commercial-terms verifier derives newly added binding fields from the selected bundle', () => {
+  const schemaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-commercial-terms-schema-'));
+  try {
+    const mediaBuyDir = path.join(schemaRoot, 'media-buy');
+    fs.mkdirSync(mediaBuyDir, { recursive: true });
+    fs.writeFileSync(path.join(schemaRoot, 'index.json'), JSON.stringify({ adcp_version: ADCP_VERSION }));
+    fs.writeFileSync(
+      path.join(mediaBuyDir, 'commercial-terms.json'),
+      JSON.stringify({
+        $schema: 'http://json-schema.org/draft-07/schema#',
+        $id: `https://adcontextprotocol.org/schemas/${ADCP_VERSION}/media-buy/commercial-terms.json`,
+        type: 'object',
+        properties: {
+          brand: { type: 'object' },
+          purchases: { type: 'array', minItems: 1 },
+          start_time: { type: 'string' },
+          end_time: { type: 'string' },
+          future_binding: { type: 'string' },
+        },
+        patternProperties: { '^x_': { type: 'string' } },
+        required: ['brand', 'purchases', 'start_time', 'end_time'],
+        additionalProperties: false,
+      })
+    );
+    const reviewed = {
+      brand: { domain: 'buyer.example' },
+      purchases: [{}],
+      start_time: 'asap',
+      end_time: '2027-02-01T00:00:00Z',
+    };
+    const offered = {
+      ...reviewed,
+      future_binding: 'new-contract-value',
+      x_dynamic_binding: 'pattern-contract-value',
+    };
+    const result = withExternalSchemaRoot(ADCP_VERSION, schemaRoot, () =>
+      verifyProposalCommercialTerms(
+        { commercial_terms: offered, terms_digest: proposalTermsDigest(offered) },
+        reviewed,
+        { adcpVersion: ADCP_VERSION }
+      )
+    );
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(
+      result.mismatches.map(({ kind, path }) => ({ kind, path })),
+      [
+        { kind: 'unexpected', path: '/commercial_terms/future_binding' },
+        { kind: 'unexpected', path: '/commercial_terms/x_dynamic_binding' },
+      ]
+    );
+  } finally {
+    fs.rmSync(schemaRoot, { recursive: true, force: true });
+  }
+});
+
+test('commercial-terms verifier fails closed when the requested schema bundle is unavailable', () => {
+  const terms = commercialTerms();
+  const result = verifyProposalCommercialTerms(
+    proposal('proposal-version', 'source-1', { commercial_terms: terms }),
+    terms,
+    {
+      adcpVersion: '3.2.0-beta.1099',
+    }
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.mismatches[0].kind, 'schema_unavailable');
+  assert.equal(result.mismatches[0].message, 'the selected AdCP commercial-terms schema is unavailable');
+});
+
+test('commercial-terms verifier caps mismatch diagnostics', () => {
+  const reviewed = commercialTerms();
+  reviewed.purchases[0].ext = { vendor: {} };
+  const offered = clone(reviewed);
+  for (let index = 0; index < 101; index++) {
+    reviewed.purchases[0].ext.vendor[`field_${index}`] = `reviewed_${index}`;
+    offered.purchases[0].ext.vendor[`field_${index}`] = `offered_${index}`;
+  }
+
+  const result = verifyProposalCommercialTerms(
+    proposal('proposal-many-differences', 'source-1', { commercial_terms: offered }),
+    reviewed
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.truncated, true);
+  assert.equal(result.mismatches.length, 100);
+});
+
+test('commercial-terms verifier rejects oversized and accessor-backed trees before canonicalization', () => {
+  const oversized = commercialTerms();
+  oversized.purchases[0].ext = { vendor: { payload: 'x'.repeat(256 * 1024 + 1) } };
+  const oversizedResult = verifyProposalCommercialTerms(
+    { commercial_terms: oversized, terms_digest: 'sha256:unchecked' },
+    oversized
+  );
+  assert.equal(oversizedResult.ok, false);
+  assert.match(oversizedResult.mismatches[0].message, /exceed 256 KiB/);
+
+  let reads = 0;
+  const accessorTerms = commercialTerms();
+  Object.defineProperty(accessorTerms.purchases[0], 'ext', {
+    enumerable: true,
+    get() {
+      reads++;
+      return { vendor: {} };
+    },
+  });
+  const accessorResult = verifyProposalCommercialTerms(
+    { commercial_terms: accessorTerms, terms_digest: 'sha256:unchecked' },
+    accessorTerms
+  );
+  assert.equal(accessorResult.ok, false);
+  assert.match(accessorResult.mismatches[0].message, /data properties only/);
+  assert.equal(reads, 0);
+});
+
+test('commercial-terms verifier accepts shared references but bounds node count and depth', () => {
+  const shared = { value: 'same' };
+  const aliased = commercialTerms();
+  aliased.purchases[0].ext = { vendor: { first: shared, second: shared } };
+  assert.equal(
+    verifyProposalCommercialTerms(
+      proposal('proposal-shared-reference', 'source-1', { commercial_terms: aliased }),
+      aliased
+    ).ok,
+    true
+  );
+
+  const tooManyNodes = commercialTerms();
+  tooManyNodes.purchases[0].ext = { vendor: { sparse: new Array(50_001) } };
+  const nodeResult = verifyProposalCommercialTerms(
+    { commercial_terms: tooManyNodes, terms_digest: 'sha256:unchecked' },
+    tooManyNodes
+  );
+  assert.equal(nodeResult.ok, false);
+  assert.match(nodeResult.mismatches[0].message, /50,000-node/);
+
+  const tooDeep = commercialTerms();
+  let cursor = {};
+  tooDeep.purchases[0].ext = { vendor: cursor };
+  for (let depth = 0; depth < 257; depth++) {
+    cursor.next = {};
+    cursor = cursor.next;
+  }
+  const depthResult = verifyProposalCommercialTerms(
+    { commercial_terms: tooDeep, terms_digest: 'sha256:unchecked' },
+    tooDeep
+  );
+  assert.equal(depthResult.ok, false);
+  assert.match(depthResult.mismatches[0].message, /maximum JSON depth/);
+});
+
+test('commercial-terms verifier caps diagnostic bytes and keeps attacker keys out of error messages', () => {
+  const longKey = `hostile\n\u001b[31m${'x'.repeat(70_000)}`;
+  const reviewed = commercialTerms();
+  const offered = commercialTerms();
+  reviewed.purchases[0].ext = { vendor: { [longKey]: { value: 'reviewed' } } };
+  offered.purchases[0].ext = { vendor: { [longKey]: { value: 'offered' } } };
+
+  const candidate = proposal('proposal-long-diagnostic', 'source-1', { commercial_terms: offered });
+  const result = verifyProposalCommercialTerms(candidate, reviewed);
+  assert.equal(result.ok, false);
+  assert.equal(result.truncated, true);
+  assert.deepEqual(result.mismatches, []);
+  assert.throws(
+    () => assertProposalCommercialTerms(candidate, reviewed),
+    error =>
+      error instanceof ProposalCommercialTermsVerificationError &&
+      error.message === 'proposal commercial terms failed verification (0 mismatches, diagnostics truncated)' &&
+      !error.message.includes('hostile')
+  );
+
+  const unknownKey = `unknown_${'y'.repeat(70_000)}`;
+  const unknownTerms = commercialTerms({ [unknownKey]: 'value' });
+  const schemaResult = verifyProposalCommercialTerms(
+    proposal('proposal-long-schema-path', 'source-1', { commercial_terms: unknownTerms }),
+    unknownTerms
+  );
+  assert.equal(schemaResult.ok, false);
+  assert.equal(schemaResult.truncated, true);
+  assert.deepEqual(schemaResult.mismatches, []);
+});
+
+test('commercial-terms verifier rejects values that cannot appear on the JSON wire', () => {
+  for (const invalidValue of [undefined, () => 'secret source', Symbol('secret'), 1n, Number.NaN]) {
+    const terms = commercialTerms();
+    terms.purchases[0].ext = { vendor: { invalid: invalidValue } };
+    const result = verifyProposalCommercialTerms({ commercial_terms: terms, terms_digest: 'sha256:unchecked' }, terms);
+    assert.equal(result.ok, false);
+    assert.equal(result.mismatches[0].message, 'commercial terms must contain JSON values only');
+  }
+});
+
 test('buyer validation fails closed on malformed union arms, non-finite values, and non-RFC3339 dates', () => {
   assert.throws(
     () => buildRefineProposalsRequest({ refinements: [{ proposal_id: 'source-1', action: 'unknown' }] }),
@@ -122,7 +532,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2-beta.9');
+  assert.equal(built.adcp_version, '3.2-beta.10');
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');

@@ -57,10 +57,19 @@ export type BrandJsonResolverErrorCode =
  */
 export class BrandJsonResolverError extends Error {
   readonly code: BrandJsonResolverErrorCode;
-  constructor(code: BrandJsonResolverErrorCode, message: string) {
+  override readonly cause?: unknown;
+  /** HTTP status for `fetch_failed` responses, when a response was received. */
+  readonly httpStatus?: number;
+  constructor(
+    code: BrandJsonResolverErrorCode,
+    message: string,
+    details: { httpStatus?: number; cause?: unknown } = {}
+  ) {
     super(message);
     this.name = 'BrandJsonResolverError';
     this.code = code;
+    this.httpStatus = details.httpStatus;
+    this.cause = details.cause;
   }
 }
 
@@ -270,13 +279,32 @@ export class BrandJsonJwksResolver implements JwksResolver {
   }
 }
 
-interface FetchedBrandJson {
+export interface FetchedBrandJson {
   status: 'ok' | 'not_modified';
   finalUrl: string;
   data: unknown;
   etag?: string;
   cacheControl?: string;
 }
+
+export interface FetchBrandJsonOptions {
+  /** Entry-point URL. HTTPS and public addresses are required by default. */
+  startUrl: string;
+  /** ETag sent only to the entry URL for cache revalidation. */
+  currentEtag?: string;
+  /** Maximum JSON-level `authoritative_location` / `house` hops. Default 3, hard maximum 10. */
+  maxRedirects?: number;
+  /** Permit HTTP and private addresses for controlled development environments. */
+  allowPrivateIp?: boolean;
+  /** Whole-request deadline per hop. Default and hard maximum 10 seconds. */
+  timeoutMs?: number;
+  /** Response-body cap per hop. Default and hard maximum 256 KiB. */
+  maxBodyBytes?: number;
+}
+
+const MAX_BRAND_JSON_TIMEOUT_MS = 10_000;
+const MAX_BRAND_JSON_BODY_BYTES = 262_144;
+const MAX_BRAND_JSON_REDIRECTS = 10;
 
 /**
  * Fetch brand.json from `startUrl`, following `authoritative_location` and
@@ -287,17 +315,30 @@ interface FetchedBrandJson {
  * `{"house": "evil.com\\@victim.com"}` or `{"authoritative_location":
  * "http://169.254.169.254/..."}` is rejected at parse time rather than
  * relying on `ssrfSafeFetch` to catch every pathological shape.
+ *
+ * This low-level function is intentionally stateless. Callers MUST add
+ * response caching and a minimum refresh cooldown rather than invoking it on
+ * every authorization request. Prefer `BrandJsonJwksResolver` when resolving
+ * signing keys; it provides both safeguards.
  */
-async function fetchBrandJson(args: {
-  startUrl: string;
-  currentEtag?: string;
-  maxRedirects: number;
-  allowPrivateIp: boolean;
-}): Promise<FetchedBrandJson> {
+export async function fetchBrandJson(args: FetchBrandJsonOptions): Promise<FetchedBrandJson> {
+  const maxRedirects = boundedIntegerOption('maxRedirects', args.maxRedirects ?? DEFAULT_MAX_REDIRECTS, {
+    min: 0,
+    max: MAX_BRAND_JSON_REDIRECTS,
+  });
+  const timeoutMs = boundedIntegerOption('timeoutMs', args.timeoutMs ?? MAX_BRAND_JSON_TIMEOUT_MS, {
+    min: 1,
+    max: MAX_BRAND_JSON_TIMEOUT_MS,
+  });
+  const maxBodyBytes = boundedIntegerOption('maxBodyBytes', args.maxBodyBytes ?? MAX_BRAND_JSON_BODY_BYTES, {
+    min: 1,
+    max: MAX_BRAND_JSON_BODY_BYTES,
+  });
+  const allowPrivateIp = args.allowPrivateIp === true;
   const seen = new Set<string>();
-  let url = canonicalizeUrl(args.startUrl, args.allowPrivateIp);
+  let url = canonicalizeUrl(args.startUrl, allowPrivateIp);
 
-  for (let hop = 0; hop <= args.maxRedirects; hop++) {
+  for (let hop = 0; hop <= maxRedirects; hop++) {
     if (seen.has(url)) {
       throw new BrandJsonResolverError('redirect_loop', `brand.json redirect loop detected`);
     }
@@ -311,11 +352,18 @@ async function fetchBrandJson(args: {
     // a lie about the redirect target.
     if (hop === 0 && args.currentEtag) headers['if-none-match'] = args.currentEtag;
 
-    const res = await ssrfSafeFetch(url, {
-      method: 'GET',
-      headers,
-      allowPrivateIp: args.allowPrivateIp,
-    });
+    let res: Awaited<ReturnType<typeof ssrfSafeFetch>>;
+    try {
+      res = await ssrfSafeFetch(url, {
+        method: 'GET',
+        headers,
+        allowPrivateIp,
+        timeoutMs,
+        maxBodyBytes,
+      });
+    } catch (cause) {
+      throw new BrandJsonResolverError('fetch_failed', 'Unable to fetch brand.json', { cause });
+    }
 
     if (hop === 0 && res.status === 304) {
       return {
@@ -327,7 +375,9 @@ async function fetchBrandJson(args: {
       };
     }
     if (res.status !== 200) {
-      throw new BrandJsonResolverError('fetch_failed', `brand.json fetch returned HTTP ${res.status}`);
+      throw new BrandJsonResolverError('fetch_failed', `brand.json fetch returned HTTP ${res.status}`, {
+        httpStatus: res.status,
+      });
     }
 
     const text = Buffer.from(res.body).toString('utf8');
@@ -346,10 +396,10 @@ async function fetchBrandJson(args: {
     const house = typeof obj.house === 'string' ? obj.house : undefined;
 
     if (authoritative !== undefined) {
-      if (hop === args.maxRedirects) {
+      if (hop === maxRedirects) {
         throw new BrandJsonResolverError('redirect_depth_exceeded', `brand.json redirect depth exceeded`);
       }
-      url = canonicalizeUrl(authoritative, args.allowPrivateIp);
+      url = canonicalizeUrl(authoritative, allowPrivateIp);
       continue;
     }
     if (house !== undefined) {
@@ -360,10 +410,10 @@ async function fetchBrandJson(args: {
       if (!BARE_HOSTNAME.test(house)) {
         throw new BrandJsonResolverError('invalid_house', `brand.json "house" is not a bare hostname`);
       }
-      if (hop === args.maxRedirects) {
+      if (hop === maxRedirects) {
         throw new BrandJsonResolverError('redirect_depth_exceeded', `brand.json redirect depth exceeded`);
       }
-      url = canonicalizeUrl(`https://${house}/.well-known/brand.json`, args.allowPrivateIp);
+      url = canonicalizeUrl(`https://${house}/.well-known/brand.json`, allowPrivateIp);
       continue;
     }
 
@@ -385,6 +435,13 @@ async function fetchBrandJson(args: {
   }
 
   throw new BrandJsonResolverError('redirect_depth_exceeded', `brand.json redirect depth exceeded`);
+}
+
+function boundedIntegerOption(name: string, value: number, bounds: { min: number; max: number }): number {
+  if (!Number.isInteger(value) || value < bounds.min || value > bounds.max) {
+    throw new TypeError(`fetchBrandJson: ${name} must be an integer between ${bounds.min} and ${bounds.max}`);
+  }
+  return value;
 }
 
 /**
