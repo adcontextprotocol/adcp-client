@@ -750,6 +750,7 @@ test('modern serving honors the resolved AdCP MCP tool profile', async () => {
   const compactNames = compact.tools.map(tool => tool.name);
   assert.ok(compactNames.includes('list_products'));
   assert.ok(compactNames.includes('buy_products'));
+  assert.ok(compactNames.includes('get_principal'));
   assert.ok(compactNames.includes('sync_principal'));
   assert.ok(compactNames.includes('get_reporting_status'));
   assert.ok(compactNames.includes('sync_reporting_receipts'));
