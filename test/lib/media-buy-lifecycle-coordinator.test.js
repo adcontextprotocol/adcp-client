@@ -3694,7 +3694,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.10/
+      /advertises only AdCP versions newer than the client pin 3\.2\.0-beta\.11/
     );
   });
 
@@ -3724,7 +3724,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.10/
+      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-beta\.11/
     );
   });
 
@@ -3736,7 +3736,7 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.2\.0-beta\.11, which is newer than the client pin 3\.2\.0-beta\.10/
+      /served AdCP 3\.2\.0-beta\.12, which is newer than the client pin 3\.2\.0-beta\.11/
     );
   });
 
