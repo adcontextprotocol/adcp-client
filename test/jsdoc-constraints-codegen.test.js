@@ -83,6 +83,7 @@ describe('injectJsdocConstraints — synthetic end-to-end', () => {
         score: { type: 'number', minimum: 0, maximum: 100 },
         slug: { type: 'string', pattern: '^[a-z0-9_]+$' },
         short: { type: 'string', minLength: 1, maxLength: 50 },
+        capped: { type: 'array', items: { type: 'string' }, maxItems: 16 },
         created_at: { type: 'string', format: 'date-time' },
         nested: {
           type: 'object',
@@ -104,6 +105,7 @@ describe('injectJsdocConstraints — synthetic end-to-end', () => {
     assert.match(ts, /@pattern \^\[a-z0-9_\]\+\$/);
     assert.match(ts, /@minLength 1/);
     assert.match(ts, /@maxLength 50/);
+    assert.match(ts, /@maxItems 16/);
     assert.match(ts, /@format date-time/);
     assert.match(ts, /@format int/);
     assert.match(ts, /@minimum 5/, 'nested inner minimum lost — recursion broken');

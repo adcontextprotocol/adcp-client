@@ -5,6 +5,7 @@ import { compile } from 'json-schema-to-typescript';
 import path from 'path';
 import { injectJsdocConstraints, removeArrayLengthConstraints } from './schema-utils';
 import { resolveSchemaRefInCache, schemaRefToCacheRelativePath } from './schema-cache-ref';
+import { relaxArrayCardinalityTypes } from './typescript-array-cardinality';
 
 // Write file only if content differs (excluding timestamp)
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
@@ -4358,22 +4359,24 @@ async function generateTypes() {
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
-  const processedCoreTypes = normalizeTransformerParamJsonValueTypes(
-    relaxZodCompatibilityArrayTypes(
-      hardenTrustedMatchGeneratedTypes(
-        applyIndividualAssetDiscriminators(
-          addBackwardCompatTypeAliases(
-            simplifyForecastRange(
-              simplifyPriceBreakdown(
-                widenMediaBuyFeaturesIndexSignature(
-                  widenPostalAreaSupportIndexSignature(
-                    widenReportedOutcomeErrorIndexSignature(
-                      fixTypedIndexSignatures(
-                        removeResidualInlineIndexSignatureArms(
-                          applyKnownJstsAliases(
-                            namePostalAreaCountryBranch(
-                              renameKnownNumberedSemanticTypes(
-                                removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+  const processedCoreTypes = relaxArrayCardinalityTypes(
+    normalizeTransformerParamJsonValueTypes(
+      relaxZodCompatibilityArrayTypes(
+        hardenTrustedMatchGeneratedTypes(
+          applyIndividualAssetDiscriminators(
+            addBackwardCompatTypeAliases(
+              simplifyForecastRange(
+                simplifyPriceBreakdown(
+                  widenMediaBuyFeaturesIndexSignature(
+                    widenPostalAreaSupportIndexSignature(
+                      widenReportedOutcomeErrorIndexSignature(
+                        fixTypedIndexSignatures(
+                          removeResidualInlineIndexSignatureArms(
+                            applyKnownJstsAliases(
+                              namePostalAreaCountryBranch(
+                                renameKnownNumberedSemanticTypes(
+                                  removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                                )
                               )
                             )
                           )
@@ -4387,15 +4390,19 @@ async function generateTypes() {
           )
         )
       )
-    )
+    ),
+    { maxItemsOnly: true }
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 
   const toolTypesPath = path.join(libOutputDir, 'tools.generated.ts');
-  const processedToolTypes = normalizeTransformerParamJsonValueTypes(
-    relaxZodCompatibilityArrayTypes(
-      addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
-    )
+  const processedToolTypes = relaxArrayCardinalityTypes(
+    normalizeTransformerParamJsonValueTypes(
+      relaxZodCompatibilityArrayTypes(
+        addCanonicalToolTypeAliases(applyIndividualAssetDiscriminators(addBackwardCompatTypeAliases(toolTypes)), tools)
+      )
+    ),
+    { maxItemsOnly: true }
   );
   const toolsChanged = writeFileIfChanged(toolTypesPath, processedToolTypes);
 
