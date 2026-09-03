@@ -39,10 +39,16 @@ function stringArray(value: unknown): boolean {
 }
 
 function isReportingStatusIssue(value: unknown): boolean {
-  if (!isRecord(value) || !hasFields(value, ['code', 'severity', 'responsible_party', 'recommended_action'])) {
+  if (
+    !isRecord(value) ||
+    !hasFields(value, ['issue_id', 'code', 'severity', 'responsible_party', 'recommended_action'])
+  ) {
     return false;
   }
   return (
+    isNonEmptyString(value.issue_id) &&
+    value.issue_id.length <= 255 &&
+    /^[A-Za-z0-9_.:-]+$/.test(value.issue_id) &&
     [
       'REPORT_OVERDUE',
       'PRODUCTION_FAILED',

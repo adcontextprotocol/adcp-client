@@ -257,8 +257,8 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Profile projection seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.11',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.11'] },
+        adcpVersion: '3.2.0-rc.0',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.0'] },
         mediaBuy: {
           ...compactHandlers,
           getProducts: async () => ({ products: [], cache_scope: 'public' }),
@@ -290,8 +290,8 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Profile seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.11',
-        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-beta.11'] },
+        adcpVersion: '3.2.0-rc.0',
+        capabilities: { supported_versions: ['3.0.25', '3.1.18', '3.2.0-rc.0'] },
         mediaBuy: {
           ...compactHandlers,
           getProducts: async params => {
@@ -328,10 +328,10 @@ describe('createAdcpServer', () => {
       assert.ok(!names.includes('update_media_buy'), 'deprecated update alias should not be advertised');
       assert.ok(!names.includes('build_creative'), 'creative-builder tools are outside the media-buy role profile');
       assert.deepStrictEqual(listed._meta, {
-        adcp_version: '3.2.0-beta.11',
+        adcp_version: '3.2.0-rc.0',
         adcp_profile: 'media-buy',
       });
-      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-beta.11');
+      assert.strictEqual(listed.tools[0]._meta.adcp_version, '3.2.0-rc.0');
       const requestProposalsTool = listed.tools.find(tool => tool.name === 'request_proposals');
       const officialRequestSchema = JSON.parse(
         readFileSync(
@@ -384,7 +384,7 @@ describe('createAdcpServer', () => {
       const server = createAdcpServer({
         name: 'Migration seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.11',
+        adcpVersion: '3.2.0-rc.0',
         mcpToolProfile: 'all',
         mediaBuy: {
           ...compactHandlers,
@@ -1361,7 +1361,7 @@ describe('createAdcpServer', () => {
           acceptProposal: async () => ({}),
         },
       });
-      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-beta.11' });
+      const modern = await callTool(server, 'get_adcp_capabilities', { adcp_version: '3.2-rc.0' });
       assert.deepStrictEqual(modern.media_buy.lifecycle_tools, [
         'list_products',
         'request_proposals',
@@ -2806,7 +2806,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(status.task_type, 'sync_creatives');
       assert.strictEqual(status.protocol, 'media-buy');
       assert.strictEqual(status.has_webhook, true);
-      assert.strictEqual(status.adcp_version, '3.2-beta.11');
+      assert.strictEqual(status.adcp_version, '3.2-rc.0');
       assert.deepStrictEqual(status.result, { creatives: [{ creative_id: 'cr_1' }] });
       assert.deepStrictEqual(status.context, { trace_id: 'trace_1' });
 
@@ -2856,7 +2856,7 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.tasks[0].task_type, 'sync_creatives');
       assert.strictEqual(listed.tasks[0].has_webhook, true);
       assert.strictEqual(listed.pagination.total_count, 1);
-      assert.strictEqual(listed.adcp_version, '3.2-beta.11');
+      assert.strictEqual(listed.adcp_version, '3.2-rc.0');
 
       const buyerTwoList = await callTool(
         server,
@@ -2870,7 +2870,7 @@ describe('createAdcpServer', () => {
       const badCursor = await callToolRaw(server, 'list_tasks', { pagination: { cursor: 'not-a-number' } }, buyerOne);
       assert.strictEqual(badCursor.isError, true);
       assert.strictEqual(badCursor.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-beta.11');
+      assert.strictEqual(badCursor.structuredContent.adcp_version, '3.2-rc.0');
 
       const opaqueTaskId = 'opaque_' + 'x'.repeat(160);
       const opaque = await taskRegistry.create({
@@ -3371,12 +3371,12 @@ describe('createAdcpServer', () => {
       const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId }, extra);
       assert.strictEqual(status.isError, true);
       assert.strictEqual(status.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(status.structuredContent.adcp_version, '3.2-beta.11');
+      assert.strictEqual(status.structuredContent.adcp_version, '3.2-rc.0');
 
       const listed = await callToolRaw(server, 'list_tasks', {}, extra);
       assert.strictEqual(listed.isError, true);
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
-      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-beta.11');
+      assert.strictEqual(listed.structuredContent.adcp_version, '3.2-rc.0');
 
       const contextLeak = await callToolRaw(
         server,

@@ -1549,7 +1549,7 @@ Flow: `get_adcp_capabilities → get_products → sync_governance → create_med
 Flow: `get_adcp_capabilities → sync_accounts → sync_governance → sync_catalogs → build_creative → expect_substitution_safe → get_products → create_media_buy → sync_event_sources → log_event → provide_performance_feedback → get_media_buy_delivery`
 
 **Digital out-of-home — non-guaranteed** — DOOH seller for non-guaranteed venue and screen inventory with canonical screen formats and substantive play reporting.
-Flow: `get_adcp_capabilities → list_products → validate_input → sync_creatives → create_media_buy → comply_test_controller → get_media_buy_delivery`
+Flow: `get_adcp_capabilities → list_products → create_media_buy → validate_input → sync_creatives → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
 **Guaranteed media buy with human IO approval** — Seller agent that requires human-in-the-loop IO signing before guaranteed media buys go live.
 Flow: `get_adcp_capabilities → sync_accounts → get_products → create_media_buy → get_media_buys → sync_creatives → get_media_buy_delivery`
@@ -1706,8 +1706,11 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 **Read-tool idempotency_key tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade accept an optional idempotency_key without strict wrapper rejection.
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
 
-**Reporting Core tier** — Validates the required reporting.core tier: capability declaration with tier boundaries, and that a polling-only seller needs no receipt task, push notification, destination, or canonicalization surface.
+**Reporting Core declaration** — Validates that reporting.core is advertised without requiring optional reporting tiers or a sandbox controller.
 Flow: `get_adcp_capabilities`
+
+**Reporting Core lifecycle** — Validates reporting.core obligation-before-report behavior, clock-derived health, and explicit zero-row reporting.
+Flow: `comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status`
 
 **Schema compliance — signals protocol** — Validates that signals agent responses conform to AdCP schemas with all required fields present and correctly typed.
 Flow: `get_adcp_capabilities → get_signals`

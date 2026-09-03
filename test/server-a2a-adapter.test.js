@@ -385,8 +385,8 @@ describe('createA2AAdapter', () => {
       const adcp = createAdcpServer({
         name: '3.2 A2A task seller',
         version: '1.0.0',
-        adcpVersion: '3.2.0-beta.11',
-        capabilities: { supported_versions: ['3.1.18', '3.2.0-beta.11'] },
+        adcpVersion: '3.2.0-rc.0',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.0'] },
         toolVersions: { tasks_get: { max: '3.1' } },
         customTools: {
           tasks_get: {

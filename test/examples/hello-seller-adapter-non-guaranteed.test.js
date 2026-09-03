@@ -42,7 +42,7 @@ runHelloAdapterGates({
           sandbox: true,
         };
         const created = await callTool('create_media_buy', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           idempotency_key: 'sequential-budget-create-0001',
           account,
           brand: { domain: 'buyer.example' },
@@ -59,14 +59,14 @@ runHelloAdapterGates({
         assert.equal(buy.packages.length, 2);
 
         await callTool('update_media_buy', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           idempotency_key: 'sequential-budget-update-0001',
           account,
           media_buy_id: buy.media_buy_id,
           packages: [{ package_id: buy.packages[0].package_id, budget: 800 }],
         });
         await callTool('update_media_buy', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           idempotency_key: 'sequential-budget-update-0002',
           account,
           media_buy_id: buy.media_buy_id,
@@ -74,7 +74,7 @@ runHelloAdapterGates({
         });
 
         const read = await callTool('get_media_buys', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           account,
           media_buy_ids: [buy.media_buy_id],
         });
@@ -95,7 +95,7 @@ runHelloAdapterGates({
           sandbox: true,
         };
         const created = await callTool('create_media_buy', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           idempotency_key: 'terminal-budget-create-0001',
           account,
           brand: { domain: 'buyer.example' },
@@ -106,7 +106,7 @@ runHelloAdapterGates({
         const buy = created.structuredContent;
         assert.ok(buy?.media_buy_id, JSON.stringify(created));
         await callTool('update_media_buy', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           idempotency_key: 'terminal-budget-cancel-0001',
           account,
           media_buy_id: buy.media_buy_id,
@@ -114,7 +114,7 @@ runHelloAdapterGates({
         });
         const before = await fetch(`${mockUrl}/_debug/traffic`).then(response => response.json());
         const rejected = await callTool('update_media_buy', {
-          adcp_version: '3.2-beta.11',
+          adcp_version: '3.2-rc.0',
           idempotency_key: 'terminal-budget-update-0001',
           account,
           media_buy_id: buy.media_buy_id,

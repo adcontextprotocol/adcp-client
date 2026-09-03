@@ -118,7 +118,7 @@ describe('adcpVersion constructor option', () => {
 
     test('accepts pins that resolve to a bundled version', () => {
       // SDK bundles the current ADCP_VERSION. The full-semver pin,
-      // release-precision pin resolve to the same bundle. The 3.2 preview
+      // release-precision pin resolve to the same bundle. The 3.2 prerelease
       // deliberately rejects its moving prerelease-family alias.
       assert.strictEqual(resolveAdcpVersion(ADCP_VERSION), ADCP_VERSION);
       assert.strictEqual(resolveAdcpVersion(ADCP_RELEASE_PRECISION), ADCP_RELEASE_PRECISION);

@@ -74,7 +74,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // requirement or nested `additionalProperties: false` boundary from the
   // signed protocol schema. Preserve the stricter billing-evidence validator
   // until code generation represents those constraints directly.
-  get_reporting_status: GetReportingStatusResponseCurrentSchema,
+  get_reporting_status: schemas.GetReportingStatusResponseSchema.and(GetReportingStatusResponseCurrentSchema),
   sync_reporting_receipts: schemas.SyncReportingReceiptsResponseSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
 

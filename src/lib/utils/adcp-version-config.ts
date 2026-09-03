@@ -57,7 +57,7 @@ export function resolveAdcpVersion(adcpVersion: string | undefined): string {
   if (isMovingAdcpPrereleaseFamilyAlias(adcpVersion)) {
     throw new ConfigurationError(
       `adcpVersion ${JSON.stringify(adcpVersion)} is a moving prerelease-family alias. ` +
-        `Pin the exact 3.2 beta artifact (${JSON.stringify(currentReleasePrecision)}) instead.`,
+        `Pin the exact 3.2 prerelease artifact (${JSON.stringify(currentReleasePrecision)}) instead.`,
       'adcpVersion'
     );
   }

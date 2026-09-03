@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-03T14:32:21.501Z
+// Generated at: 2026-09-03T20:11:07.305Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -160,6 +160,8 @@ export const DAASTTrackingEventSchema = z.union([z.literal("impression"), z.lite
 export const DAASTVersionSchema = z.union([z.literal("1.0"), z.literal("1.1")]);
 
 export const DayOfWeekSchema = z.union([z.literal("monday"), z.literal("tuesday"), z.literal("wednesday"), z.literal("thursday"), z.literal("friday"), z.literal("saturday"), z.literal("sunday")]);
+
+export const DaypartTimezoneModeSchema = z.union([z.literal("inventory_local"), z.literal("iana")]);
 
 export const DelegationAuthoritySchema = z.union([z.literal("full"), z.literal("execute_only"), z.literal("propose_only")]);
 
@@ -733,6 +735,8 @@ export const PostalAreaSupportSchema = z.object({
     }
 });
 
+export const IANATimezoneIdentifierSchema = z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$"));
+
 export const BrowserSupportSchema = z.union([SupportedSchema, z.object({
         families: z.array(BrowserFamilySchema),
         ext: ExtensionObjectSchema.optional()
@@ -775,6 +779,12 @@ export const PositivePostalAreaSupportSchema = PostalAreaSupportSchema.and(z.obj
     at_plz: z.literal(true).optional()
 }).passthrough());
 
+export const DaypartSupportSchema = z.union([z.literal(true), z.object({
+        timezone_modes: z.array(DaypartTimezoneModeSchema),
+        iana_timezones: z.union([z.literal(true), z.array(IANATimezoneIdentifierSchema)]).optional(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough()]);
+
 export const PlaceCatalogSupportSchema = z.object({
     countries: z.record(z.string(), z.array(GeographicPlaceTypeSchema)),
     current_version: z.string(),
@@ -786,6 +796,11 @@ export const RequiredSchema = z.literal(true);
 
 export const MetroRequirementSchema = z.union([RequiredSchema, z.object({
         systems: z.array(MetroAreaSystemSchema)
+    }).passthrough()]);
+
+export const DaypartRequirementSchema = z.union([RequiredSchema, z.object({
+        timezone_modes: z.array(DaypartTimezoneModeSchema),
+        iana_timezones: z.array(IANATimezoneIdentifierSchema).optional()
     }).passthrough()]);
 
 export const BrowserRequirementSchema = z.union([RequiredSchema, z.object({
@@ -996,6 +1011,7 @@ export const DaypartTargetSchema = z.object({
     days: z.array(DayOfWeekSchema),
     start_hour: z.number().int().gte(0).lte(23),
     end_hour: z.number().int().gte(1).lte(24),
+    timezone: z.union([z.literal("inventory_local"), IANATimezoneIdentifierSchema]).optional(),
     label: z.string().optional()
 }).passthrough();
 
@@ -3195,6 +3211,11 @@ export const DemographicTargetingCapabilitySchema = z.object({
     age: z.object({}).passthrough()
 }).passthrough();
 
+export const ProductIdentitySchema = z.object({
+    persistent_identifier: z.boolean(),
+    reach_methodology: z.string().min(1).optional()
+}).passthrough();
+
 export const ProductCardReferenceAssetSchema = z.object({}).passthrough().merge(z.object({
     role: z.union([z.literal("coverage_map"), z.literal("sample_render"), z.literal("environment_photo"), z.literal("media_kit"), z.literal("logo"), z.literal("other")]),
     role_label: z.string().optional(),
@@ -3469,6 +3490,8 @@ export const CPPPricingOptionSchema = z.object({
 export const DoohParametersSchema = z.object({
     type: z.literal("dooh"),
     sov_percentage: z.number().gte(0).lte(100).optional(),
+    slot_span: z.number().optional(),
+    loop_position: z.string().optional(),
     loop_duration_seconds: z.number().int().gte(1).optional(),
     min_plays_per_hour: z.number().int().gte(1).optional(),
     venue_package: z.string().optional(),
@@ -3898,6 +3921,67 @@ export const CanonicalMetricQualifierSchema = z.object({
     lift_dimension: LiftDimensionSchema.optional()
 }).strict();
 
+export const CanonicalReportingCapabilitiesSchema = z.object({
+    available_reporting_frequencies: z.array(ReportingFrequencySchema),
+    expected_delay_minutes: z.number().int().gte(0),
+    timezone: z.string(),
+    supports_webhooks: z.boolean(),
+    available_metrics: z.array(AvailableMetricSchema),
+    vendor_metrics: z.array(z.object({
+        vendor: BrandKeySchema,
+        metric_id: VendorMetricIDSchema
+    }).passthrough()).optional(),
+    supports_creative_breakdown: z.boolean().optional(),
+    supports_format_breakdown: z.boolean().optional(),
+    supports_keyword_breakdown: z.boolean().optional(),
+    supports_geo_breakdown: GeographicBreakdownSupportSchema.optional(),
+    supports_device_type_breakdown: z.boolean().optional(),
+    supports_device_platform_breakdown: z.boolean().optional(),
+    supports_audience_breakdown: z.boolean().optional(),
+    supports_demographic_breakdown: DemographicReportingCapabilitySchema.optional(),
+    supports_placement_breakdown: z.boolean().optional(),
+    supports_property_breakdown: z.boolean().optional(),
+    supports_collection_breakdown: z.boolean().optional(),
+    supports_installment_breakdown: z.boolean().optional(),
+    supports_collection_property_breakdown: z.boolean().optional(),
+    supports_installment_property_breakdown: z.boolean().optional(),
+    supports_placement_property_breakdown: z.boolean().optional(),
+    supports_spot_breakdown: SpotReportingCapabilitySchema.optional(),
+    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
+    windowed_pull_granularities: z.array(ReportingFrequencySchema).optional(),
+    measurement_windows: z.array(MeasurementWindowSchema).optional()
+}).passthrough();
+
+export const CanonicalMeasurementTermsSchema = z.object({
+    billing_measurement: z.object({
+        vendor: BrandKeySchema,
+        max_variance_percent: z.number().gte(0).lt(100).optional(),
+        measurement_window: z.string().min(1).optional(),
+        finalization_deadline_hours: z.number().int().gte(0).optional()
+    }).passthrough().optional(),
+    makegood_policy: z.object({
+        available_remedies: z.array(MakegoodRemedySchema)
+    }).passthrough().optional()
+}).passthrough();
+
+export const CanonicalPerformanceStandardSchema = z.object({
+    metric: PerformanceStandardMetricSchema,
+    threshold: z.number().gte(0).lte(1),
+    standard: ViewabilityStandardSchema.optional(),
+    vendor: BrandKeySchema
+}).passthrough();
+
+export const SignalTargetingRulesSchema = z.object({
+    resolution_model: z.union([z.literal("direct_targeting"), z.literal("seller_planned")]).optional(),
+    selection_mode: z.union([z.literal("optional"), z.literal("required"), z.literal("fixed")]).optional(),
+    min_selected_signals: z.number().int().gte(0).optional(),
+    max_selected_signals: z.number().int().gte(1).optional(),
+    max_selected_per_group: z.number().int().gte(1).optional(),
+    max_signal_targeting_groups: z.number().int().gte(1).optional(),
+    max_signals_per_targeting_group: z.number().int().gte(1).optional(),
+    selection_group_rules: z.array(SignalSelectionGroupRuleSchema).optional()
+}).passthrough();
+
 export const CanonicalAudienceEvidenceSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     evidence_id: z.string().min(1),
     snapshot_id: z.string().min(1),
@@ -3980,6 +4064,28 @@ export const CanonicalAudienceEvidenceSchema = z.object({}).passthrough().merge(
     attestation_digests: z.array(z.string()).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
+
+export const CanonicalAudienceEvidenceSelectionSchema = z.object({
+    evidence_id: z.string().min(1),
+    snapshot_id: z.string().min(1),
+    version: z.string().min(1),
+    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
+    decision_use: z.union([z.literal("recommendation"), z.literal("eligibility"), z.literal("package_construction")]),
+    evidence: CanonicalAudienceEvidenceSchema.optional(),
+    verified_attestation_digests: z.array(z.string()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const InventoryListApplicationSchema = z.union([PropertyListApplicationSchema, CollectionListApplicationSchema]);
+
+export const CanonicalProductActionSchema = z.object({
+    action: CanonicalMediaBuyActionNameSchema,
+    modes: z.array(CanonicalMediaBuyActionModeSchema),
+    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
+    sla: SLAWindowSchema.optional(),
+    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
+    terms_ref: z.string().optional()
+}).passthrough();
 
 export const RequestProposalsAsyncSubmittedSchema = CompactTaskSubmittedSchema;
 
@@ -4203,25 +4309,6 @@ export const AudienceEvidencePinSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CanonicalMeasurementTermsSchema = z.object({
-    billing_measurement: z.object({
-        vendor: BrandKeySchema,
-        max_variance_percent: z.number().gte(0).lt(100).optional(),
-        measurement_window: z.string().min(1).optional(),
-        finalization_deadline_hours: z.number().int().gte(0).optional()
-    }).passthrough().optional(),
-    makegood_policy: z.object({
-        available_remedies: z.array(MakegoodRemedySchema)
-    }).passthrough().optional()
-}).passthrough();
-
-export const CanonicalPerformanceStandardSchema = z.object({
-    metric: PerformanceStandardMetricSchema,
-    threshold: z.number().gte(0).lte(1),
-    standard: ViewabilityStandardSchema.optional(),
-    vendor: BrandKeySchema
-}).passthrough();
-
 export const CanonicalForecastVendorMetricValueSchema = z.object({
     vendor: BrandKeySchema,
     metric_id: VendorMetricIDSchema,
@@ -4229,70 +4316,6 @@ export const CanonicalForecastVendorMetricValueSchema = z.object({
     unit: z.string().optional(),
     measurable_impressions: ForecastRangeSchema.optional(),
     breakdown: z.object({}).passthrough().optional()
-}).passthrough();
-
-export const CanonicalReportingCapabilitiesSchema = z.object({
-    available_reporting_frequencies: z.array(ReportingFrequencySchema),
-    expected_delay_minutes: z.number().int().gte(0),
-    timezone: z.string(),
-    supports_webhooks: z.boolean(),
-    available_metrics: z.array(AvailableMetricSchema),
-    vendor_metrics: z.array(z.object({
-        vendor: BrandKeySchema,
-        metric_id: VendorMetricIDSchema
-    }).passthrough()).optional(),
-    supports_creative_breakdown: z.boolean().optional(),
-    supports_format_breakdown: z.boolean().optional(),
-    supports_keyword_breakdown: z.boolean().optional(),
-    supports_geo_breakdown: GeographicBreakdownSupportSchema.optional(),
-    supports_device_type_breakdown: z.boolean().optional(),
-    supports_device_platform_breakdown: z.boolean().optional(),
-    supports_audience_breakdown: z.boolean().optional(),
-    supports_demographic_breakdown: DemographicReportingCapabilitySchema.optional(),
-    supports_placement_breakdown: z.boolean().optional(),
-    supports_property_breakdown: z.boolean().optional(),
-    supports_collection_breakdown: z.boolean().optional(),
-    supports_installment_breakdown: z.boolean().optional(),
-    supports_collection_property_breakdown: z.boolean().optional(),
-    supports_installment_property_breakdown: z.boolean().optional(),
-    supports_placement_property_breakdown: z.boolean().optional(),
-    supports_spot_breakdown: SpotReportingCapabilitySchema.optional(),
-    date_range_support: z.union([z.literal("date_range"), z.literal("lifetime_only")]),
-    windowed_pull_granularities: z.array(ReportingFrequencySchema).optional(),
-    measurement_windows: z.array(MeasurementWindowSchema).optional()
-}).passthrough();
-
-export const SignalTargetingRulesSchema = z.object({
-    resolution_model: z.union([z.literal("direct_targeting"), z.literal("seller_planned")]).optional(),
-    selection_mode: z.union([z.literal("optional"), z.literal("required"), z.literal("fixed")]).optional(),
-    min_selected_signals: z.number().int().gte(0).optional(),
-    max_selected_signals: z.number().int().gte(1).optional(),
-    max_selected_per_group: z.number().int().gte(1).optional(),
-    max_signal_targeting_groups: z.number().int().gte(1).optional(),
-    max_signals_per_targeting_group: z.number().int().gte(1).optional(),
-    selection_group_rules: z.array(SignalSelectionGroupRuleSchema).optional()
-}).passthrough();
-
-export const CanonicalAudienceEvidenceSelectionSchema = z.object({
-    evidence_id: z.string().min(1),
-    snapshot_id: z.string().min(1),
-    version: z.string().min(1),
-    content_digest: z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")),
-    decision_use: z.union([z.literal("recommendation"), z.literal("eligibility"), z.literal("package_construction")]),
-    evidence: CanonicalAudienceEvidenceSchema.optional(),
-    verified_attestation_digests: z.array(z.string()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const InventoryListApplicationSchema = z.union([PropertyListApplicationSchema, CollectionListApplicationSchema]);
-
-export const CanonicalProductActionSchema = z.object({
-    action: CanonicalMediaBuyActionNameSchema,
-    modes: z.array(CanonicalMediaBuyActionModeSchema),
-    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
-    sla: SLAWindowSchema.optional(),
-    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
-    terms_ref: z.string().optional()
 }).passthrough();
 
 export const CanonicalDOOHScreenResolutionSchema = z.object({
@@ -7623,7 +7646,7 @@ export const OutcomeTargetSchema = z.object({
     }
 });
 
-export const ProductResponseFieldsSchema = z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("expires_at"), z.literal("allowed_actions")]));
+export const ProductResponseFieldsSchema = z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("identity"), z.literal("expires_at"), z.literal("allowed_actions")]));
 
 export const ProductRefinementRequestsSchema = z.array(z.union([z.object({
         scope: z.literal("request"),
@@ -8405,7 +8428,7 @@ export const TargetingOverlayRequirementsSchema = z.object({
             geometry: RequiredSchema.optional(),
             transport_modes: z.array(TransportModeSchema).optional()
         }).passthrough()]).optional(),
-    daypart_targets: RequiredSchema.optional(),
+    daypart_targets: DaypartRequirementSchema.optional(),
     audience_include: RequiredSchema.optional(),
     audience_exclude: RequiredSchema.optional(),
     signal_targeting_groups: RequiredSchema.optional(),
@@ -8435,6 +8458,57 @@ export const TargetingOverlayRequirementsSchema = z.object({
 export const BiddingPolicyCapabilitySchema = z.object({
     media_buy: ScopeCapabilitySchema.optional(),
     package: ScopeCapabilitySchema.optional()
+}).passthrough();
+
+export const TargetingOverlaySupportSchema = z.object({
+    geo_countries: CountrySupportSchema.optional(),
+    geo_countries_exclude: CountrySupportSchema.optional(),
+    geo_regions: z.union([SupportedSchema, GeographicRegionSupportSchema]).optional(),
+    geo_regions_exclude: z.union([SupportedSchema, GeographicRegionSupportSchema]).optional(),
+    geo_metros: MetroSupportSchema.optional(),
+    geo_metros_exclude: MetroSupportSchema.optional(),
+    geo_places: PlaceSupportSchema.optional(),
+    geo_places_exclude: PlaceSupportSchema.optional(),
+    geo_postal_areas: z.union([SupportedSchema, PositivePostalAreaSupportSchema]).optional(),
+    geo_postal_areas_exclude: z.union([SupportedSchema, PositivePostalAreaSupportSchema]).optional(),
+    geo_proximity: z.union([SupportedSchema, z.object({
+            radius: SupportedSchema.optional(),
+            travel_time: SupportedSchema.optional(),
+            geometry: SupportedSchema.optional(),
+            transport_modes: z.array(TransportModeSchema).optional(),
+            max_values_per_package: z.int().min(1).optional(),
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough()]).optional(),
+    daypart_targets: DaypartSupportSchema.optional(),
+    audience_include: SupportedSchema.optional(),
+    audience_exclude: SupportedSchema.optional(),
+    signal_targeting_groups: SupportedSchema.optional(),
+    demographics: z.union([SupportedSchema, z.object({
+            age: SupportedSchema,
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough()]).optional(),
+    frequency_cap: SupportedSchema.optional(),
+    property_list: SupportedSchema.optional(),
+    property_list_exclude: SupportedSchema.optional(),
+    collection_list: SupportedSchema.optional(),
+    collection_list_exclude: SupportedSchema.optional(),
+    placement_selection: z.union([SupportedSchema, z.object({
+            max_values_per_package: z.int().min(1).optional(),
+            max_packages: z.int().min(1).optional(),
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough()]).optional(),
+    age_restriction: SupportedSchema.optional(),
+    device_platform: SupportedSchema.optional(),
+    device_platform_exclude: SupportedSchema.optional(),
+    device_type: SupportedSchema.optional(),
+    device_type_exclude: SupportedSchema.optional(),
+    browser: BrowserSupportSchema.optional(),
+    browser_exclude: BrowserSupportSchema.optional(),
+    store_catchments: SupportedSchema.optional(),
+    language: SupportedSchema.optional(),
+    keyword_targets: KeywordSupportSchema.optional(),
+    negative_keywords: KeywordSupportSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 export const CanonicalDOOHPlacementAttributesSchema = z.object({
@@ -11763,57 +11837,6 @@ export const DeliveryForecastSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const TargetingOverlaySupportSchema = z.object({
-    geo_countries: CountrySupportSchema.optional(),
-    geo_countries_exclude: CountrySupportSchema.optional(),
-    geo_regions: z.union([SupportedSchema, GeographicRegionSupportSchema]).optional(),
-    geo_regions_exclude: z.union([SupportedSchema, GeographicRegionSupportSchema]).optional(),
-    geo_metros: MetroSupportSchema.optional(),
-    geo_metros_exclude: MetroSupportSchema.optional(),
-    geo_places: PlaceSupportSchema.optional(),
-    geo_places_exclude: PlaceSupportSchema.optional(),
-    geo_postal_areas: z.union([SupportedSchema, PositivePostalAreaSupportSchema]).optional(),
-    geo_postal_areas_exclude: z.union([SupportedSchema, PositivePostalAreaSupportSchema]).optional(),
-    geo_proximity: z.union([SupportedSchema, z.object({
-            radius: SupportedSchema.optional(),
-            travel_time: SupportedSchema.optional(),
-            geometry: SupportedSchema.optional(),
-            transport_modes: z.array(TransportModeSchema).optional(),
-            max_values_per_package: z.int().min(1).optional(),
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).optional(),
-    daypart_targets: SupportedSchema.optional(),
-    audience_include: SupportedSchema.optional(),
-    audience_exclude: SupportedSchema.optional(),
-    signal_targeting_groups: SupportedSchema.optional(),
-    demographics: z.union([SupportedSchema, z.object({
-            age: SupportedSchema,
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).optional(),
-    frequency_cap: SupportedSchema.optional(),
-    property_list: SupportedSchema.optional(),
-    property_list_exclude: SupportedSchema.optional(),
-    collection_list: SupportedSchema.optional(),
-    collection_list_exclude: SupportedSchema.optional(),
-    placement_selection: z.union([SupportedSchema, z.object({
-            max_values_per_package: z.int().min(1).optional(),
-            max_packages: z.int().min(1).optional(),
-            ext: ExtensionObjectSchema.optional()
-        }).passthrough()]).optional(),
-    age_restriction: SupportedSchema.optional(),
-    device_platform: SupportedSchema.optional(),
-    device_platform_exclude: SupportedSchema.optional(),
-    device_type: SupportedSchema.optional(),
-    device_type_exclude: SupportedSchema.optional(),
-    browser: BrowserSupportSchema.optional(),
-    browser_exclude: BrowserSupportSchema.optional(),
-    store_catchments: SupportedSchema.optional(),
-    language: SupportedSchema.optional(),
-    keyword_targets: KeywordSupportSchema.optional(),
-    negative_keywords: KeywordSupportSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const TrackerExecutionContractSchema = z.object({
     complete: z.boolean(),
     honored: z.array(TrackerExecutionSelectorSchema)
@@ -12371,6 +12394,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
     signal_targeting_allowed: z.boolean().optional(),
     demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
     overlay_support: TargetingOverlaySupportSchema.optional(),
+    identity: ProductIdentitySchema.optional(),
     targeting_resolution: ProductTargetingResolutionSchema.optional(),
     audience_evidence: z.array(AudienceEvidenceSchema).optional(),
     audience_evidence_selections: z.array(AudienceEvidenceSelectionSchema).optional(),
@@ -12488,6 +12512,33 @@ export const CanonicalFormatOptionSchema = z.object({
     format_schema: PlatformExtensionReferenceSchema.optional()
 }).passthrough();
 
+export const CanonicalProductPlacementSchema = z.object({
+    kind: z.union([z.literal("publisher_ref"), z.literal("seller_inline")]),
+    placement_id: z.string().min(1),
+    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
+    seller_agent: SellerAgentReferenceSchema.optional(),
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    mode: z.union([z.literal("targetable"), z.literal("included")]),
+    tags: z.array(z.string()).optional(),
+    format_options: z.array(CanonicalFormatOptionSchema).optional(),
+    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
+    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
+    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
+    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
+    identifiers: z.array(z.object({
+        type: PropertyIdentifierTypesSchema,
+        value: z.string()
+    }).passthrough()).optional(),
+    dooh_placement_attributes: CanonicalDOOHPlacementAttributesSchema.optional()
+}).passthrough().and(z.union([z.object({
+        kind: z.literal("publisher_ref")
+    }).passthrough(), z.object({
+        kind: z.literal("seller_inline")
+    }).passthrough()]));
+
+export const TargetingOverlaySupport1Schema = TargetingOverlaySupportSchema;
+
 export const AssetVariantSchema = z.union([ImageAssetSchema, VideoAssetSchema, AudioAssetSchema, VASTAssetSchema, DisplayTagAssetSchema, TextAssetSchema, URLAssetSchema, HTMLAssetSchema, JavaScriptAssetSchema, ZipAssetSchema, WebhookAssetSchema, CSSAssetSchema, DAASTAssetSchema, MarkdownAssetSchema, BriefAssetSchema, CatalogAssetSchema, PublishedPostAssetSchema, CardAssetSchema, PixelTrackerAssetSchema, VASTTrackerAssetSchema, DAASTTrackerAssetSchema]);
 
 export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object({
@@ -12584,45 +12635,6 @@ export const CanonicalForecastPointSchema = z.object({
         standard: ViewabilityStandardSchema.optional()
     }).passthrough().optional(),
     vendor_metric_values: z.array(CanonicalForecastVendorMetricValueSchema).optional()
-}).passthrough();
-
-export const CanonicalProductPlacementSchema = z.object({
-    kind: z.union([z.literal("publisher_ref"), z.literal("seller_inline")]),
-    placement_id: z.string().min(1),
-    publisher_domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).optional(),
-    seller_agent: SellerAgentReferenceSchema.optional(),
-    name: z.string().min(1).optional(),
-    description: z.string().optional(),
-    mode: z.union([z.literal("targetable"), z.literal("included")]),
-    tags: z.array(z.string()).optional(),
-    format_options: z.array(CanonicalFormatOptionSchema).optional(),
-    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
-    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
-    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
-    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
-    identifiers: z.array(z.object({
-        type: PropertyIdentifierTypesSchema,
-        value: z.string()
-    }).passthrough()).optional(),
-    dooh_placement_attributes: CanonicalDOOHPlacementAttributesSchema.optional()
-}).passthrough().and(z.union([z.object({
-        kind: z.literal("publisher_ref")
-    }).passthrough(), z.object({
-        kind: z.literal("seller_inline")
-    }).passthrough()]));
-
-export const CanonicalDeliveryForecastSchema = z.object({
-    points: z.array(CanonicalForecastPointSchema),
-    forecast_range_unit: ForecastRangeUnitSchema.optional(),
-    method: ForecastMethodSchema,
-    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
-    demographic_system: DemographicSystemSchema.optional(),
-    demographic: z.string().optional(),
-    measurement_source: z.string().max(64).regex(new RegExp("^[a-z0-9_]+$")).optional(),
-    reach_unit: ReachUnitSchema.optional(),
-    generated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
 const CreativeAssetValueSchema: z.ZodType = z.unknown().superRefine((value, ctx) => {
@@ -13821,46 +13833,6 @@ export const VehicleItemSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CanonicalProductSchema = z.object({
-    product_id: z.string().min(1),
-    name: z.string().min(1),
-    description: z.string().optional(),
-    publisher_properties: z.array(PublisherPropertySelectorSchema.and(z.object({}).passthrough())).optional(),
-    channels: z.array(MediaChannelSchema).optional(),
-    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
-    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
-    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
-    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
-    format_options: z.array(CanonicalFormatOptionSchema).optional(),
-    placements: z.array(CanonicalProductPlacementSchema).optional(),
-    delivery_type: DeliveryTypeSchema.optional(),
-    exclusivity: ExclusivitySchema.optional(),
-    pricing_options: z.array(CanonicalPricingOptionSchema).optional(),
-    forecast: CanonicalDeliveryForecastSchema.optional(),
-    reporting_capabilities: CanonicalReportingCapabilitiesSchema.optional(),
-    measurement_terms: CanonicalMeasurementTermsSchema.optional(),
-    performance_standards: z.array(CanonicalPerformanceStandardSchema).optional(),
-    catalog_types: z.array(CatalogTypeSchema).optional(),
-    signal_targeting_allowed: z.boolean().optional(),
-    signal_targeting_rules: SignalTargetingRulesSchema.optional(),
-    demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
-    audience_evidence: z.array(CanonicalAudienceEvidenceSchema).optional(),
-    audience_evidence_selections: z.array(CanonicalAudienceEvidenceSelectionSchema).optional(),
-    max_optimization_goals: z.number().int().gte(0).optional(),
-    catalog_match: z.object({
-        matched_gtins: z.array(z.string()).optional(),
-        matched_ids: z.array(z.string()).optional(),
-        matched_count: z.number().int().gte(0).optional(),
-        submitted_count: z.number().int().gte(0)
-    }).passthrough().optional(),
-    list_applications: z.array(InventoryListApplicationSchema).optional(),
-    brief_relevance: z.string().optional(),
-    expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    allowed_actions: z.array(CanonicalProductActionSchema).optional(),
-    acceptance_policy_profile_ids: AcceptancePolicyProfileIDsSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const Product1Schema = ProductSchema;
 
 export const WholesaleSignalObjectSchema = z.object({
@@ -13886,104 +13858,6 @@ export const WholesaleSignalObjectSchema = z.object({
     deployments: z.array(DeploymentSchema),
     pricing_options: z.array(VendorPricingOptionSchema).optional()
 }).passthrough();
-
-export const WholesaleFeedEventSchema: z.ZodType = z.object({
-    event_id: z.uuid(),
-    event_type: z.union([z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")]),
-    entity_type: z.union([z.literal("product"), z.literal("signal"), z.literal("feed")]),
-    entity_id: z.string(),
-    created_at: z.iso.datetime(),
-    payload: z.object({}).passthrough()
-}).passthrough().and(z.union([z.object({
-        event_type: z.literal("product.created"),
-        entity_type: z.literal("product").optional(),
-        payload: z.object({
-            product_id: z.string(),
-            product: ProductSchema.optional(),
-            canonical_product: CanonicalProductSchema.optional(),
-            applies_to: CacheLayerScopeSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("product.updated"),
-        entity_type: z.literal("product").optional(),
-        payload: z.object({
-            product_id: z.string(),
-            product: Product1Schema.optional(),
-            canonical_product: CanonicalProductSchema.optional(),
-            changed_fields: z.array(z.string()).optional(),
-            applies_to: CacheLayerScopeSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("product.priced"),
-        entity_type: z.literal("product").optional(),
-        payload: z.object({
-            product_id: z.string(),
-            pricing_options: z.array(PricingOptionSchema).optional(),
-            canonical_pricing_options: z.array(CanonicalPricingOptionSchema).optional(),
-            previous_pricing_option_ids: z.array(z.string()).optional(),
-            effective_at: z.iso.datetime().optional(),
-            retracts_event_id: z.uuid().optional(),
-            applies_to: CacheLayerScopeSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("product.removed"),
-        entity_type: z.literal("product").optional(),
-        payload: z.object({
-            product_id: z.string(),
-            removal_reason: RemovalReasonSchema.optional(),
-            applies_to: CacheLayerScopeSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("signal.created"),
-        entity_type: z.literal("signal").optional(),
-        payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
-            signal_ref: SignalRefSchema.optional(),
-            applies_to: CacheLayerScopeSchema,
-            signal: WholesaleSignalObjectSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("signal.updated"),
-        entity_type: z.literal("signal").optional(),
-        payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
-            signal_ref: SignalRefSchema.optional(),
-            changed_fields: z.array(z.string()).optional(),
-            applies_to: CacheLayerScopeSchema,
-            signal: WholesaleSignalObjectSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("signal.priced"),
-        entity_type: z.literal("signal").optional(),
-        payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
-            signal_ref: SignalRefSchema.optional(),
-            pricing_options: z.array(VendorPricingOptionSchema),
-            previous_pricing_option_ids: z.array(z.string()).optional(),
-            effective_at: z.iso.datetime().optional(),
-            retracts_event_id: z.uuid().optional(),
-            applies_to: CacheLayerScopeSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("signal.removed"),
-        entity_type: z.literal("signal").optional(),
-        payload: z.object({
-            signal_agent_segment_id: z.string().min(1),
-            signal_ref: SignalRefSchema.optional(),
-            removal_reason: RemovalReasonSchema.optional(),
-            applies_to: CacheLayerScopeSchema
-        }).passthrough().optional()
-    }).passthrough(), z.object({
-        event_type: z.literal("wholesale_feed.bulk_change"),
-        entity_type: z.literal("feed").optional(),
-        payload: z.object({
-            summary: z.string(),
-            affected_count: z.int().min(1),
-            recommendation: z.literal("wholesale_resync").optional(),
-            applies_to: CacheLayerScopeSchema,
-            affected_entity_type: z.union([z.literal("product"), z.literal("signal")])
-        }).passthrough().optional()
-    }).passthrough()]));
 
 export const GovernanceAgentNotAcceptedDetailsSchema = z.union([z.object({
         disclosure: z.literal("disclosed"),
@@ -14178,51 +14052,19 @@ export const ProductDiscoveryCriteriaSchema = z.object({
     ext: z.object({}).passthrough().optional()
 }).passthrough();
 
-export const ListProductsResponseSchema = z.object({
-    outcome: z.union([z.literal("listed"), z.literal("unchanged")]).optional(),
-    products: z.array(CanonicalProductSchema).optional(),
-    next_cursor: z.string().min(1).optional(),
-    feed_version: z.string().optional(),
-    pricing_version: z.string().optional(),
-    cache_scope: z.union([z.literal("public"), z.literal("account")]).optional(),
-    incomplete: z.array(z.object({
-        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
-        description: z.string().min(1),
-        estimated_wait: DurationSchema.optional()
-    }).passthrough()).optional(),
-    replayed: z.literal(true).optional(),
-    context: ContextObjectSchema.optional(),
+export const CanonicalDeliveryForecastSchema = z.object({
+    points: z.array(CanonicalForecastPointSchema),
+    forecast_range_unit: ForecastRangeUnitSchema.optional(),
+    method: ForecastMethodSchema,
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
+    demographic_system: DemographicSystemSchema.optional(),
+    demographic: z.string().optional(),
+    measurement_source: z.string().max(64).regex(new RegExp("^[a-z0-9_]+$")).optional(),
+    reach_unit: ReachUnitSchema.optional(),
+    generated_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    valid_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough().and(z.union([z.object({
-        outcome: z.literal("listed"),
-        products: z.array(CanonicalProductSchema),
-        next_cursor: z.string().min(1).optional(),
-        feed_version: z.string(),
-        pricing_version: z.string().optional(),
-        cache_scope: z.union([z.literal("public"), z.literal("account")]),
-        incomplete: z.array(z.object({
-            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
-            description: z.string().min(1),
-            estimated_wait: DurationSchema.optional()
-        }).passthrough()).optional(),
-        replayed: z.literal(true).optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough(), z.object({
-        outcome: z.literal("unchanged"),
-        next_cursor: z.string().min(1).optional(),
-        feed_version: z.string(),
-        pricing_version: z.string().optional(),
-        cache_scope: z.union([z.literal("public"), z.literal("account")]),
-        incomplete: z.array(z.object({
-            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
-            description: z.string().min(1),
-            estimated_wait: DurationSchema.optional()
-        }).passthrough()).optional(),
-        replayed: z.literal(true).optional(),
-        context: ContextObjectSchema.optional(),
-        ext: ExtensionObjectSchema.optional()
-    }).passthrough()]));
+}).passthrough();
 
 export const RequestProposalsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -14303,6 +14145,48 @@ export const RefineProposalsRequestSchema = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     refinements: z.array(ProposalRefinementSchema).max(25)
 }).passthrough();
+
+export const CanonicalProductSchema = z.object({}).passthrough().merge(z.object({
+    product_id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().optional(),
+    publisher_properties: z.array(PublisherPropertySelectorSchema.and(z.object({}).passthrough())).optional(),
+    channels: z.array(MediaChannelSchema).optional(),
+    video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
+    audio_distribution_types: z.array(AudioDistributionTypeSchema).optional(),
+    sponsored_placement_types: z.array(SponsoredPlacementTypeSchema).optional(),
+    social_placement_surfaces: z.array(SocialPlacementSurfaceSchema).optional(),
+    format_options: z.array(CanonicalFormatOptionSchema).optional(),
+    placements: z.array(CanonicalProductPlacementSchema).optional(),
+    delivery_type: DeliveryTypeSchema.optional(),
+    exclusivity: ExclusivitySchema.optional(),
+    pricing_options: z.array(CanonicalPricingOptionSchema).optional(),
+    forecast: CanonicalDeliveryForecastSchema.optional(),
+    reporting_capabilities: CanonicalReportingCapabilitiesSchema.optional(),
+    measurement_terms: CanonicalMeasurementTermsSchema.optional(),
+    performance_standards: z.array(CanonicalPerformanceStandardSchema).optional(),
+    catalog_types: z.array(CatalogTypeSchema).optional(),
+    signal_targeting_allowed: z.boolean().optional(),
+    signal_targeting_rules: SignalTargetingRulesSchema.optional(),
+    demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
+    overlay_support: TargetingOverlaySupportSchema.optional(),
+    identity: ProductIdentitySchema.optional(),
+    audience_evidence: z.array(CanonicalAudienceEvidenceSchema).optional(),
+    audience_evidence_selections: z.array(CanonicalAudienceEvidenceSelectionSchema).optional(),
+    max_optimization_goals: z.number().int().gte(0).optional(),
+    catalog_match: z.object({
+        matched_gtins: z.array(z.string()).optional(),
+        matched_ids: z.array(z.string()).optional(),
+        matched_count: z.number().int().gte(0).optional(),
+        submitted_count: z.number().int().gte(0)
+    }).passthrough().optional(),
+    list_applications: z.array(InventoryListApplicationSchema).optional(),
+    brief_relevance: z.string().optional(),
+    expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    allowed_actions: z.array(CanonicalProductActionSchema).optional(),
+    acceptance_policy_profile_ids: AcceptancePolicyProfileIDsSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
 
 export const BuyProductsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -16883,7 +16767,7 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
         message: "Invalid input: Should pass single schema. Passed " + passed,
       });
     }
-  })).describe("Discriminated reference to a product format option. The global canonical shape is still named by `format_kind`; this reference selects one concrete product `format_options[]` entry. `scope: \"publisher\"` identifies a publisher-declared catalog option by `{ publisher_domain, format_option_id }`. `scope: \"product\"` identifies a product-local option by `format_option_id`; the enclosing package/product context supplies the namespace.")).min(1).describe("Canonical format options selected from the published product offer. Legacy named-format identifiers are not accepted.").optional(), "catalog_ids": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.").optional(), "budget": z.number().gte(0).describe("Hard spend cap for this selection in the media-buy currency.").optional(), "daily_budget_cap": z.number().gte(0).describe("Optional hard daily spend ceiling for this purchase. It is subordinate to the media-buy aggregate daily cap and is not a reserved daily allocation. Its day boundary is the media buy's budget_cap_timezone.").optional(), "min_spend_target": z.number().gte(0).describe("Soft lifetime spend target for seller-optimized allocation.").optional(), "impressions": z.number().gte(0).optional(), "start_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "targeting_overlay": z.object({ "geo_countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_countries_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_regions": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.").optional(), "geo_regions_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.").optional(), "geo_metros": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_metros_exclude": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas_exclude": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_places": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.").optional(), "geo_places_exclude": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.").optional(), "daypart_targets": z.array(z.object({ "days": z.array(z.enum(["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]).describe("Days of the week for daypart targeting")).min(1).describe("Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object)."), "start_hour": z.number().int().gte(0).lte(23).describe("Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm."), "end_hour": z.number().int().gte(1).lte(24).describe("End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour."), "label": z.string().describe("Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')").optional() }).passthrough().describe("A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.")).min(1).describe("Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.").optional(), "axe_include_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.").optional(), "axe_exclude_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.").optional(), "audience_include": z.array(z.string()).min(1).describe("Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.").optional(), "audience_exclude": z.array(z.string()).min(1).describe("Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.").optional(), "signal_targeting_groups": z.object({ "operator": z.literal("all").describe("Groups-level operator. Required even though v1 only supports 'all': every child group must be satisfied."), "groups": z.array(z.object({ "operator": z.enum(["any","none"]).describe("How to evaluate the signals in this group. 'any' is an OR include group. 'none' is an exclusion group equivalent to NOT (A OR B OR C)."), "signals": z.array(z.object({ "pricing_option_id": z.string().describe("Pricing option selected for this signal. Use the pricing_option_id from the product's signal_targeting_options entry when product-scoped pricing is present; otherwise use the seller get_signals pricing only when the product option does not override it. Required when the selected signal has pricing_options; omit only when the signal is bundled into the product price or has no incremental cost.").optional(), "signal_agent_segment_id": z.string().describe("Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the product option exposes a separate runtime or activation handle, and pass it verbatim. Buyers SHOULD prefer an exposed segment handle over reconstructing condition identity from categorical values because the handle can carry provider namespace and methodology distinctions.").optional(), "activation_key": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+  })).describe("Discriminated reference to a product format option. The global canonical shape is still named by `format_kind`; this reference selects one concrete product `format_options[]` entry. `scope: \"publisher\"` identifies a publisher-declared catalog option by `{ publisher_domain, format_option_id }`. `scope: \"product\"` identifies a product-local option by `format_option_id`; the enclosing package/product context supplies the namespace.")).min(1).describe("Canonical format options selected from the published product offer. Legacy named-format identifiers are not accepted.").optional(), "catalog_ids": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.").optional(), "budget": z.number().gte(0).describe("Hard spend cap for this selection in the media-buy currency.").optional(), "daily_budget_cap": z.number().gte(0).describe("Optional hard daily spend ceiling for this purchase. It is subordinate to the media-buy aggregate daily cap and is not a reserved daily allocation. Its day boundary is the media buy's budget_cap_timezone.").optional(), "min_spend_target": z.number().gte(0).describe("Soft lifetime spend target for seller-optimized allocation.").optional(), "impressions": z.number().gte(0).optional(), "start_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "targeting_overlay": z.object({ "geo_countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_countries_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_regions": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.").optional(), "geo_regions_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.").optional(), "geo_metros": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_metros_exclude": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas_exclude": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_places": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.").optional(), "geo_places_exclude": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.").optional(), "daypart_targets": z.array(z.object({ "days": z.array(z.enum(["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]).describe("Days of the week for daypart targeting")).min(1).describe("Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object)."), "start_hour": z.number().int().gte(0).lte(23).describe("Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm."), "end_hour": z.number().int().gte(1).lte(24).describe("End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour."), "timezone": z.union([z.literal("inventory_local"), z.any().refine((value) => !z.literal("inventory_local").safeParse(value).success, "Invalid input: Should NOT be valid against schema").describe("Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.")]).describe("Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and hour with the half-open window: a skipped DST hour has no matching instants, while both occurrences of a repeated hour match. This delivery clock is independent of reporting_capabilities.timezone.").default("inventory_local"), "label": z.string().describe("Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')").optional() }).passthrough().describe("A time window for daypart targeting. Specifies days of week, an hour range, and the civil-time clock used to evaluate it. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.")).min(1).describe("Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.").optional(), "axe_include_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.").optional(), "axe_exclude_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.").optional(), "audience_include": z.array(z.string()).min(1).describe("Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.").optional(), "audience_exclude": z.array(z.string()).min(1).describe("Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.").optional(), "signal_targeting_groups": z.object({ "operator": z.literal("all").describe("Groups-level operator. Required even though v1 only supports 'all': every child group must be satisfied."), "groups": z.array(z.object({ "operator": z.enum(["any","none"]).describe("How to evaluate the signals in this group. 'any' is an OR include group. 'none' is an exclusion group equivalent to NOT (A OR B OR C)."), "signals": z.array(z.object({ "pricing_option_id": z.string().describe("Pricing option selected for this signal. Use the pricing_option_id from the product's signal_targeting_options entry when product-scoped pricing is present; otherwise use the seller get_signals pricing only when the product option does not override it. Required when the selected signal has pricing_options; omit only when the signal is bundled into the product price or has no incremental cost.").optional(), "signal_agent_segment_id": z.string().describe("Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the product option exposes a separate runtime or activation handle, and pass it verbatim. Buyers SHOULD prefer an exposed segment handle over reconstructing condition identity from categorical values because the handle can carry provider namespace and methodology distinctions.").optional(), "activation_key": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
     const schemas = [z.object({ "type": z.literal("segment_id").describe("Segment ID based targeting"), "segment_id": z.string().describe("The platform-specific segment identifier to use in campaign targeting") }).catchall(z.any()), z.object({ "type": z.literal("key_value").describe("Key-value pair based targeting"), "key": z.string().describe("The targeting parameter key"), "value": z.string().describe("The targeting parameter value") }).catchall(z.any())];
     const { errors, failed } = schemas.reduce<{
       errors: z.core.$ZodIssue[];
@@ -18486,6 +18370,104 @@ export const RegistryFeedResponseSchema = z.object({
     }).passthrough()
 }).passthrough();
 
+export const WholesaleFeedEventSchema: z.ZodType = z.object({
+    event_id: z.uuid(),
+    event_type: z.union([z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change")]),
+    entity_type: z.union([z.literal("product"), z.literal("signal"), z.literal("feed")]),
+    entity_id: z.string(),
+    created_at: z.iso.datetime(),
+    payload: z.object({}).passthrough()
+}).passthrough().and(z.union([z.object({
+        event_type: z.literal("product.created"),
+        entity_type: z.literal("product").optional(),
+        payload: z.object({
+            product_id: z.string(),
+            product: ProductSchema.optional(),
+            canonical_product: CanonicalProductSchema.optional(),
+            applies_to: CacheLayerScopeSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("product.updated"),
+        entity_type: z.literal("product").optional(),
+        payload: z.object({
+            product_id: z.string(),
+            product: Product1Schema.optional(),
+            canonical_product: CanonicalProductSchema.optional(),
+            changed_fields: z.array(z.string()).optional(),
+            applies_to: CacheLayerScopeSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("product.priced"),
+        entity_type: z.literal("product").optional(),
+        payload: z.object({
+            product_id: z.string(),
+            pricing_options: z.array(PricingOptionSchema).optional(),
+            canonical_pricing_options: z.array(CanonicalPricingOptionSchema).optional(),
+            previous_pricing_option_ids: z.array(z.string()).optional(),
+            effective_at: z.iso.datetime().optional(),
+            retracts_event_id: z.uuid().optional(),
+            applies_to: CacheLayerScopeSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("product.removed"),
+        entity_type: z.literal("product").optional(),
+        payload: z.object({
+            product_id: z.string(),
+            removal_reason: RemovalReasonSchema.optional(),
+            applies_to: CacheLayerScopeSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("signal.created"),
+        entity_type: z.literal("signal").optional(),
+        payload: z.object({
+            signal_agent_segment_id: z.string().min(1),
+            signal_ref: SignalRefSchema.optional(),
+            applies_to: CacheLayerScopeSchema,
+            signal: WholesaleSignalObjectSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("signal.updated"),
+        entity_type: z.literal("signal").optional(),
+        payload: z.object({
+            signal_agent_segment_id: z.string().min(1),
+            signal_ref: SignalRefSchema.optional(),
+            changed_fields: z.array(z.string()).optional(),
+            applies_to: CacheLayerScopeSchema,
+            signal: WholesaleSignalObjectSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("signal.priced"),
+        entity_type: z.literal("signal").optional(),
+        payload: z.object({
+            signal_agent_segment_id: z.string().min(1),
+            signal_ref: SignalRefSchema.optional(),
+            pricing_options: z.array(VendorPricingOptionSchema),
+            previous_pricing_option_ids: z.array(z.string()).optional(),
+            effective_at: z.iso.datetime().optional(),
+            retracts_event_id: z.uuid().optional(),
+            applies_to: CacheLayerScopeSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("signal.removed"),
+        entity_type: z.literal("signal").optional(),
+        payload: z.object({
+            signal_agent_segment_id: z.string().min(1),
+            signal_ref: SignalRefSchema.optional(),
+            removal_reason: RemovalReasonSchema.optional(),
+            applies_to: CacheLayerScopeSchema
+        }).passthrough().optional()
+    }).passthrough(), z.object({
+        event_type: z.literal("wholesale_feed.bulk_change"),
+        entity_type: z.literal("feed").optional(),
+        payload: z.object({
+            summary: z.string(),
+            affected_count: z.int().min(1),
+            recommendation: z.literal("wholesale_resync").optional(),
+            applies_to: CacheLayerScopeSchema,
+            affected_entity_type: z.union([z.literal("product"), z.literal("signal")])
+        }).passthrough().optional()
+    }).passthrough()]));
+
 export const WholesaleFeedWebhookSchema: z.ZodType = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     notification_id: z.uuid(),
@@ -18543,7 +18525,7 @@ export const GetProductsRequestSchema: z.ZodObject<{ [K in keyof GetProductsRequ
     targeting_overlay: TargetingOverlaySchema.optional(),
     required_overlay_support: TargetingOverlayRequirementsSchema.optional(),
     property_list: PropertyListReferenceSchema.optional(),
-    fields: z.array(z.union([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("expires_at"), z.literal("allowed_actions")]), z.union([z.literal("format_ids"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("creative_policy"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("included_signals"), z.literal("signal_targeting_options"), z.literal("overlay_support"), z.literal("targeting_resolution"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("is_custom"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies"), z.literal("trusted_match")])])).optional(),
+    fields: z.array(z.union([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("identity"), z.literal("expires_at"), z.literal("allowed_actions")]), z.union([z.literal("format_ids"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("creative_policy"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("included_signals"), z.literal("signal_targeting_options"), z.literal("overlay_support"), z.literal("targeting_resolution"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("is_custom"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies"), z.literal("trusted_match")])])).optional(),
     time_budget: DurationSchema.optional(),
     push_notification_config: PushNotificationConfigSchema.optional(),
     pagination: PaginationRequestSchema.optional(),
@@ -18571,6 +18553,52 @@ export const ListProductsRequestSchema = z.object({
     if_feed_version: z.string().optional(),
     if_pricing_version: z.string().optional()
 }).passthrough();
+
+export const ListProductsResponseSchema = z.object({
+    outcome: z.union([z.literal("listed"), z.literal("unchanged")]).optional(),
+    products: z.array(CanonicalProductSchema).optional(),
+    next_cursor: z.string().min(1).optional(),
+    feed_version: z.string().optional(),
+    pricing_version: z.string().optional(),
+    cache_scope: z.union([z.literal("public"), z.literal("account")]).optional(),
+    incomplete: z.array(z.object({
+        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
+        description: z.string().min(1),
+        estimated_wait: DurationSchema.optional()
+    }).passthrough()).optional(),
+    replayed: z.literal(true).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([z.object({
+        outcome: z.literal("listed"),
+        products: z.array(CanonicalProductSchema),
+        next_cursor: z.string().min(1).optional(),
+        feed_version: z.string(),
+        pricing_version: z.string().optional(),
+        cache_scope: z.union([z.literal("public"), z.literal("account")]),
+        incomplete: z.array(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        replayed: z.literal(true).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough(), z.object({
+        outcome: z.literal("unchanged"),
+        next_cursor: z.string().min(1).optional(),
+        feed_version: z.string(),
+        pricing_version: z.string().optional(),
+        cache_scope: z.union([z.literal("public"), z.literal("account")]),
+        incomplete: z.array(z.object({
+            scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("wholesale_feed")]),
+            description: z.string().min(1),
+            estimated_wait: DurationSchema.optional()
+        }).passthrough()).optional(),
+        replayed: z.literal(true).optional(),
+        context: ContextObjectSchema.optional(),
+        ext: ExtensionObjectSchema.optional()
+    }).passthrough()]));
 
 export const MediaBuyCommitmentResponseSchema = z.union([CommittedMediaBuySchema, CommitmentErrorSchema, CommitmentSubmittedSchema]);
 
@@ -18986,7 +19014,8 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         plan_id: z.string().optional(),
         rights_id: z.string().optional(),
         fixture: z.object({}).passthrough().optional(),
-        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal")]).optional(),
+        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("omit_obligation")]).optional(),
+        target_health: z.union([z.literal("delayed"), z.literal("action_required")]).optional(),
         catalog_id: z.string().min(1).max(255).optional(),
         catalog_generation: z.string().min(1).max(255).optional(),
         item_id: z.string().min(1).max(255).optional(),
@@ -19011,6 +19040,7 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         }).passthrough().optional(),
         reach: z.number().min(0).optional(),
         frequency: z.number().min(0).optional(),
+        reach_unit: ReachUnitSchema.optional(),
         reach_window: z.object({
             kind: z.union([z.literal("cumulative"), z.literal("period"), z.literal("rolling")]),
             period: DurationSchema.optional()

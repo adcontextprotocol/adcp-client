@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-beta.11
-// Generated at: 2026-09-03T14:28:10.870Z
+// Generated AdCP core types from official schemas v3.2.0-rc.0
+// Generated at: 2026-09-03T19:59:28.854Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -700,6 +700,12 @@ export type DAASTVersion = '1.0' | '1.1';
  * Days of the week for daypart targeting
  */
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+
+// DAYPARTTIMEZONEMODE CANONICAL ENUM
+/**
+ * Clock modes a product supports for daypart targeting.
+ */
+export type DaypartTimezoneMode = 'inventory_local' | 'iana';
 
 // DELEGATIONAUTHORITY CANONICAL ENUM
 /**
@@ -3650,7 +3656,7 @@ export interface DeliveryMetrics {
      */
     screen_time_seconds?: number;
     /**
-     * Actual share of voice delivered (0.0 to 1.0)
+     * Actual share of voice delivered on a 0.0-1.0 scale. To compare this achieved value with the selected flat-rate DOOH parameters.sov_percentage, multiply sov_achieved by 100. Share is time-weighted: the sum of the delivered segment durations divided by the full loop duration. On equal-duration loops this equals the slot-count ratio. See also ooh_metrics.share_of_voice_contracted, which uses the same 0.0-1.0 scale.
      * @minimum 0
      * @maximum 1
      */
@@ -3741,7 +3747,7 @@ export interface DeliveryMetrics {
      */
     materials_timely?: boolean;
     /**
-     * Contracted share of voice where the buy is rotation-based (e.g., rotary bulletin programs) rather than an exclusive face (0.0 to 1.0)
+     * Contracted share of voice where the buy is rotation-based (e.g., rotary bulletin programs) rather than an exclusive face, on a 0.0-1.0 scale. Share is time-weighted: the sum of contracted display durations divided by the full rotation duration. On equal-duration rotations this equals the slot-count ratio.
      * @minimum 0
      * @maximum 1
      */
@@ -4182,6 +4188,20 @@ export type PositivePostalAreaSupport = PostalAreaSupport & {
   ch_plz?: true;
   at_plz?: true;
 };
+export type DaypartSupport =
+  | true
+  | {
+      timezone_modes: DaypartTimezoneMode[];
+      /**
+       * Concrete IANA timezone identifiers accepted by this product. true means every identifier valid in the seller's supported IANA TZDB; an array is the exact supported subset. Required when timezone_modes includes iana and forbidden otherwise.
+       */
+      iana_timezones?: true | IANATimezoneIdentifier[];
+      ext?: ExtensionObject;
+    };
+/**
+ * Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.
+ */
+export type IANATimezoneIdentifier = string;
 export type BrowserSupport =
   | Supported
   | {
@@ -4195,7 +4215,7 @@ export type KeywordSupport =
       ext?: ExtensionObject;
     };
 /**
- * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package and max_packages. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching.
+ * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package and max_packages. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. The daypart_targets boolean is the backward-compatible exception: true promises inventory_local only, and structured support opts into IANA zones. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching.
  */
 export interface TargetingOverlaySupport {
   geo_countries?: CountrySupport;
@@ -4223,7 +4243,7 @@ export interface TargetingOverlaySupport {
         max_values_per_package?: number;
         ext?: ExtensionObject;
       };
-  daypart_targets?: Supported;
+  daypart_targets?: DaypartSupport;
   audience_include?: Supported;
   audience_exclude?: Supported;
   signal_targeting_groups?: Supported;
@@ -4454,6 +4474,15 @@ export type MetroRequirement =
   | {
       systems: MetroAreaSystem[];
     };
+export type DaypartRequirement =
+  | Required
+  | {
+      timezone_modes: DaypartTimezoneMode[];
+      /**
+       * Exact concrete IANA timezone identifiers that must remain selectable after discovery. Valid only when timezone_modes includes iana.
+       */
+      iana_timezones?: IANATimezoneIdentifier[];
+    };
 export type BrowserRequirement =
   | Required
   | {
@@ -4465,7 +4494,7 @@ export type KeywordRequirement =
       supported_match_types: MatchType[];
     };
 /**
- * Buyer minimum requirements for targeting dimensions that will be selected on packages later. This request shape deliberately excludes seller limits such as max_values_per_package and max_packages. Matching is capability containment: where a field permits a boolean form, a requirement value of true matches product support true or any valid positive support object, and product support true satisfies every protocol-valid structured requirement. Otherwise, structured product support must contain the structured requirement. For geo_regions and geo_regions_exclude, every requested country must exist; requested all_values requires supported all_values; and requested values must be a subset of supported values unless support declares all_values. For geo_places and geo_places_exclude, every requested system and country key must exist and each requested place-type and system-version array must be a subset of the corresponding product array. Include and exclude fields match independently. Every valid structured requirement or support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Object fields the buyer did not request do not participate. Missing or unknown required fields do not match. Numeric seller limits are disclosed only in Product.overlay_support and never participate in matching.
+ * Buyer minimum requirements for targeting dimensions that will be selected on packages later. This request shape deliberately excludes seller limits such as max_values_per_package and max_packages. Matching is capability containment: where a field permits a boolean form, a requirement value of true matches product support true or any valid positive support object, and product support true satisfies every protocol-valid structured requirement except daypart_targets, where true promises inventory_local only. Otherwise, structured product support must contain the structured requirement. For geo_regions and geo_regions_exclude, every requested country must exist; requested all_values requires supported all_values; and requested values must be a subset of supported values unless support declares all_values. For geo_places and geo_places_exclude, every requested system and country key must exist and each requested place-type and system-version array must be a subset of the corresponding product array. Include and exclude fields match independently. Every valid structured requirement or support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Object fields the buyer did not request do not participate. Missing or unknown required fields do not match. Numeric seller limits are disclosed only in Product.overlay_support and never participate in matching.
  */
 export interface TargetingOverlayRequirements {
   geo_countries?: Required;
@@ -4486,7 +4515,7 @@ export interface TargetingOverlayRequirements {
         geometry?: Required;
         transport_modes?: TransportMode[];
       };
-  daypart_targets?: Required;
+  daypart_targets?: DaypartRequirement;
   audience_include?: Required;
   audience_exclude?: Required;
   signal_targeting_groups?: Required;
@@ -5607,7 +5636,7 @@ export type TargetingOverlay = {
    */
   geo_places_exclude?: [GeographicPlaceArea, ...GeographicPlaceArea[]];
   /**
-   * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
+   * Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.
    *
    * @minItems 1
    */
@@ -7775,7 +7804,7 @@ export interface PostalAreaWithFusedSystem {
   values: [string, ...string[]];
 }
 /**
- * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ * A time window for daypart targeting. Specifies days of week, an hour range, and the civil-time clock used to evaluate it. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
  */
 export interface DaypartTarget {
   /**
@@ -7792,6 +7821,10 @@ export interface DaypartTarget {
    * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour.
    */
   end_hour: number;
+  /**
+   * Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and hour with the half-open window: a skipped DST hour has no matching instants, while both occurrences of a repeated hour match. This delivery clock is independent of reporting_capabilities.timezone.
+   */
+  timezone?: 'inventory_local' | IANATimezoneIdentifier;
   /**
    * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
    */
@@ -17239,6 +17272,7 @@ export type Product = {
   signal_targeting_allowed?: boolean;
   demographic_targeting?: DemographicTargetingCapability;
   overlay_support?: TargetingOverlaySupport;
+  identity?: ProductIdentity;
   targeting_resolution?: ProductTargetingResolution;
   /**
    * Immutable population-level evidence explaining why this inventory may suit an audience. This supports discovery, comparison, and planning only. It does not imply exact demographic targeting, user-level signal membership, or legal-age verification. Sellers MUST publish each distinct snapshot with a new snapshot_id and content_digest.
@@ -18337,9 +18371,17 @@ export interface DoohParameters {
    */
   type: 'dooh';
   /**
-   * Guaranteed share of voice as a percentage (0-100)
+   * Guaranteed share of voice on a 0-100 percentage scale. To compare this contracted value with delivery dooh_metrics.sov_achieved, divide sov_percentage by 100. Share is time-weighted: the sum of the reserved segment durations divided by the full loop duration. On equal-duration loops this equals the slot-count ratio.
    */
   sov_percentage?: number;
+  /**
+   * Number of consecutive loop slots reserved by this seller-declared pre-packaged offer. Contiguity is guaranteed; position is not guaranteed unless loop_position is also present. This field does not carry a buyer-requested custom span for an offer the seller has not pre-packaged.
+   */
+  slot_span?: number;
+  /**
+   * Seller-defined position label for the reserved span within the loop, such as any, first, last, or adjacent_to_content_break. This is deliberately an open string because network vocabularies differ. Consumers MUST accept unrecognized values as opaque and treat them as conveying no position guarantee the consumer understands; an unrecognized value is not a protocol error.
+   */
+  loop_position?: string;
   /**
    * @deprecated
    * Deprecated compatibility copy of the placement-level dooh_placement_attributes.loop_duration_seconds, which is the canonical source. Retained for backward compatibility; new integrations read the placement-level field. When both are present they MUST agree. A product that offers different loop durations under different prices MUST expose distinct placements or products rather than vary this compatibility copy by pricing option.
@@ -18882,6 +18924,19 @@ export interface DemographicTargetingCapability {
    */
   age: {
   };
+}
+/**
+ * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap; create and update reject that overlay under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
+ */
+export interface ProductIdentity {
+  /**
+   * Whether delivery on this product has a persistent per-entity identifier suitable for identifier-backed reach, frequency, and frequency-cap enforcement. false does not prohibit modeled individuals or households measurement.
+   */
+  persistent_identifier: boolean;
+  /**
+   * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
+   */
+  reach_methodology?: string;
 }
 /**
  * Discovery-time targeting resolution bound to this configured product. modifications sparsely disclose product-specific differences from get_products.targeting_overlay. Request-level brief interpretation is returned once on GetProductsResponse.targeting_resolution. Exact structured overlay values are not repeated. Selecting product_id accepts the disclosed modifications; product forecast and pricing MUST reflect them.
@@ -19853,6 +19908,98 @@ export type CanonicalReportingCommitment =
       qualifier?: CanonicalMetricQualifier;
       effective_at?: string;
     };
+/**
+ * Standalone compact Product view for the AdCP 3.2 lifecycle. product_id and name are the only always-returned fields; requested detail fields are optional. Legacy named formats, coarse MediaBuy actions, and the legacy Product inheritance graph are absent.
+ */
+export type CanonicalProduct = {
+} & {
+  product_id: string;
+  name: string;
+  description?: string;
+  /**
+   * @minItems 1
+   */
+  publisher_properties?: [
+    PublisherPropertySelector & {
+    },
+    ...(PublisherPropertySelector & {
+    })[]
+  ];
+  channels?: MediaChannel[];
+  /**
+   * @minItems 1
+   */
+  video_placement_types?: [VideoPlacementType, ...VideoPlacementType[]];
+  /**
+   * @minItems 1
+   */
+  audio_distribution_types?: [AudioDistributionType, ...AudioDistributionType[]];
+  /**
+   * @minItems 1
+   */
+  sponsored_placement_types?: [SponsoredPlacementType, ...SponsoredPlacementType[]];
+  /**
+   * @minItems 1
+   */
+  social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
+  /**
+   * @minItems 1
+   */
+  format_options?: [CanonicalFormatOption, ...CanonicalFormatOption[]];
+  placements?: CanonicalProductPlacement[];
+  delivery_type?: DeliveryType;
+  exclusivity?: Exclusivity;
+  /**
+   * @minItems 1
+   */
+  pricing_options?: [CanonicalPricingOption, ...CanonicalPricingOption[]];
+  forecast?: CanonicalDeliveryForecast;
+  reporting_capabilities?: CanonicalReportingCapabilities;
+  measurement_terms?: CanonicalMeasurementTerms;
+  /**
+   * Default performance thresholds and measurement vendors inherited by a direct purchase.
+   *
+   * @minItems 1
+   */
+  performance_standards?: [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
+  /**
+   * @minItems 1
+   */
+  catalog_types?: [CatalogType, ...CatalogType[]];
+  signal_targeting_allowed?: boolean;
+  signal_targeting_rules?: SignalTargetingRules;
+  demographic_targeting?: DemographicTargetingCapability;
+  overlay_support?: TargetingOverlaySupport1;
+  identity?: ProductIdentity;
+  /**
+   * @minItems 1
+   */
+  audience_evidence?: [CanonicalAudienceEvidence, ...CanonicalAudienceEvidence[]];
+  /**
+   * Exact evidence snapshots that affected eligibility or ranking. Returned whenever evidence requirements affected the result, even if not requested explicitly.
+   *
+   * @minItems 1
+   */
+  audience_evidence_selections?: [CanonicalAudienceEvidenceSelection, ...CanonicalAudienceEvidenceSelection[]];
+  max_optimization_goals?: number;
+  catalog_match?: {
+    matched_gtins?: string[];
+    matched_ids?: string[];
+    matched_count?: number;
+    submitted_count: number;
+  };
+  /**
+   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+   *
+   * @minItems 1
+   */
+  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
+  brief_relevance?: string;
+  expires_at?: string;
+  allowed_actions?: CanonicalProductAction[];
+  acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
+  ext?: ExtensionObject;
+};
 /**
  * Compact product placement with canonical format narrowing. Publisher references carry their publisher authority. New seller-inline placements SHOULD carry seller_agent as their defining authority; legacy seller-inline placements without it remain valid in product context.
  */
@@ -21129,7 +21276,7 @@ export interface ProductAllocation {
    */
   end_time?: string;
   /**
-   * Recommended time windows for this allocation in spot-plan proposals.
+   * Recommended time windows for this allocation in spot-plan proposals. Each entry's timezone defaults to inventory_local when omitted, and entries MAY use different clocks.
    *
    * @minItems 1
    */
@@ -21625,95 +21772,6 @@ export interface CanonicalForecastVendorMetricValue {
   };
 }
 /**
- * Standalone compact Product view for the AdCP 3.2 lifecycle. product_id and name are the only always-returned fields; requested detail fields are optional. Legacy named formats, coarse MediaBuy actions, and the legacy Product inheritance graph are absent.
- */
-export interface CanonicalProduct {
-  product_id: string;
-  name: string;
-  description?: string;
-  /**
-   * @minItems 1
-   */
-  publisher_properties?: [
-    PublisherPropertySelector & {
-    },
-    ...(PublisherPropertySelector & {
-    })[]
-  ];
-  channels?: MediaChannel[];
-  /**
-   * @minItems 1
-   */
-  video_placement_types?: [VideoPlacementType, ...VideoPlacementType[]];
-  /**
-   * @minItems 1
-   */
-  audio_distribution_types?: [AudioDistributionType, ...AudioDistributionType[]];
-  /**
-   * @minItems 1
-   */
-  sponsored_placement_types?: [SponsoredPlacementType, ...SponsoredPlacementType[]];
-  /**
-   * @minItems 1
-   */
-  social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
-  /**
-   * @minItems 1
-   */
-  format_options?: [CanonicalFormatOption, ...CanonicalFormatOption[]];
-  placements?: CanonicalProductPlacement[];
-  delivery_type?: DeliveryType;
-  exclusivity?: Exclusivity;
-  /**
-   * @minItems 1
-   */
-  pricing_options?: [CanonicalPricingOption, ...CanonicalPricingOption[]];
-  forecast?: CanonicalDeliveryForecast;
-  reporting_capabilities?: CanonicalReportingCapabilities;
-  measurement_terms?: CanonicalMeasurementTerms;
-  /**
-   * Default performance thresholds and measurement vendors inherited by a direct purchase.
-   *
-   * @minItems 1
-   */
-  performance_standards?: [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
-  /**
-   * @minItems 1
-   */
-  catalog_types?: [CatalogType, ...CatalogType[]];
-  signal_targeting_allowed?: boolean;
-  signal_targeting_rules?: SignalTargetingRules;
-  demographic_targeting?: DemographicTargetingCapability;
-  /**
-   * @minItems 1
-   */
-  audience_evidence?: [CanonicalAudienceEvidence, ...CanonicalAudienceEvidence[]];
-  /**
-   * Exact evidence snapshots that affected eligibility or ranking. Returned whenever evidence requirements affected the result, even if not requested explicitly.
-   *
-   * @minItems 1
-   */
-  audience_evidence_selections?: [CanonicalAudienceEvidenceSelection, ...CanonicalAudienceEvidenceSelection[]];
-  max_optimization_goals?: number;
-  catalog_match?: {
-    matched_gtins?: string[];
-    matched_ids?: string[];
-    matched_count?: number;
-    submitted_count: number;
-  };
-  /**
-   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
-   *
-   * @minItems 1
-   */
-  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
-  brief_relevance?: string;
-  expires_at?: string;
-  allowed_actions?: CanonicalProductAction[];
-  acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
-  ext?: ExtensionObject;
-}
-/**
  * DOOH installed-surface and scheduled-loop facts. These fields do not define creative acceptance, which is governed exclusively by effective canonical format_options. Visual placements may declare screen_resolution and motion; audio-only placements omit those screen-specific fields. For publisher_ref placements, product slot and loop values override publisher defaults while repeated screen_resolution and motion values must equal the publisher facts.
  */
 export interface CanonicalDOOHPlacementAttributes {
@@ -21777,6 +21835,18 @@ export interface CanonicalReportingCapabilities {
    */
   measurement_windows?: [MeasurementWindow, ...MeasurementWindow[]];
 }
+/**
+ * Re-export of `TargetingOverlaySupport` under the legacy codegen artifact name.
+ *
+ * `TargetingOverlaySupport1` is a json-schema-to-typescript under-resolution artifact —
+ * the bundler inlined the same schema at two call sites and jsts emitted a numbered
+ * sibling. The body it produced was strictly weaker than `TargetingOverlaySupport` (missing the
+ * discriminator, canonical wrapper, or named union); aliasing to `TargetingOverlaySupport`
+ * gives consumers the correctly-discriminated shape that matches the wire format.
+ *
+ * @deprecated Use `TargetingOverlaySupport` from `@adcp/sdk/types`. Slated for removal in the next major.
+ */
+export type TargetingOverlaySupport1 = TargetingOverlaySupport;
 /**
  * Compact decision readback pinning the evidence snapshot that affected recommendation or eligibility.
  */
@@ -38866,6 +38936,7 @@ export type ProductResponseFields = (
   | 'list_applications'
   | 'brief_relevance'
   | 'acceptance_policy_profile_ids'
+  | 'identity'
   | 'expires_at'
   | 'allowed_actions'
 )[];
