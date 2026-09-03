@@ -4332,411 +4332,13 @@ export type AudienceEvidence = {
    * @maxItems 10
    */
   attestation_refs?:
-    | [
-        AttestationReference & {
+    (AttestationReference & {
           subject: AttestationSubject & {
             type: 'resource';
             resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
             content_digest: string;
           };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ];
+        })[];
   ext?: ExtensionObject;
 } & {
   /**
@@ -4809,411 +4411,13 @@ export type AudienceEvidence = {
    * @maxItems 10
    */
   attestation_refs?:
-    | [
-        AttestationReference & {
+    (AttestationReference & {
           subject: AttestationSubject & {
             type: 'resource';
             resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
             content_digest: string;
           };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ]
-    | [
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        },
-        AttestationReference & {
-          subject: AttestationSubject & {
-            type: 'resource';
-            resource_type: 'https://adcontextprotocol.org/claims/subjects/audience-evidence';
-            content_digest: string;
-          };
-        }
-      ];
+        })[];
   ext?: ExtensionObject;
 };
 /**
@@ -5941,6 +5145,7 @@ export interface GetProductsResponse {
   reason?: string;
   /**
    * Actionable alternatives available only on the GetProductsRejected arm.
+   * @maxItems 20
    */
   suggestions?: string[];
   /**
@@ -6234,7 +5439,7 @@ export interface CreativeLocalePolicy {
    * @minItems 1
    * @maxItems 50
    */
-  accepted_language_ranges: [LanguageTag, ...LanguageTag[]];
+  accepted_language_ranges: LanguageTag[];
 }
 export interface ImageFormatDeclaration {
   format_kind: 'image';
@@ -7656,8 +6861,7 @@ export interface AudienceEvidenceSelection {
    * @maxItems 10
    */
   attestation_evaluations?:
-    | [
-        {
+    {
           reference: AttestationReference;
           evaluation: AttestationEvaluation & {
             action_binding: {
@@ -7666,566 +6870,7 @@ export interface AudienceEvidenceSelection {
               action_digest: string;
             };
           };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ]
-    | [
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        },
-        {
-          reference: AttestationReference;
-          evaluation: AttestationEvaluation & {
-            action_binding: {
-              action_type: 'https://adcontextprotocol.org/actions/audience-evidence-evaluation';
-              action_id: string;
-              action_digest: string;
-            };
-          };
-        }
-      ];
+        }[];
   ext?: ExtensionObject;
 }
 /**
@@ -10608,6 +9253,7 @@ export interface RefineProposalsRequest {
   idempotency_key: string;
   /**
    * Proposal operations to apply, with at most 25 entries per request. revise creates a draft successor from a draft, committed, or accepted source. finalize MUST target a draft, reserves inventory, and creates a committed successor whose expires_at is the hold deadline. A batch containing finalize MUST contain only finalize entries and is atomic. proposal_id values MUST be unique; results preserve request order.
+   * @maxItems 25
    */
   refinements: ProposalRefinement[];
 }
@@ -10959,6 +9605,7 @@ export interface DeclineProposalsRequest {
   idempotency_key: string;
   /**
    * Proposal declines to apply. proposal_id is the semantic uniqueness key and values MUST be unique even when two entries otherwise differ; implementations enforce this rule because JSON Schema uniqueItems only compares whole objects. Results preserve request order.
+   * @maxItems 25
    */
   declines: ProposalDecline[];
   opportunity?: OpportunityContext;
@@ -12302,6 +10949,7 @@ export type CreateMediaBuyRequest = (
     authentication: {
       /**
        * Array of authentication schemes. ['Bearer'] for simple token auth, ['HMAC-SHA256'] for legacy shared-secret signing. Both are deprecated; new integrations SHOULD use the RFC 9421 webhook signing profile instead.
+       * @maxItems 1
        */
       schemes: AuthenticationScheme[];
       /**
@@ -12520,12 +11168,8 @@ export type PackageRequest = AdCPVersionEnvelope & {
    * @minItems 1
    * @maxItems 100
    */
-  creatives?: [
-    CreativeAsset & {
-    },
-    ...(CreativeAsset & {
-    })[]
-  ];
+  creatives?: (CreativeAsset & {
+    })[];
   /**
    * Agency estimate or authorization number for this package. Overrides the media buy-level estimate number when different packages correspond to different agency estimates (e.g., different stations or flights within the same buy).
    */
@@ -16229,321 +14873,14 @@ export interface Account {
    * @maxItems 16
    */
   notification_configs?:
-    | []
-    | [NotificationConfig]
-    | [NotificationConfig, NotificationConfig]
-    | [NotificationConfig, NotificationConfig, NotificationConfig]
-    | [NotificationConfig, NotificationConfig, NotificationConfig, NotificationConfig]
-    | [NotificationConfig, NotificationConfig, NotificationConfig, NotificationConfig, NotificationConfig]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ]
-    | [
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig,
-        NotificationConfig
-      ];
+    NotificationConfig[];
   /**
    * Resolved durable reporting delivery configurations owned by the authenticated caller for this account. list_accounts MUST expose only the calling principal's set. State and seller-issued destination_ref are returned; credentials and bearer profiles MUST NOT appear. Any setup URL is a secret-free authenticated entry point, not a bearer credential.
    *
    * @maxItems 16
    */
   reporting_delivery_configs?:
-    | []
-    | [ReportingDeliveryConfigurationState]
-    | [ReportingDeliveryConfigurationState, ReportingDeliveryConfigurationState]
-    | [ReportingDeliveryConfigurationState, ReportingDeliveryConfigurationState, ReportingDeliveryConfigurationState]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ]
-    | [
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState,
-        ReportingDeliveryConfigurationState
-      ];
+    ReportingDeliveryConfigurationState[];
   /**
    * Recent webhook delivery attempts scoped to this account when the caller requested webhook activity on list_accounts and the seller surfaces the log. Includes account-anchored notifications such as account.status_changed and MAY include other account-level fires relevant to this account. Three-state presence follows the shared webhook_activity[] contract: omitted means unsupported or not requested, [] means supported but no retained fires, non-empty lists recent attempts most-recent-first.
    *
@@ -17416,6 +15753,7 @@ export interface GetMediaBuysResponseMediaBuy {
   available_actions?: (CanonicalMediaBuyAction | MediaBuyAvailableAction)[];
   /**
    * Recent webhook fires relevant to this buy for the calling principal, most-recent first. Includes per-buy delivery/health fires and account-anchored indicators.changed or creative.assignment_changed invalidations whose payload names this media_buy_id. Present only when include_webhook_activity was true and the seller surfaces this debug capability. Account-anchored records MUST include subscriber_id. Three-state presence and the 30-day retention floor follow snapshot-and-log.mdx § Webhook activity log pattern.
+   * @maxItems 200
    */
   webhook_activity?: WebhookActivityRecord[];
   /**
@@ -19009,10 +17347,12 @@ export interface GetReportingStatusRequest {
   view: ReportingStatusView;
   /**
    * Optional summary/periods scope. Omit for every accessible media buy in the account.
+   * @maxItems 100
    */
   media_buy_ids?: ReportingMediaBuyID[];
   /**
    * Optional summary/periods scope. Use to reconcile billing, analytics, and pacing independently. Omit for every active caller-owned configuration.
+   * @maxItems 16
    */
   delivery_config_ids?: string[];
   /**
@@ -19627,6 +17967,9 @@ export interface UnavailableLookup {
     code: 'NOT_FOUND';
     message: 'Reporting status resource is unavailable.';
   };
+  /**
+   * @maxItems 1
+   */
   errors: {
     code: 'NOT_FOUND';
     message: 'Reporting status resource is unavailable.';
@@ -19676,6 +18019,9 @@ export interface SyncReportingReceiptsRequest {
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   idempotency_key: string;
+  /**
+   * @maxItems 100
+   */
   receipts: ReportingReceipt[];
   context?: ContextObject;
   ext?: ExtensionObject;
@@ -19731,6 +18077,9 @@ export interface SyncReportingReceiptsResponse {
    * DEPRECATED in favor of adcp_version (release-precision string). Servers MUST continue to honor this field through 3.x. Removed in 4.0. Original semantics: the AdCP major version the buyer's payloads conform to. Sellers validate against their supported major_versions and return VERSION_UNSUPPORTED if unsupported. When omitted, the seller assumes its highest supported version.
    */
   adcp_major_version?: number;
+  /**
+   * @maxItems 100
+   */
   results: (RecordedReportingReceipt | UnchangedReportingReceipt | FailedReportingReceipt)[];
   ext?: ExtensionObject;
 }
@@ -19752,6 +18101,9 @@ export interface FailedReportingReceipt {
    * @pattern ^[A-Za-z0-9_.:-]{16,255}$
    */
   reporting_receipt_id: string;
+  /**
+   * @maxItems 16
+   */
   errors: Error[];
 }
 
@@ -20362,6 +18714,7 @@ export interface LogEventRequest {
   test_event_code?: string;
   /**
    * Events to log
+   * @maxItems 10000
    */
   events: Event[];
   /**
@@ -20929,18 +19282,22 @@ export type SyncCatalogsRequest = {
   account: AccountReference;
   /**
    * Array of catalog feeds to sync (create or update). When omitted together with item_availability_updates and item_availability_queries, the call is discovery-only and returns all existing catalogs on the account without modification.
+   * @maxItems 50
    */
   catalogs?: Catalog[];
   /**
    * Immediate suppress or restore operations for items in buyer-managed catalogs. Sellers declaring media_buy.features.catalog_item_availability_updates MUST process these updates synchronously and MUST NOT silently ignore them or return a submitted task. A seller that does not declare the capability MUST reject the request with UNSUPPORTED_FEATURE before lookup or mutation and MUST NOT interpret it as discovery. The combined number of item_availability_updates and item_availability_queries MUST NOT exceed 1,000; excess entries are an operation-level INVALID_REQUEST before lookup or mutation. Each (catalog_id, catalog_generation, item_id) tuple MUST appear at most once in updates; a duplicate is an operation-level INVALID_REQUEST before mutation in every validation mode. For mixed catalog/update requests, the seller MUST validate and stage the entire request against the post-upsert candidate state, then commit catalog and availability changes atomically. It MUST reject before any mutation if synchronous atomic commit is unavailable. A successful suppress acknowledgement means the seller MUST stop selecting or rendering the item and every cached or pre-generated creative it materialized from the item. Seller-internal generation lineage MUST retain resolved_account_id, catalog_id, catalog_generation, and item_id. If the seller cannot enforce that guarantee, it MUST return a failed per-item result. Suppression persists across scheduled feed fetches and catalog upserts until explicit restore, expires_at, or deletion of the containing catalog. Restore removes only an existing buyer-authored overlay or tombstone in the same catalog generation and cannot override seller rejection, withdrawal, policy, rights, or inventory controls. A restore for an absent item without such prior state fails with REFERENCE_NOT_FOUND.
+   * @maxItems 1000
    */
   item_availability_updates?: CatalogItemAvailabilityUpdate[];
   /**
    * Read current buyer-authored availability state. Queries require media_buy.features.catalog_item_availability_updates; a seller that does not declare it rejects with UNSUPPORTED_FEATURE before lookup. Any request containing queries is synchronous. In a mixed request the seller validates and stages catalog upserts and availability updates first, evaluates queries against that post-upsert/post-update candidate state, and atomically commits the staged mutations before returning those query results. If the mixed work cannot commit synchronously, it rejects before mutation. The seller returns exactly one item_availability_states entry per query in the same order and echoes request_index and the complete identity. Unknown, inaccessible, stale-generation, and unauthorized references use the normalized REFERENCE_NOT_FOUND shape described by validation_mode. Use a fresh idempotency_key for a current read; a replayed response is a historical snapshot.
+   * @maxItems 1000
    */
   item_availability_queries?: CatalogItemAvailabilityReference[];
   /**
    * Optional filter to limit sync scope to specific catalog IDs. When provided, only these catalogs will be created/updated. Other catalogs on the account are unaffected.
+   * @maxItems 50
    */
   catalog_ids?: string[];
   /**
@@ -21265,10 +19622,12 @@ export interface SyncCatalogsSuccess {
   }[];
   /**
    * Acknowledgements for item_availability_updates. The array length MUST equal the request array length; entry N MUST have request_index N, occupy position N, and exactly echo catalog_id, catalog_generation, item_id, and action from request entry N. Buyers MUST reject the response as non-conformant if count, ordering, request_index, or echoed identity differs. Lenient-mode failures stay in their request positions. In strict mode, any per-entry failure instead produces the operation-level error branch before mutation and this array is absent.
+   * @maxItems 1000
    */
   item_availability_updates?: CatalogItemAvailabilityUpdateResult[];
   /**
    * Current-state results for item_availability_queries, evaluated after updates in a mixed request. The array length MUST equal the request query length; entry N MUST have request_index N, occupy position N, and exactly echo catalog_id, catalog_generation, and item_id. Buyers MUST reject any mismatch. A replayed response is historical; use a fresh query idempotency_key before treating it as current after time-dependent expiry or catalog deletion/recreation.
+   * @maxItems 1000
    */
   item_availability_states?: CatalogItemAvailabilityState[];
   /**
@@ -21371,6 +19730,7 @@ export type BuildCreativeRequest = {
     /**
      * @deprecated
      * **DEPRECATED in 3.2.** Legacy named-format selectors. Use `target_capability_ids` with values advertised in `get_adcp_capabilities.creative.supported_formats[].capability_id`.
+     * @maxItems 50
      */
     target_format_ids?: FormatReferenceStructuredObject[];
     /**
@@ -21380,6 +19740,7 @@ export type BuildCreativeRequest = {
     target_capability_id?: string;
     /**
      * Canonical 3.2 multi-output selector. Each value matches a `get_adcp_capabilities.creative.supported_formats[].capability_id`. The creative agent produces one canonical manifest per capability in request order. Mutually exclusive with `target_capability_id` and the deprecated target_format_id fields.
+     * @maxItems 50
      */
     target_capability_ids?: string[];
     /**
@@ -22829,6 +21190,7 @@ export type PreviewCreativeRequest = {
   item_limit?: number;
   /**
    * Array of preview requests (1-50 items). Required when request_type is 'batch'. Each item follows the single request structure.
+   * @maxItems 50
    */
   requests?: {
     /**
@@ -23807,7 +22169,7 @@ export interface CreativeFilters {
    * @minItems 1
    * @maxItems 100
    */
-  creative_ids?: [string, ...string[]];
+  creative_ids?: string[];
   /**
    * Filter creatives created after this date (ISO 8601)
    */
@@ -24272,6 +22634,7 @@ export interface ListedCreativeNamedFormatReference {
   };
   /**
    * Recent webhook fires scoped to this creative — creative.status_changed, creative.purged, creative.assignment_changed, and assignment-level indicators.changed deliveries. Present only when include_webhook_activity is true. Account-anchored records include subscriber_id; the parent creative_id disambiguates the record. Retention: 30 days from completed_at. See snapshot-and-log.mdx § Webhook activity log pattern.
+   * @maxItems 200
    */
   webhook_activity?: WebhookActivityRecord[];
 }
@@ -24297,26 +22660,17 @@ export interface CreativeLocalizationReadback {
    * @minItems 1
    * @maxItems 50
    */
-  locale_fallbacks?: [
-    {
+  locale_fallbacks?: {
       language_range: LanguageTag;
       locale_variant_id: string;
-    },
-    ...{
-      language_range: LanguageTag;
-      locale_variant_id: string;
-    }[]
-  ];
+    }[];
   /**
    * The source variant followed by every target variant, or only the source for monolingual topology. Assets are fully resolved after source inheritance. The enclosing creative status applies to the set as a whole.
    *
    * @minItems 1
    * @maxItems 51
    */
-  variants: [
-    SourceLocalizationReadback | TargetLocalizationReadback,
-    ...(SourceLocalizationReadback | TargetLocalizationReadback)[]
-  ];
+  variants: (SourceLocalizationReadback | TargetLocalizationReadback)[];
 }
 export interface SourceLocalizationReadback {
   /**
@@ -24605,6 +22959,7 @@ export interface ListedCreativeCanonicalFormatKind {
   };
   /**
    * Recent webhook fires scoped to this creative — creative.status_changed, creative.purged, creative.assignment_changed, and assignment-level indicators.changed deliveries. Present only when include_webhook_activity is true. Account-anchored records include subscriber_id; the parent creative_id disambiguates the record. Retention: 30 days from completed_at. See snapshot-and-log.mdx § Webhook activity log pattern.
+   * @maxItems 200
    */
   webhook_activity?: WebhookActivityRecord[];
 }
@@ -24626,6 +22981,7 @@ export interface SyncCreativesRequest {
   account: AccountReference;
   /**
    * Array of creative assets to sync (create or update)
+   * @maxItems 100
    */
   creatives?: (CreativeAsset & {
     revision_id?: CreativeRevisionID;
@@ -24636,6 +22992,7 @@ export interface SyncCreativesRequest {
   })[];
   /**
    * Optional filter to limit sync scope to specific creative IDs. When provided, only these creatives will be created/updated. Other creatives in the library are unaffected. Useful for partial updates and error recovery.
+   * @maxItems 100
    */
   creative_ids?: string[];
   /**
@@ -24664,6 +23021,7 @@ export interface SyncCreativesRequest {
   }[];
   /**
    * Explicit, ordered assignment mutations. These operations may be sent without creatives to traffic existing creative IDs independently from MediaBuy commercial control. The entire request is atomic under idempotency_key and therefore requires strict validation; lenient partial processing is not permitted.
+   * @maxItems 500
    */
   assignment_operations?: (AssignOrUpdate | Unassign | ReplaceAssignment)[];
   /**
@@ -24729,22 +23087,13 @@ export interface CreativeLocalization {
    * @minItems 1
    * @maxItems 50
    */
-  locale_fallbacks?: [
-    {
+  locale_fallbacks?: {
       language_range: LanguageTag;
       /**
        * Source or target locale variant to serve when this explicit fallback rule matches.
        */
       locale_variant_id: string;
-    },
-    ...{
-      language_range: LanguageTag;
-      /**
-       * Source or target locale variant to serve when this explicit fallback rule matches.
-       */
-      locale_variant_id: string;
-    }[]
-  ];
+    }[];
   /**
    * The source or target locale_variant_id used when neither strict RFC 4647 Lookup nor an explicit locale_fallbacks rule matches and unmatched_locale_action is serve_default.
    */
@@ -25010,6 +23359,7 @@ export interface ValidateInputRequest {
   manifest: CreativeManifest;
   /**
    * Discriminated list of validation targets. Each entry mirrors the `target` shape on `validate-input-result.json` so the request/response wire shapes match exactly. Multi-target requests enable universal-creative scenarios where one manifest targets multiple sellers' format declarations in a single round-trip; the response carries one result per target in the same order.
+   * @maxItems 50
    */
   targets?: (CanonicalFormatTarget | ProductTarget | ThirdPartyFormatTarget | CreativeCapabilityTarget)[];
 }
@@ -28667,6 +27017,7 @@ export interface ValidateContentDeliveryRequest {
   standards_id: string;
   /**
    * Delivery records to validate (max 10,000)
+   * @maxItems 10000
    */
   records: {
     /**
@@ -30674,6 +29025,7 @@ export interface GetPlanAuditLogsResponse {
       plan_hash?: string;
       /**
        * Portable attestation presentations and their evaluator-of-record results retained as ordered pairs for this check entry. Auditors recompute each evaluation.reference_digest from JCS(reference), then recompute runtime_attestation_binding_digest from the ordered evaluations and attestation-bound findings.
+       * @maxItems 10
        */
       runtime_attestations?: {
         reference: AttestationReference;
@@ -31018,6 +29370,7 @@ export type CheckGovernanceRequest = {
   modification_summary?: string;
   /**
    * Optional independently issued runtime evidence for an activate_signal intent check whose payload action is activate (or omitted, which defaults to activate). It MUST NOT be supplied for deactivate. Each item is the shared portable AttestationReference from the core #4529 contract; it carries no authoritative buyer-supplied decision or confidence. The governance agent MUST evaluate every item under adcp.attestations plus governance.runtime_attestations capability policy, preserve input order in response runtime_attestation_evaluations[], and reject off-policy issuers, resolvers, credential origins, and verifier nominations without network access. This field is per-check evidence outside the synced plan and therefore outside the plan_hash preimage. Other tools and purchase types cannot carry this field.
+   * @maxItems 10
    */
   runtime_attestations?: (AttestationReference & {
     subject?: {
@@ -31192,6 +29545,7 @@ export interface CheckGovernanceResponse {
   mode?: GovernanceMode;
   /**
    * Evaluator-of-record results for request runtime_attestations[], in the same order and with exactly one result per presentation. Each result is the shared AttestationEvaluation and MUST bind to this response's check_id through action_binding.action_type = https://adcontextprotocol.org/actions/governance-check and action_binding.action_id = check_id. The signed governance_context MUST bind the same reference_digest/outcome pairs; large evidence stays in the audit log rather than the token.
+   * @maxItems 10
    */
   runtime_attestation_evaluations?: (AttestationEvaluation & {
     action_binding: {
@@ -32812,6 +31166,7 @@ export interface GetAdCPCapabilitiesResponse {
       max_reporting_destinations?: number;
       /**
        * Objective per-pattern delivery offering, so buyers can select a compatible destination without submit-and-reject probing. A destination whose pattern, transport, access mode, format set, or verification-profile set falls outside this offering fails the sync request atomically with UNSUPPORTED_FEATURE; provider-side setup outcomes for in-offering destinations are expressed only through destination states.
+       * @maxItems 3
        */
       reporting_destination_offerings?: {
         pattern: 'file_transfer' | 'warehouse_materialization' | 'dataset_share';
@@ -32902,18 +31257,30 @@ export interface GetAdCPCapabilitiesResponse {
           }
         | {
             task: 'build_creative';
+            /**
+             * @maxItems 1
+             */
             modes: 'signed_context'[];
           }
         | {
             task: 'activate_signal';
+            /**
+             * @maxItems 1
+             */
             modes: 'signed_context'[];
           }
         | {
             task: 'acquire_rights';
+            /**
+             * @maxItems 1
+             */
             modes: 'signed_context'[];
           }
         | {
             task: 'update_rights';
+            /**
+             * @maxItems 1
+             */
             modes: 'signed_context'[];
           }
       )[];
@@ -33116,14 +31483,17 @@ export interface GetAdCPCapabilitiesResponse {
       registration_task: 'sync_accounts';
       /**
        * Relationship invalidation events supported by this seller. indicators.changed requires supported_indicator_types but is not required merely because polling readback is available. creative.assignment_changed is independently available when the seller can detect assignment or assignment-approval changes; it does not require indicator support or list_creatives.
+       * @maxItems 2
        */
       event_types: ('indicators.changed' | 'creative.assignment_changed')[];
       /**
        * Complete authoritative snapshot reads used after an invalidation. get_media_buys is mandatory and is the only 3.2 repair task for this contract.
+       * @maxItems 1
        */
       repair_tasks: 'get_media_buys'[];
       /**
        * Optional bounded reverse projections of relationship-scoped indicator and approval state. list_creatives is a discovery/read convenience for creative-library sellers, not a complete repair path; declaring it also requires creative in supported_protocols. Buyers fall back to get_media_buys whenever nested assignments are truncated or a relationship must be proven absent.
+       * @maxItems 1
        */
       projection_tasks?: 'list_creatives'[];
       /**
@@ -34637,6 +33007,7 @@ export interface ListTasksRequest {
     updated_before?: string;
     /**
      * Filter by specific task IDs
+     * @maxItems 100
      */
     task_ids?: string[];
     /**
@@ -34839,6 +33210,7 @@ export interface SyncAgentNotificationConfigsRequest {
   idempotency_key: string;
   /**
    * Complete desired set of agent-level notification subscribers for the authenticated caller or registry identity. Omit is invalid; send an empty array to remove every subscriber owned by this caller. Each entry registers a URL, the agent-level event types the subscriber wants, and optional legacy auth. Duplicate `subscriber_id` values are rejected within this caller-scoped array. If any entry fails validation or activation proof, the seller rejects the replacement and leaves this caller's previous set unchanged.
+   * @maxItems 16
    */
   notification_configs: AgentNotificationConfig[];
   /**
@@ -34961,6 +33333,7 @@ export interface SyncAgentNotificationConfigsResponse {
   action: 'updated' | 'unchanged' | 'cleared' | 'failed';
   /**
    * Current persisted agent-level notification subscribers owned by the authenticated caller after the request. Entries are keyed by `subscriber_id`; `authentication.credentials` is omitted on every entry because credentials are write-only. Present on successful actions and MAY be present on `failed` responses to show the unchanged prior caller-scoped set.
+   * @maxItems 16
    */
   notification_configs?: AgentNotificationConfig[];
   /**
@@ -35011,10 +33384,12 @@ export interface SyncPrincipalRequest {
   configuration: {
     /**
      * Complete desired agent-level subscriber set. The same caller-scoping, proof-of-control, secret handling, and replacement rules as sync_agent_notification_configs apply.
+     * @maxItems 16
      */
     notification_configs?: AgentNotificationConfig[];
     /**
      * Complete desired reusable reporting destination set. Omitting a previously present destination_id revokes it, and [] revokes every destination: the seller halts new deliveries to all of its generations within the advertised suspension_interval_seconds and retains it as a retired generation for reporting history. Revocation does not delete caller-owned data already delivered. destination_id values MUST be unique.
+     * @maxItems 64
      */
     reporting_destinations?: AgentReportingDestination[];
     declarations?: AgentDeclarations;
@@ -35145,14 +33520,7 @@ export interface AgentDeclarations {
    * @maxItems 8
    */
   async_adcp_versions?:
-    | [string]
-    | [string, string]
-    | [string, string, string]
-    | [string, string, string, string]
-    | [string, string, string, string, string]
-    | [string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string]
-    | [string, string, string, string, string, string, string, string];
+    string[];
   /**
    * RFC 9421 webhook-signing algorithms the caller can verify. The accepted intersection with the seller's webhook_signing.algorithms MUST be non-empty when the caller has any active webhook subscriber; an empty intersection fails the sync request with UNSUPPORTED_FEATURE because delivery would be unverifiable.
    *
@@ -35165,7 +33533,7 @@ export interface AgentDeclarations {
    * @minItems 1
    * @maxItems 32
    */
-  experimental_features?: [ExperimentalFeatureID, ...ExperimentalFeatureID[]];
+  experimental_features?: ExperimentalFeatureID[];
 }
 
 // sync_principal response
@@ -35210,56 +33578,7 @@ export type AgentReportingDestinationState = {
    * @maxItems 16
    */
   issues?:
-    | []
-    | [Error]
-    | [Error, Error]
-    | [Error, Error, Error]
-    | [Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error]
-    | [Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error, Error]
-    | [
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error
-      ]
-    | [
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error,
-        Error
-      ];
+    Error[];
 };
 /**
  * Result of synchronizing selected sections of the principal's standing configuration. Applied responses return the complete current credential-free configuration. Validated dry-run responses report the would-be action without issuing durable identifiers. Failed responses deliberately cannot carry principal identifiers, versions, or configuration state.
@@ -35334,6 +33653,9 @@ export interface AppliedPrincipalConfiguration {
    */
   configuration_version: string;
   configuration: PrincipalState;
+  /**
+   * @maxItems 16
+   */
   warnings?: Error[];
 }
 /**
@@ -35346,166 +33668,7 @@ export interface PrincipalState {
    * @maxItems 16
    */
   notification_configs?:
-    | []
-    | [AgentNotificationConfigState]
-    | [AgentNotificationConfigState, AgentNotificationConfigState]
-    | [AgentNotificationConfigState, AgentNotificationConfigState, AgentNotificationConfigState]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ]
-    | [
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState,
-        AgentNotificationConfigState
-      ];
+    AgentNotificationConfigState[];
   /**
    * Current reusable reporting destination bindings and setup states. destination_id and destination_ref values MUST each be unique within this caller-scoped array; superseded generations of a current destination appear in its prior_destination_refs.
    *
@@ -35526,7 +33689,7 @@ export interface PrincipalState {
      * @minItems 1
      * @maxItems 32
      */
-    destination_refs: [string, ...string[]];
+    destination_refs: string[];
     revoked_at?: string;
   }[];
 }
@@ -35594,10 +33757,16 @@ export interface ValidatedPrincipalDryRun {
   kind: 'validated';
   action: 'would_update' | 'would_be_unchanged' | 'would_clear';
   dry_run: true;
+  /**
+   * @maxItems 16
+   */
   warnings?: Error[];
 }
 export interface FailedPrincipalSync {
   kind: 'failed';
+  /**
+   * @maxItems 16
+   */
   errors: Error[];
 }
 
@@ -35709,6 +33878,9 @@ export interface UnconfiguredPrincipal {
 }
 export interface FailedPrincipalRead {
   kind: 'failed';
+  /**
+   * @maxItems 16
+   */
   errors: Error[];
 }
 
@@ -35744,6 +33916,7 @@ export interface ListAccountChangesRequest {
   starting_position?: 'earliest' | 'latest';
   /**
    * Optional exact resource-type filter. The cursor is bound to the normalized filter. Unknown resource types are allowed for forward compatibility.
+   * @maxItems 50
    */
   resource_types?: string[];
   /**
@@ -35809,6 +33982,7 @@ export type ListAccountChangesResponse = {
   adcp_major_version?: number;
   /**
    * Matching changes in oldest-first total account order. Timestamps are descriptive and do not define this order.
+   * @maxItems 100
    */
   changes?: AccountChange[];
   /**
@@ -35833,6 +34007,7 @@ export type ListAccountChangesResponse = {
   generated_at?: string;
   /**
    * Account-specific feed and connector coverage. Buyers use this to distinguish feed catch-up from upstream freshness. Omission means no additional connected-source coverage is declared.
+   * @maxItems 50
    */
   source_coverage?: {
     /**
@@ -35866,6 +34041,9 @@ export type ListAccountChangesResponse = {
      * @format int
      */
     stale_after_seconds?: number;
+    /**
+     * @maxItems 50
+     */
     resource_types: string[];
   }[];
   errors?: Error[];
@@ -35874,6 +34052,7 @@ export type ListAccountChangesResponse = {
   | {
       /**
        * Matching changes in oldest-first total account order. Timestamps are descriptive and do not define this order.
+       * @maxItems 100
        */
       changes: AccountChange[];
       /**
@@ -35898,6 +34077,7 @@ export type ListAccountChangesResponse = {
       generated_at: string;
       /**
        * Account-specific feed and connector coverage. Buyers use this to distinguish feed catch-up from upstream freshness. Omission means no additional connected-source coverage is declared.
+       * @maxItems 50
        */
       source_coverage?: {
         /**
@@ -35931,6 +34111,9 @@ export type ListAccountChangesResponse = {
          * @format int
          */
         stale_after_seconds?: number;
+        /**
+         * @maxItems 50
+         */
         resource_types: string[];
       }[];
       errors?: Error[];
@@ -35941,6 +34124,7 @@ export type ListAccountChangesResponse = {
   | {
       /**
        * Matching changes in oldest-first total account order. Timestamps are descriptive and do not define this order.
+       * @maxItems 100
        */
       changes?: AccountChange[];
       /**
@@ -35965,6 +34149,7 @@ export type ListAccountChangesResponse = {
       generated_at?: string;
       /**
        * Account-specific feed and connector coverage. Buyers use this to distinguish feed catch-up from upstream freshness. Omission means no additional connected-source coverage is declared.
+       * @maxItems 50
        */
       source_coverage?: {
         /**
@@ -35998,6 +34183,9 @@ export type ListAccountChangesResponse = {
          * @format int
          */
         stale_after_seconds?: number;
+        /**
+         * @maxItems 50
+         */
         resource_types: string[];
       }[];
       errors: Error[];
@@ -36289,6 +34477,7 @@ export interface SyncAccountsRequest {
   idempotency_key: string;
   /**
    * Per-account sync entries. Each entry uses one of two key shapes: the `account` field (AccountRef) for settings-update mode, or the flat `brand` + `operator` + `billing` trio for provisioning mode. An operator_identity settings update MUST carry the latest account revision.
+   * @maxItems 1000
    */
   accounts: (ProvisioningMode | SettingsUpdateMode)[];
   /**
@@ -36334,6 +34523,7 @@ export interface ProvisioningMode {
   preferred_reporting_protocol?: CloudStorageProtocol;
   /**
    * Caller-owned desired state for durable reporting delivery on this account. Declarative replacement is scoped to (authenticated caller, resolved account): omission leaves that caller's set unchanged; [] deactivates that caller's set and starts grant revocation; another caller's entries MUST NOT be read, replaced, or deleted. Entries are keyed by immutable (delivery_config_id, delivery_config_version); duplicate tuples MUST reject the entire account entry, and reusing a tuple with changed content MUST be rejected. Each generation binds the exact report_definition_id advertised by its offering. destination.mode provision asks the seller to verify caller disclosure authority and destination/recipient control from non-secret provider coordinates; destination.mode existing reuses a caller-scoped immutable destination-generation reference, including one registered through sync_agent_configuration. The account configuration independently authorizes disclosure for this feed and scope, so possession of a reusable reference is never account authority. Unknown, unauthorized, and cross-caller refs MUST be indistinguishable. Credentials never transit AdCP, including nested extension fields. Permitted in both provisioning and settings-update modes. Sellers accepting this field MUST advertise media_buy.reporting_delivery in experimental_features and echo resolved secret-free state on sync_accounts and list_accounts.
+   * @maxItems 16
    */
   reporting_delivery_configs?: ReportingDeliveryConfiguration[];
   /**
@@ -36342,6 +34532,7 @@ export interface ProvisioningMode {
    * Activation proof: before activating a new or changed active subscriber, the seller MUST validate the URL, complete the account-level webhook proof-of-control challenge, and only then persist or expose the subscriber as `active: true`. For `account.status_changed`, sellers MUST assign `account_id` before completing proof so subsequent status transitions can identify the account and be repaired through `list_accounts`, even when external approval remains pending. A valid existing proof for the same `(account_id, subscriber_id, normalized url, authentication mode/credential binding, normalized event_types)` tuple MAY be reused; changing any element of that tuple requires fresh proof. The challenge POST itself MUST be signed with the seller's RFC 9421 webhook profile key and MUST include seller_agent_url, delivery_auth, and event_types so the receiver can verify the pending registration before echoing the challenge. New signers use `adcp_use: "request-signing"`; deprecated `webhook-signing` keys remain accepted during the compatibility window. Entries sent with `active: false` may skip only the outbound proof challenge while inactive; sellers MUST still enforce URL parsing, HTTPS, hostname normalization, and reserved-range rejection at write time, and those entries MUST NOT receive fires until reactivated. If proof fails or times out, the seller rejects the account entry with `action: "failed"`, leaves the prior notification_configs[] set unchanged, and reports `VALIDATION_ERROR` (or `INVALID_REQUEST` for malformed URLs) at the failing `notification_configs[j].url` field.
    *
    * **Cap rationale:** `maxItems: 16` is a practical fan-out cap (governance + buyer ingestion + audit bus + dx team + a few partner hooks). The cap exists to prevent unbounded subscriber arrays in storage and to bound the seller's per-event fan-out work. Sellers that hit the cap with legitimate subscribers should surface this on the protocol roadmap rather than work around it.
+   * @maxItems 16
    */
   notification_configs?: NotificationConfig[];
 }
@@ -36367,6 +34558,7 @@ export interface SettingsUpdateMode {
   preferred_reporting_protocol?: CloudStorageProtocol;
   /**
    * Caller-owned desired state for durable reporting delivery on this account. Declarative replacement is scoped to (authenticated caller, resolved account): omission leaves that caller's set unchanged; [] deactivates that caller's set and starts grant revocation; another caller's entries MUST NOT be read, replaced, or deleted. Entries are keyed by immutable (delivery_config_id, delivery_config_version); duplicate tuples MUST reject the entire account entry, and reusing a tuple with changed content MUST be rejected. Each generation binds the exact report_definition_id advertised by its offering. destination.mode provision asks the seller to verify caller disclosure authority and destination/recipient control from non-secret provider coordinates; destination.mode existing reuses a caller-scoped immutable destination-generation reference, including one registered through sync_agent_configuration. The account configuration independently authorizes disclosure for this feed and scope, so possession of a reusable reference is never account authority. Unknown, unauthorized, and cross-caller refs MUST be indistinguishable. Credentials never transit AdCP, including nested extension fields. Permitted in both provisioning and settings-update modes. Sellers accepting this field MUST advertise media_buy.reporting_delivery in experimental_features and echo resolved secret-free state on sync_accounts and list_accounts.
+   * @maxItems 16
    */
   reporting_delivery_configs?: ReportingDeliveryConfiguration[];
   /**
@@ -36375,6 +34567,7 @@ export interface SettingsUpdateMode {
    * Activation proof: before activating a new or changed active subscriber, the seller MUST validate the URL, complete the account-level webhook proof-of-control challenge, and only then persist or expose the subscriber as `active: true`. For `account.status_changed`, sellers MUST assign `account_id` before completing proof so subsequent status transitions can identify the account and be repaired through `list_accounts`, even when external approval remains pending. A valid existing proof for the same `(account_id, subscriber_id, normalized url, authentication mode/credential binding, normalized event_types)` tuple MAY be reused; changing any element of that tuple requires fresh proof. The challenge POST itself MUST be signed with the seller's RFC 9421 webhook profile key and MUST include seller_agent_url, delivery_auth, and event_types so the receiver can verify the pending registration before echoing the challenge. New signers use `adcp_use: "request-signing"`; deprecated `webhook-signing` keys remain accepted during the compatibility window. Entries sent with `active: false` may skip only the outbound proof challenge while inactive; sellers MUST still enforce URL parsing, HTTPS, hostname normalization, and reserved-range rejection at write time, and those entries MUST NOT receive fires until reactivated. If proof fails or times out, the seller rejects the account entry with `action: "failed"`, leaves the prior notification_configs[] set unchanged, and reports `VALIDATION_ERROR` (or `INVALID_REQUEST` for malformed URLs) at the failing `notification_configs[j].url` field.
    *
    * **Cap rationale:** `maxItems: 16` is a practical fan-out cap (governance + buyer ingestion + audit bus + dx team + a few partner hooks). The cap exists to prevent unbounded subscriber arrays in storage and to bound the seller's per-event fan-out work. Sellers that hit the cap with legitimate subscribers should surface this on the protocol roadmap rather than work around it.
+   * @maxItems 16
    */
   notification_configs?: NotificationConfig[];
 }
@@ -36442,446 +34635,9 @@ export type AccountIdentityChangePreview =
  * @maxItems 16
  */
 export type NonblockingImpacts =
-  | [
-      Impact & {
+  (Impact & {
         effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ]
-  | [
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      },
-      Impact & {
-        effect?: 'preserved' | 'revalidation_required' | 'revoke_and_regrant';
-      }
-    ];
+      })[];
 /**
  * Account areas evaluated for a blocked change. At least one impact identifies the blocking area.
  *
@@ -36889,55 +34645,7 @@ export type NonblockingImpacts =
  * @maxItems 16
  */
 export type BlockedImpacts =
-  | [Impact]
-  | [Impact, Impact]
-  | [Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact, Impact]
-  | [
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact
-    ]
-  | [
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact,
-      Impact
-    ];
+  Impact[];
 /**
  * Sync operation processed accounts (individual accounts may be pending or have action=failed)
  */
@@ -37045,10 +34753,12 @@ export interface SyncAccountsSuccess {
     sandbox?: boolean;
     /**
      * Applied notification subscribers for this account after declarative replacement and activation-proof checks. Present on `created`, `updated`, and `unchanged` results when the buyer included `notification_configs` in the request or any persisted entries exist on the account. Entries are keyed by account-scoped `subscriber_id`; re-sending an existing `subscriber_id` replaces that subscriber's config rather than creating a duplicate. Only configs that the seller has persisted are echoed. `authentication.credentials` is omitted on every entry (write-only).
+     * @maxItems 16
      */
     notification_configs?: NotificationConfig[];
     /**
      * Resolved caller-owned durable reporting delivery configurations after declarative replacement. Each item echoes desired state and reports validation/setup state plus the seller-issued destination_ref when resolved. A setup action may direct an authenticated user to complete a provider grant or Open Sharing activation, but MUST NOT carry credentials or a bearer URL.
+     * @maxItems 16
      */
     reporting_delivery_configs?: ReportingDeliveryConfigurationState[];
     authorization?: AccountAuthorization;
@@ -37120,11 +34830,13 @@ export interface SyncGovernanceRequest {
   idempotency_key: string;
   /**
    * Per-account governance agent configuration. Each entry pairs an account reference with the governance agents for that account.
+   * @maxItems 100
    */
   accounts: {
     account: AccountReference;
     /**
      * Governance agent endpoint for this account. Exactly one entry — the single agent that owns the account's full governance lifecycle. The seller calls this agent via check_governance during media buy lifecycle events. The array shape is preserved for wire compatibility with 3.0 senders; `maxItems: 1` is load-bearing and mirrors the singular `governance_context` on the protocol envelope.
+     * @maxItems 1
      */
     governance_agents: {
       /**
@@ -37138,6 +34850,7 @@ export interface SyncGovernanceRequest {
       authentication: {
         /**
          * The seller authenticates outbound check_governance calls with the registered Bearer credential. Other shared webhook authentication schemes are not valid for this agent-to-agent call.
+         * @maxItems 1
          */
         schemes: 'Bearer'[];
         /**
@@ -37218,6 +34931,7 @@ export interface SyncGovernanceSuccess {
     status: 'synced' | 'failed';
     /**
      * Governance agent now synced on this account. Reflects the persisted state after sync. Exactly one entry; the array shape mirrors the request schema and the one-agent-per-account invariant. See sync_governance request schema.
+     * @maxItems 1
      */
     governance_agents?: {
       /**
@@ -37744,138 +35458,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
      * @maxItems 20
      */
     suggestions?:
-      | []
-      | [string]
-      | [string, string]
-      | [string, string, string]
-      | [string, string, string, string]
-      | [string, string, string, string, string]
-      | [string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string
-        ]
-      | [
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string,
-          string
-        ];
+      string[];
     /**
      * [AdCP 3.0] Indicates whether deprecated top-level property_list filtering was applied. True if the agent filtered products based on the provided property_list; every returned product also carries the corresponding property/include list_applications receipt. Absent or false if property_list was not provided or not supported by this agent.
      */
@@ -38369,6 +35952,7 @@ export interface ComplyTestControllerRequest {
     reason?: string;
     /**
      * Optional deterministic alternatives the seller MUST emit on the next get_products rejection. Used only by force_get_products_arm with arm 'rejected'.
+     * @maxItems 20
      */
     suggestions?: string[];
     /**
@@ -38420,6 +36004,7 @@ export interface ComplyTestControllerRequest {
     attestation_mode?: 'raw' | 'digest';
     /**
      * When `attestation_mode` is `digest`, the runner MAY supply SHA-256 digests (lowercase hex, 64 chars) of identifier values it wants the controller to verify echo for. The controller scans each recorded call's payload for string tokens whose SHA-256 hash matches any digest in this list and returns booleans in `recorded_calls[].identifier_match_proofs[]`. Lets the runner verify `identifier_paths` echo without ever transmitting plaintext identifiers to the controller — the digest is the comparison key. Cap of 64 digests per query to bound the controller's work; storyboards with more identifiers SHOULD batch across multiple queries. Has no effect when `attestation_mode` is `raw` (the runner does the matching in-process against the full payload).
+     * @maxItems 64
      */
     identifier_value_digests?: string[];
   };
@@ -38633,6 +36218,7 @@ export interface ForcedDirectiveSuccess {
     reason?: string;
     /**
      * Echo of the optional deterministic alternatives registered for a rejected get_products response.
+     * @maxItems 20
      */
     suggestions?: string[];
   };
@@ -38807,6 +36393,7 @@ export interface DigestAttestation {
   payload_length: number;
   /**
    * Per-identifier echo proofs for digest-mode calls. Required when `attestation_mode` is `digest` AND the request supplied `params.identifier_value_digests`; MUST be absent or empty otherwise. Each entry corresponds to one digest from the request. Capped at 64 to match the request-side `params.identifier_value_digests` cap. Lets storyboards verify `identifier_paths` echo in digest mode without ever transmitting plaintext identifiers to the controller. SHA-256 is a privacy mechanism here, not a trust mechanism — controllers self-report `found` and a determined façade can return any boolean; consumers MUST NOT treat digest-mode passing as cryptographically more trustworthy than raw mode. Tokenization is normative: for `application/json` and `*+json` content types, controllers MUST scan exactly the JSON string-typed leaf values of the post-redaction canonicalized body — no substring matching, no word splitting, no case folding, no Unicode normalization. A token matches when its SHA-256 hash equals one of the requested digests byte-for-byte. For non-JSON content types (form-urlencoded, multipart, plain text), `identifier_match_proofs` MUST be empty and runner-side `identifier_paths` assertions targeting those calls grade `not_applicable` — token boundaries are not portably defined across non-JSON shapes.
+   * @maxItems 64
    */
   identifier_match_proofs?: {
     /**

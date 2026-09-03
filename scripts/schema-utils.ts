@@ -53,8 +53,9 @@ const TS_TO_ZOD_SUPPORTED_FORMATS = new Set([
  * `minimum: 1`. ts-to-zod natively reads six JSDoc constraint tags
  * (`@minimum`, `@maximum`, `@minLength`, `@maxLength`, `@pattern`,
  * `@format`), so we encode the constraints into the JSDoc-bound description
- * field before jsts runs. The emitted JSDoc round-trips into Zod chains
- * (`z.number().min(1)`, etc).
+ * field before jsts runs. `@maxItems` is retained for the generator's
+ * source-aware array post-pass, because ts-to-zod does not natively parse it.
+ * The emitted JSDoc round-trips into Zod chains (`z.number().min(1)`, etc).
  *
  * Skipped (Ajv still enforces these against the unstripped schema at runtime):
  *  - `exclusiveMinimum` / `exclusiveMaximum` — ts-to-zod has no exclusive variant.
@@ -136,6 +137,10 @@ export function injectJsdocConstraints(schema: any): any {
     const hasStringType = out.type === 'string' || (Array.isArray(out.type) && out.type.includes('string'));
     if (hasStringType && typeof out.minLength === 'number') addTag('minLength', out.minLength);
     if (hasStringType && typeof out.maxLength === 'number') addTag('maxLength', out.maxLength);
+    // TypeScript has no ergonomic bounded-array type, so maxItems is removed
+    // before public type generation. Preserve it as JSDoc provenance for the
+    // Zod generator, which restores the runtime ZodArray `.max()` check.
+    if (out.type === 'array' && typeof out.maxItems === 'number') addTag('maxItems', out.maxItems);
     if (typeof out.pattern === 'string' && !/[\n\r]/.test(out.pattern)) {
       // ts-to-zod wraps the JSDoc `@pattern` value as `/PATTERN/`, so we
       // need to escape any unescaped `/` to keep the regex literal valid.

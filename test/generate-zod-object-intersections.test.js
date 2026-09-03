@@ -62,6 +62,36 @@ function postProcessTupleRestArrays(input) {
   return runPostProcess('postProcessTupleRestArrays', input, '.zod-tuple-rest-');
 }
 
+function postProcessArrayMaxItems(typeSource, zodSource, passes = 1) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-array-max-items-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.txt');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+let output = ${JSON.stringify(zodSource)};
+for (let pass = 0; pass < ${JSON.stringify(passes)}; pass++) {
+  output = __test__.postProcessArrayMaxItems(output, ${JSON.stringify(typeSource)});
+}
+writeFileSync(${JSON.stringify(outPath)}, output);
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return fs.readFileSync(outPath, 'utf8');
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
 function postProcessMarkerUnionObjectIntersections(input) {
   return runPostProcess('postProcessMarkerUnionObjectIntersections', input, '.zod-marker-union-');
 }
@@ -189,7 +219,7 @@ export const ArraySchema = z.array(z.string()).max(5);
 test('relaxArrayCardinalityTypes uses source metadata and preserves structural tuples', () => {
   const output = relaxArrayCardinalityTypes(`
 /** @minItems 1 */
-export type ComplexArray = [{ value: string }, ...{ value: string }[]];
+export type ComplexArray = [{ /** Item value. */ value: string }, ...{ /** Item value. */ value: string }[]];
 /**
  * @minItems 1
  * @maxItems 3
@@ -203,10 +233,198 @@ export type Coordinate = [number, number];
 export type StructuralTupleUnion = [string] | [string, string];
 `);
 
-  assert.match(output, /type ComplexArray = \{\s*value: string;\s*\}\[\]/);
-  assert.match(output, /type BoundedArray = \{\s*value: string;\s*\}\[\]/);
+  assert.match(output, /type ComplexArray = \{[\s\S]*?value: string;?[\s\S]*?\}\[\]/);
+  assert.match(output, /Item value\./);
+  assert.match(output, /type BoundedArray =\s*\{\s*value: string;?\s*\}\[\]/);
   assert.match(output, /type Coordinate = \[\s*number,\s*number\s*\]/);
   assert.match(output, /type StructuralTupleUnion = \[\s*string\s*\] \| \[\s*string,\s*string\s*\]/);
+});
+
+test('relaxArrayCardinalityTypes makes maxItems properties assignable from ordinary arrays', () => {
+  const output = relaxArrayCardinalityTypes(`
+export interface ReportingDeliveryConfigurationState {}
+export interface Account {
+  /** @maxItems 16 */
+  reporting_delivery_configs?:
+    | []
+    | [ReportingDeliveryConfigurationState]
+    | [ReportingDeliveryConfigurationState, ReportingDeliveryConfigurationState];
+}
+`);
+
+  assert.match(output, /reporting_delivery_configs\?:\s*ReportingDeliveryConfigurationState\[\];/);
+  assert.doesNotMatch(output, /reporting_delivery_configs\?:\s*\| \[\]/);
+});
+
+test('relaxArrayCardinalityTypes is idempotent for relaxed intersection arrays', () => {
+  const source = `
+export interface AttestationReference {}
+/** @maxItems 3 */
+export type AttestationRefs = (AttestationReference & {
+  /** Inline provenance. */
+  required: true;
+})[];
+/** @maxItems 4 */
+export type Matrix = [number, number][];
+/** @maxItems 4 */
+export type GenericMatrix = Array<[number, number]>;
+`;
+
+  assert.equal(relaxArrayCardinalityTypes(source), source);
+
+  const bounded = `
+export interface AttestationReference {}
+/** @maxItems 2 */
+export type AttestationRefs =
+  | [AttestationReference & { required: true }]
+  | [AttestationReference & { required: true }, AttestationReference & { required: true }];
+`;
+  const relaxed = relaxArrayCardinalityTypes(bounded);
+  assert.equal(relaxArrayCardinalityTypes(relaxed), relaxed);
+});
+
+test('generated Account maxItems property accepts dynamically assembled arrays', () => {
+  const tmpDir = fs.mkdtempSync(path.join(REPO_ROOT, '.tmp-maxitems-types-'));
+  const reproPath = path.join(tmpDir, 'repro.ts');
+  fs.writeFileSync(
+    reproPath,
+    `import type { Account, ReportingDeliveryConfigurationState } from '../src/lib/types/tools.generated';
+declare const states: ReportingDeliveryConfigurationState[];
+const configs: Account['reporting_delivery_configs'] = states;
+void configs;
+`
+  );
+
+  try {
+    const result = spawnSync(
+      'npx',
+      [
+        'tsc',
+        reproPath,
+        '--noEmit',
+        '--skipLibCheck',
+        '--module',
+        'NodeNext',
+        '--moduleResolution',
+        'NodeNext',
+        '--target',
+        'ES2022',
+      ],
+      { cwd: REPO_ROOT, encoding: 'utf8' }
+    );
+    assert.equal(result.status, 0, `TypeScript repro failed:\n${result.stderr}\n${result.stdout}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('postProcessArrayMaxItems restores metadata bounds without changing exact tuples', () => {
+  const typeSource = `
+export interface CreativeLocalePolicy {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  accepted_language_ranges: string[];
+  nested_entries: {
+    /** @maxItems 16 */
+    reporting_delivery_configs?: number[];
+  }[];
+}
+/** @minItems 2 @maxItems 2 */
+export type Coordinate = [number, number];
+`;
+  const zodSource = `
+export const CreativeLocalePolicySchema = z.object({
+  accepted_language_ranges: z.array(z.string()),
+  nested_entries: z.array(z.object({ reporting_delivery_configs: z.array(z.number()).optional() }))
+});
+export const CoordinateSchema = z.tuple([z.number(), z.number()]);
+`;
+  const output = postProcessArrayMaxItems(typeSource, zodSource);
+
+  assert.match(output, /accepted_language_ranges: z\.array\(z\.string\(\)\)\.max\(50\)/);
+  assert.match(output, /reporting_delivery_configs: z\.array\(z\.number\(\)\)\.max\(16\)\.optional\(\)/);
+  assert.match(output, /CoordinateSchema = z\.tuple\(\[z\.number\(\), z\.number\(\)\]\)/);
+  assert.doesNotMatch(output, /CoordinateSchema = z\.tuple[^;]*\.max\(/);
+  assert.equal(postProcessArrayMaxItems(typeSource, output, 2), output);
+});
+
+test('postProcessArrayMaxItems keeps same-named root and nested paths distinct', () => {
+  const output = postProcessArrayMaxItems(
+    `
+export interface Collision {
+  /** @maxItems 2 */
+  values: string[];
+  nested: {
+    /** @maxItems 3 */
+    values: string[];
+  };
+  unbounded: { values: string[] };
+}
+`,
+    `
+export const CollisionSchema = z.object({
+  values: z.array(z.string()),
+  nested: z.object({ values: z.array(z.string()) }),
+  unbounded: z.object({ values: z.array(z.string()) })
+});
+`
+  );
+
+  assert.match(output, /^\s*values: z\.array\(z\.string\(\)\)\.max\(2\),$/m);
+  assert.match(output, /nested: z\.object\(\{ values: z\.array\(z\.string\(\)\)\.max\(3\) \}\)/);
+  assert.match(output, /unbounded: z\.object\(\{ values: z\.array\(z\.string\(\)\) \}\)/);
+});
+
+test('generated Zod schemas enforce maxItems at the boundary', () => {
+  const harnessDir = fs.mkdtempSync(path.join(REPO_ROOT, '.tmp-zod-maxitems-runtime-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const schemasPath = path.join(REPO_ROOT, 'src/lib/types/schemas.generated.ts');
+  fs.writeFileSync(
+    scriptPath,
+    `
+import assert from 'node:assert/strict';
+import { AccountSchema, CreativeLocalePolicySchema } from ${JSON.stringify(schemasPath)};
+
+const languages = (length: number) => Array.from({ length }, () => 'en');
+assert.equal(CreativeLocalePolicySchema.safeParse({ accepted_language_ranges: languages(50) }).success, true);
+assert.equal(CreativeLocalePolicySchema.safeParse({ accepted_language_ranges: languages(51) }).success, false);
+
+const reportingConfig = {
+  configuration: {
+    delivery_config_id: 'config',
+    delivery_config_version: 1,
+    offering_id: 'offering',
+    active: true,
+    feed_purpose: 'pacing',
+    report_definition_id: 'definition',
+    reporting_profile: 'profile',
+    scope: { all_media_buys: true },
+    coverage_requirement: 'full',
+    required_finality: 'snapshot',
+    reconciliation_mode: 'delivery_only',
+    schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'P1D' }
+  },
+  state: 'ready'
+};
+const account = (count: number) => ({
+  account_id: 'account',
+  name: 'Account',
+  status: 'active',
+  reporting_delivery_configs: Array.from({ length: count }, () => reportingConfig)
+});
+assert.equal(AccountSchema.safeParse(account(16)).success, true);
+assert.equal(AccountSchema.safeParse(account(17)).success, false);
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    assert.equal(result.status, 0, `runtime boundary harness failed:\n${result.stderr}\n${result.stdout}`);
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
 });
 
 test('postProcessTupleRestArrays handles differently-indented complex items only', () => {

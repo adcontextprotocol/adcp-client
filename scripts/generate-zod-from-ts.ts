@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { writeFileSync, readFileSync, existsSync, readdirSync } from 'fs';
 import path from 'path';
 import { isDeepStrictEqual } from 'util';
+import { relaxArrayCardinalityTypes } from './typescript-array-cardinality';
 
 /**
  * Generate Zod v4 schemas from TypeScript types
@@ -364,148 +365,6 @@ function postProcessLazyTypeAnnotations(content: string): string {
 }
 
 const typePrinter = ts.createPrinter({ removeComments: true });
-const sourcePrinter = ts.createPrinter();
-
-function canonicalTypeText(node: ts.TypeNode, sourceFile: ts.SourceFile): string {
-  let semanticNode = node;
-  while (ts.isParenthesizedTypeNode(semanticNode)) semanticNode = semanticNode.type;
-  return typePrinter.printNode(ts.EmitHint.Unspecified, semanticNode, sourceFile);
-}
-
-function tupleArrayElementType(node: ts.TypeNode, sourceFile: ts.SourceFile): ts.TypeNode | undefined {
-  if (!ts.isTupleTypeNode(node)) return undefined;
-
-  const elements = node.elements.map(element => {
-    if (ts.isRestTypeNode(element)) {
-      return ts.isArrayTypeNode(element.type) ? element.type.elementType : undefined;
-    }
-    if (ts.isNamedTupleMember(element)) {
-      const memberType = element.type;
-      return element.dotDotDotToken && ts.isArrayTypeNode(memberType) ? memberType.elementType : memberType;
-    }
-    return element;
-  });
-  if (elements.some((element): element is undefined => element === undefined)) return undefined;
-
-  const first = elements[0];
-  if (!first) return undefined;
-  const canonical = canonicalTypeText(first, sourceFile);
-  return elements.every(element => canonicalTypeText(element!, sourceFile) === canonical) ? first : undefined;
-}
-
-function cardinalityArrayElementType(node: ts.TypeNode, sourceFile: ts.SourceFile): ts.TypeNode | undefined {
-  let semanticNode = node;
-  while (ts.isParenthesizedTypeNode(semanticNode)) semanticNode = semanticNode.type;
-  if (ts.isTupleTypeNode(semanticNode)) return tupleArrayElementType(semanticNode, sourceFile);
-  if (!ts.isUnionTypeNode(semanticNode)) return undefined;
-
-  const elements = semanticNode.types.map(type => {
-    let arm = type;
-    while (ts.isParenthesizedTypeNode(arm)) arm = arm.type;
-    if (!ts.isTupleTypeNode(arm)) return undefined;
-    return arm.elements.length === 0 ? null : tupleArrayElementType(arm, sourceFile);
-  });
-  const first = elements.find((element): element is ts.TypeNode => element != null);
-  if (!first || elements.some(element => element === undefined)) return undefined;
-  const canonical = canonicalTypeText(first, sourceFile);
-  return elements.every(element => element === null || canonicalTypeText(element, sourceFile) === canonical)
-    ? first
-    : undefined;
-}
-
-function relaxCardinalityTypeNode(
-  type: ts.TypeNode,
-  sourceFile: ts.SourceFile,
-  context: ts.TransformationContext,
-  visit: ts.Visitor
-): ts.TypeNode {
-  const element = cardinalityArrayElementType(type, sourceFile);
-  if (element) {
-    return ts.factory.createArrayTypeNode(ts.visitNode(element, visit, ts.isTypeNode));
-  }
-
-  // Cardinality metadata can apply to an array branch in a wider union or to
-  // an index-signature/record value. Descend through type containers, but not
-  // into object members where an unrelated structural tuple could live.
-  if (ts.isParenthesizedTypeNode(type)) {
-    return ts.factory.updateParenthesizedType(type, relaxCardinalityTypeNode(type.type, sourceFile, context, visit));
-  }
-  if (ts.isUnionTypeNode(type)) {
-    return ts.factory.updateUnionTypeNode(
-      type,
-      type.types.map(member => relaxCardinalityTypeNode(member, sourceFile, context, visit))
-    );
-  }
-  if (ts.isIntersectionTypeNode(type)) {
-    return ts.factory.updateIntersectionTypeNode(
-      type,
-      type.types.map(member => relaxCardinalityTypeNode(member, sourceFile, context, visit))
-    );
-  }
-  if (ts.isTypeReferenceNode(type)) {
-    return ts.factory.updateTypeReferenceNode(
-      type,
-      type.typeName,
-      type.typeArguments?.map(argument => relaxCardinalityTypeNode(argument, sourceFile, context, visit))
-    );
-  }
-  return ts.visitEachChild(type, visit, context) as ts.TypeNode;
-}
-
-/**
- * Relax non-exact JSON Schema array cardinality before passing generated TypeScript
- * to ts-to-zod. json-schema-to-typescript represents those arrays as tuple/rest or
- * bounded tuple-union types, which ts-to-zod faithfully projects as Zod tuples.
- *
- * Scoping the rewrite to declarations carrying @minItems/@maxItems provenance avoids
- * widening authored structural tuple unions. Exact min=max tuples (for example an
- * [x, y] focal point) remain tuples on the public Zod surface.
- */
-function relaxArrayCardinalityTypes(source: string): string {
-  const sourceFile = ts.createSourceFile(
-    'adcp-generated-types.ts',
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
-  const relaxedTypeRoots = new Set<ts.TypeNode>();
-
-  const collect = (node: ts.Node): void => {
-    const tags = ts.getJSDocTags(node);
-    const minTag = tags.find(tag => tag.tagName.text === 'minItems');
-    const maxTag = tags.find(tag => tag.tagName.text === 'maxItems');
-    if (minTag || maxTag) {
-      const min = minTag ? Number(String(minTag.comment ?? '').trim()) : undefined;
-      const max = maxTag ? Number(String(maxTag.comment ?? '').trim()) : undefined;
-      const exactTuple = min !== undefined && max !== undefined && min === max;
-      const typedNode = node as ts.Node & { type?: ts.TypeNode };
-      if (!exactTuple && typedNode.type) {
-        relaxedTypeRoots.add(typedNode.type);
-      }
-    }
-    ts.forEachChild(node, collect);
-  };
-  collect(sourceFile);
-
-  const transformed = ts.transform(sourceFile, [
-    context => root => {
-      const visit: ts.Visitor = node => {
-        if (ts.isTypeNode(node) && relaxedTypeRoots.has(node)) {
-          return relaxCardinalityTypeNode(node, sourceFile, context, visit);
-        }
-        return ts.visitEachChild(node, visit, context);
-      };
-      return ts.visitNode(root, visit) as ts.SourceFile;
-    },
-  ]);
-  try {
-    return sourcePrinter.printFile(transformed.transformed[0]!);
-  } finally {
-    transformed.dispose();
-  }
-}
-
 function canonicalSchemaExpression(expression: string): string {
   const sourceFile = ts.createSourceFile(
     'zod-expression.ts',
@@ -573,6 +432,304 @@ function postProcessTupleRestArrays(content: string): string {
   }
 
   return result;
+}
+
+interface ArrayMaxItemsConstraint {
+  schemaName: string;
+  path: string[];
+  maxItems: number;
+}
+
+function jsDocNumberTag(node: ts.Node, name: string): number | undefined {
+  const tag = ts.getJSDocTags(node).find(candidate => candidate.tagName.text === name);
+  if (!tag) return undefined;
+  const value = Number(String(tag.comment ?? '').trim());
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function isTupleType(type: ts.TypeNode): boolean {
+  let unwrapped = type;
+  while (ts.isParenthesizedTypeNode(unwrapped)) unwrapped = unwrapped.type;
+  return ts.isTupleTypeNode(unwrapped);
+}
+
+/**
+ * Collect maxItems annotations which survive the JSON-Schema-to-TypeScript
+ * hop as JSDoc. ts-to-zod deliberately only knows scalar/string JSDoc
+ * constraints, so arrays need this small source-aware bridge.
+ *
+ * `path` allows nested type literals to be handled without matching an
+ * unrelated same-named field elsewhere in a generated schema. An exact tuple
+ * already enforces its cardinality, and must remain a tuple for compatibility.
+ */
+function collectArrayMaxItemsConstraints(source: string): ArrayMaxItemsConstraint[] {
+  const sourceFile = ts.createSourceFile(
+    'adcp-generated-types.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const constraints: ArrayMaxItemsConstraint[] = [];
+
+  const visitType = (type: ts.TypeNode, schemaName: string, path: string[]): void => {
+    if (ts.isParenthesizedTypeNode(type)) {
+      visitType(type.type, schemaName, path);
+      return;
+    }
+    if (ts.isTypeLiteralNode(type)) {
+      for (const member of type.members) {
+        if (!ts.isPropertySignature(member) || !member.type) continue;
+        const propertyName =
+          ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
+            ? member.name.text
+            : undefined;
+        if (!propertyName) continue;
+        collectMember(member, schemaName, [...path, propertyName]);
+      }
+      return;
+    }
+    if (ts.isArrayTypeNode(type)) {
+      visitType(type.elementType, schemaName, path);
+      return;
+    }
+    if (
+      ts.isTypeReferenceNode(type) &&
+      ts.isIdentifier(type.typeName) &&
+      (type.typeName.text === 'Array' || type.typeName.text === 'ReadonlyArray') &&
+      type.typeArguments?.[0]
+    ) {
+      visitType(type.typeArguments[0], schemaName, path);
+      return;
+    }
+    if (ts.isTupleTypeNode(type)) {
+      for (const element of type.elements) {
+        if (ts.isRestTypeNode(element)) visitType(element.type, schemaName, path);
+        else if (ts.isNamedTupleMember(element)) visitType(element.type, schemaName, path);
+        else visitType(element, schemaName, path);
+      }
+      return;
+    }
+    if (ts.isUnionTypeNode(type) || ts.isIntersectionTypeNode(type)) {
+      type.types.forEach(member => visitType(member, schemaName, path));
+    }
+  };
+
+  const collectMember = (member: ts.PropertySignature, schemaName: string, path: string[]): void => {
+    const maxItems = jsDocNumberTag(member, 'maxItems');
+    const minItems = jsDocNumberTag(member, 'minItems');
+    if (maxItems !== undefined && minItems !== maxItems && !isTupleType(member.type!)) {
+      constraints.push({ schemaName, path, maxItems });
+    }
+    visitType(member.type!, schemaName, path);
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isInterfaceDeclaration(statement)) {
+      for (const member of statement.members) {
+        if (!ts.isPropertySignature(member) || !member.type) continue;
+        const propertyName =
+          ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)
+            ? member.name.text
+            : undefined;
+        if (propertyName) collectMember(member, statement.name.text, [propertyName]);
+      }
+      continue;
+    }
+    if (!ts.isTypeAliasDeclaration(statement)) continue;
+
+    const maxItems = jsDocNumberTag(statement, 'maxItems');
+    const minItems = jsDocNumberTag(statement, 'minItems');
+    if (maxItems !== undefined && minItems !== maxItems && !isTupleType(statement.type)) {
+      constraints.push({ schemaName: statement.name.text, path: [], maxItems });
+    }
+    visitType(statement.type, statement.name.text, []);
+  }
+
+  const unique = new Map<string, ArrayMaxItemsConstraint>();
+  for (const constraint of constraints) {
+    const key = `${constraint.schemaName}:${constraint.path.join('.')}`;
+    const existing = unique.get(key);
+    if (existing && existing.maxItems !== constraint.maxItems) {
+      throw new Error(`Conflicting @maxItems values for ${key}: ${existing.maxItems} and ${constraint.maxItems}.`);
+    }
+    unique.set(key, constraint);
+  }
+  return [...unique.values()];
+}
+
+function propertyNameText(name: ts.PropertyName): string | undefined {
+  return ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name) ? name.text : undefined;
+}
+
+function isZodArrayCall(node: ts.Expression): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'array' &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'z'
+  );
+}
+
+function isZodTupleCall(node: ts.Expression): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'tuple' &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'z'
+  );
+}
+
+/** Find the outer array base beneath chains such as `.optional()` or `.nullable()`. */
+function findZodArrayBase(node: ts.Expression): ts.CallExpression | undefined {
+  if (isZodArrayCall(node)) return node;
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    return findZodArrayBase(node.expression.expression);
+  }
+  return undefined;
+}
+
+function fixedZodTupleLength(node: ts.Expression): number | undefined {
+  if (isZodTupleCall(node)) {
+    const values = node.arguments[0];
+    return values && ts.isArrayLiteralExpression(values) ? values.elements.length : undefined;
+  }
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    return fixedZodTupleLength(node.expression.expression);
+  }
+  return undefined;
+}
+
+function zodArrayMaxItems(node: ts.Expression): number | undefined {
+  let current = node;
+  while (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+    if (
+      current.expression.name.text === 'max' &&
+      current.arguments.length === 1 &&
+      ts.isNumericLiteral(current.arguments[0])
+    ) {
+      return Number(current.arguments[0].text);
+    }
+    current = current.expression.expression;
+  }
+  return undefined;
+}
+
+function findSchemaVariable(sourceFile: ts.SourceFile, schemaName: string): ts.Expression | undefined {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === schemaName && declaration.initializer) {
+        return declaration.initializer;
+      }
+    }
+  }
+  return undefined;
+}
+
+function isZodObjectCall(node: ts.Node): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'object' &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'z'
+  );
+}
+
+function collectObjectPropertyValues(expression: ts.Expression, path: readonly string[]): ts.Expression[] {
+  if (path.length === 0) return [expression];
+  const values: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (isZodObjectCall(node)) {
+      const shape = node.arguments[0];
+      if (shape && ts.isObjectLiteralExpression(shape)) {
+        for (const property of shape.properties) {
+          if (!ts.isPropertyAssignment(property) || propertyNameText(property.name) !== path[0]) continue;
+          if (path.length === 1) values.push(property.initializer);
+          else values.push(...collectObjectPropertyValues(property.initializer, path.slice(1)));
+        }
+      }
+      // Properties inside this object are a deeper schema level. Only enter a
+      // matching property above, after consuming the current path segment.
+      return;
+    }
+    if (ts.isObjectLiteralExpression(node)) {
+      // Object literals outside z.object() are configuration/data arguments,
+      // not schema shapes.
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  return values;
+}
+
+/**
+ * Restore JSON Schema maxItems as ZodArray `.max(N)` chains after ts-to-zod
+ * generation. This is intentionally source-driven rather than a list of
+ * known fields so newly added schema bounds receive runtime validation.
+ */
+function postProcessArrayMaxItems(content: string, typeSource: string): string {
+  const constraints = collectArrayMaxItemsConstraints(typeSource);
+  if (constraints.length === 0) return content;
+
+  const sourceFile = ts.createSourceFile(
+    'adcp-generated-zod.ts',
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const insertions = new Map<number, number>();
+  for (const constraint of constraints) {
+    const schema = findSchemaVariable(sourceFile, `${constraint.schemaName}Schema`);
+    if (!schema) continue; // ts-to-zod may intentionally omit unsupported declarations.
+    const values = collectObjectPropertyValues(schema, constraint.path);
+    let foundArray = false;
+    let fixedTupleSatisfiesBound = false;
+    for (const value of values) {
+      const array = findZodArrayBase(value);
+      if (!array) {
+        const tupleLength = fixedZodTupleLength(value);
+        if (tupleLength !== undefined && tupleLength <= constraint.maxItems) fixedTupleSatisfiesBound = true;
+        continue;
+      }
+      foundArray = true;
+      const existingMax = zodArrayMaxItems(value);
+      if (existingMax !== undefined) {
+        if (existingMax !== constraint.maxItems) {
+          throw new Error(
+            `Conflicting generated Zod maxItems values at ${constraint.schemaName}.${constraint.path.join('.')}: ` +
+              `${existingMax} and ${constraint.maxItems}.`
+          );
+        }
+        continue;
+      }
+      const existing = insertions.get(array.end);
+      if (existing !== undefined && existing !== constraint.maxItems) {
+        throw new Error(
+          `Conflicting generated Zod maxItems values at ${constraint.schemaName}.${constraint.path.join('.')}.`
+        );
+      }
+      insertions.set(array.end, constraint.maxItems);
+    }
+    if (!foundArray && !fixedTupleSatisfiesBound) {
+      throw new Error(
+        `Unable to restore @maxItems for ${constraint.schemaName}.${constraint.path.join('.')}: ` +
+          'the generated schema did not contain a ZodArray.'
+      );
+    }
+  }
+
+  return [...insertions.entries()]
+    .sort(([left], [right]) => right - left)
+    .reduce(
+      (result, [position, maxItems]) => result.slice(0, position) + `.max(${maxItems})` + result.slice(position),
+      content
+    );
 }
 
 /**
@@ -1853,13 +2010,14 @@ type CanonicalPrimitiveConstraints = {
  * after every structural Zod rewrite has run. The TypeScript intermediary can
  * lose JSDoc when a transitive occurrence wins first-definition ownership;
  * this pass makes the canonical document authoritative without relying on a
- * growing allowlist of field names.
+ * growing allowlist of field names. Array cardinality is reconciled separately
+ * by `postProcessArrayMaxItems`.
  *
  * Constraints are applied by property name only when every occurrence of that
  * name inside the canonical document has the same constraint set. Ambiguous
  * nested names are deliberately left alone rather than applying a constraint
- * in the wrong context. Defaults and array cardinality remain documentation-
- * only by design and are not handled here.
+ * in the wrong context. Defaults are not materialized, and array cardinality
+ * is handled by the dedicated source-aware pass.
  */
 function postProcessCanonicalPrimitiveConstraints(content: string): string {
   const cacheRoot = path.join(__dirname, '../schemas/cache/latest');
@@ -2091,15 +2249,19 @@ function postProcessCanonicalVastAudioConstraints(content: string): string {
   const end = endCandidate < 0 ? content.length : endCandidate;
   let block = content.slice(start, end);
   const unconstrainedDuration = 'duration_ms_range: z.array(z.number()).optional()';
+  const maxConstrainedDuration = 'duration_ms_range: z.array(z.number()).max(2).optional()';
   const constrainedDuration = 'duration_ms_range: z.array(z.number().int().min(0)).length(2).optional()';
   if (!block.includes(constrainedDuration)) {
-    const occurrences = block.split(unconstrainedDuration).length - 1;
+    const occurrences =
+      block.split(unconstrainedDuration).length - 1 + (block.split(maxConstrainedDuration).length - 1);
     if (occurrences !== 1) {
       throw new Error(
         `postProcessCanonicalVastAudioConstraints: expected one unconstrained duration_ms_range, found ${occurrences}.`
       );
     }
-    block = block.replace(unconstrainedDuration, constrainedDuration);
+    block = block
+      .replace(unconstrainedDuration, constrainedDuration)
+      .replace(maxConstrainedDuration, constrainedDuration);
   }
 
   const refinementMarker = 'audio VAST declarations cannot combine vast_version and vast_versions';
@@ -4023,6 +4185,11 @@ async function generateZodSchemas() {
     // homogeneous tuple/rest representation without touching fixed tuples.
     zodSchemas = postProcessTupleRestArrays(zodSchemas);
 
+    // ts-to-zod does not natively support @maxItems JSDoc. Recover the
+    // retained JSON Schema provenance from the generated TS source and apply
+    // the bound to the corresponding ZodArray validators.
+    zodSchemas = postProcessArrayMaxItems(zodSchemas, combinedSource);
+
     // Post-process: Replace z.union([z.unknown(), z.undefined()]) with z.unknown().
     // ts-to-zod generates the union for Record<string, unknown> types, but z.undefined()
     // has no JSON Schema representation, breaking MCP SDK's toJSONSchema() conversion.
@@ -4480,6 +4647,7 @@ if (require.main === module) {
 
 export const __test__ = {
   postProcessTupleRestArrays,
+  postProcessArrayMaxItems,
   relaxArrayCardinalityTypes,
   postProcessForNullish,
   postProcessRecordIntersections,
