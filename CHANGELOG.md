@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-beta.30
+
+### Patch Changes
+
+- c1d1f9a: Preserve resolved reporting delivery configuration state in server account projections.
+
 ## 14.0.0-beta.29
 
 ### Patch Changes
