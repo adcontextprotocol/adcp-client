@@ -93,6 +93,7 @@ import type {
   DAASTVersion,
   DOOHMotionType,
   DayOfWeek,
+  DaypartTimezoneMode,
   DelegationAuthority,
   DeliveryMetricAggregate,
   DeliveryMetrics,
@@ -269,7 +270,7 @@ import type {
   WebhookSecurityMethod,
 } from './core.generated';
 
-export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
+export type { AccountCurrencyMode, AccountReference, AccountScope, AccountStatus, ActionNotAllowedReason, ActionSource, AdCPProtocol, AdCPSpecialism, AdCPVersionEnvelope, AdvertiserIndustry, AgeDeterminationBasis, AgeVerificationMethod, AssessmentStatus, AssetContentType, AssetVariant, AttestationClaim, AttributionMethodology, AttributionModel, AudienceConstraints, AudienceEvidenceMethodology, AudienceResolutionMethod, AudienceSource, AudienceStatus, AudienceSubjectType, AudioChannelLayout, AudioDistributionType, AuthenticationScheme, AvailabilityStatus, AvailableMetric, BillingParty, BinaryVerdict, BrandAgentType, BrandReference, BrowserFamily, BusinessEntity, C2PAWatermarkAction, CTVAdExperience, CanceledBy, CancellationPolicy, CanonicalFormatAgentPlacementAISurfaceSponsoredPlacement, CanonicalFormatBase, CanonicalFormatCoordinatedPlacements, CanonicalFormatDAASTAudio, CanonicalFormatDisplayTag, CanonicalFormatHTML5Banner, CanonicalFormatHostedAudio, CanonicalFormatHostedVideo, CanonicalFormatImage, CanonicalFormatImageCarousel, CanonicalFormatNativeInFeed, CanonicalFormatOption, CanonicalFormatResponsiveCreative, CanonicalFormatSellerRenderedStatefulDisplay, CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven, CanonicalFormatVASTAudio, CanonicalFormatVASTVideo, CanonicalMediaBuyActionMode, CanonicalMediaBuyActionName, CanonicalProposal, CatalogAction, CatalogItemDeliveryMetrics, CatalogItemStatus, CatalogType, CloudStorageProtocol, CoBrandingRequirement, CollectionCadence, CollectionKind, CollectionRelationship, CollectionStatus, CompletionSource, ConsentBasis, ContentIDType, ContentRatingSystem, CountryFusedPostalCodeSystem, CreativeAction, CreativeActivationMethod, CreativeAgentCapability, CreativeApprovalStatus, CreativeAsset, CreativeBrief, CreativeEventReasonCode, CreativeIdentifierType, CreativeMotionLevel, CreativeQuality, CreativeSelectionStrategy, CreativeSortField, CreativeStatus, DAASTTrackingEvent, DAASTVersion, DOOHMotionType, DayOfWeek, DaypartTimezoneMode, DelegationAuthority, DeliveryMetricAggregate, DeliveryMetrics, DeliveryRecipientCloud, DeliveryStatus, DeliveryType, DemographicSystem, DerivativeType, DevicePlatform, DeviceType, DigitalSourceType, DimensionUnit, DisclosurePersistence, DisclosurePosition, DistanceUnit, DistributionIdentifierType, EmbeddedProvenanceMethod, ErrorCode, ErrorScope, EscalationSeverity, EventType, Exclusivity, ExtensionObject, FeatureCheckStatus, FeedFormat, FeedbackSource, Fixed, ForecastMethod, ForecastPoint, ForecastRangeUnit, ForecastableMetric, Format, FormatIDParameter, FormatReferenceStructuredObject, FrameRateType, FrequencyCapScope, GOPType, GenreTaxonomy, GeoDeliveryMetrics, GeographicTargetingLevel, GetProductsAsyncSubmitted, GovernanceDecision, GovernanceDomain, GovernanceMode, GovernancePhase, HTTPMethod, HistoryEntryType, ImageAsset, ImpairmentOfflineState, ImpairmentReasonCode, IndicatorType, InstallmentStatus, JavaScriptModuleType, KeywordDeliveryMetrics, LandingPageRequirement, LiftDimension, LogoSlot, MacroDialectFamily, MacroMappingStatus, MacroProcessingActor, MacroProcessingOperation, MacroResolutionReason, MacroValueContext, MakegoodRemedy, MarkdownFlavor, MatchIDType, MatchType, MeasurementTerms, MediaBuyActionMode, MediaBuyHealth, MediaBuyStatus, MediaBuyValidAction, MediaChannel, MetricScope, MetricType, MetroAreaSystem, MoovAtomPosition, MultiSize, None, NotificationType, OfferingAvailabilityStatus, OutcomeType, Pacing, PackageUpdate, PaymentTerms, PerformanceBaseline, PerformanceStandardMetric, PixelTrackingEvent, PlatformExtensionReference, PolicyCategory, PolicyEnforcementLevel, PostalCodeSystem, PostalCountrySystem, PreviewOutputFormat, PriceAdjustmentKind, PricingModel, PricingStructure, PrincipalKind, ProductionQuality, PropertyIdentifierTypes, PropertyType, ProposalDeclineReason, ProposalRefinementReason, ProposalStatus, ProtocolEnvelope, Provenance, PublisherIdentifierTypes, PublisherPropertySelector, PurchaseType, ReachUnit, ReportingDeliveryMethod, ReportingDestinationSetupState, ReportingFinality, ReportingFrequency, ReportingHealth, RepresentationSelectionStrategy, RequestProposalsResponse, Responsive, RestrictedAttribute, RightType, RightUse, RightsBillingPeriod, RightsConstraint, SISessionStatus, ScanType, ScopedCreativeApproval, SignalAvailabilityType, SignalDefinitionEnrichment, SignalSource, SignalTargetingExpression, SignalValueType, SizeModeMutex, SnapshotUnavailableReason, SocialPlacementSurface, SortDirection, SortMetric, SpecialCategory, SponsoredPlacementType, TMPResponseType, TalentRole, TargetingOverlayRequirements, TargetingOverlaySupport, TaskStatus, TaskType, TrackerExecutionActor, TrackerFiringPath, TransportMode, TravelTimeUnit, UIDType, URLAssetType, UniversalMacro, UpdateFrequency, VASTMediaDeliveryMethod, VASTTrackingEvent, VASTVersion, ValidationMode, VideoPlacementType, ViewThresholdBasis, ViewabilityStandard, WCAGLevel, WarningAffectedResource, WarningCode, WatermarkMediaType, WebhookResponseType, WebhookSecurityMethod } from './core.generated';
 
 // Tool Parameter and Response Types
 // Generated from official AdCP schemas
@@ -654,7 +655,7 @@ export type TargetingOverlay = {
    */
   geo_places_exclude?: [GeographicPlaceArea, ...GeographicPlaceArea[]];
   /**
-   * Restrict delivery to specific time windows. Each entry specifies days of week and an hour range.
+   * Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.
    *
    * @minItems 1
    */
@@ -955,6 +956,10 @@ export type GeographicPlaceType =
       | 'ward'
     )
   | string;
+/**
+ * Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.
+ */
+export type IANATimezoneIdentifier = string;
 /**
  * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
  */
@@ -1262,6 +1267,7 @@ export interface GetProductsRequest {
         | 'list_applications'
         | 'brief_relevance'
         | 'acceptance_policy_profile_ids'
+        | 'identity'
         | 'expires_at'
         | 'allowed_actions'
       )
@@ -1967,7 +1973,7 @@ export interface AttestationOriginIssuer {
   ext?: ExtensionObject;
 }
 /**
- * A time window for daypart targeting. Specifies days of week and an hour range. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
+ * A time window for daypart targeting. Specifies days of week, an hour range, and the civil-time clock used to evaluate it. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.
  */
 export interface DaypartTarget {
   /**
@@ -1984,6 +1990,10 @@ export interface DaypartTarget {
    * End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour.
    */
   end_hour: number;
+  /**
+   * Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and hour with the half-open window: a skipped DST hour has no matching instants, while both occurrences of a repeated hour match. This delivery clock is independent of reporting_capabilities.timezone.
+   */
+  timezone?: 'inventory_local' | IANATimezoneIdentifier;
   /**
    * Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')
    */
@@ -2517,6 +2527,7 @@ export type Product = {
     signal_targeting_allowed?: boolean;
     demographic_targeting?: DemographicTargetingCapability;
     overlay_support?: TargetingOverlaySupport;
+    identity?: ProductIdentity;
     targeting_resolution?: ProductTargetingResolution;
     /**
      * Immutable population-level evidence explaining why this inventory may suit an audience. This supports discovery, comparison, and planning only. It does not imply exact demographic targeting, user-level signal membership, or legal-age verification. Sellers MUST publish each distinct snapshot with a new snapshot_id and content_digest.
@@ -5989,9 +6000,17 @@ export interface DoohParameters {
    */
   type: 'dooh';
   /**
-   * Guaranteed share of voice as a percentage (0-100)
+   * Guaranteed share of voice on a 0-100 percentage scale. To compare this contracted value with delivery dooh_metrics.sov_achieved, divide sov_percentage by 100. Share is time-weighted: the sum of the reserved segment durations divided by the full loop duration. On equal-duration loops this equals the slot-count ratio.
    */
   sov_percentage?: number;
+  /**
+   * Number of consecutive loop slots reserved by this seller-declared pre-packaged offer. Contiguity is guaranteed; position is not guaranteed unless loop_position is also present. This field does not carry a buyer-requested custom span for an offer the seller has not pre-packaged.
+   */
+  slot_span?: number;
+  /**
+   * Seller-defined position label for the reserved span within the loop, such as any, first, last, or adjacent_to_content_break. This is deliberately an open string because network vocabularies differ. Consumers MUST accept unrecognized values as opaque and treat them as conveying no position guarantee the consumer understands; an unrecognized value is not a protocol error.
+   */
+  loop_position?: string;
   /**
    * @deprecated
    * Deprecated compatibility copy of the placement-level dooh_placement_attributes.loop_duration_seconds, which is the canonical source. Retained for backward compatibility; new integrations read the placement-level field. When both are present they MUST agree. A product that offers different loop durations under different prices MUST expose distinct placements or products rather than vary this compatibility copy by pricing option.
@@ -6744,6 +6763,19 @@ export interface PlaceCatalogSupport {
    */
   system_versions: [string, ...string[]];
   ext?: ExtensionObject;
+}
+/**
+ * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap; create and update reject that overlay under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
+ */
+export interface ProductIdentity {
+  /**
+   * Whether delivery on this product has a persistent per-entity identifier suitable for identifier-backed reach, frequency, and frequency-cap enforcement. false does not prohibit modeled individuals or households measurement.
+   */
+  persistent_identifier: boolean;
+  /**
+   * Human-readable methodology for this product's custom reach unit. Required when the product reports reach or frequency with reach_unit custom, including frequency-only reporting.
+   */
+  reach_methodology?: string;
 }
 /**
  * Discovery-time targeting resolution bound to this configured product. modifications sparsely disclose product-specific differences from get_products.targeting_overlay. Request-level brief interpretation is returned once on GetProductsResponse.targeting_resolution. Exact structured overlay values are not repeated. Selecting product_id accepts the disclosed modifications; product forecast and pricing MUST reflect them.
@@ -7510,7 +7542,7 @@ export interface ProductAllocation {
    */
   end_time?: string;
   /**
-   * Recommended time windows for this allocation in spot-plan proposals.
+   * Recommended time windows for this allocation in spot-plan proposals. Each entry's timezone defaults to inventory_local when omitted, and entries MAY use different clocks.
    *
    * @minItems 1
    */
@@ -7925,6 +7957,7 @@ export type ProductResponseFields = [
     | 'list_applications'
     | 'brief_relevance'
     | 'acceptance_policy_profile_ids'
+    | 'identity'
     | 'expires_at'
     | 'allowed_actions'
   ),
@@ -7958,6 +7991,7 @@ export type ProductResponseFields = [
     | 'list_applications'
     | 'brief_relevance'
     | 'acceptance_policy_profile_ids'
+    | 'identity'
     | 'expires_at'
     | 'allowed_actions'
   )[]
@@ -8231,6 +8265,98 @@ export type ListProductsResponse = {
     }
 );
 /**
+ * Standalone compact Product view for the AdCP 3.2 lifecycle. product_id and name are the only always-returned fields; requested detail fields are optional. Legacy named formats, coarse MediaBuy actions, and the legacy Product inheritance graph are absent.
+ */
+export type CanonicalProduct = {
+} & {
+  product_id: string;
+  name: string;
+  description?: string;
+  /**
+   * @minItems 1
+   */
+  publisher_properties?: [
+    PublisherPropertySelector & {
+    },
+    ...(PublisherPropertySelector & {
+    })[]
+  ];
+  channels?: MediaChannel[];
+  /**
+   * @minItems 1
+   */
+  video_placement_types?: [VideoPlacementType, ...VideoPlacementType[]];
+  /**
+   * @minItems 1
+   */
+  audio_distribution_types?: [AudioDistributionType, ...AudioDistributionType[]];
+  /**
+   * @minItems 1
+   */
+  sponsored_placement_types?: [SponsoredPlacementType, ...SponsoredPlacementType[]];
+  /**
+   * @minItems 1
+   */
+  social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
+  /**
+   * @minItems 1
+   */
+  format_options?: [CanonicalFormatOption, ...CanonicalFormatOption[]];
+  placements?: CanonicalProductPlacement[];
+  delivery_type?: DeliveryType;
+  exclusivity?: Exclusivity;
+  /**
+   * @minItems 1
+   */
+  pricing_options?: [CanonicalPricingOption, ...CanonicalPricingOption[]];
+  forecast?: CanonicalDeliveryForecast;
+  reporting_capabilities?: CanonicalReportingCapabilities;
+  measurement_terms?: CanonicalMeasurementTerms;
+  /**
+   * Default performance thresholds and measurement vendors inherited by a direct purchase.
+   *
+   * @minItems 1
+   */
+  performance_standards?: [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
+  /**
+   * @minItems 1
+   */
+  catalog_types?: [CatalogType, ...CatalogType[]];
+  signal_targeting_allowed?: boolean;
+  signal_targeting_rules?: SignalTargetingRules;
+  demographic_targeting?: DemographicTargetingCapability;
+  overlay_support?: TargetingOverlaySupport;
+  identity?: ProductIdentity;
+  /**
+   * @minItems 1
+   */
+  audience_evidence?: [CanonicalAudienceEvidence, ...CanonicalAudienceEvidence[]];
+  /**
+   * Exact evidence snapshots that affected eligibility or ranking. Returned whenever evidence requirements affected the result, even if not requested explicitly.
+   *
+   * @minItems 1
+   */
+  audience_evidence_selections?: [CanonicalAudienceEvidenceSelection, ...CanonicalAudienceEvidenceSelection[]];
+  max_optimization_goals?: number;
+  catalog_match?: {
+    matched_gtins?: string[];
+    matched_ids?: string[];
+    matched_count?: number;
+    submitted_count: number;
+  };
+  /**
+   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
+   *
+   * @minItems 1
+   */
+  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
+  brief_relevance?: string;
+  expires_at?: string;
+  allowed_actions?: CanonicalProductAction[];
+  acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
+  ext?: ExtensionObject;
+};
+/**
  * Compact product placement with canonical format narrowing. Publisher references carry their publisher authority. New seller-inline placements SHOULD carry seller_agent as their defining authority; legacy seller-inline placements without it remain valid in product context.
  */
 export type CanonicalProductPlacement = {
@@ -8435,95 +8561,6 @@ export type CanonicalAudienceEvidence = {
   attestation_digests?: [string, ...string[]];
   ext?: ExtensionObject;
 };
-/**
- * Standalone compact Product view for the AdCP 3.2 lifecycle. product_id and name are the only always-returned fields; requested detail fields are optional. Legacy named formats, coarse MediaBuy actions, and the legacy Product inheritance graph are absent.
- */
-export interface CanonicalProduct {
-  product_id: string;
-  name: string;
-  description?: string;
-  /**
-   * @minItems 1
-   */
-  publisher_properties?: [
-    PublisherPropertySelector & {
-    },
-    ...(PublisherPropertySelector & {
-    })[]
-  ];
-  channels?: MediaChannel[];
-  /**
-   * @minItems 1
-   */
-  video_placement_types?: [VideoPlacementType, ...VideoPlacementType[]];
-  /**
-   * @minItems 1
-   */
-  audio_distribution_types?: [AudioDistributionType, ...AudioDistributionType[]];
-  /**
-   * @minItems 1
-   */
-  sponsored_placement_types?: [SponsoredPlacementType, ...SponsoredPlacementType[]];
-  /**
-   * @minItems 1
-   */
-  social_placement_surfaces?: [SocialPlacementSurface, ...SocialPlacementSurface[]];
-  /**
-   * @minItems 1
-   */
-  format_options?: [CanonicalFormatOption, ...CanonicalFormatOption[]];
-  placements?: CanonicalProductPlacement[];
-  delivery_type?: DeliveryType;
-  exclusivity?: Exclusivity;
-  /**
-   * @minItems 1
-   */
-  pricing_options?: [CanonicalPricingOption, ...CanonicalPricingOption[]];
-  forecast?: CanonicalDeliveryForecast;
-  reporting_capabilities?: CanonicalReportingCapabilities;
-  measurement_terms?: CanonicalMeasurementTerms;
-  /**
-   * Default performance thresholds and measurement vendors inherited by a direct purchase.
-   *
-   * @minItems 1
-   */
-  performance_standards?: [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
-  /**
-   * @minItems 1
-   */
-  catalog_types?: [CatalogType, ...CatalogType[]];
-  signal_targeting_allowed?: boolean;
-  signal_targeting_rules?: SignalTargetingRules;
-  demographic_targeting?: DemographicTargetingCapability;
-  /**
-   * @minItems 1
-   */
-  audience_evidence?: [CanonicalAudienceEvidence, ...CanonicalAudienceEvidence[]];
-  /**
-   * Exact evidence snapshots that affected eligibility or ranking. Returned whenever evidence requirements affected the result, even if not requested explicitly.
-   *
-   * @minItems 1
-   */
-  audience_evidence_selections?: [CanonicalAudienceEvidenceSelection, ...CanonicalAudienceEvidenceSelection[]];
-  max_optimization_goals?: number;
-  catalog_match?: {
-    matched_gtins?: string[];
-    matched_ids?: string[];
-    matched_count?: number;
-    submitted_count: number;
-  };
-  /**
-   * Product-scoped receipts for every effective property- or collection-list targeting reference. Sellers MUST return one receipt per application regardless of response field projection; exclusion applications receive a receipt even when summary.matched is zero, while zero matches for any inclusion application make the product ineligible and it is not returned. Each receipt uses the same pre-list product inventory baseline; pricing and forecast reflect inventory remaining after all effective lists are composed.
-   *
-   * @minItems 1
-   */
-  list_applications?: [InventoryListApplication, ...InventoryListApplication[]];
-  brief_relevance?: string;
-  expires_at?: string;
-  allowed_actions?: CanonicalProductAction[];
-  acceptance_policy_profile_ids?: AcceptancePolicyProfileIDs;
-  ext?: ExtensionObject;
-}
 /**
  * DOOH installed-surface and scheduled-loop facts. These fields do not define creative acceptance, which is governed exclusively by effective canonical format_options. Visual placements may declare screen_resolution and motion; audio-only placements omit those screen-specific fields. For publisher_ref placements, product slot and loop values override publisher defaults while repeated screen_resolution and motion values must equal the publisher facts.
  */
@@ -35709,7 +35746,7 @@ export interface ComplyTestControllerRequest {
    */
   adcp_major_version?: number;
   /**
-   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'expire_account_change_cursor' rotates the sandbox account's authorization-scope epoch so runners can verify CURSOR_EXPIRED recovery without waiting for retention. 'catalog_item_availability_probe' provides deterministic sandbox operations for cross-principal reference seeding, actual eligibility observation, clock advancement, and catalog delete/recreate generation tests. 'compact_product_lifecycle_probe' prepares deterministic synchronous compact proposal, acceptance, operational-control, and MediaBuy readback behavior and expires a committed proposal strictly after its hold deadline. 'compact_direct_buy_lifecycle_probe' prepares deterministic synchronous list, direct-purchase, operational-control, and readback behavior for a published product. 'force_creative_purge' destroys or tombstones a sandbox creative so account-level `creative.purged` webhooks can be observed where the seller supports the lifecycle surface. 'force_create_media_buy_arm', 'force_get_products_arm', and 'force_get_signals_arm' register one-shot response-arm directives for the next matching operation from the caller's authenticated sandbox account + principal pair. 'seed_*' scenarios pre-populate fixtures (account, product, pricing option, creative, plan, media buy, rights grant, creative format, measurement catalog) so storyboards can reference fixture IDs and external-catalog facts without implementers guessing which fixtures the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. 'query_provenance_audit_observations' returns sandbox-only audit observations recorded for a submitted creative so storyboards can assert non-blocking governance observations without exposing an internal audit log on public seller responses. 'force_upstream_unavailable' marks a named upstream dependency as unreachable for the duration of the compliance session (or until the seller resets it), so storyboards can exercise stale-cache fallback paths - see the `stale_response_advisory` universal storyboard. The contract raises the bar against unintentional facades - adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context - cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
+   * Test scenario to execute. 'list_scenarios' discovers supported scenarios. 'force_*' and 'simulate_*' trigger state transitions. 'expire_account_change_cursor' rotates the sandbox account's authorization-scope epoch so runners can verify CURSOR_EXPIRED recovery without waiting for retention. 'catalog_item_availability_probe' provides deterministic sandbox operations for cross-principal reference seeding, actual eligibility observation, clock advancement, and catalog delete/recreate generation tests. 'compact_product_lifecycle_probe' prepares deterministic synchronous compact proposal, acceptance, operational-control, and MediaBuy readback behavior and expires a committed proposal strictly after its hold deadline. 'compact_direct_buy_lifecycle_probe' prepares deterministic synchronous list, direct-purchase, operational-control, and readback behavior for a published product. 'reporting_core_lifecycle_probe' installs a caller/account-scoped Core fixture whose first elapsed obligation is visible before any report, advances its virtual clock into delayed or action_required, and can publish a zero-row revision without waiting for wall-clock boundaries. 'force_creative_purge' destroys or tombstones a sandbox creative so account-level `creative.purged` webhooks can be observed where the seller supports the lifecycle surface. 'force_create_media_buy_arm', 'force_get_products_arm', and 'force_get_signals_arm' register one-shot response-arm directives for the next matching operation from the caller's authenticated sandbox account + principal pair. 'seed_*' scenarios pre-populate fixtures (account, product, pricing option, creative, plan, media buy, rights grant, creative format, measurement catalog) so storyboards can reference fixture IDs and external-catalog facts without implementers guessing which fixtures the conformance suite expects. 'query_upstream_traffic' returns outbound HTTP calls the agent has made since session start (or since a caller-supplied timestamp), so storyboard runners can assert upstream side-effects via `check: upstream_traffic`. 'query_provenance_audit_observations' returns sandbox-only audit observations recorded for a submitted creative so storyboards can assert non-blocking governance observations without exposing an internal audit log on public seller responses. 'force_upstream_unavailable' marks a named upstream dependency as unreachable for the duration of the compliance session (or until the seller resets it), so storyboards can exercise stale-cache fallback paths - see the `stale_response_advisory` universal storyboard. The contract raises the bar against unintentional facades - adapters that satisfy AdCP schema requirements with synthetic placeholders. It is NOT an adversarial integrity check: adopters self-report their own traffic. Adopters MUST scope the response to traffic caused by the requesting principal's session/auth context - cross-caller traffic MUST NOT be returned, regardless of the supplied since_timestamp. Multi-tenant sandboxes MUST key the recording buffer on the comply_test_controller invocation's auth principal. Runners and sellers MUST accept unknown scenario strings - new scenarios may be added in additive releases.
    */
   scenario: string;
   /**
@@ -35758,7 +35795,7 @@ export interface ComplyTestControllerRequest {
      */
     fixture?: {};
     /**
-     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic.
+     * Scenario-specific probe operation. catalog_item_availability_probe uses seed_inaccessible_item, query_eligibility, advance_time, and recreate_catalog. compact_product_lifecycle_probe uses prepare to make one seeded product's compact proposal, acceptance, operational-control, and MediaBuy readback path deterministic and expire_proposal to advance strictly beyond a committed proposal's stored expires_at and process the hold lapse. compact_direct_buy_lifecycle_probe uses prepare to make one seeded product's list, direct-purchase, operational-control, and readback path deterministic. reporting_core_lifecycle_probe uses prepare, advance_time, publish_zero_row, and omit_obligation to exercise obligation availability, health deadlines, explicit empty reporting, and buyer-side missing-obligation detection.
      */
     operation?:
       | 'seed_inaccessible_item'
@@ -35766,7 +35803,13 @@ export interface ComplyTestControllerRequest {
       | 'advance_time'
       | 'recreate_catalog'
       | 'prepare'
-      | 'expire_proposal';
+      | 'expire_proposal'
+      | 'publish_zero_row'
+      | 'omit_obligation';
+    /**
+     * Clock-derived health boundary selected by reporting_core_lifecycle_probe advance_time. The controller chooses the corresponding deterministic target time; callers do not supply timestamps.
+     */
+    target_health?: 'delayed' | 'action_required';
     /**
      * Catalog operated on by catalog_item_availability_probe.
      * @minLength 1
@@ -35873,10 +35916,11 @@ export interface ComplyTestControllerRequest {
      */
     reach?: number;
     /**
-     * Average frequency per reach unit to inject. Used by simulate_delivery. When supplied alongside reach, sellers MUST surface this value at `totals.frequency`. The measurement window for this frequency value is declared in `reach_window` when also present.
+     * Average frequency per reach unit to inject. Used by simulate_delivery. When supplied, sellers MUST surface this value at `totals.frequency`, including frequency-only delivery. The measurement window for this frequency value is declared in `reach_window` when also present.
      * @minimum 0
      */
     frequency?: number;
+    reach_unit?: ReachUnit;
     /**
      * Measurement window semantics to attach to the simulated reach and frequency values. Used by simulate_delivery. When present, sellers MUST populate `reach_window` on the delivery row so buyers can determine the window semantics (cumulative vs. period vs. rolling). Omitting this param produces a row with no `reach_window` — valid per schema but sum-unsafe. Mirrors the `reach_window` shape in delivery-metrics.json.
      */
@@ -36037,7 +36081,7 @@ export interface DoohMetrics {
    */
   screen_time_seconds?: number;
   /**
-   * Actual share of voice delivered (0.0 to 1.0)
+   * Actual share of voice delivered on a 0.0-1.0 scale. To compare this achieved value with the selected flat-rate DOOH parameters.sov_percentage, multiply sov_achieved by 100. Share is time-weighted: the sum of the delivered segment durations divided by the full loop duration. On equal-duration loops this equals the slot-count ratio. See also ooh_metrics.share_of_voice_contracted, which uses the same 0.0-1.0 scale.
    */
   sov_achieved?: number;
   /**
@@ -36149,7 +36193,7 @@ export type ComplyTestControllerResponse = {
 export interface ListScenariosSuccess {
   success: true;
   /**
-   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard.
+   * Scenarios this seller has implemented. Runners and sellers MUST accept unknown scenario strings (open-for-extension) — new scenarios may be added in additive releases. Adopters who advertise `catalog_item_availability_probe` support deterministic cross-principal reference, eligibility-gate, expiry-clock, and catalog-generation tests for the catalog availability storyboard. Adopters who advertise `compact_product_lifecycle_probe` support deterministic synchronous list/request/finalize/decline/accept/control/readback behavior for a prepared product and strict post-deadline expiry of a committed proposal. Adopters who advertise `compact_direct_buy_lifecycle_probe` support deterministic synchronous list/buy/control/readback behavior for a prepared product. Adopters who advertise `reporting_core_lifecycle_probe` support deterministic obligation-before-report, clock-health, and zero-row reporting tests without wall-clock waits. Adopters who advertise `force_creative_purge` opt in to deterministic creative purge coverage for account-level lifecycle webhooks. Adopters who advertise `seed_measurement_catalog` opt in to deterministic measurement-catalog fixtures used by vendor_metric precondition storyboards. Adopters who advertise `query_upstream_traffic` opt in to the upstream-traffic conformance contract; storyboards that declare `check: upstream_traffic` grade not_applicable against adopters who do not advertise it. Adopters who advertise `query_provenance_audit_observations` opt in to sandbox-only audit-observation assertions for accepted creatives. Adopters who advertise `force_upstream_unavailable` opt in to stale-cache conformance testing via the `stale_response_advisory` storyboard.
    */
   scenarios: string[];
   context?: ContextObject;
@@ -36176,7 +36220,7 @@ export interface StateTransitionSuccess {
   ext?: ExtensionObject;
 }
 /**
- * A simulate_delivery, simulate_budget_spend, catalog_item_availability_probe, compact_product_lifecycle_probe, or compact_direct_buy_lifecycle_probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation.
+ * A simulate_delivery, simulate_budget_spend, catalog_item_availability_probe, compact_product_lifecycle_probe, compact_direct_buy_lifecycle_probe, or reporting_core_lifecycle_probe operation succeeded. For delivery: simulated contains the metrics injected by this call (impressions/clicks/plays/reported_spend/conversions plus optional DOOH, reach, frequency, reach-window, and viewability values) and cumulative contains running totals or latest non-additive metric state. For budget: simulated contains spend_percentage/computed_spend/budget. For catalog availability: simulated reports seeded foreign identity, actual eligibility gates, processed expiry time, or delete/recreate generation rotation according to params.operation. For compact product lifecycle: simulated reports deterministic preparation through MediaBuy control/readback or strict post-deadline proposal expiry. For compact direct-buy lifecycle: simulated reports deterministic preparation. For reporting Core: simulated reports the fixed virtual time plus stable account, configuration, obligation, and revision identifiers created or advanced by the operation; prepare also reports the complete resolved configuration, period, expected_at, and recovery_deadline.
  */
 export interface SimulationSuccess {
   success: true;

@@ -208,7 +208,7 @@ test('--file forwards explicit cache authority for a declared test kit', { timeo
   const cliHome = path.join(fixtureRoot, 'home');
   mkdirSync(kitDir, { recursive: true });
   mkdirSync(cliHome, { recursive: true });
-  writeComplianceIndex(complianceDir, '3.2.0-beta.11');
+  writeComplianceIndex(complianceDir, '3.2.0-rc.0');
   writeFileSync(
     path.join(kitDir, 'live.yaml'),
     ['auth:', '  api_key: "cli-declared-kit-key"', '  probe_task: list_creatives', ''].join('\n')
@@ -287,7 +287,7 @@ test('--file forwards explicit cache authority for a declared test kit', { timeo
   assert.strictEqual(explicitDir.status, 0, explicitDir.stderr);
   assert.ok(authorizations.includes('Bearer cli-declared-kit-key'));
 
-  const versionOnly = await run(['--compliance-version', '3.2.0-beta.11'], {
+  const versionOnly = await run(['--compliance-version', '3.2.0-rc.0'], {
     ADCP_COMPLIANCE_DIR: complianceDir,
   });
   assert.strictEqual(versionOnly.status, 0, versionOnly.stderr);

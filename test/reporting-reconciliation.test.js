@@ -277,6 +277,7 @@ test('runtime response validation requires the current reporting evidence overla
   currentCoverageIssue.periods[0].health = 'action_required';
   currentCoverageIssue.periods[0].issues = [
     {
+      issue_id: 'coverage-incomplete-1',
       code: 'REPORTING_COVERAGE_INCOMPLETE',
       severity: 'action_required',
       responsible_party: 'seller',
@@ -284,7 +285,8 @@ test('runtime response validation requires the current reporting evidence overla
       message: 'The selected reporting offering does not cover the full denominator.',
     },
   ];
-  assert.equal(schema.safeParse(currentCoverageIssue).success, true);
+  const currentCoverageResult = schema.safeParse(currentCoverageIssue);
+  assert.equal(currentCoverageResult.success, true, currentCoverageResult.error?.message);
 
   assert.equal(schema.safeParse({ status: 'completed', view: 'summary' }).success, false);
   const summary = response([]);

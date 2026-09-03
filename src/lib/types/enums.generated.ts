@@ -79,6 +79,7 @@ export const CTVAdExperienceValues = ["menu", "pause", "screensaver", "overlay",
 export const DAASTTrackingEventValues = ["impression", "creativeView", "start", "firstQuartile", "midpoint", "thirdQuartile", "complete", "mute", "unmute", "pause", "resume", "rewind", "skip", "progress", "clickTracking", "customClick", "close", "error", "viewable", "notViewable", "viewUndetermined", "measurableImpression", "viewableImpression"] as const;
 export const DAASTVersionValues = ["1.0", "1.1"] as const;
 export const DayOfWeekValues = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
+export const DaypartTimezoneModeValues = ["inventory_local", "iana"] as const;
 export const DelegationAuthorityValues = ["full", "execute_only", "propose_only"] as const;
 export const DeliveryRecipientCloudValues = ["aws", "azure", "gcp"] as const;
 export const DeliveryStatusValues = ["delivering", "not_delivering", "completed", "budget_exhausted", "flight_ended", "goal_met"] as const;
