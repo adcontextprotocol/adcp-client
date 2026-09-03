@@ -30,6 +30,7 @@ import type {
   ListAccountChangesResponse,
   ListAccountsRequest,
   PaymentTerms,
+  ReportingDeliveryConfigurationState,
   ListAccountsResponse,
   ReportUsageRequest,
   ReportUsageResponse,
@@ -44,6 +45,7 @@ import type {
 } from '../../types/tools.generated';
 import type { ServerPayload } from '../../types/server-payload';
 import type { NotificationConfig } from '../../types/v3-1-beta';
+import { projectReportingDeliveryConfigStates } from '../reporting-delivery-config';
 import type { CursorPage } from './pagination';
 import type { AccountMode } from '../account-mode';
 import type { AdcpStructuredError } from './async-outcome';
@@ -202,6 +204,14 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
    * schema description for security constraints.
    */
   reporting_bucket?: WireAccount['reporting_bucket'];
+
+  /**
+   * Resolved, caller-owned durable reporting delivery configurations. These
+   * are the secret-free state records returned after the seller validates a
+   * `sync_accounts` reporting delivery declaration; they are not a reporting
+   * ledger and do not grant access to a destination.
+   */
+  reporting_delivery_configs?: ReportingDeliveryConfigurationState[];
 
   /**
    * Account-level webhook subscriptions registered through `sync_accounts`.
@@ -835,6 +845,12 @@ export interface SyncAccountsResultRow {
   /** Applied account-level webhook subscriptions; credentials are stripped on emit. */
   notification_configs?: NotificationConfig[];
   /**
+   * Resolved, secret-free durable reporting delivery configuration states.
+   * The seller returns these after validating the declaration, including for
+   * dry-run previews. This is state projection only, not ledger behavior.
+   */
+  reporting_delivery_configs?: ReportingDeliveryConfigurationState[];
+  /**
    * Caller-specific authorization metadata for this synced account, including
    * downstream grants such as advertiser-account access plus publisher
    * identity/post authorization.
@@ -903,6 +919,11 @@ export function toWireAccount<TCtxMeta>(account: Account<TCtxMeta>): WireAccount
     wire.governance_agents = [projectGovernanceAgent(account.governance_agents[0]!)];
   }
   if (account.reporting_bucket !== undefined) wire.reporting_bucket = account.reporting_bucket;
+  if (account.reporting_delivery_configs !== undefined) {
+    (
+      wire as unknown as { reporting_delivery_configs?: ReportingDeliveryConfigurationState[] }
+    ).reporting_delivery_configs = projectReportingDeliveryConfigStates(account.reporting_delivery_configs);
+  }
   if (account.notification_configs !== undefined) {
     (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       account.notification_configs.map(projectNotificationConfig);
@@ -968,6 +989,11 @@ export function toWireSyncAccountRow(row: SyncAccountsResultRow): WireSyncAccoun
   if (row.notification_configs !== undefined) {
     (wire as unknown as { notification_configs?: WireNotificationConfig[] }).notification_configs =
       row.notification_configs.map(projectNotificationConfig);
+  }
+  if (row.reporting_delivery_configs !== undefined) {
+    (
+      wire as unknown as { reporting_delivery_configs?: ReportingDeliveryConfigurationState[] }
+    ).reporting_delivery_configs = projectReportingDeliveryConfigStates(row.reporting_delivery_configs);
   }
   if (row.authorization !== undefined) {
     (wire as WireSyncAccountRow & { authorization?: AccountAuthorization }).authorization = projectAccountAuthorization(
