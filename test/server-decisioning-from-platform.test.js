@@ -6426,6 +6426,121 @@ describe('Custom-handler merge seam (incremental migration)', () => {
     assert.strictEqual(result.structuredContent.accounts[0].brand.domain, 'acme.com');
   });
 
+  it('preserves resolved reporting delivery states for existing and new-account dry runs', async () => {
+    // The reporting delivery schema deliberately contains only secret-free
+    // desired state plus seller-resolved lifecycle fields. This adapter does
+    // not implement its ledger; it only returns the validated state that an
+    // adopter's account handler produced.
+    const reportingDeliveryState = {
+      configuration: {
+        delivery_config_id: 'daily-delivery',
+        delivery_config_version: 1,
+        offering_id: 'delivery-v1',
+        active: true,
+        feed_purpose: 'analytics',
+        report_definition_id: 'media-buy-delivery-v1',
+        reporting_profile: 'media_buy_delivery_v1',
+        scope: { all_media_buys: true },
+        coverage_requirement: 'full',
+        required_finality: 'snapshot',
+        reconciliation_mode: 'delivery_only',
+        schedule: { period_duration: 'P1D', alignment: 'utc', delivery_sla: 'PT1H' },
+      },
+      state: 'ready',
+      validated_at: '2026-09-03T00:00:00Z',
+      activated_at: '2026-09-03T00:00:00Z',
+      current_coverage: {
+        status: 'full',
+        evaluated_at: '2026-09-03T00:00:00Z',
+        media_buy_ids: [],
+        fully_covered_media_buy_ids: [],
+        partially_covered_media_buy_ids: [],
+        unsupported_media_buy_ids: [],
+        unknown_media_buy_ids: [],
+        package_ids: [],
+        covered_package_ids: [],
+        unsupported_package_ids: [],
+        unknown_package_ids: [],
+        limitations: [],
+      },
+    };
+    const platform = buildPlatform({
+      accounts: {
+        resolve: async ref => ({ id: ref?.account_id ?? 'acc_1', metadata: {}, authInfo: { kind: 'api_key' } }),
+        upsert: async (entries, ctx) => {
+          assert.strictEqual(ctx.input.dry_run, true);
+          return entries.map(entry => ({
+            brand: entry.brand ?? { domain: 'acme.example' },
+            operator: entry.operator ?? 'acme-direct',
+            account_id: entry.account?.account_id ?? 'acc_new',
+            action: entry.account ? 'unchanged' : 'created',
+            status: 'active',
+            reporting_delivery_configs: [reportingDeliveryState],
+          }));
+        },
+        list: async () => ({
+          items: [
+            {
+              id: 'acc_existing',
+              name: 'Acme',
+              status: 'active',
+              metadata: {},
+              authInfo: { kind: 'api_key' },
+              reporting_delivery_configs: [reportingDeliveryState],
+            },
+          ],
+          nextCursor: null,
+        }),
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-delivery-dry-run',
+      version: '1.0.0',
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+    const cases = [
+      {
+        name: 'existing account',
+        entry: { account: { account_id: 'acc_existing' } },
+        action: 'unchanged',
+      },
+      {
+        name: 'new account',
+        entry: { brand: { domain: 'acme.example' }, operator: 'acme-direct', billing: 'agent' },
+        action: 'created',
+      },
+    ];
+    for (const [index, scenario] of cases.entries()) {
+      const result = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'sync_accounts',
+          arguments: {
+            idempotency_key: `00000000-0000-4000-8000-00000000000${index + 1}`,
+            dry_run: true,
+            accounts: [scenario.entry],
+          },
+        },
+      });
+      assert.notStrictEqual(result.isError, true, `${scenario.name}: ${JSON.stringify(result.structuredContent)}`);
+      assert.strictEqual(result.structuredContent.dry_run, true);
+      assert.strictEqual(result.structuredContent.accounts[0].action, scenario.action);
+      assert.deepStrictEqual(result.structuredContent.accounts[0].reporting_delivery_configs, [reportingDeliveryState]);
+      assert.ok(!JSON.stringify(result.structuredContent).includes('credentials'));
+    }
+
+    const listed = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'list_accounts', arguments: {} },
+    });
+    assert.notStrictEqual(listed.isError, true, `list_accounts: ${JSON.stringify(listed.structuredContent)}`);
+    assert.ok(
+      listed.structuredContent.accounts.length > 0,
+      `list_accounts: ${JSON.stringify(listed.structuredContent)}`
+    );
+    assert.deepStrictEqual(listed.structuredContent.accounts[0].reporting_delivery_configs, [reportingDeliveryState]);
+  });
+
   it('list_accounts projects CursorPage into 3.1 pagination block (not top-level next_cursor)', async () => {
     // Regression: adcontextprotocol/adcp#5723 — the pre-fix projector emitted a
     // top-level `next_cursor` field. Both 3.0 and 3.1 `list-accounts-response`

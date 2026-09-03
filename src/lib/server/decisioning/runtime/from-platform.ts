@@ -7837,7 +7837,10 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
             );
           }
           if (policy.failedRows.size === 0) {
-            return { accounts: rows.map(toWireSyncAccountRow) };
+            return {
+              ...(params.dry_run === true && { dry_run: true }),
+              accounts: rows.map(toWireSyncAccountRow),
+            };
           }
           const combined: SyncAccountsResultRow[] = [];
           let acceptedIndex = 0;
@@ -7851,7 +7854,10 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
               acceptedIndex += 1;
             }
           }
-          return { accounts: combined.map(toWireSyncAccountRow) };
+          return {
+            ...(params.dry_run === true && { dry_run: true }),
+            accounts: combined.map(toWireSyncAccountRow),
+          };
         }
       );
     };
