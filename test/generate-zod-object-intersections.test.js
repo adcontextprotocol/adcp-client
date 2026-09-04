@@ -130,6 +130,32 @@ writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingStatu
   }
 }
 
+function reportingStatusClosedStructures(input) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-closed-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.json');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingStatusClosedStructures(${JSON.stringify(input)})));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
 function postProcessGetReportingStatusViewRequiredFields(input, requiredByView) {
   const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-views-'));
   const scriptPath = path.join(harnessDir, 'harness.ts');
@@ -236,6 +262,67 @@ export const RevisionViewSchema = z.object({ status: z.literal("completed"), vie
     output,
     /RevisionViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","revision","pagination"\][\s\S]*?Required by get_reporting_status revision view/
   );
+  assert.equal(postProcessGetReportingStatusViewRequiredFields(output, requiredByView), output);
+});
+
+test('reporting-status closed structures are source-derived and fail closed', () => {
+  const source = {
+    properties: {
+      scope: {
+        properties: {
+          delivery_config_generations: {
+            items: {
+              additionalProperties: false,
+              properties: { delivery_config_id: {}, delivery_config_version: {}, feed_purpose: {} },
+              required: ['delivery_config_id', 'delivery_config_version', 'feed_purpose'],
+            },
+          },
+        },
+        additionalProperties: false,
+        required: ['delivery_config_generations'],
+      },
+      obligation_counts: {
+        additionalProperties: false,
+        properties: { total: {}, waiting: {} },
+        required: ['total', 'waiting'],
+      },
+      pagination: {
+        additionalProperties: false,
+        properties: { has_more: {}, cursor: {}, total_count: {} },
+        required: ['has_more'],
+      },
+    },
+    oneOf: [
+      {
+        oneOf: [
+          {
+            properties: { view: { const: 'periods' }, pagination: { required: ['total_count', 'has_more'] } },
+          },
+          {
+            properties: { view: { const: 'revision' }, pagination: { required: ['has_more', 'total_count'] } },
+          },
+        ],
+      },
+    ],
+  };
+
+  assert.deepEqual(reportingStatusClosedStructures(source), {
+    scope: { allowedFields: ['delivery_config_generations'], requiredFields: ['delivery_config_generations'] },
+    deliveryConfigGeneration: {
+      allowedFields: ['delivery_config_id', 'delivery_config_version', 'feed_purpose'],
+      requiredFields: ['delivery_config_id', 'delivery_config_version', 'feed_purpose'],
+    },
+    obligationCounts: { allowedFields: ['total', 'waiting'], requiredFields: ['total', 'waiting'] },
+    pagination: { allowedFields: ['has_more', 'cursor', 'total_count'], requiredFields: ['has_more'] },
+    paginationRequiredByView: {
+      periods: ['total_count', 'has_more'],
+      revision: ['has_more', 'total_count'],
+    },
+  });
+
+  const unclosedScope = structuredClone(source);
+  unclosedScope.properties.scope.additionalProperties = true;
+  assert.throws(() => reportingStatusClosedStructures(unclosedScope), /source schema must close scope/);
 });
 
 test('reporting evidence post-processor makes only closed reporting schemas strict', () => {

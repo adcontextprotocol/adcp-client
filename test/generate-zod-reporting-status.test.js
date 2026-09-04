@@ -219,6 +219,24 @@ function revisionResponse() {
   };
 }
 
+function manifestChecksumsResponse() {
+  const periodsResponse = response();
+  periodsResponse.materializations[0].feed_purpose = 'analytics';
+  periodsResponse.materializations[0].verification = {
+    ...periodsResponse.materializations[0].verification,
+    verification_profile: 'manifest_checksums',
+    physical_checksums: [
+      {
+        object_ref: 'share.billing/manifest.json',
+        algorithm: 'sha256',
+        value: digest.value,
+      },
+    ],
+  };
+  delete periodsResponse.materializations[0].verification.canonical_content_digest;
+  return periodsResponse;
+}
+
 function removeNestedIds(value, root = true, seen = new WeakSet()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return;
   seen.add(value);
@@ -288,6 +306,47 @@ test('generated reporting-status Zod matches authoritative required and closed e
   const validRevision = revisionResponse();
   const revisionMissingReceipts = revisionResponse();
   delete revisionMissingReceipts.receipts;
+  const summaryIssueWithExtraField = summaryResponse();
+  summaryIssueWithExtraField.health = 'delayed';
+  summaryIssueWithExtraField.issues = [
+    {
+      issue_id: 'report-overdue-1',
+      code: 'REPORT_OVERDUE',
+      severity: 'delayed',
+      responsible_party: 'seller',
+      recommended_action: 'wait_for_retry',
+      untrusted_extra: true,
+    },
+  ];
+  const scopeWithExtraField = response();
+  scopeWithExtraField.scope.untrusted_extra = true;
+  const deliveryConfigGenerationWithExtraField = response();
+  deliveryConfigGenerationWithExtraField.scope.delivery_config_generations[0].untrusted_extra = true;
+  const obligationCountsWithExtraField = summaryResponse();
+  obligationCountsWithExtraField.obligation_counts.untrusted_extra = true;
+  const periodsPaginationMissingTotalCount = response();
+  delete periodsPaginationMissingTotalCount.pagination.total_count;
+  const revisionPaginationMissingTotalCount = revisionResponse();
+  delete revisionPaginationMissingTotalCount.pagination.total_count;
+  const paginationWithExtraField = response();
+  paginationWithExtraField.pagination.untrusted_extra = true;
+  const obligationWithExtraField = response();
+  obligationWithExtraField.periods[0].untrusted_extra = true;
+  const scheduleWithExtraField = response();
+  scheduleWithExtraField.periods[0].schedule.untrusted_extra = true;
+  const revisionWithExtraField = response();
+  revisionWithExtraField.revisions[0].untrusted_extra = true;
+  const revisionPeriodWithExtraField = response();
+  revisionPeriodWithExtraField.revisions[0].period.untrusted_extra = true;
+  const materializationWithExtraFieldAtRoot = response();
+  materializationWithExtraFieldAtRoot.materializations[0].untrusted_extra = true;
+  const verificationWithExtraField = response();
+  verificationWithExtraField.materializations[0].verification.untrusted_extra = true;
+  const controlTotalWithExtraField = response();
+  controlTotalWithExtraField.revisions[0].control_totals[0].untrusted_extra = true;
+  const validManifestChecksums = manifestChecksumsResponse();
+  const physicalChecksumWithExtraField = manifestChecksumsResponse();
+  physicalChecksumWithExtraField.materializations[0].verification.physical_checksums[0].untrusted_extra = true;
 
   const cases = [
     valid,
@@ -303,6 +362,22 @@ test('generated reporting-status Zod matches authoritative required and closed e
     summaryMissingObligationCounts,
     validRevision,
     revisionMissingReceipts,
+    summaryIssueWithExtraField,
+    scopeWithExtraField,
+    deliveryConfigGenerationWithExtraField,
+    obligationCountsWithExtraField,
+    periodsPaginationMissingTotalCount,
+    revisionPaginationMissingTotalCount,
+    paginationWithExtraField,
+    obligationWithExtraField,
+    scheduleWithExtraField,
+    revisionWithExtraField,
+    revisionPeriodWithExtraField,
+    materializationWithExtraFieldAtRoot,
+    verificationWithExtraField,
+    controlTotalWithExtraField,
+    validManifestChecksums,
+    physicalChecksumWithExtraField,
   ];
   const validate = await authoritativeValidator();
   const authoritative = cases.map(value => validate(value));
@@ -310,16 +385,12 @@ test('generated reporting-status Zod matches authoritative required and closed e
 
   assert.deepEqual(authoritative, [
     true,
-    false,
-    false,
-    false,
-    false,
-    false,
-    false,
-    false,
+    ...Array(8).fill(false),
+    true,
     false,
     true,
     false,
+    ...Array(14).fill(false),
     true,
     false,
   ]);

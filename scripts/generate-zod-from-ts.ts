@@ -1684,6 +1684,19 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
 
 type ReportingStatusView = 'summary' | 'periods' | 'revision';
 
+type ReportingStatusClosedObject = {
+  allowedFields: string[];
+  requiredFields: string[];
+};
+
+type ReportingStatusClosedStructures = {
+  scope: ReportingStatusClosedObject;
+  deliveryConfigGeneration: ReportingStatusClosedObject;
+  obligationCounts: ReportingStatusClosedObject;
+  pagination: ReportingStatusClosedObject;
+  paginationRequiredByView: Record<'periods' | 'revision', string[]>;
+};
+
 /**
  * Read the required fields for each successful get_reporting_status view from
  * the signed bundled response schema. json-schema-to-typescript currently
@@ -1750,6 +1763,85 @@ function reportingStatusViewRequiredFields(source: unknown): Record<ReportingSta
   return result;
 }
 
+/**
+ * Read source-closed anonymous response structures that lose strictness when
+ * the generated response's root object is intersected with its view union.
+ */
+function reportingStatusClosedStructures(source: unknown): ReportingStatusClosedStructures {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    throw new Error('get_reporting_status source schema must be an object.');
+  }
+  const root = source as Record<string, unknown>;
+  const objectAt = (value: unknown, name: string): Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`get_reporting_status source schema is missing ${name}.`);
+    }
+    return value as Record<string, unknown>;
+  };
+  const closedObject = (value: unknown, name: string): ReportingStatusClosedObject => {
+    const schema = objectAt(value, name);
+    if (schema.additionalProperties !== false) {
+      throw new Error(`get_reporting_status source schema must close ${name}.`);
+    }
+    const properties = objectAt(schema.properties, `${name}.properties`);
+    const requiredFields = Array.isArray(schema.required)
+      ? schema.required.filter((field): field is string => typeof field === 'string')
+      : [];
+    return { allowedFields: Object.keys(properties), requiredFields };
+  };
+
+  const properties = objectAt(root.properties, 'root.properties');
+  const scope = closedObject(properties.scope, 'scope');
+  const scopeProperties = objectAt(objectAt(properties.scope, 'scope').properties, 'scope.properties');
+  const deliveryConfigGenerations = objectAt(
+    scopeProperties.delivery_config_generations,
+    'scope.delivery_config_generations'
+  );
+  const deliveryConfigGeneration = closedObject(
+    deliveryConfigGenerations.items,
+    'scope.delivery_config_generations.items'
+  );
+  const obligationCounts = closedObject(properties.obligation_counts, 'obligation_counts');
+  const pagination = closedObject(properties.pagination, 'pagination');
+
+  const paginationRequiredByView = new Map<'periods' | 'revision', string[]>();
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    const schema = value as Record<string, unknown>;
+    const properties = schema.properties as Record<string, Record<string, unknown>> | undefined;
+    const view = properties?.view?.const;
+    if ((view === 'periods' || view === 'revision') && properties) {
+      const pagination = objectAt(properties.pagination, `${view} view pagination`);
+      const required = Array.isArray(pagination.required)
+        ? pagination.required.filter((field): field is string => typeof field === 'string')
+        : [];
+      const prior = paginationRequiredByView.get(view);
+      if (prior && !isDeepStrictEqual([...prior].sort(), [...required].sort())) {
+        throw new Error(`get_reporting_status contains conflicting ${view} pagination required fields.`);
+      }
+      if (!prior) paginationRequiredByView.set(view, required);
+    }
+    Object.values(schema).forEach(visit);
+  };
+  visit(source);
+
+  const requiredByView = {} as Record<'periods' | 'revision', string[]>;
+  for (const view of ['periods', 'revision'] as const) {
+    const required = paginationRequiredByView.get(view);
+    if (!required?.includes('has_more') || !required.includes('total_count')) {
+      throw new Error(`get_reporting_status source schema is missing ${view} pagination required fields.`);
+    }
+    requiredByView[view] = required;
+  }
+  return { scope, deliveryConfigGeneration, obligationCounts, pagination, paginationRequiredByView: requiredByView };
+}
+
 /** Restore required fields lost when ts-to-zod projects reporting view allOf arms. */
 function postProcessGetReportingStatusViewRequiredFields(
   content: string,
@@ -1769,13 +1861,14 @@ function postProcessGetReportingStatusViewRequiredFields(
     if (!expression.includes(`view: z.literal("${view}")`)) {
       throw new Error(`postProcessGetReportingStatusViewRequiredFields: ${schemaName} no longer represents ${view}.`);
     }
-    if (expression.includes('reporting-status source required fields')) continue;
+    if (expression.includes('// get_reporting_status view required fields')) continue;
 
     const required = requiredByView[view];
     if (!required.includes('view')) {
       throw new Error(`postProcessGetReportingStatusViewRequiredFields: ${view} is missing its view discriminator.`);
     }
     const refinement = `.superRefine((value, ctx) => {
+        // get_reporting_status view required fields
         for (const field of ${JSON.stringify(required)} as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
                 ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status ${view} view" });
@@ -1832,7 +1925,10 @@ function postProcessReportingEvidenceStrictness(content: string): string {
  * failures through that composition, so revalidate just the source-closed
  * reporting evidence paths at the response boundary.
  */
-function postProcessGetReportingStatusEvidenceStrictness(content: string): string {
+function postProcessGetReportingStatusEvidenceStrictness(
+  content: string,
+  closedStructures: ReportingStatusClosedStructures
+): string {
   const target = findSchemaExportExpressions(content).find(entry => entry.name === 'GetReportingStatusResponseSchema');
   if (!target) throw new Error('postProcessGetReportingStatusEvidenceStrictness: response schema was not generated.');
   const expression = content.slice(target.expressionStart, target.expressionEnd);
@@ -1840,6 +1936,7 @@ function postProcessGetReportingStatusEvidenceStrictness(content: string): strin
 
   const refinement = `.superRefine((value, ctx) => {
         // reporting evidence strictness
+        const closedStructures = ${JSON.stringify(closedStructures)} as const;
         const addIssues = (schema: z.ZodType, candidate: unknown, path: Array<string | number>) => {
             const parsed = schema.safeParse(candidate);
             if (parsed.success) return;
@@ -1847,8 +1944,54 @@ function postProcessGetReportingStatusEvidenceStrictness(content: string): strin
                 ctx.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
             }
         };
+        const addClosedObjectIssues = (
+            candidate: unknown,
+            path: Array<string | number>,
+            structure: { allowedFields: readonly string[]; requiredFields: readonly string[] }
+        ) => {
+            if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+                ctx.addIssue({ code: "custom", path, message: "Expected source-closed get_reporting_status object" });
+                return;
+            }
+            const object = candidate as Record<string, unknown>;
+            for (const field of Object.keys(object)) {
+                if (!structure.allowedFields.includes(field)) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Unexpected field in source-closed get_reporting_status object" });
+                }
+            }
+            for (const field of structure.requiredFields) {
+                if (object[field] === undefined) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Required by source-closed get_reporting_status object" });
+                }
+            }
+        };
         const response = value as Record<string, unknown>;
         if (response.coverage !== undefined) addIssues(ReportingCoverageSchema, response.coverage, ["coverage"]);
+        if (Array.isArray(response.issues)) {
+            response.issues.forEach((issue, index) => addIssues(ReportingStatusIssueSchema, issue, ["issues", index]));
+        }
+        if (response.scope !== undefined) {
+            addClosedObjectIssues(response.scope, ["scope"], closedStructures.scope);
+            if (response.scope && typeof response.scope === "object" && !Array.isArray(response.scope)) {
+                const generations = (response.scope as Record<string, unknown>).delivery_config_generations;
+                if (Array.isArray(generations)) {
+                    generations.forEach((generation, index) =>
+                        addClosedObjectIssues(generation, ["scope", "delivery_config_generations", index], closedStructures.deliveryConfigGeneration)
+                    );
+                }
+            }
+        }
+        if (response.obligation_counts !== undefined) {
+            addClosedObjectIssues(response.obligation_counts, ["obligation_counts"], closedStructures.obligationCounts);
+        }
+        if (response.pagination !== undefined) {
+            const view = response.view;
+            const requiredFields =
+                view === "periods" || view === "revision"
+                    ? closedStructures.paginationRequiredByView[view]
+                    : closedStructures.pagination.requiredFields;
+            addClosedObjectIssues(response.pagination, ["pagination"], { ...closedStructures.pagination, requiredFields });
+        }
         const arrays: Array<[string, z.ZodType]> = [
             ["periods", ReportingObligationSchema],
             ["revisions", ReportingRevisionSchema],
@@ -4444,6 +4587,7 @@ async function generateZodSchemas() {
       )
     );
     const reportingStatusRequiredByView = reportingStatusViewRequiredFields(reportingStatusResponseSource);
+    const reportingStatusClosedStructuresBySource = reportingStatusClosedStructures(reportingStatusResponseSource);
     const refineResponseSource = JSON.parse(
       readFileSync(
         path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),
@@ -4751,7 +4895,7 @@ async function generateZodSchemas() {
     // global extension passthrough policy intentionally does not cover.
     zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
     zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
-    zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas);
+    zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas, reportingStatusClosedStructuresBySource);
 
     // Preserve the image format's beta.6 motion-level refinement without
     // regressing its public ZodObject composition surface.
@@ -4854,6 +4998,7 @@ export const __test__ = {
   postProcessCanonicalFormatSlots,
   postProcessCreativeBriefRequiredDisclosures,
   reportingStatusViewRequiredFields,
+  reportingStatusClosedStructures,
   postProcessGetReportingStatusViewRequiredFields,
   postProcessReportingEvidenceStrictness,
   postProcessGetReportingStatusEvidenceStrictness,

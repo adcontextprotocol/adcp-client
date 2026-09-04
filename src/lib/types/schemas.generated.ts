@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-04T20:00:35.932Z
+// Generated at: 2026-09-04T20:17:49.581Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -9028,6 +9028,7 @@ export const SummaryViewSchema = z.object({
     status: z.literal("completed"),
     view: z.literal("summary")
 }).passthrough().superRefine((value, ctx) => {
+        // get_reporting_status view required fields
         for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","scope","health","coverage","data_through","obligation_counts","issues"] as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
                 ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status summary view" });
@@ -9040,6 +9041,7 @@ export const PeriodsViewSchema = z.object({
     view: z.literal("periods"),
     pagination: z.object({}).passthrough()
 }).passthrough().superRefine((value, ctx) => {
+        // get_reporting_status view required fields
         for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","scope","periods","revisions","materializations","receipts","pagination"] as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
                 ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status periods view" });
@@ -9052,6 +9054,7 @@ export const RevisionViewSchema = z.object({
     view: z.literal("revision"),
     pagination: z.object({}).passthrough()
 }).passthrough().superRefine((value, ctx) => {
+        // get_reporting_status view required fields
         for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","revision","materializations","receipts","pagination"] as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
                 ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status revision view" });
@@ -18791,6 +18794,7 @@ export const GetReportingStatusResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough().and(z.union([SuccessfulLookupSchema, FailedLookupSchema])).superRefine((value, ctx) => {
         // reporting evidence strictness
+        const closedStructures = {"scope":{"allowedFields":["period_start","period_end","scope_closed","media_buy_ids","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"],"requiredFields":["period_start","period_end","scope_closed","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"]},"deliveryConfigGeneration":{"allowedFields":["delivery_config_id","delivery_config_version","feed_purpose"],"requiredFields":["delivery_config_id","delivery_config_version","feed_purpose"]},"obligationCounts":{"allowedFields":["total","waiting","healthy","delayed","action_required","complete"],"requiredFields":["total","waiting","healthy","delayed","action_required","complete"]},"pagination":{"allowedFields":["has_more","cursor","total_count"],"requiredFields":["has_more"]},"paginationRequiredByView":{"periods":["has_more","total_count"],"revision":["has_more","total_count"]}} as const;
         const addIssues = (schema: z.ZodType, candidate: unknown, path: Array<string | number>) => {
             const parsed = schema.safeParse(candidate);
             if (parsed.success) return;
@@ -18798,8 +18802,54 @@ export const GetReportingStatusResponseSchema = z.object({
                 ctx.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
             }
         };
+        const addClosedObjectIssues = (
+            candidate: unknown,
+            path: Array<string | number>,
+            structure: { allowedFields: readonly string[]; requiredFields: readonly string[] }
+        ) => {
+            if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+                ctx.addIssue({ code: "custom", path, message: "Expected source-closed get_reporting_status object" });
+                return;
+            }
+            const object = candidate as Record<string, unknown>;
+            for (const field of Object.keys(object)) {
+                if (!structure.allowedFields.includes(field)) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Unexpected field in source-closed get_reporting_status object" });
+                }
+            }
+            for (const field of structure.requiredFields) {
+                if (object[field] === undefined) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Required by source-closed get_reporting_status object" });
+                }
+            }
+        };
         const response = value as Record<string, unknown>;
         if (response.coverage !== undefined) addIssues(ReportingCoverageSchema, response.coverage, ["coverage"]);
+        if (Array.isArray(response.issues)) {
+            response.issues.forEach((issue, index) => addIssues(ReportingStatusIssueSchema, issue, ["issues", index]));
+        }
+        if (response.scope !== undefined) {
+            addClosedObjectIssues(response.scope, ["scope"], closedStructures.scope);
+            if (response.scope && typeof response.scope === "object" && !Array.isArray(response.scope)) {
+                const generations = (response.scope as Record<string, unknown>).delivery_config_generations;
+                if (Array.isArray(generations)) {
+                    generations.forEach((generation, index) =>
+                        addClosedObjectIssues(generation, ["scope", "delivery_config_generations", index], closedStructures.deliveryConfigGeneration)
+                    );
+                }
+            }
+        }
+        if (response.obligation_counts !== undefined) {
+            addClosedObjectIssues(response.obligation_counts, ["obligation_counts"], closedStructures.obligationCounts);
+        }
+        if (response.pagination !== undefined) {
+            const view = response.view;
+            const requiredFields =
+                view === "periods" || view === "revision"
+                    ? closedStructures.paginationRequiredByView[view]
+                    : closedStructures.pagination.requiredFields;
+            addClosedObjectIssues(response.pagination, ["pagination"], { ...closedStructures.pagination, requiredFields });
+        }
         const arrays: Array<[string, z.ZodType]> = [
             ["periods", ReportingObligationSchema],
             ["revisions", ReportingRevisionSchema],
