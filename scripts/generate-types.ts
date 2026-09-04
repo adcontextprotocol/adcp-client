@@ -3949,8 +3949,62 @@ function schemaPathToTypeName(relativePath: string): string {
  * - Schemas whose type names were already generated via $ref resolution
  * - Async response variant schemas (working/submitted/input-required)
  */
-async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any): Promise<string> {
-  const allFiles = discoverAllSchemaFiles(LATEST_CACHE_DIR);
+export const GAP_SCHEMA_COMPILE_CONCURRENCY = 10;
+export const GAP_SCHEMA_SLOW_COMPILE_MS = 2_000;
+
+type GapSchemaCompileInput = {
+  relPath: string;
+  typeName: string;
+  strictSchema: any;
+};
+
+type GapSchemaCompileDependencies = {
+  compileSchema?: (schema: any, typeName: string, options: any) => Promise<string>;
+  discoverSchemaFiles?: (directory: string) => string[];
+  log?: (message: string) => void;
+  now?: () => number;
+  readSchema?: (schemaPath: string) => Record<string, any>;
+  schemaDirectory?: string;
+  warn?: (message: string) => void;
+};
+
+/** Map in bounded parallelism while preserving the input order in the result. */
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error('concurrency must be a positive integer');
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
+}
+
+async function compileGapSchemas(
+  generatedTypes: Set<string>,
+  refResolver: any,
+  dependencies: GapSchemaCompileDependencies = {}
+): Promise<string> {
+  const schemaDirectory = dependencies.schemaDirectory ?? LATEST_CACHE_DIR;
+  const discoverSchemaFiles = dependencies.discoverSchemaFiles ?? discoverAllSchemaFiles;
+  const readSchema =
+    dependencies.readSchema ??
+    ((schemaPath: string) => JSON.parse(readFileSync(schemaPath, 'utf8')) as Record<string, any>);
+  const compileSchema = dependencies.compileSchema ?? compile;
+  const log = dependencies.log ?? console.log;
+  const warn = dependencies.warn ?? console.warn;
+  const now = dependencies.now ?? Date.now;
+  const gapStartedAt = now();
   const gapCode: string[] = [];
 
   // Directories that contain task request/response schemas (already covered by tool generation)
@@ -3976,9 +4030,10 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
   // Top-level aggregation schemas (not standalone types)
   const skipFiles = new Set(['adagents.json', 'brand.json']);
 
-  let compiledCount = 0;
-
-  for (const relPath of allFiles.sort()) {
+  // Preparation is deliberately synchronous and ordered. Each schema is read exactly
+  // once so title-based dedupe and compile preprocessing share the same document.
+  const compileInputs: GapSchemaCompileInput[] = [];
+  for (const relPath of discoverSchemaFiles(schemaDirectory).sort()) {
     // Skip top-level aggregation files
     if (!relPath.includes('/') && skipFiles.has(relPath)) continue;
 
@@ -4004,29 +4059,19 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
     // `CreativeRejected` — but the error-details file's title is "Creative
     // Rejected Details", so jsts would emit `CreativeRejectedDetails`, not a
     // duplicate. Tracked: adcp-client#1271.
-    let schemaForTypeName: Record<string, unknown> | null = null;
     try {
-      const schemaPath = path.join(LATEST_CACHE_DIR, relPath);
-      schemaForTypeName = JSON.parse(readFileSync(schemaPath, 'utf8'));
-    } catch {
-      // Fall through to the main compile attempt for consistent error logging
-      schemaForTypeName = null;
-    }
-    const titleDerivedTypeName =
-      typeof schemaForTypeName?.title === 'string' ? schemaForTypeName.title.replace(/[^A-Za-z0-9]/g, '') : '';
-    const typeName = titleDerivedTypeName || pathDerivedTypeName;
+      // Read once: title-based filtering and preprocessing use this same document.
+      let schema = readSchema(path.join(schemaDirectory, relPath));
+      const titleDerivedTypeName = typeof schema.title === 'string' ? schema.title.replace(/[^A-Za-z0-9]/g, '') : '';
+      const typeName = titleDerivedTypeName || pathDerivedTypeName;
 
-    // Skip if this type was already generated. The check uses the
-    // title-preferring name so two distinct schemas that share a kebab-name
-    // but have distinct titles can both emit (the previous behavior used
-    // path-only and silently dropped the second).
-    if (generatedTypes.has(typeName)) continue;
+      // Skip if this type was already generated. The check uses the
+      // title-preferring name so two distinct schemas that share a kebab-name
+      // but have distinct titles can both emit (the previous behavior used
+      // path-only and silently dropped the second).
+      if (generatedTypes.has(typeName)) continue;
 
-    try {
-      const schemaPath = path.join(LATEST_CACHE_DIR, relPath);
-      let schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
-
-      // Apply same preprocessing as other schema passes
+      // Apply same preprocessing as other schema passes before fan-out.
       const fileName = path.basename(relPath, '.json');
       if (DEPRECATED_ENUM_VALUES[fileName]) {
         schema = removeDeprecatedFields(schema, fileName);
@@ -4041,32 +4086,67 @@ async function compileGapSchemas(generatedTypes: Set<string>, refResolver: any):
       schema = applyCodegenSchemaWorkarounds(schema, pascalName);
 
       const annotatedSchema = injectJsdocConstraints(schema);
-      const strictSchema = enforceStrictSchema(
-        typeName === 'RequestProposalsResponse' ? annotatedSchema : removeArrayLengthConstraints(annotatedSchema)
-      );
-      const types = await compile(strictSchema, typeName, {
-        bannerComment: '',
-        style: { semi: true, singleQuote: true },
-        additionalProperties: false,
-        strictIndexSignatures: true,
-        $refOptions: {
-          resolve: {
-            cache: refResolver,
-          },
-        },
+      compileInputs.push({
+        relPath,
+        typeName,
+        strictSchema: enforceStrictSchema(
+          typeName === 'RequestProposalsResponse' ? annotatedSchema : removeArrayLengthConstraints(annotatedSchema)
+        ),
       });
-
-      const filtered = filterDuplicateTypeDefinitions(types, generatedTypes);
-      if (filtered.trim()) {
-        gapCode.push(`// ${relPath}\n${filtered}`);
-        compiledCount++;
-      }
     } catch (error: any) {
-      console.warn(`⚠️  Failed to compile gap schema ${relPath}: ${error.message}`);
+      warn(`⚠️  Failed to compile gap schema ${relPath}: ${error.message}`);
     }
   }
 
-  console.log(`📦 Compiled ${compiledCount} gap schemas`);
+  const compileOptions = {
+    bannerComment: '',
+    style: { semi: true, singleQuote: true },
+    additionalProperties: false,
+    strictIndexSignatures: true,
+    $refOptions: {
+      resolve: {
+        cache: refResolver,
+      },
+    },
+  };
+  // json-schema-to-typescript clones its options and schema and creates a new
+  // ref parser per compile. Our resolver is stateless, so this shared config
+  // is safe to use across bounded concurrent workers.
+  const compileResults = await mapWithConcurrency(compileInputs, GAP_SCHEMA_COMPILE_CONCURRENCY, async input => {
+    const startedAt = now();
+    try {
+      const types = await compileSchema(input.strictSchema, input.typeName, compileOptions);
+      return { input, types };
+    } catch (error: any) {
+      warn(`⚠️  Failed to compile gap schema ${input.relPath}: ${error.message}`);
+      return { input, types: null };
+    } finally {
+      const elapsedMs = now() - startedAt;
+      if (elapsedMs > GAP_SCHEMA_SLOW_COMPILE_MS) {
+        log(`🐢 Slow gap schema compilation: ${input.relPath} (${elapsedMs}ms)`);
+      }
+    }
+  });
+
+  // Deduplication mutates generatedTypes, so it must remain sequential in the
+  // original sorted relPath order even though compilation is concurrent.
+  let compiledCount = 0;
+  for (const { input, types } of compileResults) {
+    if (types) {
+      // Preserve the serial generator's title-level output gate. We still
+      // compile every prepared schema above, but a prior sorted result may
+      // have claimed this document's root type while the workers ran.
+      if (generatedTypes.has(input.typeName)) continue;
+      const filtered = filterDuplicateTypeDefinitions(types, generatedTypes);
+      if (filtered.trim()) {
+        gapCode.push(`// ${input.relPath}\n${filtered}`);
+        compiledCount++;
+      }
+    }
+  }
+
+  log(`📦 Compiled ${compiledCount} gap schemas`);
+  log(`⏱️ Gap schema compilation completed in ${now() - gapStartedAt}ms`);
   return gapCode.join('\n\n');
 }
 
@@ -4108,6 +4188,7 @@ async function generateTypes() {
 
   // Track generated types across all core schemas to prevent duplicates
   const generatedCoreTypes = new Set<string>();
+  const rootSchemaCompilationStartedAt = Date.now();
 
   // Compile canonical enum documents before broad aggregate roots. Large
   // dereferenced 3.2 roots can narrow a shared enum in one context or make
@@ -4303,12 +4384,15 @@ async function generateTypes() {
       console.error(`❌ Failed to generate standalone types for ${schemaName}:`, error.message);
     }
   }
+  console.log(`⏱️ Root schema compilation completed in ${Date.now() - rootSchemaCompilationStartedAt}ms`);
 
   // Load AdCP tools from cached schemas
   const tools = loadAdCPTools();
 
   // Generate tool types
+  const toolGenerationStartedAt = Date.now();
   let toolTypes = await generateToolTypes(tools, CORE_AUTHORED_TOOL_SHARED_TYPES);
+  console.log(`⏱️ Tool type compilation completed in ${Date.now() - toolGenerationStartedAt}ms`);
 
   // Remove index signature types that were incorrectly generated from oneOf schemas
   // These occur when JSON Schema has additionalProperties: false but oneOf with only required constraints
@@ -4447,4 +4531,4 @@ if (require.main === module) {
   })();
 }
 
-export { discoverAllSchemaFiles, generateTypes };
+export { compileGapSchemas, discoverAllSchemaFiles, generateTypes };
