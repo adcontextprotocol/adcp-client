@@ -158,6 +158,13 @@ export type FeedResponse = Omit<GeneratedFeedResponse, 'events'> & {
  */
 export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_brand'> {
   parent_brand?: string;
+  /**
+   * @deprecated Legacy caller-facing trust tier from registry versions before
+   * `source` and `relationship_trust`. New code should use
+   * `source` + `relationship_trust` for identity provenance and relationship
+   * authorization respectively.
+   */
+  provenance?: 'canonical' | 'community' | 'enriched';
 }
 
 /** Options for resolving one brand through the registry. */
