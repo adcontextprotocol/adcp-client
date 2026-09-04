@@ -180,6 +180,45 @@ function response() {
   };
 }
 
+function summaryResponse() {
+  const periodsResponse = response();
+  return {
+    status: 'completed',
+    view: 'summary',
+    ledger_snapshot_id: periodsResponse.ledger_snapshot_id,
+    ledger_as_of: periodsResponse.ledger_as_of,
+    account_id: periodsResponse.account_id,
+    scope: periodsResponse.scope,
+    health: 'healthy',
+    coverage: structuredClone(coverage),
+    data_through: period.end,
+    obligation_counts: {
+      total: 1,
+      waiting: 0,
+      healthy: 1,
+      delayed: 0,
+      action_required: 0,
+      complete: 0,
+    },
+    issues: [],
+  };
+}
+
+function revisionResponse() {
+  const periodsResponse = response();
+  return {
+    status: 'completed',
+    view: 'revision',
+    ledger_snapshot_id: periodsResponse.ledger_snapshot_id,
+    ledger_as_of: periodsResponse.ledger_as_of,
+    account_id: periodsResponse.account_id,
+    revision: periodsResponse.revisions[0],
+    materializations: periodsResponse.materializations,
+    receipts: periodsResponse.receipts,
+    pagination: periodsResponse.pagination,
+  };
+}
+
 function removeNestedIds(value, root = true, seen = new WeakSet()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return;
   seen.add(value);
@@ -225,7 +264,7 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(cases.map(value => G
   }
 }
 
-test('generated reporting-status Zod matches authoritative required and closed evidence boundaries', async () => {
+test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {
   const valid = response();
   const missingMaterializations = response();
   delete missingMaterializations.materializations;
@@ -243,6 +282,12 @@ test('generated reporting-status Zod matches authoritative required and closed e
   materializationWithExtraField.materializations[0].resource.untrusted_extra = true;
   const receiptWithExtraField = response();
   receiptWithExtraField.receipts[0].untrusted_extra = true;
+  const validSummary = summaryResponse();
+  const summaryMissingObligationCounts = summaryResponse();
+  delete summaryMissingObligationCounts.obligation_counts;
+  const validRevision = revisionResponse();
+  const revisionMissingReceipts = revisionResponse();
+  delete revisionMissingReceipts.receipts;
 
   const cases = [
     valid,
@@ -254,11 +299,29 @@ test('generated reporting-status Zod matches authoritative required and closed e
     coverageWithExtraField,
     materializationWithExtraField,
     receiptWithExtraField,
+    validSummary,
+    summaryMissingObligationCounts,
+    validRevision,
+    revisionMissingReceipts,
   ];
   const validate = await authoritativeValidator();
   const authoritative = cases.map(value => validate(value));
   const generated = generatedOutcomes(cases);
 
-  assert.deepEqual(authoritative, [true, false, false, false, false, false, false, false, false]);
+  assert.deepEqual(authoritative, [
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    true,
+    false,
+    true,
+    false,
+  ]);
   assert.deepEqual(generated, authoritative);
 });

@@ -1702,7 +1702,7 @@ function reportingStatusViewRequiredFields(source: unknown): Record<ReportingSta
   const sharedRequired = (Array.isArray(root.allOf) ? root.allOf : []).flatMap(part => {
     if (!part || typeof part !== 'object' || Array.isArray(part)) return [];
     const schema = part as Record<string, unknown>;
-    return schema.properties && Array.isArray(schema.required)
+    return Array.isArray(schema.required)
       ? schema.required.filter((field): field is string => typeof field === 'string')
       : [];
   });
@@ -1728,10 +1728,10 @@ function reportingStatusViewRequiredFields(source: unknown): Record<ReportingSta
         ]),
       ];
       const prior = requiredByView.get(view as ReportingStatusView);
-      if (prior && !isDeepStrictEqual(prior, required)) {
+      if (prior && !isDeepStrictEqual([...prior].sort(), [...required].sort())) {
         throw new Error(`get_reporting_status contains conflicting ${view} view required fields.`);
       }
-      requiredByView.set(view as ReportingStatusView, required);
+      if (!prior) requiredByView.set(view as ReportingStatusView, required);
     }
 
     Object.values(schema).forEach(visit);
@@ -1778,7 +1778,7 @@ function postProcessGetReportingStatusViewRequiredFields(
     const refinement = `.superRefine((value, ctx) => {
         for (const field of ${JSON.stringify(required)} as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
-                ctx.addIssue({ code: "custom", path: [field], message: "Required by reporting-status source required fields" });
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status ${view} view" });
             }
         }
     })`;
@@ -1794,6 +1794,8 @@ function postProcessGetReportingStatusViewRequiredFields(
  * passthrough post-processor.
  */
 function postProcessReportingEvidenceStrictness(content: string): string {
+  // Audited exhaustive named closed-evidence set for the current
+  // get_reporting_status bundle; review this list on schema-version bumps.
   const schemaNames = [
     'ReportingCoverageSchema',
     'ReportingStatusIssueSchema',

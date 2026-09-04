@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-04T19:44:51.986Z
+// Generated at: 2026-09-04T20:00:35.932Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -9030,7 +9030,7 @@ export const SummaryViewSchema = z.object({
 }).passthrough().superRefine((value, ctx) => {
         for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","scope","health","coverage","data_through","obligation_counts","issues"] as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
-                ctx.addIssue({ code: "custom", path: [field], message: "Required by reporting-status source required fields" });
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status summary view" });
             }
         }
     });
@@ -9042,7 +9042,7 @@ export const PeriodsViewSchema = z.object({
 }).passthrough().superRefine((value, ctx) => {
         for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","scope","periods","revisions","materializations","receipts","pagination"] as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
-                ctx.addIssue({ code: "custom", path: [field], message: "Required by reporting-status source required fields" });
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status periods view" });
             }
         }
     });
@@ -9054,7 +9054,7 @@ export const RevisionViewSchema = z.object({
 }).passthrough().superRefine((value, ctx) => {
         for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","revision","materializations","receipts","pagination"] as const) {
             if ((value as Record<string, unknown>)[field] === undefined) {
-                ctx.addIssue({ code: "custom", path: [field], message: "Required by reporting-status source required fields" });
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status revision view" });
             }
         }
     });

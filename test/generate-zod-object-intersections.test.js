@@ -174,11 +174,18 @@ export const ExampleSchema = z.object({
 
 test('reporting-status view post-processor restores source required fields', () => {
   const source = {
-    allOf: [{ properties: { status: { type: 'string' } }, required: ['status'] }],
+    allOf: [
+      { properties: { status: { type: 'string' } }, required: ['status'] },
+      { required: ['shared_required_field'] },
+    ],
     oneOf: [
       {
         oneOf: [
           { properties: { view: { const: 'summary' } }, required: ['view', 'ledger_snapshot_id', 'health'] },
+          {
+            properties: { view: { const: 'summary' } },
+            required: ['health', 'view', 'ledger_snapshot_id'],
+          },
           {
             properties: { view: { const: 'periods' } },
             required: ['view', 'ledger_snapshot_id', 'periods', 'materializations', 'pagination'],
@@ -193,9 +200,17 @@ test('reporting-status view post-processor restores source required fields', () 
   };
   const requiredByView = reportingStatusViewRequiredFields(source);
   assert.deepEqual(requiredByView, {
-    summary: ['status', 'view', 'ledger_snapshot_id', 'health'],
-    periods: ['status', 'view', 'ledger_snapshot_id', 'periods', 'materializations', 'pagination'],
-    revision: ['status', 'view', 'ledger_snapshot_id', 'revision', 'pagination'],
+    summary: ['status', 'shared_required_field', 'view', 'ledger_snapshot_id', 'health'],
+    periods: [
+      'status',
+      'shared_required_field',
+      'view',
+      'ledger_snapshot_id',
+      'periods',
+      'materializations',
+      'pagination',
+    ],
+    revision: ['status', 'shared_required_field', 'view', 'ledger_snapshot_id', 'revision', 'pagination'],
   });
 
   const output = postProcessGetReportingStatusViewRequiredFields(
@@ -209,12 +224,18 @@ export const RevisionViewSchema = z.object({ status: z.literal("completed"), vie
     requiredByView
   );
 
-  assert.match(output, /SummaryViewSchema[\s\S]*?\["status","view","ledger_snapshot_id","health"\]/);
   assert.match(
     output,
-    /PeriodsViewSchema[\s\S]*?\["status","view","ledger_snapshot_id","periods","materializations","pagination"\]/
+    /SummaryViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","health"\][\s\S]*?Required by get_reporting_status summary view/
   );
-  assert.match(output, /RevisionViewSchema[\s\S]*?\["status","view","ledger_snapshot_id","revision","pagination"\]/);
+  assert.match(
+    output,
+    /PeriodsViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","periods","materializations","pagination"\][\s\S]*?Required by get_reporting_status periods view/
+  );
+  assert.match(
+    output,
+    /RevisionViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","revision","pagination"\][\s\S]*?Required by get_reporting_status revision view/
+  );
 });
 
 test('reporting evidence post-processor makes only closed reporting schemas strict', () => {
