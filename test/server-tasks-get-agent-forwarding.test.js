@@ -79,6 +79,29 @@ async function createCompletedTask(server, accountId) {
   return result.structuredContent.task_id;
 }
 
+async function createTaskWithPushConfig(server, accountId) {
+  const result = await server.dispatchTestRequest({
+    method: 'tools/call',
+    params: {
+      name: 'create_media_buy',
+      arguments: {
+        buyer_ref: 'b1',
+        idempotency_key: '11111111-1111-1111-1111-111111111111',
+        packages: [],
+        start_time: '2026-05-01T00:00:00Z',
+        end_time: '2026-06-01T00:00:00Z',
+        account: { account_id: accountId },
+        push_notification_config: {
+          url: 'https://buyer.example.com/webhook',
+          operation_id: 'op_has_webhook',
+        },
+      },
+    },
+  });
+  assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+  return result.structuredContent.task_id;
+}
+
 const dispatchTasksGet = (server, taskId, accountId) =>
   server.dispatchTestRequest({
     method: 'tools/call',
@@ -298,6 +321,43 @@ describe('tasks_get — agent forwarding to accounts.resolve', () => {
     });
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'PERMISSION_DENIED');
+  });
+});
+
+describe('tasks_get — webhook availability', () => {
+  it('reports has_webhook false when a push URL is accepted without an emitter (#2836)', async () => {
+    const server = createAdcpServerFromPlatform(buildHitlPlatform({}), {
+      name: 'p',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const taskId = await createTaskWithPushConfig(server, 'acc_owner');
+
+    const result = await dispatchTasksGet(server, taskId, 'acc_owner');
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.has_webhook, false);
+  });
+
+  it('reports has_webhook true when a push URL and emitter are configured (#2836)', async () => {
+    const server = createAdcpServerFromPlatform(buildHitlPlatform({}), {
+      name: 'p',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: {
+        emit: async params => ({
+          delivery_id: params.delivery_id,
+          idempotency_key: 'k',
+          attempts: 1,
+          delivered: true,
+          errors: [],
+        }),
+      },
+    });
+    const taskId = await createTaskWithPushConfig(server, 'acc_owner');
+
+    const result = await dispatchTasksGet(server, taskId, 'acc_owner');
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.has_webhook, true);
   });
 });
 
