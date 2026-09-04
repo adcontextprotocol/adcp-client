@@ -2907,6 +2907,7 @@ describe('createAdcpServer', () => {
         accountId: 'acct_1',
         ownerScope: 'api_key:buyer-1',
         status: 'rejected',
+        statusMessage: 'Business policy declined the request',
         result: { errors: [{ code: 'POLICY_VIOLATION', message: 'rejected by policy' }] },
         createdAt: now,
         updatedAt: now,
@@ -2934,6 +2935,10 @@ describe('createAdcpServer', () => {
       });
       const buyer = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
       const summary = await callTool(server, 'get_task_status', { task_id: record.taskId }, buyer);
+      assert.strictEqual(summary.status, 'rejected');
+      assert.strictEqual(summary.completed_at, now);
+      assert.strictEqual(summary.message, record.statusMessage);
+      assert.strictEqual(summary.error, undefined, 'a business rejection is not a structured execution error');
       assert.strictEqual(summary.result, undefined);
       const detailed = await callTool(
         server,
@@ -2941,6 +2946,9 @@ describe('createAdcpServer', () => {
         { task_id: record.taskId, include_result: true },
         buyer
       );
+      assert.strictEqual(detailed.status, 'rejected');
+      assert.strictEqual(detailed.message, record.statusMessage);
+      assert.strictEqual(detailed.error, undefined);
       assert.deepStrictEqual(detailed.result, record.result);
     });
 

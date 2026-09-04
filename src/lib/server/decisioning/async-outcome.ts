@@ -279,6 +279,13 @@ export interface TaskHandoffContext {
   readonly taskRef: ScopedTaskRef;
   update(progress: TaskHandoffProgress): Promise<void>;
   heartbeat(): Promise<void>;
+  /**
+   * Terminate this handoff as a business rejection. This throws an internal
+   * control-flow signal, so write `return taskCtx.reject(result, reason)`.
+   * Unlike throwing `AdcpError`, this records a `rejected` task with the
+   * supplied terminal artifact and no structured execution error.
+   */
+  reject<TResult = never>(result: TResult, reason?: string): never;
 }
 
 export interface TaskHandoffProgress {
@@ -289,6 +296,31 @@ export interface TaskHandoffProgress {
   current_step?: string;
   /** Tool/vendor-specific progress fields permitted by the wire schema. */
   [key: string]: unknown;
+}
+
+/** @internal Framework-only signal used by `TaskHandoffContext.reject()`. */
+export class TaskHandoffRejection extends Error {
+  readonly name = 'TaskHandoffRejection' as const;
+
+  constructor(
+    readonly result: unknown,
+    readonly reason?: string
+  ) {
+    super('Task handoff rejected');
+  }
+}
+
+/** @internal */
+export function throwTaskHandoffRejection<TResult = never>(result: TResult, reason?: string): never {
+  if (reason !== undefined && typeof reason !== 'string') {
+    throw new TypeError('Task rejection reason must be a string');
+  }
+  throw new TaskHandoffRejection(result, reason);
+}
+
+/** @internal */
+export function isTaskHandoffRejection(value: unknown): value is TaskHandoffRejection {
+  return value instanceof TaskHandoffRejection;
 }
 
 /**

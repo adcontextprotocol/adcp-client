@@ -218,7 +218,9 @@ export interface RequestContext<TAccount = Account> {
    * project the spec-defined `Submitted` envelope to the buyer and run
    * `fn` asynchronously. `fn` receives a `TaskHandoffContext` with the
    * framework-issued `id` plus `update`/`heartbeat` affordances; its
-   * return value becomes the task's terminal artifact.
+   * return value becomes the task's terminal artifact. To end a business
+   * decision as `rejected` rather than a structured execution failure, write
+   * `return taskCtx.reject(result, reason)`.
    *
    * Use this for hybrid sellers — the same tool serves both fast
    * (programmatic remnant, instant `media_buy_id`) and slow (guaranteed

@@ -586,7 +586,8 @@ function _sales_platform_payload_returns_do_not_require_protocol_status() {
 function _sales_platform_handler_results_accept_task_handoff() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async (_req, ctx) => ctx.handoffToTask(async () => ({ products: [], cache_scope: 'account' })),
-    createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => _createBuyPayload()),
+    createMediaBuy: async (_req, ctx) =>
+      ctx.handoffToTask(async taskCtx => taskCtx.reject(_createBuyPayload(), 'Business approval declined')),
     updateMediaBuy: async (_buyId, _patch, ctx) => ctx.handoffToTask(async () => _updateBuyPayload()),
     getMediaBuyDelivery: async () => ({
       reporting_period: { start: '2026-01-01', end: '2026-01-31' },

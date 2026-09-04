@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-03
+> Generated at: 2026-09-04
 > Library: @adcp/sdk v14.0.0-beta.31
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -1987,7 +1987,7 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `PostgresWebhookRuntime` | Opinionated PostgreSQL webhook emitter, ready-to-wire server config, durable stores, migrations, probes, and bounded recovery |
 
 Production webhook publishers may construct an unbound emitter and call `forTenantScope(trustedTenant)` before every delivery. Direct unbound `emit()` fails before checkpointing or network access. `createAdcpServer` derives scope from trusted request context; configure `webhooks.tenantScope` only for a genuinely single-tenant factory.
-Push-enabled decisioning tasks settled by another process must return `ctx.handoffToTask(producer, { settlement: 'external' })`; the framework withholds `submitted` until the producer durably queues the complete scoped handle and encrypted route. Workers use `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()` / `failScopedPushTask()`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for `applied` or compatible `already_terminal`; retry or dead-letter scope misses and conflicts.
+In-process HITL callbacks can write `return taskCtx.reject(result, reason)` for a business decline with an artifact but no structured execution error. Push-enabled tasks settled by another process must return `ctx.handoffToTask(producer, { settlement: 'external' })`; the framework withholds `submitted` until the producer durably queues the complete scoped handle and encrypted route. Workers use `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()`, `failScopedPushTask()`, or `rejectScopedPushTask()`; the task mutation and encrypted recovery outbox checkpoint commit together. Acknowledge work only for `applied` or compatible `already_terminal`; retry or dead-letter scope misses and conflicts.
 When application state commits before SDK task settlement, call `createPostgresTaskSettlementIntentQueue().enqueue(intent, { db: tx })` in the same domain transaction. Acknowledgement discards the payload and retains an immutable fingerprint tombstone through the configured idempotency horizon; `pruneAcknowledged()` removes expired tombstones in bounded batches. Recovery callbacks are at-least-once. Use `applyTaskSettlementIntent()` to apply and prove the exact polling or push terminal artifact before returning `settled`. See `docs/guides/DURABLE-TASK-SETTLEMENT.md` for the supported workflow and scoped dead-letter operations.
 
 ## Task Statuses

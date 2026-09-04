@@ -7170,7 +7170,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
       },
       sales: {
         getProducts: async () => ({ products: [], cache_scope: 'account' }),
-        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async taskCtx => taskFn(taskCtx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -7573,7 +7573,7 @@ describe('HITL push notification webhook on terminal state', () => {
       },
       sales: {
         getProducts: async () => ({ products: [], cache_scope: 'account' }),
-        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async () => taskFn()),
+        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async taskCtx => taskFn(taskCtx)),
         updateMediaBuy: async () => ({ media_buy_id: 'mb_1' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -7729,6 +7729,62 @@ describe('HITL push notification webhook on terminal state', () => {
     assert.deepStrictEqual(emits[0].payload.result.errors[0].code, 'GOVERNANCE_DENIED');
     assert.strictEqual(emits[0].payload.message, 'op declined');
     assert.strictEqual(emits[0].payload.token, undefined, "token omitted when buyer didn't supply one");
+  });
+
+  it('settles an in-process HITL business rejection with an artifact and no execution error', async () => {
+    const emits = [];
+    const fakeEmitter = {
+      emit: async params => {
+        emits.push(params);
+        return { delivery_id: params.delivery_id, idempotency_key: 'k', attempts: 1, delivered: true, errors: [] };
+      },
+    };
+    const platform = buildHitlPlatform(async taskCtx =>
+      taskCtx.reject(
+        {
+          media_buy_id: 'mb_declined',
+          decision: 'declined',
+          ctx_metadata: { secret: 'must-not-reach-buyer' },
+          implementation_config: { internal: true },
+          issued_ref: taskCtx.taskRef,
+        },
+        'Inventory is no longer available'
+      )
+    );
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'webhook',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: fakeEmitter,
+    });
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          buyer_ref: 'b1',
+          idempotency_key: '11111111-1111-1111-1111-111111111113',
+          packages: [],
+          start_time: '2026-05-01T00:00:00Z',
+          end_time: '2026-06-01T00:00:00Z',
+          account: { account_id: 'acc_1' },
+          push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'op_rejected_task' },
+        },
+      },
+    });
+    const taskId = result.structuredContent.task_id;
+    await server.awaitTask(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
+    const record = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
+
+    assert.strictEqual(record.status, 'rejected');
+    assert.deepStrictEqual(record.result, { media_buy_id: 'mb_declined', decision: 'declined' });
+    assert.strictEqual(record.statusMessage, 'Inventory is no longer available');
+    assert.strictEqual(record.error, undefined);
+    assert.strictEqual(emits.length, 1);
+    assert.strictEqual(emits[0].payload.status, 'rejected');
+    assert.deepStrictEqual(emits[0].payload.result, { media_buy_id: 'mb_declined', decision: 'declined' });
+    assert.strictEqual(emits[0].payload.message, 'Inventory is no longer available');
+    assert.strictEqual(emits[0].payload.error, undefined);
   });
 
   it('does not emit webhook when push_notification_config is absent', async () => {

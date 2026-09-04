@@ -217,7 +217,7 @@ describe('createInMemoryTaskRegistry overrideTaskId collision guard (#1554)', ()
   });
 
   it('settles one duplicate public id from its persisted scoped handle and reports non-enumerating outcomes', async () => {
-    const { completeScopedTask, failScopedTask } = require('../dist/lib/server/decisioning');
+    const { completeScopedTask, failScopedTask, rejectScopedTask } = require('../dist/lib/server/decisioning');
     const registry = createInMemoryTaskRegistry();
     const firstRef = await registry.create({
       tool: 't',
@@ -247,8 +247,49 @@ describe('createInMemoryTaskRegistry overrideTaskId collision guard (#1554)', ()
       { outcome: 'not_found_in_scope' }
     );
 
-    assert.strictEqual((await registry.getTask(secondRef.taskId, secondRef)).status, 'submitted');
+    assert.deepStrictEqual(
+      await rejectScopedTask(registry, secondRef, { reason_code: 'SALES_GUARANTEE_DECLINED' }, 'Inventory unavailable'),
+      { outcome: 'applied' }
+    );
+    assert.deepStrictEqual(
+      await rejectScopedTask(registry, secondRef, { reason_code: 'SALES_GUARANTEE_DECLINED' }, 'Inventory unavailable'),
+      { outcome: 'already_terminal', status: 'rejected' }
+    );
+    assert.deepStrictEqual(
+      await rejectScopedTask(registry, { ...secondRef, accountId: 'acct-wrong' }, { leaked: true }),
+      { outcome: 'not_found_in_scope' }
+    );
+
+    const rejected = await registry.getTask(secondRef.taskId, secondRef);
+    assert.strictEqual(rejected.status, 'rejected');
+    assert.deepStrictEqual(rejected.result, { reason_code: 'SALES_GUARANTEE_DECLINED' });
+    assert.strictEqual(rejected.statusMessage, 'Inventory unavailable');
+    assert.strictEqual(rejected.error, undefined);
     assert.deepStrictEqual((await registry.getTask(firstRef.taskId, firstRef)).result, { owner: 'a' });
+  });
+
+  it('refuses scoped rejection when a legacy custom registry has no reject writer', async () => {
+    const { rejectScopedTask } = require('../dist/lib/server/decisioning');
+    const ref = {
+      taskId: 'task_legacy_reject',
+      accountId: 'acct-a',
+      ownerScope: 'account:acct-a',
+      registryId: 'legacy',
+    };
+    const registry = {
+      scopeVersion: 1,
+      registryId: 'legacy',
+      async getTask() {
+        return {
+          ...ref,
+          tool: 't',
+          status: 'submitted',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        };
+      },
+    };
+    await assert.rejects(rejectScopedTask(registry, ref, { outcome: 'rejected' }), /does not implement reject\(\)/);
   });
 
   it('binds persisted handles to the registry that issued them', async () => {

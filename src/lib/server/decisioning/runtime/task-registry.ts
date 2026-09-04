@@ -29,10 +29,9 @@ import { sanitizeStructuredAdcpError } from '../../errors';
  * AdCP-spec task lifecycle states. Mirrors `enums/task-status.json` —
  * the v6 framework writes `'submitted'` on create, transitions to
  * `'working'` on the first `updateProgress()` call, and terminates at
- * `'completed'` / `'failed'`. The other states (`'input-required'`,
- * `'canceled'`, `'rejected'`, `'auth-required'`, `'unknown'`) are
- * reserved for adopter-emitted transitions via the forthcoming
- * `taskRegistry.transition()` API (v6.1).
+ * `'completed'` / `'failed'`. `reject()` records a business decline as
+ * `'rejected'` without misclassifying it as an execution failure. The other
+ * spec states remain available to custom registries.
  */
 export type TaskStatus =
   | 'submitted'
@@ -293,6 +292,21 @@ export interface TaskRegistry {
   ): Promise<TaskRegistryMutationResult>;
 
   /**
+   * Mark a task `rejected` after a business decision. Unlike `fail()`, a
+   * rejection has no structured execution error. Use `fail()` only when the
+   * task execution itself failed.
+   *
+   * Optional for source compatibility with custom registries published before
+   * rejections had a writer. `rejectScopedTask()` refuses clearly when absent.
+   */
+  reject?(
+    taskId: string,
+    scope: TaskRegistryScope,
+    result: unknown,
+    reason?: string
+  ): Promise<TaskRegistryMutationResult>;
+
+  /**
    * Record intermediate progress from `TaskHandoffContext.update(...)`.
    * Transitions the task from `'submitted'` → `'working'` on the first
    * call. Reports already-terminal and scoped-miss outcomes. The `progress` payload is
@@ -409,6 +423,27 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       existing.error = error;
       if (result !== undefined) existing.result = result;
       existing.statusMessage = error.message;
+      existing.updatedAt = new Date().toISOString();
+      return { outcome: 'applied' };
+    },
+
+    async reject(
+      taskId: string,
+      scope: TaskRegistryScope,
+      result: unknown,
+      reason?: string
+    ): Promise<TaskMutationOutcome> {
+      if (reason !== undefined && typeof reason !== 'string') {
+        throw new TypeError('Task rejection reason must be a string');
+      }
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
+      const existing = tasks.get(taskStorageKey(taskId, scope));
+      if (!existing) return { outcome: 'not_found_in_scope' };
+      if (isTerminalTaskStatus(existing.status)) return { outcome: 'already_terminal', status: existing.status };
+      existing.status = 'rejected';
+      existing.result = result;
+      existing.error = undefined;
+      existing.statusMessage = reason;
       existing.updatedAt = new Date().toISOString();
       return { outcome: 'applied' };
     },
@@ -611,6 +646,23 @@ export async function failScopedTask(
       result === undefined ? undefined : sanitizeTaskResultForWire(result, ref)
     )
   );
+}
+
+/** Reject a task using the exact trusted handle returned by `create()`. */
+export async function rejectScopedTask(
+  registry: TaskRegistry,
+  ref: ScopedTaskRef,
+  result: unknown,
+  reason?: string
+): Promise<TaskMutationOutcome> {
+  const refused = await ensureWorkerSettlementIsSafe(registry, ref);
+  if (refused) return refused;
+  if (typeof registry.reject !== 'function') {
+    throw new Error(
+      'TaskRegistry does not implement reject(). Upgrade the custom registry before using scoped business-rejection settlement.'
+    );
+  }
+  return requireMutationOutcome(await registry.reject(ref.taskId, ref, sanitizeTaskResultForWire(result, ref), reason));
 }
 
 /** Record task progress using the exact trusted handle returned by `create()`. */

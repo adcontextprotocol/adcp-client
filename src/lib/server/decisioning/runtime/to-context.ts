@@ -33,6 +33,7 @@ import type { RequestContext, CtxMetadataAccessor } from '../context';
 import { sanitizeTaskProgressForStorage, type ScopedTaskRef, type TaskRegistry } from './task-registry';
 import {
   _createTaskHandoff,
+  throwTaskHandoffRejection,
   type ExternalTaskHandoffOptions,
   type TaskHandoffContext,
   type TaskHandoff,
@@ -315,5 +316,6 @@ export function buildHandoffContext(taskRegistry: TaskRegistry, taskRef: ScopedT
     heartbeat: async () => {
       await Promise.resolve();
     },
+    reject: (result, reason) => throwTaskHandoffRejection(result, reason),
   };
 }

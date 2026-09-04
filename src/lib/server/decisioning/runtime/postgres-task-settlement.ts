@@ -67,7 +67,8 @@ export type TaskPushSettlementOutcome =
 
 type TerminalSettlement =
   | { status: 'completed'; result: unknown }
-  | { status: 'failed'; error: AdcpStructuredError; result?: unknown };
+  | { status: 'failed'; error: AdcpStructuredError; result?: unknown }
+  | { status: 'rejected'; result: unknown; reason?: string };
 
 export interface PostgresTaskSettlementCoordinatorOptions {
   /** The exact PostgreSQL registry that issued the ScopedTaskRef. */
@@ -115,6 +116,7 @@ interface LockedTaskRow {
   status: TaskStatus;
   result: unknown;
   error: unknown;
+  status_message: string | null;
   has_webhook: boolean;
 }
 
@@ -228,20 +230,27 @@ export function createPostgresTaskSettlementCoordinator(
 
       let result: unknown;
       let error: AdcpStructuredError | undefined;
+      let reason: string | undefined;
       try {
         result =
           clonedTerminal.status === 'completed'
             ? sanitizeTaskResultForWire(clonedTerminal.result, settlementRef)
-            : clonedTerminal.result === undefined
-              ? { errors: [sanitizeStructuredAdcpError(clonedTerminal.error)] }
-              : sanitizeTaskResultForWire(clonedTerminal.result, settlementRef);
+            : clonedTerminal.status === 'rejected'
+              ? sanitizeTaskResultForWire(clonedTerminal.result, settlementRef)
+              : clonedTerminal.result === undefined
+                ? { errors: [sanitizeStructuredAdcpError(clonedTerminal.error)] }
+                : sanitizeTaskResultForWire(clonedTerminal.result, settlementRef);
         error = clonedTerminal.status === 'failed' ? sanitizeStructuredAdcpError(clonedTerminal.error) : undefined;
-        assertWellFormedUnicode({ result, error }, 'Task terminal result/error');
+        reason = clonedTerminal.status === 'rejected' ? clonedTerminal.reason : undefined;
+        if (reason !== undefined && typeof reason !== 'string') {
+          throw new TypeError('Task rejection reason must be a string');
+        }
+        assertWellFormedUnicode({ result, error, reason }, 'Task terminal result/error');
         // Validate the exact canonical domain used later for immutable
         // terminal and outbox fingerprints. JSON.stringify alone would
         // silently coerce NaN/Infinity and exotic objects.
-        canonicalJsonSha256({ result, error });
-        assertPayloadSize(result, error);
+        canonicalJsonSha256({ result, error, reason });
+        assertPayloadSize(result, error, reason);
       } catch (cause) {
         if (cause instanceof TaskPushSettlementConfigurationError) throw cause;
         throw new TaskPushSettlementConfigurationError('Task terminal result/error must be serializable JSON', {
@@ -251,7 +260,7 @@ export function createPostgresTaskSettlementCoordinator(
 
       if (
         TERMINAL.has(observed.status) &&
-        !terminalMatches(observed, clonedTerminal.status, result, error, settlementRef)
+        !terminalMatches(observed, clonedTerminal.status, result, error, reason, settlementRef)
       ) {
         return {
           outcome: 'already_terminal',
@@ -290,6 +299,7 @@ export function createPostgresTaskSettlementCoordinator(
         result,
         ...(clonedPush.token !== undefined && { token: clonedPush.token }),
         ...(clonedTerminal.status === 'failed' && { message: error!.message }),
+        ...(clonedTerminal.status === 'rejected' && reason !== undefined && { message: reason }),
       };
       let prepared: PreparedWebhookDeliverySnapshot;
       try {
@@ -333,7 +343,7 @@ export function createPostgresTaskSettlementCoordinator(
             `Task type ${row.tool} cannot be emitted by the closed AdCP task-webhook schema`
           );
         }
-        const compatible = terminalMatches(row, clonedTerminal.status, result, error, settlementRef);
+        const compatible = terminalMatches(row, clonedTerminal.status, result, error, reason, settlementRef);
         if (TERMINAL.has(row.status) && !compatible) {
           await client.query('COMMIT');
           return {
@@ -432,21 +442,36 @@ export function createPostgresTaskSettlementCoordinator(
                     JSON.stringify(result),
                   ]
                 )
-              : await client.query(
-                  `UPDATE ${binding.tableName}
+              : clonedTerminal.status === 'rejected'
+                ? await client.query(
+                    `UPDATE ${binding.tableName}
+                        SET status = 'rejected', result = $5::jsonb, error = NULL,
+                            status_message = $6, updated_at = clock_timestamp()
+                      WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
+                    [
+                      settlementRef.taskId,
+                      binding.namespace,
+                      settlementRef.accountId,
+                      settlementRef.ownerScope,
+                      JSON.stringify(result),
+                      reason ?? null,
+                    ]
+                  )
+                : await client.query(
+                    `UPDATE ${binding.tableName}
                       SET status = 'failed', result = $5::jsonb, error = $6::jsonb,
                           status_message = $7, updated_at = clock_timestamp()
                     WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
-                  [
-                    settlementRef.taskId,
-                    binding.namespace,
-                    settlementRef.accountId,
-                    settlementRef.ownerScope,
-                    JSON.stringify(result),
-                    JSON.stringify(error),
-                    error!.message,
-                  ]
-                );
+                    [
+                      settlementRef.taskId,
+                      binding.namespace,
+                      settlementRef.accountId,
+                      settlementRef.ownerScope,
+                      JSON.stringify(result),
+                      JSON.stringify(error),
+                      error!.message,
+                    ]
+                  );
           if ((update.rowCount ?? 0) !== 1) throw new Error('Task disappeared while holding its settlement lock');
           await client.query('COMMIT');
           return { outcome: 'applied', delivery: 'durably_bound' };
@@ -488,6 +513,17 @@ export async function failScopedPushTask(
   return coordinator.settle(ref, { status: 'failed', error, ...(result !== undefined && { result }) }, push);
 }
 
+/** Reject a push-enabled task with a terminal business-decision artifact. */
+export async function rejectScopedPushTask(
+  coordinator: PostgresTaskSettlementCoordinator,
+  ref: ScopedTaskRef,
+  push: TaskPushSettlementConfig,
+  result: unknown,
+  reason?: string
+): Promise<TaskPushSettlementOutcome> {
+  return coordinator.settle(ref, { status: 'rejected', result, ...(reason !== undefined && { reason }) }, push);
+}
+
 function snapshotSettlementRef(ref: ScopedTaskRef): ScopedTaskRef & { registryId: string } {
   const cloned = structuredClone(ref) as Partial<ScopedTaskRef>;
   const snapshot = {
@@ -509,9 +545,10 @@ function requireSettlementRefPart(value: unknown, field: string): string {
 
 function terminalMatches(
   row: LockedTaskRow,
-  status: 'completed' | 'failed',
+  status: 'completed' | 'failed' | 'rejected',
   result: unknown,
   error: AdcpStructuredError | undefined,
+  reason: string | undefined,
   ref: ScopedTaskRef
 ): boolean {
   if (row.status !== status) return false;
@@ -522,7 +559,9 @@ function terminalMatches(
       status === 'failed' ? sanitizeStructuredAdcpError(structuredClone(row.error) as AdcpStructuredError) : undefined;
     return (
       canonicalJsonSha256(storedResult) === canonicalJsonSha256(result) &&
-      (status === 'completed' || canonicalJsonSha256(storedError) === canonicalJsonSha256(error))
+      (status === 'completed' ||
+        (status === 'failed' && canonicalJsonSha256(storedError) === canonicalJsonSha256(error)) ||
+        (status === 'rejected' && row.status_message === (reason ?? null)))
     );
   } catch {
     return false;
@@ -672,8 +711,8 @@ function resolveRetries(retries: WebhookRetryOptions | undefined): Required<Webh
   return resolved;
 }
 
-function assertPayloadSize(result: unknown, error: unknown): void {
-  const bytes = Buffer.byteLength(JSON.stringify({ result, error }), 'utf8');
+function assertPayloadSize(result: unknown, error: unknown, reason: string | undefined): void {
+  const bytes = Buffer.byteLength(JSON.stringify({ result, error, reason }), 'utf8');
   if (bytes > MAX_RESULT_BYTES) {
     throw new TaskPushSettlementConfigurationError(`Task result/error JSON exceeds ${MAX_RESULT_BYTES} bytes`);
   }
@@ -695,7 +734,7 @@ async function readTaskRow(
   lock: boolean
 ): Promise<LockedTaskRow | undefined> {
   const found = await db.query(
-    `SELECT tool, status, result, error, has_webhook
+    `SELECT tool, status, result, error, status_message, has_webhook
        FROM ${table}
       WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4${lock ? '\n      FOR UPDATE' : ''}`,
     [ref.taskId, namespace, ref.accountId, ref.ownerScope]

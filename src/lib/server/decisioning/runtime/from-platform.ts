@@ -20,7 +20,8 @@
  *   - HITL path: framework detects the `TaskHandoff` marker, allocates
  *     `taskId`, returns the submitted envelope to the buyer immediately,
  *     then runs the handoff function in background. The function's return
- *     value becomes the task's terminal `result`; thrown `AdcpError` becomes
+ *     value becomes the task's terminal `result`; `taskCtx.reject(...)`
+ *     becomes a business `rejected` result, and thrown `AdcpError` becomes
  *     the terminal `error`.
  *
  * Generic thrown errors (`Error`, `TypeError`) fall through to the
@@ -139,7 +140,7 @@ import type {
 } from '../../media-buy-store';
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryBootstrap } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
-import { isTaskHandoff, _extractHandoffEntry, type TaskHandoff } from '../async-outcome';
+import { isTaskHandoff, isTaskHandoffRejection, _extractHandoffEntry, type TaskHandoff } from '../async-outcome';
 import { _extractResponseSummaryEntry } from '../response-summary';
 import { productsResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
@@ -1897,7 +1898,8 @@ export interface DecisioningObservabilityHooks {
 
   /**
    * Fired when a task transitions to a terminal state (`completed`,
-   * `failed`, or `failed-write` when the registry write itself fails).
+   * `failed`, `rejected`, or `failed-write` when the registry write itself
+   * fails).
    * `durationMs` is from create → terminal. `errorCode` is the structured
    * error code for the failure cases — pre-bucketed for metric tags
    * (matches `ErrorCode` enum + the framework-synthetic
@@ -1907,7 +1909,7 @@ export interface DecisioningObservabilityHooks {
     taskId: string;
     tool: string;
     accountId: string;
-    status: 'completed' | 'failed';
+    status: 'completed' | 'failed' | 'rejected';
     durationMs: number;
     errorCode?: string;
   }): void;
@@ -4030,9 +4032,14 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         updated_at: record.updatedAt,
       };
       // Terminal states get `completed_at` per spec (covers completed,
-      // failed, canceled). The framework writes terminal-state transitions
+      // failed, rejected, canceled). The framework writes terminal-state transitions
       // by stamping `updated_at`, so the two coincide today.
-      if (record.status === 'completed' || record.status === 'failed' || record.status === 'canceled') {
+      if (
+        record.status === 'completed' ||
+        record.status === 'failed' ||
+        record.status === 'rejected' ||
+        record.status === 'canceled'
+      ) {
         payload.completed_at = record.updatedAt;
       }
       if (record.statusMessage) payload.message = record.statusMessage;
@@ -4728,6 +4735,7 @@ async function routeIfHandoff<TInner, TWire>(
           try {
             inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
           } catch (error) {
+            if (isTaskHandoffRejection(error)) throw error;
             await lifecycle?.onHandoffFailure?.(error);
             throw error;
           }
@@ -4812,7 +4820,7 @@ async function dispatchHitl<TResult>(
   const taskStart = Date.now();
 
   // Single helper for the four `onTaskTransition` fire sites.
-  const fireTransition = (status: 'completed' | 'failed', errorCode?: string): void => {
+  const fireTransition = (status: 'completed' | 'failed' | 'rejected', errorCode?: string): void => {
     safeFire(
       opts.observability?.onTaskTransition,
       {
@@ -4868,6 +4876,43 @@ async function dispatchHitl<TResult>(
       result = await taskFn(taskRef);
     } catch (err) {
       taskFnError = err;
+    }
+
+    if (taskFnError instanceof Error && isTaskHandoffRejection(taskFnError)) {
+      // Keep business-rejection artifacts on the exact same wire-sanitization
+      // boundary as normal completions before either durable storage or an
+      // optional buyer webhook sees them.
+      const rejectionResult = sanitizeTaskResultForWire(taskFnError.result, taskRef);
+      try {
+        if (typeof taskRegistry.reject !== 'function') {
+          throw new Error(
+            'TaskRegistry does not implement reject(). Upgrade the custom registry before using taskCtx.reject().'
+          );
+        }
+        const outcome = await taskRegistry.reject(taskId, registryScope, rejectionResult, taskFnError.reason);
+        if (outcome?.outcome === 'not_found_in_scope') {
+          throw new Error('Scoped task registry rejection matched no task');
+        }
+        if (outcome?.outcome === 'already_terminal') return;
+      } catch (registryErr) {
+        opts.logger.error(
+          `[adcp/decisioning] task ${taskId} (${opts.tool}) rejected but registry write failed — ` +
+            `manual reconciliation required. Webhook not emitted; buyer state will diverge until resolved. ` +
+            `Error type: ${registryErr instanceof Error ? 'Error' : typeof registryErr}`
+        );
+        fireTransition('failed', 'REGISTRY_WRITE_FAILED');
+        return;
+      }
+      fireTransition('rejected');
+      await emitTaskWebhook(opts, {
+        task: {
+          task_id: taskId,
+          status: 'rejected',
+          result: rejectionResult,
+          ...(taskFnError.reason !== undefined && { message: taskFnError.reason }),
+        },
+      });
+      return;
     }
 
     if (taskFnError === undefined) {
@@ -4958,7 +5003,7 @@ function buildTaskWebhookPayload(
   opts: DispatchHitlOpts,
   taskId: string,
   status: TaskStatus,
-  artifact: { result?: unknown; error?: AdcpStructuredError }
+  artifact: { result?: unknown; error?: AdcpStructuredError; message?: string }
 ): Record<string, unknown> {
   const idempotencyKey = randomUUID();
   const payload: Record<string, unknown> = {
@@ -4979,11 +5024,14 @@ function buildTaskWebhookPayload(
   if (opts.pushNotificationToken !== undefined) {
     payload.token = opts.pushNotificationToken;
   }
-  // `result` is the AdCP async-response-data union — for completed it's
-  // the success-arm body; for failed it carries `errors: AdcpStructuredError[]`
-  // alongside the empty success shape.
-  if (status === 'completed' && artifact.result !== undefined) {
+  // `result` is the AdCP async-response-data union — for completed and
+  // rejected it is the terminal artifact; for failed it carries
+  // `errors: AdcpStructuredError[]` alongside the empty success shape.
+  if ((status === 'completed' || status === 'rejected') && artifact.result !== undefined) {
     payload.result = artifact.result;
+  }
+  if (status === 'rejected' && artifact.message !== undefined) {
+    payload.message = artifact.message;
   }
   if (status === 'failed' && artifact.error !== undefined) {
     payload.result = artifact.result ?? { errors: [artifact.error] };
@@ -5013,7 +5061,15 @@ function resolveWebhookDeliveryId(opts: DispatchHitlOpts, taskId: string): strin
 
 async function emitTaskWebhook(
   opts: DispatchHitlOpts,
-  source: { task: { task_id: string; status: 'completed' | 'failed'; result?: unknown; error?: AdcpStructuredError } }
+  source: {
+    task: {
+      task_id: string;
+      status: 'completed' | 'failed' | 'rejected';
+      result?: unknown;
+      error?: AdcpStructuredError;
+      message?: string;
+    };
+  }
 ): Promise<void> {
   if (!opts.emitWebhook || !opts.pushNotificationUrl) return;
   const taskId = source.task.task_id;
@@ -5034,6 +5090,7 @@ async function emitTaskWebhook(
   const wirePayload = buildTaskWebhookPayload(opts, taskId, source.task.status, {
     ...(source.task.result !== undefined && { result: source.task.result }),
     ...(source.task.error !== undefined && { error: source.task.error }),
+    ...(source.task.message !== undefined && { message: source.task.message }),
   });
   const start = Date.now();
   let success = false;
