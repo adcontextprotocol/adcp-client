@@ -29,7 +29,13 @@ import type {
   PropertyList,
   CollectionList,
 } from '../../types/tools.generated';
-import type { ExternalTaskHandoffOptions, TaskHandoff, TaskHandoffContext, TaskHandoffOptions } from './async-outcome';
+import type {
+  ExternalTaskHandoffContext,
+  ExternalTaskHandoffOptions,
+  TaskHandoff,
+  TaskHandoffContext,
+  TaskHandoffOptions,
+} from './async-outcome';
 import type { CtxMetadataRef, ResourceKind } from '../ctx-metadata';
 import type { BuyerAgent } from './buyer-agent';
 import type { Recipe } from './proposal';
@@ -216,7 +222,8 @@ export interface RequestContext<TAccount = Account> {
    * Hand off the call to a background task. Returns a `TaskHandoff<T>`
    * marker — return that from your method to signal the framework should
    * project the spec-defined `Submitted` envelope to the buyer and run
-   * `fn` asynchronously. `fn` receives a `TaskHandoffContext` with the
+   * `fn` asynchronously. Framework-settled callbacks receive a
+   * `TaskHandoffContext` with the
    * framework-issued `id` plus `update`/`heartbeat` affordances; its
    * return value becomes the task's terminal artifact. To end a business
    * decision as `rejected` rather than a structured execution failure, write
@@ -250,16 +257,16 @@ export interface RequestContext<TAccount = Account> {
    * Constraints: non-empty, ≤ 128 characters. Throws if violated.
    *
    * For crash-safe queue workers, pass `{ settlement: 'external' }`. The
-   * callback must durably enqueue `taskCtx.taskRef` and return only after that
-   * write commits; the submitted response waits for it. Returning does not
-   * complete the task; a trusted worker must
-   * settle it through a scoped settlement helper. If the producer callback
+   * callback receives an `ExternalTaskHandoffContext`: it must durably enqueue
+   * `taskCtx.taskRef` and return only after that write commits. It deliberately
+   * has no `reject()` method; a trusted worker must settle it through a scoped
+   * settlement helper. If the producer callback
    * throws, the initial invocation fails and the task remains internally
    * submitted, so the framework cannot acknowledge unrecoverable work or
    * create a terminal task without its required durable delivery record.
    */
   handoffToTask(
-    fn: (taskCtx: TaskHandoffContext) => Promise<void>,
+    fn: (taskCtx: ExternalTaskHandoffContext) => Promise<void>,
     options: ExternalTaskHandoffOptions
   ): TaskHandoff<never>;
   handoffToTask<TResult>(

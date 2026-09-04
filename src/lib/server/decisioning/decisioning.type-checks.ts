@@ -60,6 +60,7 @@ import type {
   ServerPayload,
   CheckGovernancePayload,
   GetSignalsHandlerResult,
+  ExternalTaskHandoffContext,
 } from './index';
 import type { OperationalContext, OperationalPlatform } from '../operational-platform';
 import {
@@ -611,7 +612,14 @@ function _sales_platform_handler_results_accept_task_handoff() {
 function _sales_platform_handler_results_accept_external_task_handoff() {
   const sales: SalesCorePlatform<_SocialMeta> & SalesIngestionPlatform<_SocialMeta> = {
     getProducts: async (_req, ctx) =>
-      ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
+      ctx.handoffToTask(
+        async taskCtx => {
+          void taskCtx.taskRef;
+          // @ts-expect-error the external overload must not expose in-process rejection
+          taskCtx.reject({ decision: 'declined' }, 'External producer cannot settle');
+        },
+        { settlement: 'external' }
+      ),
     createMediaBuy: async (_req, ctx) =>
       ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
     updateMediaBuy: async (_buyId, _patch, ctx) =>
@@ -625,6 +633,11 @@ function _sales_platform_handler_results_accept_external_task_handoff() {
       ctx.handoffToTask(async taskCtx => void taskCtx.taskRef, { settlement: 'external' }),
   };
   return sales;
+}
+
+function _external_handoff_context_cannot_reject(taskCtx: ExternalTaskHandoffContext) {
+  // @ts-expect-error external settlement must be performed by a trusted worker
+  taskCtx.reject({ decision: 'declined' }, 'External producer cannot settle');
 }
 
 function _get_products_handler_accepts_sdk_owned_response_summary() {

@@ -288,6 +288,23 @@ export interface TaskHandoffContext {
   reject<TResult = never>(result: TResult, reason?: string): never;
 }
 
+/**
+ * Context supplied to an external-settlement producer. The producer owns only
+ * durable work enqueueing; a separate trusted worker settles the task through
+ * a scoped helper. Business rejection is intentionally unavailable here: a
+ * producer has neither the crash-safe push route nor the coordinator needed
+ * to atomically record a terminal rejection and its outbox checkpoint.
+ *
+ * @public
+ */
+export interface ExternalTaskHandoffContext {
+  readonly id: string;
+  /** Trusted serializable handle for the durable worker settlement record. */
+  readonly taskRef: ScopedTaskRef;
+  update(progress: TaskHandoffProgress): Promise<void>;
+  heartbeat(): Promise<void>;
+}
+
 export interface TaskHandoffProgress {
   message?: string;
   percentage?: number;

@@ -248,7 +248,17 @@ describe('createInMemoryTaskRegistry overrideTaskId collision guard (#1554)', ()
     );
 
     assert.deepStrictEqual(
-      await rejectScopedTask(registry, secondRef, { reason_code: 'SALES_GUARANTEE_DECLINED' }, 'Inventory unavailable'),
+      await rejectScopedTask(
+        registry,
+        secondRef,
+        {
+          reason_code: 'SALES_GUARANTEE_DECLINED',
+          // Terminal artifacts are buyer-visible even when they are not a
+          // Product carrier, so this server-only root field must be removed.
+          implementation_config: { internal: true },
+        },
+        'Inventory unavailable'
+      ),
       { outcome: 'applied' }
     );
     assert.deepStrictEqual(

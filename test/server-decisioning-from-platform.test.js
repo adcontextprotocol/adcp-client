@@ -4839,6 +4839,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           async taskCtx => {
             // Represents the application queue transaction. The complete
             // opaque handle, rather than only taskCtx.id, crosses processes.
+            assert.strictEqual(taskCtx.reject, undefined, 'external producers cannot reject in-process');
+            assert.strictEqual('reject' in taskCtx, false, 'external context omits reject at runtime');
             queuedTaskRef = structuredClone(taskCtx.taskRef);
             markProducerStarted();
             await producerCommit;

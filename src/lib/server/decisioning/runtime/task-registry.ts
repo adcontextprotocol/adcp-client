@@ -595,11 +595,19 @@ function sanitizeEmbeddedStructuredErrors(value: unknown): void {
   visit(value);
 }
 
-/** Remove server-only fields before a task result becomes buyer-readable. */
+/**
+ * Remove server-only fields before a task result becomes buyer-readable.
+ *
+ * A terminal task artifact is itself buyer-visible, rather than necessarily a
+ * Product carrier. Strip its root implementation configuration explicitly;
+ * the generic product sanitizer intentionally only strips known carriers.
+ */
 export function sanitizeTaskResultForWire<T>(result: T, taskRef?: ScopedTaskRef): T {
   if (result != null && typeof result === 'object') {
-    stripCtxMetadata(result as Record<string, unknown>);
-    stripImplementationConfig(result as Record<string, unknown>);
+    const record = result as Record<string, unknown>;
+    delete record.implementation_config;
+    stripCtxMetadata(record);
+    stripImplementationConfig(record);
     sanitizeEmbeddedStructuredErrors(result);
     if (taskRef) stripIssuedTaskRef(result, taskRef);
   }

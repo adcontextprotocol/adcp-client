@@ -119,7 +119,7 @@ import { resolveCredentialPolicyForTool, scanArgsForCredentials, type Credential
 import { validatePlatform, PlatformConfigError } from './validate-platform';
 import { validateSpecialismRequiredTools, formatSpecialismIssue } from '../validate-specialisms';
 import type { AdcpLogger } from '../../create-adcp-server';
-import { buildRequestContext, buildHandoffContext } from './to-context';
+import { buildExternalHandoffContext, buildRequestContext, buildHandoffContext } from './to-context';
 import {
   type CtxMetadataStore,
   type ResourceKind,
@@ -140,7 +140,13 @@ import type {
 } from '../../media-buy-store';
 import { createPostgresTaskRegistry, getDecisioningTaskRegistryBootstrap } from './postgres-task-registry';
 import type { PgQueryable } from '../../postgres-task-store';
-import { isTaskHandoff, isTaskHandoffRejection, _extractHandoffEntry, type TaskHandoff } from '../async-outcome';
+import {
+  isTaskHandoff,
+  isTaskHandoffRejection,
+  _extractHandoffEntry,
+  type ExternalTaskHandoffContext,
+  type TaskHandoff,
+} from '../async-outcome';
 import { _extractResponseSummaryEntry } from '../response-summary';
 import { productsResponse } from '../../responses';
 import { TOOL_ENTITY_FIELDS } from './entity-hydration.generated';
@@ -4714,11 +4720,15 @@ async function routeIfHandoff<TInner, TWire>(
     }
     const { fn: taskFn, options } = entry;
     if (options && 'settlement' in options && options.settlement === 'external') {
+      // `_extractHandoffEntry` retains the broad framework callback type for
+      // its opaque marker. The external option was validated at construction,
+      // and its public overload supplies this narrower context at runtime.
+      const externalTaskFn = taskFn as (taskCtx: ExternalTaskHandoffContext) => Promise<unknown>;
       return dispatchHitl(
         taskRegistry,
         opts,
         async taskRef => {
-          await taskFn(buildHandoffContext(taskRegistry, taskRef));
+          await externalTaskFn(buildExternalHandoffContext(taskRegistry, taskRef));
         },
         options.task_id,
         'external'
@@ -4735,7 +4745,10 @@ async function routeIfHandoff<TInner, TWire>(
           try {
             inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
           } catch (error) {
-            if (isTaskHandoffRejection(error)) throw error;
+            // A business rejection still abandons proposal-backed work. The
+            // callback releases the reservation before the rejection signal
+            // escapes to dispatchHitl, which recognizes it and writes a
+            // rejected (not failed) terminal task.
             await lifecycle?.onHandoffFailure?.(error);
             throw error;
           }
