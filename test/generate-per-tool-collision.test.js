@@ -108,9 +108,29 @@ const protocolRequiredClosure = [...closure(new Map([
     sourceFile: 'core.generated.d.ts',
   }],
 ]), ['GetProductsRequest'])];
+const protocolErrorClosure = [...closure(new Map([
+  ['GetReportingStatusResponse', {
+    name: 'GetReportingStatusResponse',
+    kind: 'type',
+    body: 'export type GetReportingStatusResponse = OperationalFailure;',
+    sourceFile: 'tools.generated.d.ts',
+  }],
+  ['OperationalFailure', {
+    name: 'OperationalFailure',
+    kind: 'interface',
+    body: "export interface OperationalFailure { status: 'failed'; errors: Error[]; }",
+    sourceFile: 'tools.generated.d.ts',
+  }],
+  ['Error', {
+    name: 'Error',
+    kind: 'interface',
+    body: 'export interface Error { code: string; message: string; }',
+    sourceFile: 'core.generated.d.ts',
+  }],
+]), ['GetReportingStatusResponse'])];
 writeFileSync(
   ${JSON.stringify(outPath)},
-  JSON.stringify({ stripResults, collisionResults, generatedSurface, protocolRequiredClosure })
+  JSON.stringify({ stripResults, collisionResults, generatedSurface, protocolRequiredClosure, protocolErrorClosure })
 );
 `
   );
@@ -192,5 +212,13 @@ test('dependency closure keeps the AdCP Required=true protocol type in narrow sl
     RESULTS.protocolRequiredClosure.sort(),
     ['GetProductsRequest', 'Required', 'TargetingRequirements'],
     'Required must resolve to the AdCP protocol export, not be skipped as TypeScript Required<T>'
+  );
+});
+
+test('dependency closure keeps the AdCP Error protocol type in narrow slices', () => {
+  assert.deepEqual(
+    RESULTS.protocolErrorClosure.sort(),
+    ['Error', 'GetReportingStatusResponse', 'OperationalFailure'],
+    'Error must resolve to the AdCP protocol export, not the JavaScript global Error'
   );
 });

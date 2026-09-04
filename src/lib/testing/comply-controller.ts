@@ -54,7 +54,6 @@ import {
   createSeedFixtureCache,
   handleTestControllerRequest,
   toMcpResponse,
-  type ControllerScenario,
   type SeedFixtureCache,
   type TestControllerStore,
   type UpstreamTrafficSuccessResponse,
@@ -681,22 +680,22 @@ function buildStore(config: ComplyControllerConfig, ctx: ComplyControllerContext
   return store;
 }
 
-/** The set of canonical scenarios a config advertises via `list_scenarios`.
+/** The set of scenarios a config advertises via `list_scenarios`.
  * `list_scenarios` itself is implicit and excluded. */
-function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario[] {
-  const out: ControllerScenario[] = [];
+function advertisedScenarios(config: ComplyControllerConfig): string[] {
+  const out: string[] = [];
   if (config.force?.creative_status) out.push(CONTROLLER_SCENARIOS.FORCE_CREATIVE_STATUS);
   if (config.force?.account_status) out.push(CONTROLLER_SCENARIOS.FORCE_ACCOUNT_STATUS);
   if (config.force?.media_buy_status) out.push(CONTROLLER_SCENARIOS.FORCE_MEDIA_BUY_STATUS);
   if (config.force?.session_status) out.push(CONTROLLER_SCENARIOS.FORCE_SESSION_STATUS);
   if (config.force?.create_media_buy_arm) out.push(CONTROLLER_SCENARIOS.FORCE_CREATE_MEDIA_BUY_ARM);
-  if (config.force?.get_products_arm) out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM as ControllerScenario);
-  if (config.force?.get_signals_arm) out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM as ControllerScenario);
+  if (config.force?.get_products_arm) out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM);
+  if (config.force?.get_signals_arm) out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM);
   if (config.force?.task_completion) out.push(CONTROLLER_SCENARIOS.FORCE_TASK_COMPLETION);
   if (config.force?.creative_purge) out.push(CONTROLLER_SCENARIOS.FORCE_CREATIVE_PURGE);
   if (config.simulate?.delivery) out.push(CONTROLLER_SCENARIOS.SIMULATE_DELIVERY);
   if (config.simulate?.budget_spend) out.push(CONTROLLER_SCENARIOS.SIMULATE_BUDGET_SPEND);
-  if (config.seed?.account) out.push('seed_account' as unknown as ControllerScenario);
+  if (config.seed?.account) out.push('seed_account');
   if (config.seed?.product) out.push('seed_product');
   if (config.seed?.pricing_option) out.push('seed_pricing_option');
   if (config.seed?.creative) out.push('seed_creative');
@@ -704,12 +703,9 @@ function advertisedScenarios(config: ComplyControllerConfig): ControllerScenario
   if (config.seed?.media_buy) out.push('seed_media_buy');
   if (config.seed?.creative_format) out.push('seed_creative_format');
   if (config.seed?.measurement_catalog) out.push('seed_measurement_catalog');
-  // Extension scenarios not yet in the schema cache's `ControllerScenario`
-  // enum are still accepted by the dispatcher under the open-extension
-  // `TOOL_INPUT_SHAPE.scenario: z.string()` pattern.
-  if (config.seed?.buyer_agent) out.push('seed_buyer_agent' as unknown as ControllerScenario);
-  if (config.force?.audience_status) out.push('force_audience_status' as unknown as ControllerScenario);
-  if (config.force?.catalog_item_status) out.push('force_catalog_item_status' as unknown as ControllerScenario);
+  if (config.seed?.buyer_agent) out.push('seed_buyer_agent');
+  if (config.force?.audience_status) out.push('force_audience_status');
+  if (config.force?.catalog_item_status) out.push('force_catalog_item_status');
   if (config.queryUpstreamTraffic) out.push(CONTROLLER_SCENARIOS.QUERY_UPSTREAM_TRAFFIC);
   if (config.queryProvenanceAuditObservations) {
     out.push(CONTROLLER_SCENARIOS.QUERY_PROVENANCE_AUDIT_OBSERVATIONS);
@@ -746,7 +742,7 @@ export function createComplyController(config: ComplyControllerConfig): ComplyCo
   const scenarios = advertisedScenarios(config);
   // Stable reference so factory answers list_scenarios without invoking
   // createStore — handleTestControllerRequest inspects the `scenarios` field.
-  const factoryScenarios = Object.freeze([...scenarios]) as readonly ControllerScenario[];
+  const factoryScenarios = Object.freeze([...scenarios]);
 
   async function handleRawWithResolvedAuthority(
     input: Record<string, unknown>,

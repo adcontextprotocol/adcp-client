@@ -17,7 +17,7 @@ import type {
   ControllerError,
 } from '../types/tools.generated';
 
-/** Scenarios the controller can support */
+/** Known canonical scenarios, retained as an autocomplete convenience. */
 export type ControllerScenario =
   | 'force_creative_status'
   | 'force_account_status'
@@ -43,7 +43,12 @@ export type { DigestRecordedCall, RawRecordedCall, RecordedCall } from '../upstr
 /** What capabilities the seller's test controller exposes */
 export interface ControllerCapabilities {
   detected: true;
-  scenarios: ControllerScenario[];
+  /**
+   * Scenario names are an open protocol extension point. Keep
+   * `ControllerScenario` for autocomplete of canonical names, but accept and
+   * preserve names introduced by newer or vendor-specific controllers.
+   */
+  scenarios: string[];
 }
 
 /** No test controller available */
@@ -146,9 +151,7 @@ export async function detectController(
     const data = result.data as Record<string, unknown>;
     if (data.success && data.scenarios) {
       // Handle both array format (spec) and object format (training agent returns scenario descriptions)
-      const scenarios = Array.isArray(data.scenarios)
-        ? (data.scenarios as ControllerScenario[])
-        : (Object.keys(data.scenarios) as ControllerScenario[]);
+      const scenarios = Array.isArray(data.scenarios) ? (data.scenarios as string[]) : Object.keys(data.scenarios);
       return {
         detected: true,
         scenarios,
@@ -166,7 +169,7 @@ export async function detectController(
 }
 
 /** Check if a specific scenario is supported */
-export function supportsScenario(controller: ControllerDetection, scenario: ControllerScenario): boolean {
+export function supportsScenario(controller: ControllerDetection, scenario: string): boolean {
   return controller.detected && controller.scenarios.includes(scenario);
 }
 

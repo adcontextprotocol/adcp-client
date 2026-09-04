@@ -267,9 +267,11 @@ const BUILTIN_IDENTIFIERS = new Set([
   'NodeJS',
   'URL',
   'URLSearchParams',
-  // Iteration protocol + errors (any future codegen output that
-  // references these should resolve to the lib.d.ts versions, not
-  // get flagged as missing slice deps).
+  // Iteration protocol + JavaScript error subclasses (any future codegen
+  // output that references these should resolve to the lib.d.ts versions,
+  // not get flagged as missing slice deps). Do not add `Error` here: AdCP
+  // exports a protocol error shape with that name, and narrow slices must
+  // include it when response payloads reference it.
   'Iterable',
   'AsyncIterable',
   'Iterator',
@@ -278,7 +280,6 @@ const BUILTIN_IDENTIFIERS = new Set([
   'ReadonlyArray',
   'ReadonlyMap',
   'ReadonlySet',
-  'Error',
   'TypeError',
   'RangeError',
   'SyntaxError',
