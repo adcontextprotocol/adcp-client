@@ -33,32 +33,10 @@ function runCli(args, env = {}) {
   });
 }
 
-test('--parallel-dispatch opts into process-local parallel dispatch grading', { timeout: 60_000 }, async t => {
-  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'adcp-cli-parallel-dispatch-'));
-  const storyboardPath = path.join(fixtureRoot, 'storyboard.yaml');
-  writeFileSync(
-    storyboardPath,
-    [
-      'id: cli-parallel-dispatch-contract',
-      'title: CLI parallel dispatch contract',
-      'protocol: media-buy',
-      'phases:',
-      '  - id: phase-1',
-      '    title: Concurrent capability probes',
-      '    steps:',
-      '      - id: concurrent-capabilities',
-      '        title: Concurrent capability probes',
-      '        task: get_adcp_capabilities',
-      '        request: {}',
-      '        parallel_dispatch:',
-      '          count: 2',
-      '',
-    ].join('\n')
-  );
-
+async function createCapabilityServer(t, name) {
   let toolCalls = 0;
   const server = http.createServer(async (req, res) => {
-    const mcp = new McpServer({ name: 'cli-parallel-dispatch', version: '1.0.0' });
+    const mcp = new McpServer({ name, version: '1.0.0' });
     mcp.registerTool('get_adcp_capabilities', { inputSchema: {} }, async () => {
       toolCalls++;
       return {
@@ -83,13 +61,46 @@ test('--parallel-dispatch opts into process-local parallel dispatch grading', { 
   t.after(async () => {
     if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
+  });
+
+  return {
+    address: () => server.address().port,
+    toolCalls: () => toolCalls,
+  };
+}
+
+test('--parallel-dispatch opts into process-local parallel dispatch grading', { timeout: 60_000 }, async t => {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'adcp-cli-parallel-dispatch-'));
+  const storyboardPath = path.join(fixtureRoot, 'storyboard.yaml');
+  writeFileSync(
+    storyboardPath,
+    [
+      'id: cli-parallel-dispatch-contract',
+      'title: CLI parallel dispatch contract',
+      'protocol: media-buy',
+      'phases:',
+      '  - id: phase-1',
+      '    title: Concurrent capability probes',
+      '    steps:',
+      '      - id: concurrent-capabilities',
+      '        title: Concurrent capability probes',
+      '        task: get_adcp_capabilities',
+      '        request: {}',
+      '        parallel_dispatch:',
+      '          count: 2',
+      '',
+    ].join('\n')
+  );
+
+  const capabilityServer = await createCapabilityServer(t, 'cli-parallel-dispatch');
+  t.after(async () => {
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
   const command = extraArgs => [
     'storyboard',
     'run',
-    `http://127.0.0.1:${server.address().port}/mcp`,
+    `http://127.0.0.1:${capabilityServer.address()}/mcp`,
     '--protocol',
     'mcp',
     '--allow-http',
@@ -105,13 +116,77 @@ test('--parallel-dispatch opts into process-local parallel dispatch grading', { 
   assert.strictEqual(skipped.phases[0].steps[0].skip_reason, 'not_applicable');
   // Every storyboard run primes capabilities before evaluating its steps.
   // The skipped step itself must add no second dispatch.
-  assert.strictEqual(toolCalls, 1, 'the gated step must not dispatch without the opt-in');
+  assert.strictEqual(capabilityServer.toolCalls(), 1, 'the gated step must not dispatch without the opt-in');
 
+  const callsBeforeWithFlag = capabilityServer.toolCalls();
   const withFlag = await runCli(command(['--parallel-dispatch']), { ADCP_SKIP_VERSION_CHECK: '1' });
   assert.strictEqual(withFlag.status, 0, withFlag.stderr);
   const graded = JSON.parse(withFlag.stdout);
   assert.strictEqual(graded.phases[0].steps[0].skipped, undefined);
-  assert.strictEqual(toolCalls, 4, 'the opt-in must fan out every requested dispatch');
+  assert.strictEqual(
+    capabilityServer.toolCalls() - callsBeforeWithFlag,
+    3,
+    'the opt-in run must make one capability probe and fan out both requested dispatches'
+  );
+});
+
+test('--parallel-dispatch and --webhook-receiver retain both runner contracts', { timeout: 60_000 }, async t => {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'adcp-cli-combined-runner-contracts-'));
+  const storyboardPath = path.join(fixtureRoot, 'storyboard.yaml');
+  writeFileSync(
+    storyboardPath,
+    [
+      'id: cli-combined-runner-contracts',
+      'title: CLI combined runner contracts',
+      'protocol: media-buy',
+      'phases:',
+      '  - id: phase-1',
+      '    title: Combined contracts',
+      '    steps:',
+      '      - id: webhook-contract',
+      '        title: Webhook contract probe',
+      '        task: get_adcp_capabilities',
+      '        request: {}',
+      '        requires_contract: webhook_receiver_runner',
+      '      - id: parallel-contract',
+      '        title: Parallel contract probe',
+      '        task: get_adcp_capabilities',
+      '        request: {}',
+      '        parallel_dispatch:',
+      '          count: 2',
+      '',
+    ].join('\n')
+  );
+  const capabilityServer = await createCapabilityServer(t, 'cli-combined-runner-contracts');
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+
+  const callsBeforeRun = capabilityServer.toolCalls();
+  const result = await runCli(
+    [
+      'storyboard',
+      'run',
+      `http://127.0.0.1:${capabilityServer.address()}/mcp`,
+      '--protocol',
+      'mcp',
+      '--allow-http',
+      '--file',
+      storyboardPath,
+      '--json',
+      '--parallel-dispatch',
+      '--webhook-receiver',
+    ],
+    { ADCP_SKIP_VERSION_CHECK: '1' }
+  );
+
+  assert.strictEqual(result.status, 0, result.stderr);
+  const combined = JSON.parse(result.stdout);
+  assert.strictEqual(combined.phases[0].steps[0].skipped, undefined, 'webhook runner contract must remain in scope');
+  assert.strictEqual(combined.phases[0].steps[1].skipped, undefined, 'parallel runner contract must remain in scope');
+  assert.strictEqual(
+    capabilityServer.toolCalls() - callsBeforeRun,
+    4,
+    'the combined run must make one capability probe, one webhook-contract probe, and two parallel dispatches'
+  );
 });
 
 test('storyboard help describes the parallel dispatch opt-in and its mode limits', async () => {
