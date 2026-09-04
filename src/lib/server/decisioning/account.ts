@@ -29,6 +29,7 @@ import type {
   ListAccountChangesRequest,
   ListAccountChangesResponse,
   ListAccountsRequest,
+  NotificationConfig,
   PaymentTerms,
   ReportingDeliveryConfigurationState,
   ListAccountsResponse,
@@ -44,7 +45,6 @@ import type {
   GetAccountFinancialsSuccess,
 } from '../../types/tools.generated';
 import type { ServerPayload } from '../../types/server-payload';
-import type { NotificationConfig } from '../../types/v3-1-beta';
 import { projectReportingDeliveryConfigStates } from '../reporting-delivery-config';
 import type { CursorPage } from './pagination';
 import type { AccountMode } from '../account-mode';

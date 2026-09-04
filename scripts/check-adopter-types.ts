@@ -82,6 +82,7 @@ const ADOPTER_SOURCE = `
 // payload typing surface that adopters consume from a packed SDK tarball.
 import type {
   AdcpServer,
+  Account,
   AccountStore,
   ActivateSignalPayload,
   LegacyBuildCreativePayload,
@@ -115,6 +116,7 @@ import type {
   SIGetOfferingPayload,
   SyncAudiencesPayload,
   SyncAccountsHandlerResult,
+  SyncAccountsResultRow,
   SyncCreativesPayload,
   SyncCreativesHandlerResult,
   SyncEventSourcesPayload,
@@ -184,6 +186,7 @@ import type {
   CommercialTerms,
   ExplicitPackagesWithFixedAllocation,
   ListCreativesResponse,
+  NotificationConfig,
   Placement,
   PostalCountrySystem,
   PublisherPropertySelector,
@@ -260,6 +263,30 @@ const _accountChangeStore: AccountStore = {
   },
 };
 void _accountChangeStore;
+
+// Issue #2831: decisioning Account surfaces must accept the current generated
+// 3.2 notification contract, including reporting lifecycle subscriptions.
+const _reportingStatusNotification: NotificationConfig = {
+  subscriber_id: 'reporting-status',
+  url: 'https://buyer.example/webhooks/adcp/reporting',
+  event_types: ['reporting.status_changed'],
+};
+const _accountWithReportingStatusNotification: Account = {
+  id: 'acct_1',
+  name: 'Acme',
+  status: 'active',
+  ctx_metadata: {},
+  notification_configs: [_reportingStatusNotification],
+};
+const _syncRowWithReportingStatusNotification: SyncAccountsResultRow = {
+  brand: { domain: 'acme.example' },
+  operator: 'acme-direct',
+  action: 'updated',
+  status: 'active',
+  notification_configs: [_reportingStatusNotification],
+};
+void _accountWithReportingStatusNotification;
+void _syncRowWithReportingStatusNotification;
 
 // Public schema declarations must retain their object helpers and complete
 // parse outputs after packing, not just while compiling inside the repository.
