@@ -1,5 +1,12 @@
 # Changelog
 
+## 14.0.0-beta.31
+
+### Patch Changes
+
+- 7a1e985: Adopt the signed AdCP 3.2.0-rc.0 bundle, including product identity and daypart timezone support.
+- 105ba59: Generate JSON Schema arrays with non-exact `maxItems` constraints as ordinary TypeScript arrays while enforcing the bounds in generated Zod runtime schemas.
+
 ## 14.0.0-beta.30
 
 ### Patch Changes
