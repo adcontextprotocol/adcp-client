@@ -112,6 +112,39 @@ main().catch(error => { console.error(error); process.exitCode = 1; });
   ]);
 });
 
+test('gap compilation continues after a rejected compile and preserves sorted output', () => {
+  const result = runHarness(`
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { compileGapSchemas } from __GENERATOR__;
+
+async function main() {
+const warnings: string[] = [];
+const compileOrder: string[] = [];
+const output = await compileGapSchemas(new Set(), {}, {
+  discoverSchemaFiles: () => ['enums/z.json', 'enums/a.json', 'enums/m.json'],
+  readSchema: schemaPath => ({ title: path.basename(schemaPath, '.json') }),
+  compileSchema: async (_schema, typeName) => {
+    compileOrder.push(typeName);
+    if (typeName === 'm') throw new Error('intentional compile failure');
+    return 'export type ' + typeName + " = '" + typeName + "';";
+  },
+  log: () => {},
+  warn: message => warnings.push(message),
+});
+writeFileSync(__OUTPUT__, JSON.stringify({ compileOrder, output, warnings }));
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
+`);
+
+  assert.deepEqual(result.compileOrder, ['a', 'm', 'z']);
+  assert.match(result.output, /\/\/ enums\/a\.json\nexport type a = 'a';/);
+  assert.match(result.output, /\/\/ enums\/z\.json\nexport type z = 'z';/);
+  assert.ok(result.output.indexOf('enums/a.json') < result.output.indexOf('enums/z.json'));
+  assert.doesNotMatch(result.output, /enums\/m\.json/);
+  assert.deepEqual(result.warnings, ['⚠️  Failed to compile gap schema enums/m.json: intentional compile failure']);
+});
+
 test('gap output keeps the first sorted title while compiling every duplicate schema', () => {
   const result = runHarness(`
 import { writeFileSync } from 'node:fs';
