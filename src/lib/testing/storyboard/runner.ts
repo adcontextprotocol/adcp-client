@@ -53,7 +53,7 @@ import {
 import { redactSecrets } from '../../utils/redact-secrets';
 import { ResponseSchemaValidationError } from '../../utils/response-unwrapper';
 import { injectLegacyEnvelopeStatus, normalizeLegacyMediaBuyStatusForReturn } from '../../utils/envelope-status-compat';
-import { queryUpstreamTraffic, type ControllerScenario, type UpstreamTrafficSuccess } from '../test-controller';
+import { queryUpstreamTraffic, type UpstreamTrafficSuccess } from '../test-controller';
 import { IDENTIFIER_DIGEST_LIMIT } from '../../upstream-recorder/constants';
 import { enrichRequest, hasRequestEnricher } from './request-builder';
 import {
@@ -8042,7 +8042,7 @@ async function prefetchUpstreamTraffic(
 
   const advertised =
     options._controllerCapabilities?.detected === true &&
-    options._controllerCapabilities.scenarios.includes('query_upstream_traffic' as ControllerScenario);
+    options._controllerCapabilities.scenarios.includes('query_upstream_traffic');
   if (!advertised) {
     return {
       advertised: false,

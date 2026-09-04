@@ -122,17 +122,48 @@ describe('Test controller module', () => {
     assert.strictEqual(hasTestController({ name: 'test', tools: [] }), false);
   });
 
+  test('detectController preserves canonical and extension scenario names', async () => {
+    const { detectController } = require('../../dist/lib/testing/test-controller.js');
+    const client = {
+      executeTask: async () => ({
+        success: true,
+        data: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: true,
+                scenarios: ['force_creative_status', 'vendor_reset_fixture'],
+              }),
+            },
+          ],
+        },
+      }),
+    };
+
+    const detection = await detectController(client, {
+      name: 'test',
+      tools: ['comply_test_controller'],
+    });
+
+    assert.deepEqual(detection, {
+      detected: true,
+      scenarios: ['force_creative_status', 'vendor_reset_fixture'],
+    });
+  });
+
   test('supportsScenario checks controller capabilities', () => {
     const { supportsScenario } = require('../../dist/lib/testing/test-controller.js');
 
     const controller = {
       detected: true,
-      scenarios: ['force_creative_status', 'force_account_status'],
+      scenarios: ['force_creative_status', 'force_account_status', 'vendor_reset_fixture'],
     };
     assert.strictEqual(supportsScenario(controller, 'force_creative_status'), true);
     assert.strictEqual(supportsScenario(controller, 'force_account_status'), true);
     assert.strictEqual(supportsScenario(controller, 'force_media_buy_status'), false);
     assert.strictEqual(supportsScenario(controller, 'simulate_delivery'), false);
+    assert.strictEqual(supportsScenario(controller, 'vendor_reset_fixture'), true);
   });
 
   test('supportsScenario returns false when controller not detected', () => {

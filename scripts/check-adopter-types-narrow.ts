@@ -48,6 +48,7 @@ const NARROW_TOOLS = [
   'refine_proposals', // 3.2 type-alias response + deep proposal closure
   'report_plan_adjustment', // 3.2 governance mutation
   'sync_agent_notification_configs', // 3.2 protocol configuration mutation
+  'get_reporting_status', // operational failures depend on the AdCP Error shape
 ];
 
 // `moduleResolution: node16` (or newer: nodenext / bundler) is required
@@ -74,16 +75,28 @@ const ADOPTER_TSCONFIG = {
 function adopterSource(toolName: string): string {
   const pascal = toolNameToPascal(toolName);
   const kebab = toolNameToKebab(toolName);
+  const operationalFailureImport = toolName === 'get_reporting_status' ? ', OperationalFailure' : '';
+  const operationalFailureFixture =
+    toolName === 'get_reporting_status'
+      ? `
+const _operationalError: OperationalFailure['errors'][number] = {
+  code: 'NOT_FOUND',
+  message: 'Reporting status resource is unavailable.',
+};
+void _operationalError;
+`
+      : '';
   // The slice always exports `${Pascal}Request` and `${Pascal}Response`
   // because the extractor seeds from those names. Other variants
   // (Success/Error/Submitted) are present when they exist on the spec.
   return `
-import type { ${pascal}Request, ${pascal}Response } from '@adcp/sdk/types/${kebab}';
+import type { ${pascal}Request, ${pascal}Response${operationalFailureImport} } from '@adcp/sdk/types/${kebab}';
 
 declare const _req: ${pascal}Request;
 declare const _res: ${pascal}Response;
 void _req;
 void _res;
+${operationalFailureFixture}
 `;
 }
 
