@@ -17,11 +17,16 @@
 // to the wire `adcp_error` envelope.
 //
 // HITL is expressed in the type system via the dual-method shape on each
-// spec-HITL tool (`xxx` for sync, `xxxTask` for HITL). No adopter-facing
-// task primitives — the framework owns task lifecycle and dispatches the
-// `*Task` method in the background.
+// spec-HITL tool (`xxx` for sync, `xxxTask` for HITL). The framework owns
+// task lifecycle and dispatches the `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
-export type { ExternalTaskHandoffOptions, TaskHandoffOptions, TaskHandoffProgress } from './async-outcome';
+export type {
+  ExternalTaskHandoffOptions,
+  ExternalTaskHandoffContext,
+  TaskHandoffOptions,
+  TaskHandoffProgress,
+  TaskHandoffContext,
+} from './async-outcome';
 export { withResponseSummary } from './response-summary';
 export type { ResponseWithSummary } from './response-summary';
 export type { ServerPayload } from '../../types/server-payload';
@@ -362,6 +367,7 @@ export {
   completeScopedTask,
   createInMemoryTaskRegistry,
   failScopedTask,
+  rejectScopedTask,
   updateScopedTaskProgress,
   type ScopedTaskRef,
   type TaskMutationOutcome,
@@ -376,9 +382,11 @@ export {
   getDecisioningTaskRegistryBootstrap,
   getDecisioningTaskRegistryMigration,
   getDecisioningTaskRegistryScopeV1Upgrade,
+  getDecisioningTaskRegistryStatusWidenV61Migration,
   type CreatePostgresTaskRegistryOptions,
   type DecisioningTaskRegistryScopeV1Upgrade,
   type DecisioningTaskRegistryScopeV1UpgradeOptions,
+  type DecisioningTaskRegistryStatusWidenV61MigrationOptions,
   type PgQueryable,
   type PgTransactionClient,
   type PgTransactionalPool,
@@ -387,6 +395,7 @@ export {
   completeScopedPushTask,
   createPostgresTaskSettlementCoordinator,
   failScopedPushTask,
+  rejectScopedPushTask,
   TaskPushSettlementConfigurationError,
   type PostgresTaskSettlementCoordinator,
   type PostgresTaskSettlementCoordinatorOptions,

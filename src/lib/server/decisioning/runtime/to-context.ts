@@ -33,6 +33,8 @@ import type { RequestContext, CtxMetadataAccessor } from '../context';
 import { sanitizeTaskProgressForStorage, type ScopedTaskRef, type TaskRegistry } from './task-registry';
 import {
   _createTaskHandoff,
+  throwTaskHandoffRejection,
+  type ExternalTaskHandoffContext,
   type ExternalTaskHandoffOptions,
   type TaskHandoffContext,
   type TaskHandoff,
@@ -182,7 +184,7 @@ function buildCtxMetadataAccessor(store: CtxMetadataStore, accountId: string): C
 }
 
 function createContextTaskHandoff(
-  fn: (taskCtx: TaskHandoffContext) => Promise<void>,
+  fn: (taskCtx: ExternalTaskHandoffContext) => Promise<void>,
   options: ExternalTaskHandoffOptions
 ): TaskHandoff<never>;
 function createContextTaskHandoff<TResult>(
@@ -294,7 +296,10 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
  * `heartbeat()` remains a no-op stub (v6.1); it is a liveness / TTL-reset
  * signal for operator infrastructure, not buyer-facing.
  */
-export function buildHandoffContext(taskRegistry: TaskRegistry, taskRef: ScopedTaskRef): TaskHandoffContext {
+export function buildExternalHandoffContext(
+  taskRegistry: TaskRegistry,
+  taskRef: ScopedTaskRef
+): ExternalTaskHandoffContext {
   const { taskId } = taskRef;
   return {
     id: taskId,
@@ -315,5 +320,13 @@ export function buildHandoffContext(taskRegistry: TaskRegistry, taskRef: ScopedT
     heartbeat: async () => {
       await Promise.resolve();
     },
+  };
+}
+
+/** @internal Construct the framework-settled context, including reject(). */
+export function buildHandoffContext(taskRegistry: TaskRegistry, taskRef: ScopedTaskRef): TaskHandoffContext {
+  return {
+    ...buildExternalHandoffContext(taskRegistry, taskRef),
+    reject: (result, reason) => throwTaskHandoffRejection(result, reason),
   };
 }

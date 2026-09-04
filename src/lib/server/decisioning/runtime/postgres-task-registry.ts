@@ -41,7 +41,8 @@
  * that process restarts before the method completes, the task record stays
  * in `submitted` state in Postgres but no `awaitTask` resolution is
  * possible from a different instance. Production HITL flows that span
- * process boundaries may use `completeScopedTask()` / `failScopedTask()` for
+ * process boundaries may use `completeScopedTask()` / `failScopedTask()` /
+ * `rejectScopedTask()` for
  * polling-only tasks after persisting the full issued reference. Registry-only
  * settlement rejects buyer push-notification tasks because it cannot durably
  * deliver their terminal webhook; settle those with
@@ -232,14 +233,10 @@ CREATE TABLE IF NOT EXISTS ${table} (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
   CONSTRAINT ${table}_valid_status CHECK (
-    -- Framework-written values: 'submitted' (initial), 'working'
-    -- (after first updateProgress() call), 'completed' / 'failed'
-    -- (terminal). The other 5 spec-defined states ('input-required',
-    -- 'canceled', 'rejected', 'auth-required', 'unknown') are reserved
-    -- for adopter-emitted transitions via the v6.1
-    -- \`taskRegistry.transition()\` API; the v6.1 migration will widen
-    -- this CHECK.
-    status IN ('submitted', 'working', 'completed', 'failed')
+    status IN (
+      'submitted', 'working', 'input-required', 'completed', 'canceled',
+      'failed', 'rejected', 'auth-required', 'unknown'
+    )
   ),
   CONSTRAINT ${table}_scope_pkey
     PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)
@@ -261,6 +258,43 @@ export function getDecisioningTaskRegistryMigration(_options: { tableName?: stri
   throw new Error(
     'getDecisioningTaskRegistryMigration() is unsafe and no longer returns SQL. Use getDecisioningTaskRegistryBootstrap() only for a new/empty database, or getDecisioningTaskRegistryScopeV1Upgrade() for a populated legacy table.'
   );
+}
+
+export interface DecisioningTaskRegistryStatusWidenV61MigrationOptions {
+  tableName?: string;
+  /** Abort rather than wait indefinitely for the required table lock. Default 5000. */
+  lockTimeoutMs?: number;
+  /** Bound validation and constraint replacement. Default 30000. */
+  statementTimeoutMs?: number;
+}
+
+/**
+ * Build an idempotent, operator-run CHECK expansion for a populated scoped
+ * registry. Run outside application startup: ALTER TABLE takes ACCESS
+ * EXCLUSIVE, so it can briefly block all readers and writers.
+ */
+export function getDecisioningTaskRegistryStatusWidenV61Migration(
+  options: DecisioningTaskRegistryStatusWidenV61MigrationOptions = {}
+): string {
+  const table = options.tableName ?? DEFAULT_TABLE;
+  assertValidIdentifier(table);
+  const lockTimeoutMs = positiveTimeout(options.lockTimeoutMs, 5_000, 'lockTimeoutMs');
+  const statementTimeoutMs = positiveTimeout(options.statementTimeoutMs, 30_000, 'statementTimeoutMs');
+  return `
+BEGIN;
+SET LOCAL lock_timeout = '${lockTimeoutMs}ms';
+SET LOCAL statement_timeout = '${statementTimeoutMs}ms';
+SELECT pg_advisory_xact_lock(hashtext('adcp-task-registry:${table}:status-widen-v61'));
+
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_valid_status;
+ALTER TABLE ${table} ADD CONSTRAINT ${table}_valid_status CHECK (
+  status IN (
+    'submitted', 'working', 'input-required', 'completed', 'canceled',
+    'failed', 'rejected', 'auth-required', 'unknown'
+  )
+);
+COMMIT;
+`.trim();
 }
 
 /** Versioned, operator-run upgrade plan for a populated pre-scope registry. */
@@ -771,6 +805,48 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
                 candidate.status
          FROM candidate`,
         [taskId, namespace, scope.accountId, scope.ownerScope, errorJson, resultJson ?? null, error.message]
+      );
+      return mutationOutcome(rows);
+    },
+
+    async reject(
+      taskId: string,
+      scope: TaskRegistryScope,
+      result: unknown,
+      reason?: string
+    ): Promise<TaskMutationOutcome> {
+      if (reason !== undefined && typeof reason !== 'string') {
+        throw new TypeError('Task rejection reason must be a string');
+      }
+      if (scope.registryId !== undefined && scope.registryId !== registryId) return { outcome: 'not_found_in_scope' };
+      let resultJson: string;
+      try {
+        resultJson = safeStringify(result, taskId);
+        assertResultSize(resultJson, taskId);
+        if (reason !== undefined) assertResultSize(safeStringify(reason, taskId), taskId);
+      } catch (payloadError) {
+        return await classifyAfterInvalidPayload('reject', taskId, scope, payloadError);
+      }
+      const { rows } = await query(
+        'reject',
+        `WITH candidate AS MATERIALIZED (
+           SELECT status FROM ${table}
+           WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
+           FOR UPDATE
+         ), updated AS (
+           UPDATE ${table}
+           SET status = 'rejected', result = $5::jsonb, error = NULL, status_message = $6, updated_at = NOW()
+           WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4
+             AND EXISTS (
+               SELECT 1 FROM candidate
+               WHERE status NOT IN ('completed', 'failed', 'rejected', 'canceled')
+             )
+           RETURNING 1
+         )
+         SELECT CASE WHEN EXISTS (SELECT 1 FROM updated) THEN 'applied' ELSE 'already_terminal' END AS outcome,
+                candidate.status
+         FROM candidate`,
+        [taskId, namespace, scope.accountId, scope.ownerScope, resultJson, reason ?? null]
       );
       return mutationOutcome(rows);
     },

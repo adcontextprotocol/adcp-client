@@ -605,8 +605,8 @@ your DB-side existence check still gates the operation.
   separate specialisms — v6.0 routes these tools through `SalesPlatform`
   optional methods.
 - `taskCtx.update({ progress })` projection to `tasks_get`'s `progress`
-  field — interface ships in v6.0; framework wires the projection in
-  v6.1 alongside `taskRegistry.transition()`.
+  field — interface ships in v6.0; framework wiring follows in a later
+  runtime release.
 - Handoff support for `update_media_buy`, `build_creative`, `sync_catalogs`
   — blocked on [adcp#3392](https://github.com/adcontextprotocol/adcp/issues/3392)
   (per-tool response schemas don't include the `Submitted` arm even

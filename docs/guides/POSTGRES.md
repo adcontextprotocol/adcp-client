@@ -112,7 +112,10 @@ CREATE TABLE adcp_decisioning_tasks (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT adcp_decisioning_tasks_valid_status CHECK (
-    status IN ('submitted', 'working', 'completed', 'failed')
+    status IN (
+      'submitted', 'working', 'input-required', 'completed', 'canceled',
+      'failed', 'rejected', 'auth-required', 'unknown'
+    )
   ),
   PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)
 );
@@ -120,14 +123,28 @@ CREATE INDEX idx_adcp_decisioning_tasks_account_id ON adcp_decisioning_tasks(acc
 CREATE INDEX idx_adcp_decisioning_tasks_status_created ON adcp_decisioning_tasks(status, created_at);
 ```
 
-The four-value status constraint is intentionally narrow. The five additional spec-defined states (`input-required`, `canceled`, `rejected`, `auth-required`, `unknown`) are reserved for adopter-emitted transitions via a forthcoming `taskRegistry.transition()` API; a migration will widen this constraint when that API ships.
+The status constraint admits all nine AdCP `TaskStatus` values. Built-in registries write `submitted`, `working`, `completed`, `failed`, and the business-decision terminal state `rejected`; custom registries can persist the remaining spec states.
 
 - **Composite PK on registry namespace, account, owner, and task ID** — prevents task identifiers from crossing hosted-tenant, account, or authenticated-principal boundaries.
 - **Index on `account_id`** — tenant-scoped operational queries.
 - **Index on `(status, created_at)`** — "pending tasks oldest first" queue queries for cron / monitoring.
-- **CHECK constraint on status** — guards against invalid transitions writing bad rows.
+- **CHECK constraint on status** — guards against invalid status writes while preserving the full AdCP enum.
 
-**Sizing.** Bounded by HITL traffic. Tasks accumulate forever unless adopter prunes — the SDK doesn't auto-delete completed tasks. Run a periodic `DELETE FROM adcp_decisioning_tasks WHERE status IN ('completed', 'failed') AND updated_at < NOW() - INTERVAL '30 days'`.
+**Sizing.** Bounded by HITL traffic. Tasks accumulate forever unless adopter prunes — the SDK doesn't auto-delete completed tasks. Run a periodic `DELETE FROM adcp_decisioning_tasks WHERE status IN ('completed', 'failed', 'rejected') AND updated_at < NOW() - INTERVAL '30 days'`.
+
+### Widening the status CHECK on an existing scoped table
+
+Existing tables bootstrapped by earlier SDK versions reject `rejected` rows. Before deploying `reject()` or `rejectScopedPushTask()`, run the idempotent operator migration once against the same table:
+
+```ts
+await pool.query(getDecisioningTaskRegistryStatusWidenV61Migration({
+  tableName: 'adcp_decisioning_tasks',
+  lockTimeoutMs: 5_000,
+  statementTimeoutMs: 30_000,
+}));
+```
+
+The helper replaces only the named status CHECK with the full nine-value enum; it does not rewrite rows. It uses a transaction-scoped advisory lock plus bounded lock and statement timeouts, and is safe to rerun after a successful or interrupted attempt. `ALTER TABLE` needs an `ACCESS EXCLUSIVE` lock, so run it outside application boot during a brief maintenance window: it can block reads and writers until commit, and it fails rather than waiting indefinitely when `lockTimeoutMs` elapses.
 
 ### Upgrading a populated pre-scope task table
 

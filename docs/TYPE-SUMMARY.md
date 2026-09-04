@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-03
+> Generated at: 2026-09-04
 > @adcp/sdk v14.0.0-beta.31
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -247,6 +247,7 @@ interface TaskPushSettlementConfig {
   authentication?: WebhookAuthentication;
 }
 interface ExternalTaskHandoffOptions { settlement: 'external'; task_id?: string; }
+interface ExternalTaskHandoffContext { id: string; taskRef: ScopedTaskRef; update(progress: TaskHandoffProgress): Promise<void>; heartbeat(): Promise<void>; /* no reject() */ }
 type TaskPushSettlementOutcome =
   | { outcome: 'applied'; delivery: 'durably_bound' }
   | { outcome: 'already_terminal'; status: TaskStatus; compatibility: 'compatible'; delivery: 'durably_bound' | 'recoverable' | 'delivered' | 'terminal' }
@@ -259,6 +260,7 @@ const settlements = createPostgresTaskSettlementCoordinator({
 });
 await completeScopedPushTask(settlements, scopedTaskRef, push, result);
 await failScopedPushTask(settlements, scopedTaskRef, push, structuredError);
+await rejectScopedPushTask(settlements, scopedTaskRef, push, result, 'Business policy declined the request');
 // Recovery after task + outbox commit and intentional push-config deletion:
 // First compare the stored terminal result/error with the intended artifact.
 if (await settlements.hasTerminalCheckpoint(scopedTaskRef)) {
@@ -266,7 +268,7 @@ if (await settlements.hasTerminalCheckpoint(scopedTaskRef)) {
 }
 ```
 
-The registry and outbox must share one PostgreSQL pool. Run the task-registry and webhook-recovery migrations, return `ctx.handoffToTask(producer, { settlement: 'external' })`, and persist the complete `ScopedTaskRef` plus encrypted push route before the producer returns. The framework waits for that durable producer commit before returning `submitted`; rejection fails the initial invocation. Poll `settlements.recovery` from a worker. After intentionally deleting a settled task's push config, first compare the stored terminal result/error with the intended artifact; then `hasTerminalCheckpoint()` proves that the scoped task still has its deterministic durable webhook checkpoint without reconstructing the secret route. It does not prove artifact compatibility or delivery. Reconstructed coordinators must retain the same publisher scope, registry storage ID/namespace, and outbox table, and checkpoint tombstones must remain through the intent replay horizon. See `docs/migration-task-registry-scoping.md`.
+The registry and outbox must share one PostgreSQL pool. Run the task-registry status-widen migration and webhook-recovery migrations before settling legacy tables, return `ctx.handoffToTask(producer, { settlement: 'external' })`, and persist the complete `ScopedTaskRef` plus encrypted push route before the producer returns. The producer receives `ExternalTaskHandoffContext`, which deliberately has no `reject()`; a trusted worker uses `rejectScopedPushTask()` for a business decline. The framework waits for that durable producer commit before returning `submitted`. Poll `settlements.recovery` from a worker. After intentionally deleting a settled task's push config, first compare the stored terminal result/error and rejected message with the intended artifact; then `hasTerminalCheckpoint()` proves that the scoped task still has its deterministic durable webhook checkpoint without reconstructing the secret route. It does not prove artifact compatibility or delivery. Reconstructed coordinators must retain the same publisher scope, registry storage ID/namespace, and outbox table, and checkpoint tombstones must remain through the intent replay horizon. See `docs/migration-task-registry-scoping.md`.
 
 ## PostgreSQL Webhook Runtime
 

@@ -100,7 +100,7 @@ describe('decisioning task registry schema management', () => {
     const databaseError = new Error('private database host unavailable');
     const pool = {
       async query(sql) {
-        if (sql.includes('SELECT tool, status, result, error, has_webhook')) {
+        if (sql.includes('SELECT tool, status, result, error, status_message, has_webhook')) {
           return {
             rows: [{ tool: 'create_media_buy', status: 'submitted', result: null, error: null, has_webhook: true }],
             rowCount: 1,
@@ -185,7 +185,7 @@ describe('decisioning task registry schema management', () => {
     });
     const pool = {
       async query(sql) {
-        if (sql.includes('SELECT tool, status, result, error, has_webhook')) {
+        if (sql.includes('SELECT tool, status, result, error, status_message, has_webhook')) {
           return {
             rows: [{ tool: 'create_media_buy', status: 'submitted', result: null, error: null, has_webhook: true }],
             rowCount: 1,
@@ -302,7 +302,7 @@ describe('decisioning task registry schema management', () => {
     let connectCalls = 0;
     const pool = {
       async query(sql) {
-        if (sql.includes('SELECT tool, status, result, error, has_webhook')) {
+        if (sql.includes('SELECT tool, status, result, error, status_message, has_webhook')) {
           return {
             rows: [
               {
@@ -369,12 +369,38 @@ describe('decisioning task registry schema management', () => {
     const {
       getDecisioningTaskRegistryBootstrap,
       getDecisioningTaskRegistryMigration,
+      getDecisioningTaskRegistryStatusWidenV61Migration,
     } = require('../dist/lib/server/decisioning');
     const sql = getDecisioningTaskRegistryBootstrap({ namespace: NAMESPACE });
     assert.ok(sql.includes('PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)'));
     assert.ok(sql.includes('idx_adcp_decisioning_tasks_owner_account'));
     assert.doesNotMatch(sql, /UPDATE adcp_decisioning_tasks/);
     assert.doesNotMatch(sql, /DROP CONSTRAINT/);
+    for (const status of [
+      'submitted',
+      'working',
+      'input-required',
+      'completed',
+      'canceled',
+      'failed',
+      'rejected',
+      'auth-required',
+      'unknown',
+    ]) {
+      assert.match(sql, new RegExp(`'${status}'`));
+    }
+    const upgrade = getDecisioningTaskRegistryStatusWidenV61Migration({
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 60000,
+    });
+    assert.match(upgrade, /BEGIN;/);
+    assert.match(upgrade, /SET LOCAL lock_timeout = '2500ms'/);
+    assert.match(upgrade, /SET LOCAL statement_timeout = '60000ms'/);
+    assert.match(upgrade, /pg_advisory_xact_lock/);
+    assert.match(upgrade, /DROP CONSTRAINT IF EXISTS adcp_decisioning_tasks_valid_status/);
+    assert.match(upgrade, /ADD CONSTRAINT adcp_decisioning_tasks_valid_status CHECK/);
+    assert.match(upgrade, /COMMIT;/);
+    assert.throws(() => getDecisioningTaskRegistryStatusWidenV61Migration({ lockTimeoutMs: 0 }), /lockTimeoutMs/);
     assert.throws(
       () => getDecisioningTaskRegistryMigration({ namespace: NAMESPACE }),
       /unsafe and no longer returns SQL/
@@ -472,21 +498,97 @@ describe('decisioning task registry schema management', () => {
     const registry = createInMemoryTaskRegistry();
 
     for (const status of ['rejected', 'canceled']) {
-      const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acct_1' });
+      const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acct_1' });
+      const { taskId } = ref;
       const seeded = await registry.getTask(taskId, ACCT_1_SCOPE);
-      seeded.status = status;
-      seeded.result = { terminal: status };
+      if (status === 'rejected') {
+        assert.deepStrictEqual(
+          await registry.reject(taskId, ref, { terminal: status }, 'Business policy declined the request'),
+          { outcome: 'applied' }
+        );
+        assert.deepStrictEqual(
+          await registry.reject(taskId, ref, { terminal: status }, 'Business policy declined the request'),
+          { outcome: 'already_terminal', status: 'rejected' }
+        );
+      } else {
+        seeded.status = status;
+        seeded.result = { terminal: status };
+      }
 
-      await registry.updateProgress(taskId, ACCT_1_SCOPE, { percent: 50, message: 'must not overwrite' });
-      await registry.complete(taskId, ACCT_1_SCOPE, { terminal: 'completed' });
-      await registry.fail(taskId, ACCT_1_SCOPE, { code: 'INVALID_STATE', message: 'must not overwrite' });
+      assert.deepStrictEqual(
+        await registry.updateProgress(taskId, ACCT_1_SCOPE, { percent: 50, message: 'must not overwrite' }),
+        {
+          outcome: 'already_terminal',
+          status,
+        }
+      );
+      assert.deepStrictEqual(await registry.complete(taskId, ACCT_1_SCOPE, { terminal: 'completed' }), {
+        outcome: 'already_terminal',
+        status,
+      });
+      assert.deepStrictEqual(
+        await registry.fail(taskId, ACCT_1_SCOPE, { code: 'INVALID_STATE', message: 'must not overwrite' }),
+        {
+          outcome: 'already_terminal',
+          status,
+        }
+      );
 
       const record = await registry.getTask(taskId, ACCT_1_SCOPE);
       assert.strictEqual(record.status, status);
       assert.deepStrictEqual(record.result, { terminal: status });
       assert.strictEqual(record.progress, undefined);
       assert.strictEqual(record.error, undefined);
+      if (status === 'rejected') assert.strictEqual(record.statusMessage, 'Business policy declined the request');
     }
+  });
+
+  test('Postgres registry has an atomic business-rejection writer distinct from fail', async () => {
+    const { createPostgresTaskRegistry } = require('../dist/lib/server/decisioning');
+    const returnedRows = [
+      [{ outcome: 'applied', status: 'submitted' }],
+      [{ outcome: 'already_terminal', status: 'rejected' }],
+      [{ outcome: 'already_terminal', status: 'rejected' }],
+      [{ outcome: 'already_terminal', status: 'rejected' }],
+      [{ outcome: 'already_terminal', status: 'rejected' }],
+    ];
+    const queries = [];
+    const pool = {
+      async query(text, values) {
+        queries.push({ text, values });
+        return { rowCount: returnedRows[0]?.length ?? 0, rows: returnedRows.shift() };
+      },
+    };
+    const registry = createPostgresTaskRegistry({ pool, namespace: NAMESPACE });
+    assert.deepStrictEqual(
+      await registry.reject('task_rejected', ACC_1_SCOPE, { decision: 'declined' }, 'Sales guarantee unavailable'),
+      { outcome: 'applied' }
+    );
+    assert.deepStrictEqual(
+      await registry.reject('task_rejected', ACC_1_SCOPE, { decision: 'declined' }, 'Sales guarantee unavailable'),
+      { outcome: 'already_terminal', status: 'rejected' }
+    );
+    assert.deepStrictEqual(await registry.complete('task_rejected', ACC_1_SCOPE, { leaked: true }), {
+      outcome: 'already_terminal',
+      status: 'rejected',
+    });
+    assert.deepStrictEqual(
+      await registry.fail('task_rejected', ACC_1_SCOPE, { code: 'TASK_FAILED', message: 'must not overwrite' }),
+      { outcome: 'already_terminal', status: 'rejected' }
+    );
+    assert.deepStrictEqual(await registry.updateProgress('task_rejected', ACC_1_SCOPE, { percentage: 10 }), {
+      outcome: 'already_terminal',
+      status: 'rejected',
+    });
+    assert.match(queries[0].text, /SET status = 'rejected', result = \$5::jsonb, error = NULL, status_message = \$6/);
+    assert.deepStrictEqual(queries[0].values, [
+      'task_rejected',
+      NAMESPACE,
+      ACC_1_SCOPE.accountId,
+      ACC_1_SCOPE.ownerScope,
+      JSON.stringify({ decision: 'declined' }),
+      'Sales guarantee unavailable',
+    ]);
   });
 
   test('Postgres registry fences every terminal status in all update queries', async () => {
@@ -503,8 +605,9 @@ describe('decisioning task registry schema management', () => {
     await registry.updateProgress('task_terminal', ACC_1_SCOPE, { percent: 50 });
     await registry.complete('task_terminal', ACC_1_SCOPE, { terminal: 'completed' });
     await registry.fail('task_terminal', ACC_1_SCOPE, { code: 'INVALID_STATE', message: 'must not overwrite' });
+    await registry.reject('task_terminal', ACC_1_SCOPE, { terminal: 'rejected' });
 
-    assert.strictEqual(queries.length, 3);
+    assert.strictEqual(queries.length, 4);
     for (const query of queries) {
       assert.match(query, /status NOT IN \('completed', 'failed', 'rejected', 'canceled'\)/);
       assert.match(query, /WITH candidate AS MATERIALIZED/);
@@ -544,6 +647,7 @@ describe('decisioning task registry schema management', () => {
 describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL not set' }, () => {
   let Pool, pool;
   let createPostgresTaskRegistry, getDecisioningTaskRegistryBootstrap, getDecisioningTaskRegistryScopeV1Upgrade;
+  let getDecisioningTaskRegistryStatusWidenV61Migration;
 
   before(async () => {
     Pool = require('pg').Pool;
@@ -553,6 +657,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     createPostgresTaskRegistry = lib.createPostgresTaskRegistry;
     getDecisioningTaskRegistryBootstrap = lib.getDecisioningTaskRegistryBootstrap;
     getDecisioningTaskRegistryScopeV1Upgrade = lib.getDecisioningTaskRegistryScopeV1Upgrade;
+    getDecisioningTaskRegistryStatusWidenV61Migration = lib.getDecisioningTaskRegistryStatusWidenV61Migration;
     const { getWebhookDeliveryMigration, getWebhookDeliveryRecoveryMigration } = require('../dist/lib/server');
 
     await pool.query(`DROP TABLE IF EXISTS ${TABLE} CASCADE`);
@@ -579,6 +684,22 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     assert.ok(sql.includes('adcp_decisioning_tasks_valid_status'));
     assert.ok(sql.includes('idx_adcp_decisioning_tasks_account_id'));
     assert.ok(sql.includes('idx_adcp_decisioning_tasks_status_created'));
+  });
+
+  test('status-widen migration upgrades the legacy CHECK idempotently', async () => {
+    await pool.query(`ALTER TABLE ${TABLE} DROP CONSTRAINT ${TABLE}_valid_status`);
+    await pool.query(
+      `ALTER TABLE ${TABLE} ADD CONSTRAINT ${TABLE}_valid_status CHECK (status IN ('submitted', 'working', 'completed', 'failed'))`
+    );
+    const migration = getDecisioningTaskRegistryStatusWidenV61Migration({ tableName: TABLE });
+    await pool.query(migration);
+    await pool.query(migration);
+    const { rows } = await pool.query(
+      `SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid = $1::regclass AND conname = $2`,
+      [TABLE, `${TABLE}_valid_status`]
+    );
+    assert.match(rows[0].definition, /rejected/);
+    assert.match(rows[0].definition, /auth-required/);
   });
 
   test('migration rejects invalid table names', () => {
@@ -720,7 +841,7 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     });
     const gatedPool = {
       async query(sql, values) {
-        if (gateReads && !blocked && sql.includes('SELECT tool, status, result, error, has_webhook')) {
+        if (gateReads && !blocked && sql.includes('SELECT tool, status, result, error, status_message, has_webhook')) {
           blocked = true;
           readStarted();
           await readGate;
@@ -833,6 +954,28 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
       { media_buy_id: 'mb_42', status: 'active' },
       'second complete must be a no-op'
     );
+  });
+
+  test('reject stores a business artifact and message without a failure error', async () => {
+    const registry = createPostgresTaskRegistry({ pool, namespace: NAMESPACE });
+    const ref = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
+    const artifact = { decision: 'declined', reason_code: 'SALES_GUARANTEE_UNAVAILABLE' };
+    assert.deepStrictEqual(await registry.reject(ref.taskId, ref, artifact, 'Guaranteed inventory is unavailable'), {
+      outcome: 'applied',
+    });
+    assert.deepStrictEqual(await registry.reject(ref.taskId, ref, artifact, 'Guaranteed inventory is unavailable'), {
+      outcome: 'already_terminal',
+      status: 'rejected',
+    });
+    assert.deepStrictEqual(await registry.complete(ref.taskId, ref, { must_not_replace: true }), {
+      outcome: 'already_terminal',
+      status: 'rejected',
+    });
+    const record = await registry.getTask(ref.taskId, ref);
+    assert.strictEqual(record.status, 'rejected');
+    assert.deepStrictEqual(record.result, artifact);
+    assert.strictEqual(record.statusMessage, 'Guaranteed inventory is unavailable');
+    assert.strictEqual(record.error, undefined);
   });
 
   test('scoped mutation outcomes conflate every no-match and isolate duplicate public ids', async () => {
@@ -1840,6 +1983,49 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     assert.deepStrictEqual(lease.snapshot.payload.result, { errors: [error] });
   });
 
+  test('rejected push settlement atomically binds the business artifact and exact retry message', async () => {
+    const { createPostgresTaskSettlementCoordinator, rejectScopedPushTask } = require('../dist/lib/server/decisioning');
+    const registry = createPostgresTaskRegistry({
+      pool,
+      namespace: NAMESPACE,
+      storageId: 'store:push-rejection',
+    });
+    const coordinator = createPostgresTaskSettlementCoordinator({
+      registry,
+      publisherScope: 'test-seller-rejection',
+      outbox: { tableName: SETTLEMENT_OUTBOX },
+    });
+    const ref = await registry.create({ tool: 'sync_creatives', accountId: 'acc_1', hasWebhook: true });
+    const push = { url: 'https://buyer.example/webhooks/task', operationId: 'approval-op-rejected' };
+    const artifact = { decision: 'declined', reason_code: 'SALES_GUARANTEE_UNAVAILABLE' };
+
+    assert.deepStrictEqual(
+      await rejectScopedPushTask(coordinator, ref, push, artifact, 'Guaranteed inventory is unavailable'),
+      { outcome: 'applied', delivery: 'durably_bound' }
+    );
+    const stored = await registry.getTask(ref.taskId, ref);
+    assert.strictEqual(stored.status, 'rejected');
+    assert.deepStrictEqual(stored.result, artifact);
+    assert.strictEqual(stored.statusMessage, 'Guaranteed inventory is unavailable');
+    assert.strictEqual(stored.error, undefined);
+    const [lease] = await coordinator.recovery.claimPending({ ownerToken: 'rejected-task-worker', limit: 1 });
+    assert.strictEqual(lease.snapshot.payload.status, 'rejected');
+    assert.strictEqual(lease.snapshot.payload.message, 'Guaranteed inventory is unavailable');
+    assert.deepStrictEqual(lease.snapshot.payload.result, artifact);
+
+    assert.deepStrictEqual(
+      await rejectScopedPushTask(coordinator, ref, push, artifact, 'Guaranteed inventory is unavailable'),
+      { outcome: 'already_terminal', status: 'rejected', compatibility: 'compatible', delivery: 'recoverable' }
+    );
+    assert.deepStrictEqual(await rejectScopedPushTask(coordinator, ref, push, artifact, 'A different reason'), {
+      outcome: 'already_terminal',
+      status: 'rejected',
+      compatibility: 'conflicting',
+      delivery: 'not_applicable',
+    });
+    assert.strictEqual((await pool.query(`SELECT count(*)::int AS count FROM ${SETTLEMENT_OUTBOX}`)).rows[0].count, 1);
+  });
+
   test('push settlement accepts a pre-upgrade terminal artifact after current-wire normalization', async () => {
     const { createPostgresTaskSettlementCoordinator, failScopedPushTask } = require('../dist/lib/server/decisioning');
     const { canonicalJsonSha256 } = require('../dist/lib/utils/jcs');
@@ -2395,6 +2581,19 @@ describe('createPostgresTaskRegistry', { skip: !DATABASE_URL && 'DATABASE_URL no
     await assert.rejects(registry.complete(taskId, ACC_1_SCOPE, oversized), /exceeds.*bytes/);
 
     // Task stays submitted — failed write didn't transition.
+    const record = await registry.getTask(taskId, ACC_1_SCOPE);
+    assert.strictEqual(record.status, 'submitted');
+  });
+
+  test('reject() rejects an oversized buyer-visible reason without settling the task', async () => {
+    const registry = createPostgresTaskRegistry({ pool, namespace: NAMESPACE });
+    const { taskId } = await registry.create({ tool: 'create_media_buy', accountId: 'acc_1' });
+
+    await assert.rejects(
+      registry.reject(taskId, ACC_1_SCOPE, { decision: 'declined' }, 'x'.repeat(5 * 1024 * 1024)),
+      /exceeds.*bytes/
+    );
+
     const record = await registry.getTask(taskId, ACC_1_SCOPE);
     assert.strictEqual(record.status, 'submitted');
   });

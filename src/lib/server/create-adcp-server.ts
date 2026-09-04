@@ -2672,14 +2672,18 @@ function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefin
     status: task.status as TaskStatus,
     created_at: task.createdAt,
     updated_at: task.updatedAt,
-    ...(task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+    ...(task.status === 'completed' ||
+    task.status === 'failed' ||
+    task.status === 'rejected' ||
+    task.status === 'canceled'
       ? { completed_at: task.updatedAt }
       : {}),
     ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
     ...(progress !== undefined ? { progress } : {}),
+    ...(task.status === 'rejected' && task.statusMessage !== undefined ? { message: task.statusMessage } : {}),
     ...(task.error !== undefined
       ? { error: sanitizeStructuredAdcpError(task.error) as GetTaskStatusResponse['error'] }
-      : task.statusMessage !== undefined
+      : task.statusMessage !== undefined && task.status !== 'rejected'
         ? {
             error: {
               code: task.status === 'failed' ? 'TASK_FAILED' : 'TASK_STATUS_MESSAGE',
@@ -2701,7 +2705,10 @@ function toProtocolTaskListItem(task: TaskRecord): ListTasksResponse['tasks'][nu
     status: task.status as TaskStatus,
     created_at: task.createdAt,
     updated_at: task.updatedAt,
-    ...(task.status === 'completed' || task.status === 'failed' || task.status === 'canceled'
+    ...(task.status === 'completed' ||
+    task.status === 'failed' ||
+    task.status === 'rejected' ||
+    task.status === 'canceled'
       ? { completed_at: task.updatedAt }
       : {}),
     ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
