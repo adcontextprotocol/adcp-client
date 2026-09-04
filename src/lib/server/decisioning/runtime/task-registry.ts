@@ -146,8 +146,9 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
    */
   progress?: TaskHandoffProgress;
   /**
-   * Whether the buyer wired `push_notification_config.url` on the original
-   * request. Surfaced to the buyer via `tasks_get`'s spec-defined
+   * Whether the buyer wired `push_notification_config.url` and the dispatch
+   * had an emitter capable of delivering it. Surfaced to the buyer via
+   * `tasks_get`'s spec-defined
    * `has_webhook: boolean` field so they can decide between long-poll vs.
    * single-shot polling.
    */
@@ -239,7 +240,8 @@ export interface TaskRegistry {
    * Allocate a new task record. Returns the complete scoped reference the
    * framework passes to the handoff context. Initial status is `submitted`.
    *
-   * `hasWebhook: true` when the buyer wired `push_notification_config.url`
+   * `hasWebhook: true` when dispatch has both a buyer
+   * `push_notification_config.url` and an emitter capable of delivering it
    * — surfaced via `tasks_get`'s `has_webhook` field. Defaults to `false`.
    *
    * `overrideTaskId` — when set, the registry uses this exact string as the

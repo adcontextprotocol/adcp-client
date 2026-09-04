@@ -4574,7 +4574,8 @@ async function projectSync<TResult, TWire, TCtxMeta = unknown>(
  *
  * **Webhook delivery on terminal state.** When the buyer passed
  * `push_notification_config: { url, token? }` in the request and the host
- * wired `webhooks` on `serve()`, the framework emits a signed RFC 9421
+ * wired an `emitWebhook` callback (normally by configuring `webhooks` on
+ * `serve()`), the framework emits a signed RFC 9421
  * webhook to that URL on terminal state with the task lifecycle payload.
  * Buyers don't need to poll — they receive completion via push. Polling via
  * `server.getTaskState(taskId, scope)` continues to work for harnesses + the
@@ -4767,7 +4768,10 @@ async function dispatchHitl<TResult>(
     tool: opts.tool,
     accountId: opts.accountId,
     ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
-    hasWebhook: opts.pushNotificationUrl !== undefined,
+    // `tasks_get.has_webhook` promises a usable completion-delivery path,
+    // not merely that the buyer supplied a destination. Keep accepting the
+    // request without an emitter, but report false when nothing can emit it.
+    hasWebhook: opts.pushNotificationUrl !== undefined && typeof opts.emitWebhook === 'function',
     ...(overrideTaskId !== undefined && { overrideTaskId }),
   });
   if (

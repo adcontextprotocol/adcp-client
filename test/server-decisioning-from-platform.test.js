@@ -8190,7 +8190,20 @@ describe('tasks_get wire tool (B9)', () => {
         await unblockTask;
         return { media_buy_id: 'mb_42', status: 'active' };
       }),
-      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+      {
+        name: 'p',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskWebhookEmitter: {
+          emit: async params => ({
+            delivery_id: params.delivery_id,
+            idempotency_key: 'k',
+            attempts: 1,
+            delivered: true,
+            errors: [],
+          }),
+        },
+      }
     );
     let taskId;
 
