@@ -2164,6 +2164,15 @@ WEBHOOK OPTIONS:
                                   direct child only).
                                   HTTP-on-the-wire — spec-compliant.
 
+PARALLEL DISPATCH OPTIONS:
+  --parallel-dispatch             Enable process-local concurrent dispatches
+                                  for storyboards that require the
+                                  parallel_dispatch_runner contract. This
+                                  exercises event-loop concurrency, which is
+                                  sufficient for rule 9 / first-insert-wins.
+                                  Distributed mode is not implemented and
+                                  grades not_applicable.
+
 OPTIONS:
   --context JSON      Pass context from previous step (step only)
   --contributions JSON|CSV
@@ -2893,6 +2902,7 @@ async function handleStoryboardRun(args) {
   // conflicts surface in dry-run too.
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
+  const parallelDispatchOpts = extractParallelDispatchOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
 
   // Load invariants before the dry-run gate so `--dry-run --invariants` fails
@@ -2954,6 +2964,7 @@ async function handleStoryboardRun(args) {
       resolvedOauthClientCredentials,
     }),
     ...(webhookReceiverOpts ?? {}),
+    ...mergeStoryboardContracts(webhookReceiverOpts, parallelDispatchOpts),
     ...(fileComplianceOptions.complianceDir && { complianceDir: fileComplianceOptions.complianceDir }),
     ...(fileComplianceOptions.adcpVersion && { adcpVersion: fileComplianceOptions.adcpVersion }),
     ...(fileComplianceOptions.schemaRoot && { schemaRoot: fileComplianceOptions.schemaRoot }),
@@ -3231,6 +3242,27 @@ function extractWebhookReceiverOptions(args) {
     },
     contracts: ['webhook_receiver_runner'],
   };
+}
+
+/**
+ * Parse the opt-in `--parallel-dispatch` flag. The runner already implements
+ * the process-local fan-out contract, but only advertises it when an operator
+ * explicitly requests concurrent grading. This preserves the existing
+ * not_applicable skip for callers that omit the flag.
+ */
+function extractParallelDispatchOptions(args) {
+  return args.includes('--parallel-dispatch') ? { contracts: ['parallel_dispatch_runner'] } : null;
+}
+
+/**
+ * Combine independently requested storyboard-runner contracts. Both webhook
+ * receiver and parallel dispatch are opt-ins, so a run that requests both
+ * must advertise both rather than allowing the later object spread to replace
+ * the earlier contracts array.
+ */
+function mergeStoryboardContracts(...optionSets) {
+  const contracts = [...new Set(optionSets.flatMap(optionSet => optionSet?.contracts ?? []))];
+  return contracts.length > 0 ? { contracts } : {};
 }
 
 const MAX_WEBHOOK_TLS_FILE_BYTES = 1_048_576;
@@ -3906,6 +3938,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
   }
 
   const storyboardsSpec = storyboardId ? [storyboardId] : 'all';
+  const parallelDispatchOpts = extractParallelDispatchOptions(args);
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
   let result;
   try {
@@ -3923,6 +3956,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
           mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
         }),
         ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+        ...mergeStoryboardContracts(parallelDispatchOpts),
       },
       onStoryboardComplete:
         jsonOutput || format === 'junit'
@@ -4133,6 +4167,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   // up front — not after bundle resolution, connection setup, or dispatch.
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
+  const parallelDispatchOpts = extractParallelDispatchOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
   if ((webhookReceiverBase || webhookAutoTunnel) && strategy === 'multi-pass') {
     // The runner throws on this combination (each pass binds a fresh receiver
@@ -4348,6 +4383,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
     ...(opts.allowHttp && { allow_http: true }),
     multi_instance_strategy: strategy,
     ...(webhookReceiverOpts ?? {}),
+    ...mergeStoryboardContracts(webhookReceiverOpts, parallelDispatchOpts),
     ...(runComplianceDir && { complianceDir: runComplianceDir }),
     ...(runAdcpVersion && { adcpVersion: runAdcpVersion }),
     ...(runSchemaRoot && { schemaRoot: runSchemaRoot }),
@@ -4469,6 +4505,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
+  const parallelDispatchOpts = extractParallelDispatchOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
 
   // Strip per-flag values that may have leaked into positionals via parseAgentOptions.
@@ -4632,6 +4669,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
     agents: routing.agents,
     ...(routing.default_agent ? { default_agent: routing.default_agent } : {}),
     ...(webhookReceiverOpts ?? {}),
+    ...mergeStoryboardContracts(webhookReceiverOpts, parallelDispatchOpts),
     ...(runComplianceDir && { complianceDir: runComplianceDir }),
     ...(runAdcpVersion && { adcpVersion: runAdcpVersion }),
     ...(runSchemaRoot && { schemaRoot: runSchemaRoot }),
@@ -4838,6 +4876,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
   });
 
   const webhookReceiverOpts = await resolveWebhookReceiverOptions(rawArgs, { jsonOutput: opts.jsonOutput });
+  const parallelDispatchOpts = extractParallelDispatchOptions(rawArgs);
 
   await loadInvariantModules(rawArgs);
 
@@ -4851,6 +4890,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(authOption && { auth: authOption }),
     ...(opts.allowHttp && { allow_http: true }),
     ...(webhookReceiverOpts ?? {}),
+    ...mergeStoryboardContracts(webhookReceiverOpts, parallelDispatchOpts),
     ...sandboxRunOptions(opts),
     ...(opts.assertsSeededState && { assertsSeededState: true }),
     ...(opts.mediaBuyLifecycleCompatibility && {
