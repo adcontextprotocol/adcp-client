@@ -598,6 +598,92 @@ test('e2e: proposal-backed createMediaBuy handoff releases after task failure', 
   assert.strictEqual(store.get('p-handoff-failure', { expectedAccountId: 'acct_1' }).state, 'committed');
 });
 
+test('e2e: proposal-backed handoff rejection releases the reservation and remains a rejected task', async () => {
+  const store = new InMemoryProposalStore();
+  const proposalId = 'p-handoff-rejection';
+  store.putDraft({
+    proposalId,
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: proposalId },
+  });
+  store.commit(proposalId, {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: proposalId },
+  });
+
+  let attempts = 0;
+  const taskRegistry = createInMemoryTaskRegistry();
+  let rejectedTaskRef;
+  const rejectTask = taskRegistry.reject.bind(taskRegistry);
+  taskRegistry.reject = async (taskId, scope, result, reason) => {
+    rejectedTaskRef = scope;
+    return rejectTask(taskId, scope, result, reason);
+  };
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async taskCtx => {
+            attempts += 1;
+            if (attempts === 1) {
+              return taskCtx.reject(
+                { decision: 'declined', reason_code: 'SALES_GUARANTEE_UNAVAILABLE' },
+                'Guaranteed inventory is unavailable'
+              );
+            }
+            return { media_buy_id: 'mb-after-rejection', buyer_ref: 'br', packages: [], status: 'pending_creative' };
+          }),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      proposalStore: store,
+      taskRegistry,
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+
+  const rejected = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: proposalId, idempotency_key: 'idem-handoff-rejection-0001' },
+      },
+    },
+    { authInfo }
+  );
+  const rejectedTaskId = rejected.structuredContent.task_id;
+  await server.awaitTaskUnsafe(rejectedTaskId);
+  const rejectedTask = await taskRegistry.getTask(rejectedTaskId, rejectedTaskRef);
+  assert.strictEqual(rejectedTask.status, 'rejected');
+  assert.deepStrictEqual(rejectedTask.result, { decision: 'declined', reason_code: 'SALES_GUARANTEE_UNAVAILABLE' });
+  assert.strictEqual(rejectedTask.statusMessage, 'Guaranteed inventory is unavailable');
+  assert.strictEqual(rejectedTask.error, undefined);
+  assert.strictEqual(store.get(proposalId, { expectedAccountId: 'acct_1' }).state, 'committed');
+
+  const retried = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: proposalId, idempotency_key: 'idem-handoff-rejection-0002' },
+      },
+    },
+    { authInfo }
+  );
+  await server.awaitTaskUnsafe(retried.structuredContent.task_id);
+  const record = store.get(proposalId, { expectedAccountId: 'acct_1' });
+  assert.strictEqual(attempts, 2);
+  assert.strictEqual(record.state, 'consumed');
+  assert.strictEqual(record.mediaBuyId, 'mb-after-rejection');
+});
+
 test('e2e: proposal-backed handoff keeps its fence when terminal success has no media_buy_id', async () => {
   const store = new InMemoryProposalStore();
   store.putDraft({
