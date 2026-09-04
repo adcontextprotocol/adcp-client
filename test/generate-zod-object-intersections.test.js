@@ -104,6 +104,88 @@ function postProcessObjectUnionIntersections(input) {
   return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
 }
 
+function reportingStatusViewRequiredFields(input) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-required-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.json');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingStatusViewRequiredFields(${JSON.stringify(input)})));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+function reportingStatusClosedStructures(input) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-closed-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.json');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingStatusClosedStructures(${JSON.stringify(input)})));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+function postProcessGetReportingStatusViewRequiredFields(input, requiredByView) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-views-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.txt');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessGetReportingStatusViewRequiredFields(${JSON.stringify(input)}, ${JSON.stringify(requiredByView)}));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return fs.readFileSync(outPath, 'utf8');
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+function postProcessReportingEvidenceStrictness(input) {
+  return runPostProcess('postProcessReportingEvidenceStrictness', input, '.zod-reporting-strictness-');
+}
+
 test('postProcessForNullish keeps never optional constraints strict', () => {
   const output = postProcessForNullish(`
 export const ExampleSchema = z.object({
@@ -114,6 +196,165 @@ export const ExampleSchema = z.object({
 
   assert.match(output, /forbidden: z\.never\(\)\.optional\(\)/);
   assert.match(output, /allowed: z\.string\(\)\.nullish\(\)/);
+});
+
+test('reporting-status view post-processor restores source required fields', () => {
+  const source = {
+    allOf: [
+      { properties: { status: { type: 'string' } }, required: ['status'] },
+      { required: ['shared_required_field'] },
+    ],
+    oneOf: [
+      {
+        oneOf: [
+          { properties: { view: { const: 'summary' } }, required: ['view', 'ledger_snapshot_id', 'health'] },
+          {
+            properties: { view: { const: 'summary' } },
+            required: ['health', 'view', 'ledger_snapshot_id'],
+          },
+          {
+            properties: { view: { const: 'periods' } },
+            required: ['view', 'ledger_snapshot_id', 'periods', 'materializations', 'pagination'],
+          },
+          {
+            properties: { view: { const: 'revision' } },
+            required: ['view', 'ledger_snapshot_id', 'revision', 'pagination'],
+          },
+        ],
+      },
+    ],
+  };
+  const requiredByView = reportingStatusViewRequiredFields(source);
+  assert.deepEqual(requiredByView, {
+    summary: ['status', 'shared_required_field', 'view', 'ledger_snapshot_id', 'health'],
+    periods: [
+      'status',
+      'shared_required_field',
+      'view',
+      'ledger_snapshot_id',
+      'periods',
+      'materializations',
+      'pagination',
+    ],
+    revision: ['status', 'shared_required_field', 'view', 'ledger_snapshot_id', 'revision', 'pagination'],
+  });
+
+  const output = postProcessGetReportingStatusViewRequiredFields(
+    `
+export const SummaryViewSchema = z.object({ status: z.literal("completed"), view: z.literal("summary") }).passthrough();
+
+export const PeriodsViewSchema = z.object({ status: z.literal("completed"), view: z.literal("periods"), pagination: z.object({}).passthrough() }).passthrough();
+
+export const RevisionViewSchema = z.object({ status: z.literal("completed"), view: z.literal("revision"), pagination: z.object({}).passthrough() }).passthrough();
+`,
+    requiredByView
+  );
+
+  assert.match(
+    output,
+    /SummaryViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","health"\][\s\S]*?Required by get_reporting_status summary view/
+  );
+  assert.match(
+    output,
+    /PeriodsViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","periods","materializations","pagination"\][\s\S]*?Required by get_reporting_status periods view/
+  );
+  assert.match(
+    output,
+    /RevisionViewSchema[\s\S]*?\["status","shared_required_field","view","ledger_snapshot_id","revision","pagination"\][\s\S]*?Required by get_reporting_status revision view/
+  );
+  assert.equal(postProcessGetReportingStatusViewRequiredFields(output, requiredByView), output);
+});
+
+test('reporting-status closed structures are source-derived and fail closed', () => {
+  const source = {
+    properties: {
+      scope: {
+        properties: {
+          delivery_config_generations: {
+            items: {
+              additionalProperties: false,
+              properties: { delivery_config_id: {}, delivery_config_version: {}, feed_purpose: {} },
+              required: ['delivery_config_id', 'delivery_config_version', 'feed_purpose'],
+            },
+          },
+        },
+        additionalProperties: false,
+        required: ['delivery_config_generations'],
+      },
+      obligation_counts: {
+        additionalProperties: false,
+        properties: { total: {}, waiting: {} },
+        required: ['total', 'waiting'],
+      },
+      pagination: {
+        additionalProperties: false,
+        properties: { has_more: {}, cursor: {}, total_count: {} },
+        required: ['has_more'],
+      },
+    },
+    oneOf: [
+      {
+        oneOf: [
+          {
+            properties: { view: { const: 'periods' }, pagination: { required: ['total_count', 'has_more'] } },
+          },
+          {
+            properties: { view: { const: 'revision' }, pagination: { required: ['has_more', 'total_count'] } },
+          },
+        ],
+      },
+    ],
+  };
+
+  assert.deepEqual(reportingStatusClosedStructures(source), {
+    scope: { allowedFields: ['delivery_config_generations'], requiredFields: ['delivery_config_generations'] },
+    deliveryConfigGeneration: {
+      allowedFields: ['delivery_config_id', 'delivery_config_version', 'feed_purpose'],
+      requiredFields: ['delivery_config_id', 'delivery_config_version', 'feed_purpose'],
+    },
+    obligationCounts: { allowedFields: ['total', 'waiting'], requiredFields: ['total', 'waiting'] },
+    pagination: { allowedFields: ['has_more', 'cursor', 'total_count'], requiredFields: ['has_more'] },
+    paginationRequiredByView: {
+      periods: ['total_count', 'has_more'],
+      revision: ['has_more', 'total_count'],
+    },
+  });
+
+  const unclosedScope = structuredClone(source);
+  unclosedScope.properties.scope.additionalProperties = true;
+  assert.throws(() => reportingStatusClosedStructures(unclosedScope), /source schema must close scope/);
+});
+
+test('reporting evidence post-processor makes only closed reporting schemas strict', () => {
+  const names = [
+    'ReportingCoverage',
+    'ReportingStatusIssue',
+    'ReportingCanonicalContentDigest',
+    'IntegerReportingControlTotal',
+    'DecimalReportingControlTotal',
+    'SHA256PhysicalChecksum',
+    'SHA512PhysicalChecksum',
+    'ReportingResource',
+    'ReportingVerification',
+    'ReportingSchedule',
+    'ReportingReceipt',
+    'ReportingRevision',
+    'ReportingObligation',
+    'ReportingMaterialization',
+  ];
+  const input = `${names.map(name => `export const ${name}Schema = z.object({ nested: z.object({}).passthrough() }).passthrough();`).join('\n\n')}
+
+export const ExtensionFriendlySchema = z.object({}).passthrough();
+`;
+  const output = postProcessReportingEvidenceStrictness(input);
+
+  for (const name of names) {
+    assert.match(
+      output,
+      new RegExp(`${name}Schema = z\\.object\\(\\{ nested: z\\.object\\(\\{\\}\\)\\.strict\\(\\) \\}\\)\\.strict\\(\\)`)
+    );
+  }
+  assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
 });
 
 test('postProcessMarkerUnionObjectIntersections collapses opaque marker unions', () => {

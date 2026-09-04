@@ -11,6 +11,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 export const SLOW_NODE_TESTS = new Set([
   'test/canonical-creatives-a2a-e2e.test.js',
   'test/generate-zod-object-intersections.test.js',
+  'test/generate-zod-reporting-status.test.js',
   'test/server-decisioning-from-platform.test.js',
   'test/lib/cli-auth-scheme.test.js',
   'test/lib/cli-removed-flags.test.js',

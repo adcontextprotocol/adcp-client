@@ -158,6 +158,16 @@ export type FeedResponse = Omit<GeneratedFeedResponse, 'events'> & {
  */
 export interface ResolvedBrand extends Omit<GeneratedResolvedBrand, 'parent_brand'> {
   parent_brand?: string;
+  /**
+   * @deprecated Legacy caller-facing trust tier from registry versions before
+   * `source` and `relationship_trust`. Modern registry responses may omit
+   * this legacy wire field. Its classification maps as follows: `source`
+   * `hosted` or `brand_json` maps to `canonical`; `community` maps to
+   * `community`; `enriched` maps to `enriched`; and `stub` has no legacy tier.
+   * New code should use `source` + `relationship_trust`. Neither `source` nor
+   * `provenance` substitutes for `relationship_trust` authorization.
+   */
+  provenance?: 'canonical' | 'community' | 'enriched';
 }
 
 /** Options for resolving one brand through the registry. */

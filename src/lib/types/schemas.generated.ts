@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-03T20:11:07.305Z
+// Generated at: 2026-09-04T20:17:49.581Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3007,8 +3007,8 @@ export const ReportingCoverageSchema = z.object({
         reason: z.union([z.literal("offering_unsupported"), z.literal("account_entitlement_unavailable"), z.literal("credential_scope_insufficient"), z.literal("provider_limitation"), z.literal("capability_unknown")]),
         media_buy_id: ReportingMediaBuyIDSchema,
         package_ids: z.array(ReportingPackageIDSchema).optional()
-    }).passthrough())
-}).passthrough();
+    }).strict())
+}).strict();
 
 export const ReportingStatusIssueSchema = z.object({
     issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
@@ -3026,7 +3026,7 @@ export const ReportingStatusIssueSchema = z.object({
     period_start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     period_end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-}).passthrough();
+}).strict();
 
 export const PriceAdjustmentSchema = z.object({
     kind: PriceAdjustmentKindSchema,
@@ -6529,7 +6529,7 @@ export const ReportingCanonicalContentDigestSchema = z.object({
     canonicalization_id: z.string().min(1).max(128),
     canonicalization_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
     canonicalization_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$"))
-}).passthrough();
+}).strict();
 
 export const ReportingPrimaryKeySchema = z.string();
 
@@ -6562,14 +6562,14 @@ export const IntegerReportingControlTotalSchema = z.object({
     value: z.string(),
     value_type: z.literal("integer"),
     unit: z.string().optional()
-}).passthrough();
+}).strict();
 
 export const DecimalReportingControlTotalSchema = z.object({
     name: z.string(),
     value: z.string(),
     value_type: z.literal("decimal"),
     unit: z.string().optional()
-}).passthrough();
+}).strict();
 
 export const ReportingScheduleOfferingSchema = z.object({}).passthrough().merge(z.object({
     period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
@@ -6669,15 +6669,15 @@ export const SHA256PhysicalChecksumSchema = z.object({
     object_ref: z.string(),
     algorithm: z.literal("sha256"),
     value: z.string()
-}).passthrough();
+}).strict();
 
 export const SHA512PhysicalChecksumSchema = z.object({
     object_ref: z.string(),
     algorithm: z.literal("sha512"),
     value: z.string()
-}).passthrough();
+}).strict();
 
-export const ReportingResourceSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingResourceSchema = z.object({}).strict().merge(z.object({
     resource_ref: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     kind: z.union([z.literal("manifest"), z.literal("dataset"), z.literal("warehouse_relation")]),
     location: z.string().min(1).max(2048),
@@ -6687,9 +6687,9 @@ export const ReportingResourceSchema = z.object({}).passthrough().merge(z.object
     immutability: z.union([z.literal("immutable_location"), z.literal("native_version")]),
     expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     reader_compatibility: z.array(ReportingReaderCompatibilityItemSchema).optional()
-}).passthrough());
+}).strict());
 
-export const ReportingVerificationSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingVerificationSchema = z.object({}).strict().merge(z.object({
     verified_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     verification_path: z.union([z.literal("producer"), z.literal("representative_consumer"), z.literal("destination")]),
     verification_profile: ReportingVerificationProfileSchema,
@@ -6700,18 +6700,18 @@ export const ReportingVerificationSchema = z.object({}).passthrough().merge(z.ob
     native_commit_evidence: z.object({
         native_version_ref: z.string().min(1).max(512),
         observed_through: z.union([z.literal("representative_consumer"), z.literal("destination")])
-    }).passthrough().optional()
-}).passthrough());
+    }).strict().optional()
+}).strict());
 
-export const ReportingScheduleSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingScheduleSchema = z.object({}).strict().merge(z.object({
     period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
     alignment: ReportingScheduleAlignmentSchema,
     period_anchor: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     period_timezone: z.string().min(1).max(255).optional(),
     delivery_sla: z.string().regex(new RegExp("^P(?=\\d|T)(?=.*\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"))
-}).passthrough());
+}).strict());
 
-export const ReportingReceiptSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingReceiptSchema = z.object({}).strict().merge(z.object({
     reporting_receipt_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")),
     reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
@@ -6727,7 +6727,7 @@ export const ReportingReceiptSchema = z.object({}).passthrough().merge(z.object(
     rejection_codes: z.array(z.string()).optional(),
     observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     received_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-}).passthrough());
+}).strict());
 
 export const ReportCalendarTimezoneBasisSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("configured_timezone")]);
 
@@ -6776,7 +6776,7 @@ export const ReportingReportDefinitionSchema = z.object({
         }).passthrough()]))
 }).passthrough();
 
-export const ReportingRevisionSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingRevisionSchema = z.object({}).strict().merge(z.object({
     reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     report_definition_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -6794,7 +6794,7 @@ export const ReportingRevisionSchema = z.object({}).passthrough().merge(z.object
         start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
         end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
         source_timezone: z.string().min(1)
-    }).passthrough(),
+    }).strict(),
     finality: ReportingFinalitySchema,
     finality_basis: z.union([z.literal("source_final"), z.literal("contractual_cutoff"), z.literal("stabilized")]).optional(),
     finality_policy_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
@@ -6807,7 +6807,7 @@ export const ReportingRevisionSchema = z.object({}).passthrough().merge(z.object
     control_totals: z.array(ReportingControlTotalSchema),
     canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
     created_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
-}).passthrough());
+}).strict());
 
 export const ReportingStatusChangedWebhookSchema = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
@@ -8971,7 +8971,7 @@ export const GetReportingStatusRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ReportingObligationSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingObligationSchema = z.object({}).strict().merge(z.object({
     reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     delivery_config_version: z.number().int().gte(1),
@@ -8986,7 +8986,7 @@ export const ReportingObligationSchema = z.object({}).passthrough().merge(z.obje
         start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
         end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
         source_timezone: z.string().min(1)
-    }).passthrough(),
+    }).strict(),
     expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     schedule: ReportingScheduleSchema,
     destination_ref: z.string().min(1).max(255).optional(),
@@ -9002,9 +9002,9 @@ export const ReportingObligationSchema = z.object({}).passthrough().merge(z.obje
     accepted_receipt_count: z.number().int().gte(0).optional(),
     issues: z.array(ReportingStatusIssueSchema),
     resource_retained_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
-}).passthrough());
+}).strict());
 
-export const ReportingMaterializationSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingMaterializationSchema = z.object({}).strict().merge(z.object({
     reporting_materialization_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
@@ -9022,24 +9022,45 @@ export const ReportingMaterializationSchema = z.object({}).passthrough().merge(z
     resource: ReportingResourceSchema.optional(),
     verification: ReportingVerificationSchema.optional(),
     created_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
-}).passthrough());
+}).strict());
 
 export const SummaryViewSchema = z.object({
     status: z.literal("completed"),
     view: z.literal("summary")
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+        // get_reporting_status view required fields
+        for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","scope","health","coverage","data_through","obligation_counts","issues"] as const) {
+            if ((value as Record<string, unknown>)[field] === undefined) {
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status summary view" });
+            }
+        }
+    });
 
 export const PeriodsViewSchema = z.object({
     status: z.literal("completed"),
     view: z.literal("periods"),
     pagination: z.object({}).passthrough()
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+        // get_reporting_status view required fields
+        for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","scope","periods","revisions","materializations","receipts","pagination"] as const) {
+            if ((value as Record<string, unknown>)[field] === undefined) {
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status periods view" });
+            }
+        }
+    });
 
 export const RevisionViewSchema = z.object({
     status: z.literal("completed"),
     view: z.literal("revision"),
     pagination: z.object({}).passthrough()
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+        // get_reporting_status view required fields
+        for (const field of ["status","view","ledger_snapshot_id","ledger_as_of","account_id","revision","materializations","receipts","pagination"] as const) {
+            if ((value as Record<string, unknown>)[field] === undefined) {
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by get_reporting_status revision view" });
+            }
+        }
+    });
 
 export const UnavailableLookupSchema = z.object({
     adcp_version: z.string().optional(),
@@ -18771,7 +18792,77 @@ export const GetReportingStatusResponseSchema = z.object({
     receipts: z.array(ReportingReceiptSchema).optional(),
     errors: z.array(ErrorSchema).optional(),
     ext: ExtensionObjectSchema.optional()
-}).passthrough().and(z.union([SuccessfulLookupSchema, FailedLookupSchema]));
+}).passthrough().and(z.union([SuccessfulLookupSchema, FailedLookupSchema])).superRefine((value, ctx) => {
+        // reporting evidence strictness
+        const closedStructures = {"scope":{"allowedFields":["period_start","period_end","scope_closed","media_buy_ids","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"],"requiredFields":["period_start","period_end","scope_closed","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"]},"deliveryConfigGeneration":{"allowedFields":["delivery_config_id","delivery_config_version","feed_purpose"],"requiredFields":["delivery_config_id","delivery_config_version","feed_purpose"]},"obligationCounts":{"allowedFields":["total","waiting","healthy","delayed","action_required","complete"],"requiredFields":["total","waiting","healthy","delayed","action_required","complete"]},"pagination":{"allowedFields":["has_more","cursor","total_count"],"requiredFields":["has_more"]},"paginationRequiredByView":{"periods":["has_more","total_count"],"revision":["has_more","total_count"]}} as const;
+        const addIssues = (schema: z.ZodType, candidate: unknown, path: Array<string | number>) => {
+            const parsed = schema.safeParse(candidate);
+            if (parsed.success) return;
+            for (const issue of parsed.error.issues) {
+                ctx.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
+            }
+        };
+        const addClosedObjectIssues = (
+            candidate: unknown,
+            path: Array<string | number>,
+            structure: { allowedFields: readonly string[]; requiredFields: readonly string[] }
+        ) => {
+            if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+                ctx.addIssue({ code: "custom", path, message: "Expected source-closed get_reporting_status object" });
+                return;
+            }
+            const object = candidate as Record<string, unknown>;
+            for (const field of Object.keys(object)) {
+                if (!structure.allowedFields.includes(field)) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Unexpected field in source-closed get_reporting_status object" });
+                }
+            }
+            for (const field of structure.requiredFields) {
+                if (object[field] === undefined) {
+                    ctx.addIssue({ code: "custom", path: [...path, field], message: "Required by source-closed get_reporting_status object" });
+                }
+            }
+        };
+        const response = value as Record<string, unknown>;
+        if (response.coverage !== undefined) addIssues(ReportingCoverageSchema, response.coverage, ["coverage"]);
+        if (Array.isArray(response.issues)) {
+            response.issues.forEach((issue, index) => addIssues(ReportingStatusIssueSchema, issue, ["issues", index]));
+        }
+        if (response.scope !== undefined) {
+            addClosedObjectIssues(response.scope, ["scope"], closedStructures.scope);
+            if (response.scope && typeof response.scope === "object" && !Array.isArray(response.scope)) {
+                const generations = (response.scope as Record<string, unknown>).delivery_config_generations;
+                if (Array.isArray(generations)) {
+                    generations.forEach((generation, index) =>
+                        addClosedObjectIssues(generation, ["scope", "delivery_config_generations", index], closedStructures.deliveryConfigGeneration)
+                    );
+                }
+            }
+        }
+        if (response.obligation_counts !== undefined) {
+            addClosedObjectIssues(response.obligation_counts, ["obligation_counts"], closedStructures.obligationCounts);
+        }
+        if (response.pagination !== undefined) {
+            const view = response.view;
+            const requiredFields =
+                view === "periods" || view === "revision"
+                    ? closedStructures.paginationRequiredByView[view]
+                    : closedStructures.pagination.requiredFields;
+            addClosedObjectIssues(response.pagination, ["pagination"], { ...closedStructures.pagination, requiredFields });
+        }
+        const arrays: Array<[string, z.ZodType]> = [
+            ["periods", ReportingObligationSchema],
+            ["revisions", ReportingRevisionSchema],
+            ["materializations", ReportingMaterializationSchema],
+            ["receipts", ReportingReceiptSchema],
+        ];
+        for (const [field, schema] of arrays) {
+            const entries = response[field];
+            if (!Array.isArray(entries)) continue;
+            entries.forEach((entry, index) => addIssues(schema, entry, [field, index]));
+        }
+        if (response.revision !== undefined) addIssues(ReportingRevisionSchema, response.revision, ["revision"]);
+    });
 
 export const ListedCreativeNamedFormatReferenceSchema: z.ZodType = z.object({
     creative_id: z.string(),
