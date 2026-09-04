@@ -104,6 +104,62 @@ function postProcessObjectUnionIntersections(input) {
   return runPostProcess('postProcessObjectUnionIntersections', input, '.zod-object-union-');
 }
 
+function reportingStatusViewRequiredFields(input) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-required-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.json');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingStatusViewRequiredFields(${JSON.stringify(input)})));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+function postProcessGetReportingStatusViewRequiredFields(input, requiredByView) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-status-views-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.txt');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessGetReportingStatusViewRequiredFields(${JSON.stringify(input)}, ${JSON.stringify(requiredByView)}));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return fs.readFileSync(outPath, 'utf8');
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+function postProcessReportingEvidenceStrictness(input) {
+  return runPostProcess('postProcessReportingEvidenceStrictness', input, '.zod-reporting-strictness-');
+}
+
 test('postProcessForNullish keeps never optional constraints strict', () => {
   const output = postProcessForNullish(`
 export const ExampleSchema = z.object({
@@ -114,6 +170,83 @@ export const ExampleSchema = z.object({
 
   assert.match(output, /forbidden: z\.never\(\)\.optional\(\)/);
   assert.match(output, /allowed: z\.string\(\)\.nullish\(\)/);
+});
+
+test('reporting-status view post-processor restores source required fields', () => {
+  const source = {
+    allOf: [{ properties: { status: { type: 'string' } }, required: ['status'] }],
+    oneOf: [
+      {
+        oneOf: [
+          { properties: { view: { const: 'summary' } }, required: ['view', 'ledger_snapshot_id', 'health'] },
+          {
+            properties: { view: { const: 'periods' } },
+            required: ['view', 'ledger_snapshot_id', 'periods', 'materializations', 'pagination'],
+          },
+          {
+            properties: { view: { const: 'revision' } },
+            required: ['view', 'ledger_snapshot_id', 'revision', 'pagination'],
+          },
+        ],
+      },
+    ],
+  };
+  const requiredByView = reportingStatusViewRequiredFields(source);
+  assert.deepEqual(requiredByView, {
+    summary: ['status', 'view', 'ledger_snapshot_id', 'health'],
+    periods: ['status', 'view', 'ledger_snapshot_id', 'periods', 'materializations', 'pagination'],
+    revision: ['status', 'view', 'ledger_snapshot_id', 'revision', 'pagination'],
+  });
+
+  const output = postProcessGetReportingStatusViewRequiredFields(
+    `
+export const SummaryViewSchema = z.object({ status: z.literal("completed"), view: z.literal("summary") }).passthrough();
+
+export const PeriodsViewSchema = z.object({ status: z.literal("completed"), view: z.literal("periods"), pagination: z.object({}).passthrough() }).passthrough();
+
+export const RevisionViewSchema = z.object({ status: z.literal("completed"), view: z.literal("revision"), pagination: z.object({}).passthrough() }).passthrough();
+`,
+    requiredByView
+  );
+
+  assert.match(output, /SummaryViewSchema[\s\S]*?\["status","view","ledger_snapshot_id","health"\]/);
+  assert.match(
+    output,
+    /PeriodsViewSchema[\s\S]*?\["status","view","ledger_snapshot_id","periods","materializations","pagination"\]/
+  );
+  assert.match(output, /RevisionViewSchema[\s\S]*?\["status","view","ledger_snapshot_id","revision","pagination"\]/);
+});
+
+test('reporting evidence post-processor makes only closed reporting schemas strict', () => {
+  const names = [
+    'ReportingCoverage',
+    'ReportingStatusIssue',
+    'ReportingCanonicalContentDigest',
+    'IntegerReportingControlTotal',
+    'DecimalReportingControlTotal',
+    'SHA256PhysicalChecksum',
+    'SHA512PhysicalChecksum',
+    'ReportingResource',
+    'ReportingVerification',
+    'ReportingSchedule',
+    'ReportingReceipt',
+    'ReportingRevision',
+    'ReportingObligation',
+    'ReportingMaterialization',
+  ];
+  const input = `${names.map(name => `export const ${name}Schema = z.object({ nested: z.object({}).passthrough() }).passthrough();`).join('\n\n')}
+
+export const ExtensionFriendlySchema = z.object({}).passthrough();
+`;
+  const output = postProcessReportingEvidenceStrictness(input);
+
+  for (const name of names) {
+    assert.match(
+      output,
+      new RegExp(`${name}Schema = z\\.object\\(\\{ nested: z\\.object\\(\\{\\}\\)\\.strict\\(\\) \\}\\)\\.strict\\(\\)`)
+    );
+  }
+  assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
 });
 
 test('postProcessMarkerUnionObjectIntersections collapses opaque marker unions', () => {

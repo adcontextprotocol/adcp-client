@@ -1682,6 +1682,187 @@ function postProcessTrustedMatchPrivacyBoundaryStrictness(content: string): stri
   return result;
 }
 
+type ReportingStatusView = 'summary' | 'periods' | 'revision';
+
+/**
+ * Read the required fields for each successful get_reporting_status view from
+ * the signed bundled response schema. json-schema-to-typescript currently
+ * projects the shared response object and each `allOf` view arm separately,
+ * which loses the arm's required array before ts-to-zod sees it.
+ */
+function reportingStatusViewRequiredFields(source: unknown): Record<ReportingStatusView, string[]> {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) {
+    throw new Error('get_reporting_status source schema must be an object.');
+  }
+  const root = source as Record<string, unknown>;
+  // The version/protocol envelope is composed into the response at the root.
+  // Merge its direct object requirements into every successful view arm. Do
+  // not traverse conditionals here: their requirements apply only when their
+  // own `if` predicate matches and are handled by the existing response rules.
+  const sharedRequired = (Array.isArray(root.allOf) ? root.allOf : []).flatMap(part => {
+    if (!part || typeof part !== 'object' || Array.isArray(part)) return [];
+    const schema = part as Record<string, unknown>;
+    return schema.properties && Array.isArray(schema.required)
+      ? schema.required.filter((field): field is string => typeof field === 'string')
+      : [];
+  });
+  const requiredByView = new Map<ReportingStatusView, string[]>();
+  const views = new Set<ReportingStatusView>(['summary', 'periods', 'revision']);
+  const seen = new WeakSet<object>();
+
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    const schema = value as Record<string, unknown>;
+    const view = (schema.properties as Record<string, Record<string, unknown>> | undefined)?.view?.const;
+    if (typeof view === 'string' && views.has(view as ReportingStatusView) && Array.isArray(schema.required)) {
+      const required = [
+        ...new Set([
+          ...sharedRequired,
+          ...schema.required.filter((field): field is string => typeof field === 'string'),
+        ]),
+      ];
+      const prior = requiredByView.get(view as ReportingStatusView);
+      if (prior && !isDeepStrictEqual(prior, required)) {
+        throw new Error(`get_reporting_status contains conflicting ${view} view required fields.`);
+      }
+      requiredByView.set(view as ReportingStatusView, required);
+    }
+
+    Object.values(schema).forEach(visit);
+  };
+
+  visit(source);
+
+  const result = {} as Record<ReportingStatusView, string[]>;
+  for (const view of views) {
+    const required = requiredByView.get(view);
+    if (!required?.includes('view')) {
+      throw new Error(`get_reporting_status source schema is missing the ${view} view required fields.`);
+    }
+    result[view] = required;
+  }
+  return result;
+}
+
+/** Restore required fields lost when ts-to-zod projects reporting view allOf arms. */
+function postProcessGetReportingStatusViewRequiredFields(
+  content: string,
+  requiredByView: Record<ReportingStatusView, string[]>
+): string {
+  const schemaNames: Record<ReportingStatusView, string> = {
+    summary: 'SummaryViewSchema',
+    periods: 'PeriodsViewSchema',
+    revision: 'RevisionViewSchema',
+  };
+  let result = content;
+
+  for (const [view, schemaName] of Object.entries(schemaNames) as Array<[ReportingStatusView, string]>) {
+    const target = findSchemaExportExpressions(result).find(entry => entry.name === schemaName);
+    if (!target) throw new Error(`postProcessGetReportingStatusViewRequiredFields: ${schemaName} was not generated.`);
+    const expression = result.slice(target.expressionStart, target.expressionEnd);
+    if (!expression.includes(`view: z.literal("${view}")`)) {
+      throw new Error(`postProcessGetReportingStatusViewRequiredFields: ${schemaName} no longer represents ${view}.`);
+    }
+    if (expression.includes('reporting-status source required fields')) continue;
+
+    const required = requiredByView[view];
+    if (!required.includes('view')) {
+      throw new Error(`postProcessGetReportingStatusViewRequiredFields: ${view} is missing its view discriminator.`);
+    }
+    const refinement = `.superRefine((value, ctx) => {
+        for (const field of ${JSON.stringify(required)} as const) {
+            if ((value as Record<string, unknown>)[field] === undefined) {
+                ctx.addIssue({ code: "custom", path: [field], message: "Required by reporting-status source required fields" });
+            }
+        }
+    })`;
+    result = result.slice(0, target.expressionStart) + expression + refinement + result.slice(target.expressionEnd);
+  }
+  return result;
+}
+
+/**
+ * Reporting evidence is a closed, audit-relevant contract. These schemas are
+ * explicitly `additionalProperties: false` in the signed source, unlike the
+ * ordinary extension-friendly AdCP payload objects handled by the global
+ * passthrough post-processor.
+ */
+function postProcessReportingEvidenceStrictness(content: string): string {
+  const schemaNames = [
+    'ReportingCoverageSchema',
+    'ReportingStatusIssueSchema',
+    'ReportingCanonicalContentDigestSchema',
+    'IntegerReportingControlTotalSchema',
+    'DecimalReportingControlTotalSchema',
+    'SHA256PhysicalChecksumSchema',
+    'SHA512PhysicalChecksumSchema',
+    'ReportingResourceSchema',
+    'ReportingVerificationSchema',
+    'ReportingScheduleSchema',
+    'ReportingReceiptSchema',
+    'ReportingRevisionSchema',
+    'ReportingObligationSchema',
+    'ReportingMaterializationSchema',
+  ];
+  let result = content;
+  for (const schemaName of schemaNames) {
+    const target = findSchemaExportExpressions(result).find(entry => entry.name === schemaName);
+    if (!target) throw new Error(`postProcessReportingEvidenceStrictness: ${schemaName} was not generated.`);
+    const expression = result.slice(target.expressionStart, target.expressionEnd);
+    const strict = expression.replaceAll('.passthrough()', '.strict()');
+    if (strict === expression) {
+      throw new Error(`postProcessReportingEvidenceStrictness: ${schemaName} no longer has a passthrough boundary.`);
+    }
+    result = result.slice(0, target.expressionStart) + strict + result.slice(target.expressionEnd);
+  }
+  return result;
+}
+
+/**
+ * The generated response composes the root object with the loose view union
+ * using `and()`. Zod's intersection does not retain the nested strict-object
+ * failures through that composition, so revalidate just the source-closed
+ * reporting evidence paths at the response boundary.
+ */
+function postProcessGetReportingStatusEvidenceStrictness(content: string): string {
+  const target = findSchemaExportExpressions(content).find(entry => entry.name === 'GetReportingStatusResponseSchema');
+  if (!target) throw new Error('postProcessGetReportingStatusEvidenceStrictness: response schema was not generated.');
+  const expression = content.slice(target.expressionStart, target.expressionEnd);
+  if (expression.includes('// reporting evidence strictness')) return content;
+
+  const refinement = `.superRefine((value, ctx) => {
+        // reporting evidence strictness
+        const addIssues = (schema: z.ZodType, candidate: unknown, path: Array<string | number>) => {
+            const parsed = schema.safeParse(candidate);
+            if (parsed.success) return;
+            for (const issue of parsed.error.issues) {
+                ctx.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
+            }
+        };
+        const response = value as Record<string, unknown>;
+        if (response.coverage !== undefined) addIssues(ReportingCoverageSchema, response.coverage, ["coverage"]);
+        const arrays: Array<[string, z.ZodType]> = [
+            ["periods", ReportingObligationSchema],
+            ["revisions", ReportingRevisionSchema],
+            ["materializations", ReportingMaterializationSchema],
+            ["receipts", ReportingReceiptSchema],
+        ];
+        for (const [field, schema] of arrays) {
+            const entries = response[field];
+            if (!Array.isArray(entries)) continue;
+            entries.forEach((entry, index) => addIssues(schema, entry, [field, index]));
+        }
+        if (response.revision !== undefined) addIssues(ReportingRevisionSchema, response.revision, ["revision"]);
+    })`;
+  return content.slice(0, target.expressionStart) + expression + refinement + content.slice(target.expressionEnd);
+}
+
 /** Preserve JSON-Schema-only creative constraints lost in TS projection. */
 function postProcessCreativeRuntimeConstraints(content: string): string {
   const schemaBlock = (schemaName: string): { start: number; end: number; block: string } => {
@@ -4254,6 +4435,13 @@ async function generateZodSchemas() {
     zodSchemas = postProcessPostalAreaValues(zodSchemas);
     zodSchemas = postProcessCompatibilityPurchaseCoordinatorInput(zodSchemas);
     zodSchemas = postProcessLegacyPurchaseContinuationResponse(zodSchemas);
+    const reportingStatusResponseSource = JSON.parse(
+      readFileSync(
+        path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/get-reporting-status-response.json'),
+        'utf8'
+      )
+    );
+    const reportingStatusRequiredByView = reportingStatusViewRequiredFields(reportingStatusResponseSource);
     const refineResponseSource = JSON.parse(
       readFileSync(
         path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),
@@ -4555,6 +4743,14 @@ async function generateZodSchemas() {
     // richer/conflicting intersections alone so future schema changes do not weaken checks.
     zodSchemas = postProcessObjectIntersections(zodSchemas);
 
+    // The reporting-status response composes a shared result object with a
+    // view-specific allOf arm. Recover the arm required fields from the signed
+    // bundle, then restore the closed audit-evidence boundaries that the
+    // global extension passthrough policy intentionally does not cover.
+    zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
+    zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
+    zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas);
+
     // Preserve the image format's beta.6 motion-level refinement without
     // regressing its public ZodObject composition surface.
     zodSchemas = postProcessCanonicalImageMotionNarrowing(zodSchemas);
@@ -4655,6 +4851,10 @@ export const __test__ = {
   postProcessRepeatedProductIntersections,
   postProcessCanonicalFormatSlots,
   postProcessCreativeBriefRequiredDisclosures,
+  reportingStatusViewRequiredFields,
+  postProcessGetReportingStatusViewRequiredFields,
+  postProcessReportingEvidenceStrictness,
+  postProcessGetReportingStatusEvidenceStrictness,
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
   postProcessRecordSizeConstraints,
