@@ -860,7 +860,7 @@ describe('createAdcpServer', () => {
         const server = createAdcpServer({
           name: `push-config-guard-${label}`,
           version: '1.0.0',
-          adcpVersion: '3.2.0-rc.0',
+          adcpVersion: '3.2.0-rc.1',
           validation: { requests: 'off', responses: 'off' },
           mediaBuy: {
             getProducts: async () => {

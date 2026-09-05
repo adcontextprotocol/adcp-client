@@ -163,7 +163,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
       },
     };
     const server = createAdcpServerFromPlatform(
-      buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.0' } }),
+      buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.1' } }),
       {
         name: `push-before-finalize-${label}`,
         version: '1.0',
@@ -179,7 +179,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
         params: {
           name: 'get_products',
           arguments: {
-            adcp_version: '3.2.0-rc.0',
+            adcp_version: '3.2.0-rc.1',
             buying_mode: 'refine',
             refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
             push_notification_config,
@@ -198,7 +198,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
         method: 'tools/call',
         params: {
           name: 'get_products',
-          arguments: { adcp_version: '3.2.0-rc.0', buying_mode: 'brief', push_notification_config },
+          arguments: { adcp_version: '3.2.0-rc.1', buying_mode: 'brief', push_notification_config },
         },
       },
       { authInfo }
