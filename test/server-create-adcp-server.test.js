@@ -880,6 +880,61 @@ describe('createAdcpServer', () => {
       }
     });
 
+    it('keeps malformed push config fail-closed but permits a well-shaped legacy config without operation_id (#2836)', async () => {
+      const malformedConfigs = [
+        ['null config', null, 'push_notification_config'],
+        ['array config', [], 'push_notification_config'],
+        ['missing url', {}, 'push_notification_config.url'],
+        [
+          'non-string own token',
+          { url: 'https://buyer.example.com/webhook', token: null },
+          'push_notification_config.token',
+        ],
+      ];
+
+      for (const [label, pushNotificationConfig, field] of malformedConfigs) {
+        let handlerCalls = 0;
+        const server = createAdcpServer({
+          name: `legacy-push-config-guard-${label}`,
+          version: '1.0.0',
+          adcpVersion: '3.1.18',
+          validation: { requests: 'off', responses: 'off' },
+          mediaBuy: {
+            getProducts: async () => {
+              handlerCalls += 1;
+              return { products: [], cache_scope: 'public' };
+            },
+          },
+        });
+        const result = await callToolRaw(server, 'get_products', {
+          push_notification_config: pushNotificationConfig,
+        });
+        assert.strictEqual(result.isError, true, label);
+        assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+        assert.strictEqual(result.structuredContent.adcp_error.field, field, label);
+        assert.strictEqual(handlerCalls, 0, `${label}: legacy handler must not run`);
+      }
+
+      let legacyHandlerCalls = 0;
+      const legacyServer = createAdcpServer({
+        name: 'legacy-well-shaped-push-config',
+        version: '1.0.0',
+        adcpVersion: '3.1.18',
+        validation: { requests: 'off', responses: 'off' },
+        mediaBuy: {
+          getProducts: async () => {
+            legacyHandlerCalls += 1;
+            return { products: [], cache_scope: 'public' };
+          },
+        },
+      });
+      const accepted = await callToolRaw(legacyServer, 'get_products', {
+        push_notification_config: { url: 'https://buyer.example.com/webhook' },
+      });
+      assert.notStrictEqual(accepted.isError, true);
+      assert.strictEqual(legacyHandlerCalls, 1);
+    });
+
     it('enforces per-tool version ranges before custom adopter handlers run', async () => {
       let calls = 0;
       const server = createAdcpServer({

@@ -4462,7 +4462,6 @@ function pushOperationIdError(
   params: Record<string, unknown>,
   release: ServedAdcpRelease
 ): McpToolResponse | undefined {
-  if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
   const config = params.push_notification_config;
   if (config === undefined) return undefined;
   // This generic server seam runs before arbitrary custom handlers too; it
@@ -4490,6 +4489,38 @@ function pushOperationIdError(
       field: 'push_notification_config.token',
     });
   }
+  // Framework handlers can receive a release-projected request shape, which
+  // may omit this beta-era field before it reaches a domain adapter. Reject
+  // universally-invalid delivery values here, while the decisioning runtime
+  // applies its stricter deployment-aware SSRF policy to the extracted URL.
+  const pushConfig = config as { url: string; token?: string };
+  try {
+    const parsed = new URL(pushConfig.url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return adcpError('INVALID_REQUEST', {
+        message: 'push_notification_config.url must use http: or https:',
+        field: 'push_notification_config.url',
+      });
+    }
+  } catch {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.url must be a valid URL',
+      field: 'push_notification_config.url',
+    });
+  }
+  if (
+    typeof pushConfig.token === 'string' &&
+    (pushConfig.token.length < 16 || pushConfig.token.length > 4096 || /[\x00-\x1f\x7f]/.test(pushConfig.token))
+  ) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token is invalid',
+      field: 'push_notification_config.token',
+    });
+  }
+  // Only operation_id itself is beta.5+. The basic supplied-config shape is
+  // always checked above so version negotiation cannot turn malformed input
+  // into an unvalidated call when request validation is disabled.
+  if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
   if (
     !isPlainObject(config) ||
     typeof config.operation_id !== 'string' ||

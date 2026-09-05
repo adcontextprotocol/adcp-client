@@ -121,6 +121,89 @@ test('e2e: getProducts routes through ProposalManager when wired', async () => {
   assert.strictEqual(calls.sales, 0, 'sales.getProducts should NOT fire when manager is wired');
 });
 
+test('e2e: getProducts validates push config before proposal finalization and normal manager dispatch (#2836)', async () => {
+  const invalidPushConfigs = [
+    ['malformed config', null, 'push_notification_config'],
+    [
+      'unsupported URL scheme',
+      { url: 'ftp://buyer.example.com/webhook', operation_id: 'op_unsupported_scheme' },
+      'push_notification_config.url',
+    ],
+    [
+      'invalid token',
+      { url: 'https://buyer.example.com/webhook', token: 'short', operation_id: 'op_short_token' },
+      'push_notification_config.token',
+    ],
+  ];
+
+  for (const [label, push_notification_config, field] of invalidPushConfigs) {
+    const store = new InMemoryProposalStore();
+    store.putDraft({
+      proposalId: 'p1',
+      accountId: 'acct_1',
+      recipes: new Map(),
+      proposalPayload: { proposal_id: 'p1' },
+    });
+    let finalizeCalls = 0;
+    let getProductsCalls = 0;
+    const proposalManager = {
+      capabilities: { salesSpecialism: 'sales-guaranteed', finalize: true },
+      getProducts: async () => {
+        getProductsCalls += 1;
+        return { products: [], proposals: [] };
+      },
+      finalizeProposal: async () => {
+        finalizeCalls += 1;
+        throw new Error('must not finalize');
+      },
+    };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.0' } }),
+      {
+        name: `push-before-finalize-${label}`,
+        version: '1.0',
+        proposalStore: store,
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const intercepted = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: {
+            adcp_version: '3.2.0-rc.0',
+            buying_mode: 'refine',
+            refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+            push_notification_config,
+          },
+        },
+      },
+      { authInfo }
+    );
+    assert.strictEqual(intercepted.isError, true, label);
+    assert.strictEqual(intercepted.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+    assert.strictEqual(intercepted.structuredContent.adcp_error.field, field, label);
+    assert.strictEqual(finalizeCalls, 0, `${label}: finalizeProposal must not run`);
+
+    const normal = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { adcp_version: '3.2.0-rc.0', buying_mode: 'brief', push_notification_config },
+        },
+      },
+      { authInfo }
+    );
+    assert.strictEqual(normal.isError, true, label);
+    assert.strictEqual(normal.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+    assert.strictEqual(normal.structuredContent.adcp_error.field, field, label);
+    assert.strictEqual(getProductsCalls, 0, `${label}: proposalManager.getProducts must not run`);
+  }
+});
+
 test('e2e: native getProducts can customize MCP text without changing structured payload', async () => {
   const disclosure = 'Synthetic sample data for demonstration only.';
   const sales = {

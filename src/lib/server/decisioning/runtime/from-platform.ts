@@ -6276,6 +6276,27 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         );
         const canonicalParams = asCanonicalGetProductsRequest(params as unknown as Record<string, unknown>);
         const reqCtx = ctxFor(ctx, params as Readonly<Record<string, unknown>>);
+        // Validate once before either proposal-finalize interception or normal
+        // getProducts dispatch. Finalization is adopter-controlled and can
+        // commit side effects, so malformed/unsafe buyer delivery config must
+        // not reach it.
+        const pushOrError = await projectSync<
+          ReturnType<typeof extractPushConfig>,
+          ReturnType<typeof extractPushConfig>
+        >(
+          async () =>
+            extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+            }),
+          value => value
+        );
+        // The interception branch is outside its normal projectSync wrapper;
+        // preserve the extractor's structured request error there too.
+        if ('isError' in pushOrError && pushOrError.isError === true) return pushOrError;
+        // `AdcpErrorResponse` carries an open wire shape, so TypeScript cannot
+        // narrow the successful extractor result from the property check even
+        // though projectSync returns it only on the error path.
+        const push = pushOrError as ReturnType<typeof extractPushConfig>;
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
@@ -6309,9 +6330,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             // requires propagating an AbortSignal into the projection
             // — framework-level work tracked separately, not finalize-
             // specific.
-            const push = extractPushConfig(params, logger, {
-              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-            });
             const out = await routeIfHandoff(
               taskRegistry,
               {
@@ -6344,9 +6362,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 recovery: 'correctable',
               });
             }
-            const push = extractPushConfig(params, logger, {
-              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-            });
             // Pick dispatch target: ProposalManager (when wired) takes
             // ownership of get_products; sales is the v1 fallback.
             // Refine routing per Python's _select_proposal_method:
