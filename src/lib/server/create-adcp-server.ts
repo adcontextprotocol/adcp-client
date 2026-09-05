@@ -4465,20 +4465,30 @@ function pushOperationIdError(
   if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
   const config = params.push_notification_config;
   if (config === undefined) return undefined;
-  // The decisioning runtime owns the full push-config shape validation so it
-  // can reject malformed supplied config at the precise field before any
-  // platform handler runs. Do not let this beta.5 operation-id guard mask a
-  // null/primitive/array config, a non-string URL, or an invalid own token.
-  // Once the basic delivery shape is valid, preserve the early operation-id
-  // refusal required by beta.5+ even when request-schema validation is off.
+  // This generic server seam runs before arbitrary custom handlers too; it
+  // cannot assume a downstream runtime will validate the push shape. Keep
+  // malformed supplied configs fail-closed, with the same precise fields as
+  // the decisioning extractor. Explicit `undefined` above remains absent.
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config must be an object',
+      field: 'push_notification_config',
+    });
+  }
+  if (typeof (config as { url?: unknown }).url !== 'string') {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.url must be a string',
+      field: 'push_notification_config.url',
+    });
+  }
   if (
-    config === null ||
-    typeof config !== 'object' ||
-    Array.isArray(config) ||
-    typeof (config as { url?: unknown }).url !== 'string' ||
-    (Object.prototype.hasOwnProperty.call(config, 'token') && typeof (config as { token?: unknown }).token !== 'string')
+    Object.prototype.hasOwnProperty.call(config, 'token') &&
+    typeof (config as { token?: unknown }).token !== 'string'
   ) {
-    return undefined;
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token must be a string',
+      field: 'push_notification_config.token',
+    });
   }
   if (
     !isPlainObject(config) ||

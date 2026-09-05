@@ -840,6 +840,46 @@ describe('createAdcpServer', () => {
   describe('customTools', () => {
     const { z } = require('zod');
 
+    it('rejects malformed push config before generic framework handlers when request validation is off (#2836)', async () => {
+      const malformedConfigs = [
+        ['null config', null, 'push_notification_config'],
+        ['string config', 'not-an-object', 'push_notification_config'],
+        ['number config', 42, 'push_notification_config'],
+        ['array config', [], 'push_notification_config'],
+        ['missing url', { operation_id: 'op_missing_url' }, 'push_notification_config.url'],
+        ['non-string url', { url: null, operation_id: 'op_null_url' }, 'push_notification_config.url'],
+        [
+          'non-string own token',
+          { url: 'https://buyer.example.com/webhook', token: null, operation_id: 'op_null_token' },
+          'push_notification_config.token',
+        ],
+      ];
+
+      for (const [label, pushNotificationConfig, field] of malformedConfigs) {
+        let handlerCalls = 0;
+        const server = createAdcpServer({
+          name: `push-config-guard-${label}`,
+          version: '1.0.0',
+          adcpVersion: '3.2.0-rc.0',
+          validation: { requests: 'off', responses: 'off' },
+          mediaBuy: {
+            getProducts: async () => {
+              handlerCalls += 1;
+              return { products: [], cache_scope: 'public' };
+            },
+          },
+        });
+
+        const result = await callToolRaw(server, 'get_products', {
+          push_notification_config: pushNotificationConfig,
+        });
+        assert.strictEqual(result.isError, true, label);
+        assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+        assert.strictEqual(result.structuredContent.adcp_error.field, field, label);
+        assert.strictEqual(handlerCalls, 0, `${label}: framework handler must not run`);
+      }
+    });
+
     it('enforces per-tool version ranges before custom adopter handlers run', async () => {
       let calls = 0;
       const server = createAdcpServer({
