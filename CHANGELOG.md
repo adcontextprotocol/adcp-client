@@ -1,5 +1,38 @@
 # Changelog
 
+## 14.0.0-rc.32
+
+### Major Changes
+
+- 8df7d0b: Push-enabled `TaskHandoff` responses now fail closed with `UNSUPPORTED_FEATURE`
+  when no terminal task-webhook delivery path is configured. Configure framework
+  `webhooks` or remove `push_notification_config` for polling-only tasks. The
+  same rule applies to external settlement, which is polling-only even if a
+  framework emitter is configured.
+
+  Supplied malformed `push_notification_config` values now return precise
+  `INVALID_REQUEST` errors at the configuration, `url`, or `token` field even
+  when request validation is disabled. Omitted or explicitly `undefined`
+  configuration remains polling-only. Custom durable task registries used for
+  external settlement must expose a stable non-empty `registryId` and return
+  that exact identity from `create()`.
+
+### Minor Changes
+
+- bb9b137: Restore required reporting-status view fields and strict closed reporting evidence validation in generated Zod schemas. Extra fields in source-closed reporting evidence are now rejected. Preserve the deprecated registry `ResolvedBrand.provenance` type for SDK callers while syncing the authoritative registry OpenAPI.
+- 04b19d9: Accept unknown comply-test-controller scenario names and include the AdCP error shape in self-contained per-tool type declarations.
+- 93535bf: Add non-breaking business-rejection settlement for decisioning tasks. `TaskRegistry.reject?()`, `taskCtx.reject(result, reason)`, and `rejectScopedTask()` record a `rejected` terminal artifact with an optional buyer-visible reason, distinct from structured execution failures. PostgreSQL registries and `rejectScopedPushTask()` preserve the same scoped, idempotent, atomic task/outbox protections as complete and fail settlement.
+
+  New PostgreSQL bootstraps accept all nine AdCP task statuses. Before using rejection on a table created by an earlier SDK, run `getDecisioningTaskRegistryStatusWidenV61Migration()` during a maintenance window. The idempotent helper uses bounded lock and statement timeouts, but its `ALTER TABLE` takes an `ACCESS EXCLUSIVE` lock and can briefly block task reads and writes.
+
+### Patch Changes
+
+- 3674123: Add the `adcp storyboard run --parallel-dispatch` opt-in for process-local parallel dispatch conformance grading.
+- c7152fa: Report HITL task webhook availability only when both a buyer URL and delivery emitter are configured.
+- 9cf1ef1: Fix decisioning account notification types to accept current AdCP 3.2 reporting events.
+- 5f1fffe: Improve gap-schema type generation performance while preserving deterministic output.
+- a65f946: Adopt the signed AdCP 3.2.0-rc.1 bundle.
+
 ## 14.0.0-beta.31
 
 ### Patch Changes
