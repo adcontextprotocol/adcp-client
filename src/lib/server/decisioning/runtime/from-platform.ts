@@ -6354,6 +6354,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         return projectSync(
           async () => {
             const buyingMode = (params as { buying_mode?: string }).buying_mode;
+            if (buyingMode === 'wholesale' && hasPushNotificationConfig(params)) {
+              throw new AdcpError('INVALID_REQUEST', {
+                message:
+                  'get_products buying_mode=wholesale is synchronous and does not support push_notification_config; use incomplete[] for partial feed results.',
+                field: 'push_notification_config',
+                recovery: 'correctable',
+              });
+            }
             // Pick dispatch target: ProposalManager (when wired) takes
             // ownership of get_products; sales is the v1 fallback.
             // Refine routing per Python's _select_proposal_method:
