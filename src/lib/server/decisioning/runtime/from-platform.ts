@@ -145,7 +145,6 @@ import {
   isTaskHandoffRejection,
   _extractHandoffEntry,
   type ExternalTaskHandoffContext,
-  type ExternalTaskWebhookDelivery,
   type TaskHandoff,
 } from '../async-outcome';
 import { _extractResponseSummaryEntry } from '../response-summary';
@@ -2088,19 +2087,6 @@ export interface CreateAdcpServerFromPlatformOptions<TAccount = unknown> extends
   };
 
   /**
-   * Permit a durable `handoffToTask(..., { settlement: 'external' })` worker
-   * to own terminal webhook delivery. This is mutually exclusive with SDK
-   * task webhooks and never applies to framework-settled handoffs.
-   *
-   * For a valid push-enabled external handoff, its producer receives the
-   * validated `taskCtx.terminalWebhook` value and MUST atomically persist it
-   * with `taskCtx.taskRef` and the work item. The external worker MUST provide
-   * at-least-once terminal delivery, security/signing, retries, durability,
-   * and `operation_id` correlation. The SDK neither emits nor observes it.
-   */
-  externallyManagedTaskWebhooks?: boolean;
-
-  /**
    * `comply_test_controller` adapter set. When supplied, the framework
    * composes `createComplyController` (`@adcp/sdk/testing`) with the adopter's
    * adapters and registers the wire tool after platform handlers wire up. MCP
@@ -2623,23 +2609,6 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const fwLogger = opts.logger ?? DEFAULT_FRAMEWORK_LOGGER;
   const mergeOpts = { mode: opts.mergeSeam ?? 'warn', logger: fwLogger };
 
-  if (opts.externallyManagedTaskWebhooks === true) {
-    if (opts.taskWebhookEmitter !== undefined || opts.webhooks !== undefined) {
-      throw new PlatformConfigError(
-        'externallyManagedTaskWebhooks cannot be combined with SDK task webhooks. Remove webhooks/taskWebhookEmitter ' +
-          'or let the SDK own terminal task delivery; configuring both risks duplicate buyer notifications.'
-      );
-    }
-    if (process.env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'development') {
-      fwLogger.warn(
-        '[adcp/decisioning] externallyManagedTaskWebhooks is enabled. Only durable external-settlement handoffs with ' +
-          'a validated taskCtx.terminalWebhook may advertise has_webhook. Your producer must atomically persist that ' +
-          'config and taskRef; your worker owns signed, at-least-once terminal delivery, retries, durability, and ' +
-          'operation_id correlation. The SDK neither emits nor observes these deliveries.'
-      );
-    }
-  }
-
   // Project per-domain capability blocks declared on the platform onto
   // get_adcp_capabilities via createAdcpServer's `overrides.media_buy`
   // deep-merge seam. Adopters declare audience_targeting /
@@ -2946,7 +2915,6 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const taskPushOptions = {
     allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
     autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
-    externallyManagedTaskWebhooks: opts.externallyManagedTaskWebhooks === true,
   };
   const platformProposalNegotiation = buildProposalNegotiationHandlers(
     platform,
@@ -4627,8 +4595,6 @@ interface DispatchHitlOpts {
   pushNotificationOperationId?: string;
   servedAdcpVersion?: string;
   emitWebhook?: HandlerContext<Account>['emitWebhook'];
-  /** Explicit adopter attestation that terminal task webhooks are delivered outside the SDK. */
-  externallyManagedTaskWebhooks?: boolean;
   observability?: DecisioningObservabilityHooks;
   logger: AdcpLogger;
   /** @deprecated Ignored; retained internally during the SDK 14 compatibility window. */
@@ -4638,8 +4604,7 @@ interface DispatchHitlOpts {
 function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, suggestion: string): never {
   opts.logger.warn(
     '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
-      'settlement, or remove push_notification_config and retry with a new idempotency_key. externallyManagedTaskWebhooks ' +
-      'is valid only for a durable external-settlement worker that persists and delivers taskCtx.terminalWebhook.'
+      'settlement, or remove push_notification_config and retry with a new idempotency_key.'
   );
   throw new AdcpError('UNSUPPORTED_FEATURE', {
     recovery: 'correctable',
@@ -4650,23 +4615,11 @@ function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, sugge
   });
 }
 
-function resolveTaskWebhookDelivery(
-  opts: DispatchHitlOpts,
-  settlement: 'framework' | 'external'
-): 'framework' | 'external' | undefined {
+function resolveTaskWebhookDelivery(opts: DispatchHitlOpts): boolean {
   // This value is populated only by extractPushConfig after URL validation.
   // A malformed or missing URL cannot turn an accepted task into has_webhook.
-  if (opts.pushNotificationUrl === undefined) return undefined;
-  if (typeof opts.emitWebhook === 'function') return 'framework';
-  if (opts.externallyManagedTaskWebhooks === true && settlement === 'external') return 'external';
-  if (opts.externallyManagedTaskWebhooks === true) {
-    return refuseTaskWebhookHandoff(
-      opts,
-      'This seller permits externally managed task webhooks only for durable external-settlement handoffs. ' +
-        'Remove push_notification_config to use polling, or configure SDK task webhooks on the seller.',
-      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure task webhooks.'
-    );
-  }
+  if (opts.pushNotificationUrl === undefined) return false;
+  if (typeof opts.emitWebhook === 'function') return true;
   return refuseTaskWebhookHandoff(
     opts,
     'This seller cannot submit a task with push_notification_config because no task webhook delivery path is configured. ' +
@@ -4793,8 +4746,8 @@ async function routeIfHandoff<TInner, TWire>(
       return dispatchHitl(
         taskRegistry,
         opts,
-        async (taskRef, terminalWebhook) => {
-          await externalTaskFn(buildExternalHandoffContext(taskRegistry, taskRef, terminalWebhook));
+        async taskRef => {
+          await externalTaskFn(buildExternalHandoffContext(taskRegistry, taskRef));
         },
         options.task_id,
         'external'
@@ -4843,29 +4796,15 @@ async function routeIfHandoff<TInner, TWire>(
 async function dispatchHitl<TResult>(
   taskRegistry: TaskRegistry,
   opts: DispatchHitlOpts,
-  taskFn: (taskRef: ScopedTaskRef, terminalWebhook?: ExternalTaskWebhookDelivery) => Promise<TResult>,
+  taskFn: (taskRef: ScopedTaskRef) => Promise<TResult>,
   overrideTaskId?: string,
   settlement: 'framework' | 'external' = 'framework'
 ): Promise<SubmittedEnvelope> {
   // Fail before task creation, external producer callbacks, or any terminal
   // state can be persisted. A buyer gets Submitted only after a validated
   // destination has exactly one terminal-delivery owner.
-  const webhookDelivery = resolveTaskWebhookDelivery(opts, settlement);
-  if (webhookDelivery === 'external' && taskRegistry.webhookDeliveryVersion !== 1) {
-    return refuseTaskWebhookHandoff(
-      opts,
-      'This seller cannot submit a task with push_notification_config because its task registry does not support external webhook ownership. ' +
-        'Remove push_notification_config to use polling, or ask the seller to configure task webhooks.',
-      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure a task registry with webhookDeliveryVersion: 1.'
-    );
-  }
+  const hasWebhook = resolveTaskWebhookDelivery(opts);
   if (settlement === 'external' && taskRegistry.durability !== 'durable') {
-    throw new Error('External task settlement requires a durable task registry with a stable identity');
-  }
-  if (
-    settlement === 'external' &&
-    (typeof taskRegistry.registryId !== 'string' || taskRegistry.registryId.length === 0)
-  ) {
     throw new Error('External task settlement requires a durable task registry with a stable identity');
   }
   const createStart = Date.now();
@@ -4875,8 +4814,7 @@ async function dispatchHitl<TResult>(
     ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
     // `tasks_get.has_webhook` promises a validated destination with an actual
     // owner, not merely buyer intent.
-    hasWebhook: webhookDelivery !== undefined,
-    ...(webhookDelivery !== undefined && { webhookDelivery }),
+    hasWebhook,
     ...(overrideTaskId !== undefined && { overrideTaskId }),
   });
   if (
@@ -4940,18 +4878,7 @@ async function dispatchHitl<TResult>(
     try {
       // The callback owns the durable application-queue write. Do not tell the
       // buyer that the task was submitted until that write has committed.
-      await taskFn(
-        taskRef,
-        webhookDelivery === 'external'
-          ? {
-              url: opts.pushNotificationUrl!,
-              taskType: opts.tool,
-              ...(opts.pushNotificationOperationId !== undefined && { operationId: opts.pushNotificationOperationId }),
-              ...(opts.pushNotificationToken !== undefined && { token: opts.pushNotificationToken }),
-              ...(opts.servedAdcpVersion !== undefined && { servedAdcpVersion: opts.servedAdcpVersion }),
-            }
-          : undefined
-      );
+      await taskFn(taskRef);
     } catch (taskFnError) {
       opts.logger.error(
         `[adcp/decisioning] external task producer for ${taskId} (${opts.tool}) failed before durable handoff. ` +
@@ -6076,7 +6003,6 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
-    externallyManagedTaskWebhooks: boolean;
   },
   ctxFor: CtxForFn
 ): ProposalNegotiationHandlers<Account> | undefined {
@@ -6133,7 +6059,6 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
               pushNotificationOperationId: push.operationId,
               servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
               logger,
@@ -6157,7 +6082,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
-    externallyManagedTaskWebhooks: boolean;
   },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined,
@@ -6227,7 +6151,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             pushNotificationOperationId: push.operationId,
             servedAdcpVersion: ctx.servedAdcpVersion,
             emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-            externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
             autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
             observability,
             logger,
@@ -6345,7 +6268,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
                 logger,
@@ -6485,7 +6407,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
                 logger,
@@ -6619,7 +6540,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
                 logger,
@@ -6740,7 +6660,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
                 logger,
@@ -6795,7 +6714,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
                 logger,
@@ -7048,7 +6966,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
-    externallyManagedTaskWebhooks: boolean;
   },
   ctxFor: CtxForFn,
   legacyFormatConverter: LegacyFormatConverter | undefined,
@@ -7152,7 +7069,6 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
                 pushNotificationOperationId: push.operationId,
                 servedAdcpVersion: ctx.servedAdcpVersion,
                 emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-                externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
                 autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
                 observability,
                 logger,
@@ -7313,7 +7229,6 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   pushOpts: {
     allowPrivateWebhookUrls: boolean;
     autoEmitCompletionWebhooks: boolean;
-    externallyManagedTaskWebhooks: boolean;
   },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined
@@ -7393,7 +7308,6 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
               pushNotificationOperationId: push.operationId,
               servedAdcpVersion: ctx.servedAdcpVersion,
               emitWebhook: taskWebhookEmit ?? ctx.emitWebhook,
-              externallyManagedTaskWebhooks: pushOpts.externallyManagedTaskWebhooks,
               autoEmitCompletion: pushOpts.autoEmitCompletionWebhooks,
               observability,
               logger,

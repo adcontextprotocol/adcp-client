@@ -709,24 +709,6 @@ keep irreversible effects in the handoff callback; framework-managed proposal
 reservations are unwound. Buyers changing the request must use a new
 `idempotency_key`. Synchronous responses are unaffected.
 
-For a separately implemented delivery worker, set
-`externallyManagedTaskWebhooks: true` on `createAdcpServerFromPlatform` **only**
-with a durable `handoffToTask(producer, { settlement: 'external' })` flow. It
-is rejected for framework-settled handoffs and cannot be combined with SDK
-`webhooks` or `taskWebhookEmitter`. The producer receives the validated
-`taskCtx.terminalWebhook`; atomically persist it with `taskCtx.taskRef` and the
-work item. `tasks_get.has_webhook` will then be true, but the SDK will not emit
-or observe delivery. The worker owns at-least-once terminal delivery,
-security/signing, retries, durability, settlement, and buyer `operation_id`
-correlation required by the protocol. It must call
-`settleScopedExternallyManagedWebhookTask()` with its durable outbox before
-changing task state. Do not enable this in reference adapters or claim webhook
-compliance unless that worker actually exists. `terminalWebhook.token` (and
-any future credential fields) is buyer secret material: use encrypted,
-secret-safe durable storage with least-privilege worker access, redact it from
-logs/errors, delete it after the delivery retry window, and never place it in a
-buyer-visible task result.
-
 **Production key storage.** For outbound request or webhook signing, prefer a KMS-backed `SigningProvider` over in-process JWKs. See [SIGNING-GUIDE.md § Production Key Storage](./SIGNING-GUIDE.md#step-35-production-key-storage--kms--hsm--vault) for the full walkthrough including a reference GCP KMS adapter. Production webhook servers must provide a shared durable `deliveryStore` plus `deliveryRecovery`, a durable outbox that checkpoints the exact destination, payload/timestamp, authentication reference, and retry policy before delivery and recovers unsettled snapshots after restart. The SDK supplies PostgreSQL and Redis delivery stores, recovery backends, migrations, and a bounded recovery polling API; applications supply the KMS/secret adapter and operational scheduler. Tenant namespaces are derived from trusted resolved request context.
 
 See [SIGNING-GUIDE.md](./SIGNING-GUIDE.md) for the full walkthrough: key generation, JWKS publication, brand.json, conformance testing, and KMS-backed production deployment.

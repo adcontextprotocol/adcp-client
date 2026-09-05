@@ -1361,9 +1361,8 @@ const taskRegistry = createInMemoryTaskRegistry();
 
 // TEST-ONLY: The storyboard runner supplies a local webhook receiver for the
 // guaranteed-sales async scenario. Deliver its terminal task notification for
-// real; do not use externallyManagedTaskWebhooks, which is only for an
-// application-owned durable external worker. Production uses the SDK `webhooks`
-// configuration with signing, durable delivery binding, and recovery instead.
+// real. Production uses the SDK `webhooks` configuration with signing, durable
+// delivery binding, and recovery instead.
 const storyboardTaskWebhookEmitter =
   process.env['NODE_ENV'] === 'development'
     ? {

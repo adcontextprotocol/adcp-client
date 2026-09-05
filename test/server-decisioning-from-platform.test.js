@@ -4928,7 +4928,6 @@ describe('HITL dual-method dispatch — *Task variants', () => {
 
   it('external handoff acknowledges submitted only after the durable producer commit', async () => {
     let queuedTaskRef;
-    let queuedTerminalWebhook;
     let markProducerStarted;
     let releaseProducer;
     const producerStarted = new Promise(resolve => {
@@ -4946,7 +4945,6 @@ describe('HITL dual-method dispatch — *Task variants', () => {
             assert.strictEqual(taskCtx.reject, undefined, 'external producers cannot reject in-process');
             assert.strictEqual('reject' in taskCtx, false, 'external context omits reject at runtime');
             queuedTaskRef = structuredClone(taskCtx.taskRef);
-            queuedTerminalWebhook = structuredClone(taskCtx.terminalWebhook);
             markProducerStarted();
             await producerCommit;
           },
@@ -4961,17 +4959,11 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       name: 'external-settlement',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
-      externallyManagedTaskWebhooks: true,
       taskRegistry,
     });
 
     let responseResolved = false;
-    const submittedPromise = dispatchCreate(server, {
-      push_notification_config: {
-        url: 'https://buyer.example/task-webhook',
-        operation_id: 'external-approval-1',
-      },
-    }).then(result => {
+    const submittedPromise = dispatchCreate(server).then(result => {
       responseResolved = true;
       return result;
     });
@@ -4984,67 +4976,13 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(queuedTaskRef.taskId, submitted.structuredContent.task_id);
     assert.strictEqual(queuedTaskRef.accountId, 'acc_1');
     assert.strictEqual(queuedTaskRef.ownerScope, 'account:acc_1');
-    assert.deepStrictEqual(queuedTerminalWebhook, {
-      url: 'https://buyer.example/task-webhook',
-      taskType: 'create_media_buy',
-      operationId: 'external-approval-1',
-      servedAdcpVersion: '3.2-rc.0',
-    });
     const state = await server.getTaskState(submitted.structuredContent.task_id, queuedTaskRef);
     assert.strictEqual(state.status, 'submitted');
     assert.strictEqual(state.result, undefined);
-    assert.strictEqual(
-      state.hasWebhook,
-      true,
-      'the explicit external-delivery attestation owns terminal push delivery'
-    );
-    const stagedDeliveries = [];
-    const {
-      completeScopedTask,
-      settleScopedExternallyManagedWebhookTask,
-    } = require('../dist/lib/server/decisioning/runtime/task-registry');
-    await assert.rejects(
-      () => completeScopedTask(taskRegistry, queuedTaskRef, { media_buy_id: 'would-drop-delivery' }),
-      /must use settleScopedExternallyManagedWebhookTask/
-    );
-    const settled = await settleScopedExternallyManagedWebhookTask(
-      taskRegistry,
-      queuedTaskRef,
-      queuedTerminalWebhook,
-      {
-        status: 'completed',
-        result: {
-          media_buy_id: 'external-worker-result',
-          // This server-only capability must never be retained in the task
-          // artifact or forwarded to a buyer by an external worker mistake.
-          terminalWebhook: { token: 'buyer-secret-must-not-egress' },
-        },
-      },
-      {
-        recordTerminalDelivery: async entry => {
-          stagedDeliveries.push(structuredClone(entry));
-        },
-      }
-    );
-    assert.strictEqual(settled.outcome, 'applied');
-    assert.deepStrictEqual(stagedDeliveries, [
-      {
-        taskRef: queuedTaskRef,
-        webhook: queuedTerminalWebhook,
-        terminal: { status: 'completed', result: { media_buy_id: 'external-worker-result' } },
-      },
-    ]);
-    assert.strictEqual(
-      (await server.getTaskState(submitted.structuredContent.task_id, queuedTaskRef)).webhookDelivery,
-      'external',
-      'external workers can settle state without changing delivery ownership'
-    );
-    const completed = await server.getTaskState(submitted.structuredContent.task_id, queuedTaskRef);
-    assert.strictEqual(completed.result.terminalWebhook, undefined);
-    assert.doesNotMatch(JSON.stringify(completed.result), /buyer-secret-must-not-egress/);
+    assert.strictEqual(state.hasWebhook, undefined, 'polling-only tasks do not claim webhook delivery');
   });
 
-  it('rejects externally managed task webhooks for framework-settled handoffs (#2836)', async () => {
+  it('fails closed for framework-settled handoffs without an emitter (#2836)', async () => {
     let callbackRan = false;
     const taskRegistry = createInMemoryTaskRegistry();
     let createCalls = 0;
@@ -5062,10 +5000,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           }),
       }),
       {
-        name: 'external-owner-framework-handoff',
+        name: 'framework-handoff-no-webhook-owner',
         version: '0.0.1',
         validation: { requests: 'off', responses: 'off' },
-        externallyManagedTaskWebhooks: true,
         taskRegistry,
       }
     );
@@ -5080,16 +5017,15 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(callbackRan, false);
   });
 
-  it('refuses an external push handoff before create when a custom registry lacks webhookDeliveryVersion (#2836)', async () => {
+  it('refuses an external push handoff before create without an emitter (#2836)', async () => {
     let producerCalled = false;
     let createCalls = 0;
     const builtIn = createInMemoryTaskRegistry();
     const taskRegistry = {
       ...builtIn,
       durability: 'durable',
-      registryId: 'custom-registry-without-webhook-delivery-contract',
+      registryId: 'custom-registry-no-webhook-emitter',
     };
-    delete taskRegistry.webhookDeliveryVersion;
     const create = taskRegistry.create.bind(taskRegistry);
     taskRegistry.create = async args => {
       createCalls += 1;
@@ -5106,10 +5042,9 @@ describe('HITL dual-method dispatch — *Task variants', () => {
           ),
       }),
       {
-        name: 'custom-registry-no-external-webhook-contract',
+        name: 'custom-registry-no-webhook-emitter',
         version: '0.0.1',
         validation: { requests: 'off', responses: 'off' },
-        externallyManagedTaskWebhooks: true,
         taskRegistry,
       }
     );
@@ -5117,7 +5052,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     const result = await dispatchCreate(server, {
       push_notification_config: {
         url: 'https://buyer.example.com/webhook',
-        operation_id: 'missing-registry-capability',
+        operation_id: 'missing-webhook-emitter',
       },
     });
     assert.strictEqual(result.isError, true);
@@ -5127,22 +5062,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(producerCalled, false);
   });
 
-  it('rejects combining external ownership with SDK task webhooks (#2836)', () => {
-    assert.throws(
-      () =>
-        createAdcpServerFromPlatform(buildHitlPlatform(), {
-          name: 'duplicate-task-webhook-owners',
-          version: '0.0.1',
-          externallyManagedTaskWebhooks: true,
-          taskWebhookEmitter: {
-            emit: async () => ({ delivery_id: 'x', idempotency_key: 'x', attempts: 1, delivered: true, errors: [] }),
-          },
-        }),
-      PlatformConfigError
-    );
-  });
-
-  it('fails closed for external settlement unless external task webhook delivery is explicitly managed (#2836)', async () => {
+  it('fails closed for external settlement before task creation (#2836)', async () => {
     let producerCalled = false;
     let createCalls = 0;
     const taskRegistry = {
@@ -5181,7 +5101,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(producerCalled, false);
   });
 
-  it('external handoff producer failure rejects the initial invocation without exposing queue details', async () => {
+  it('polling-only external handoff producer failure rejects the initial invocation without exposing queue details', async () => {
     const errors = [];
     let failedTaskRef;
     const platform = buildHitlPlatform({
@@ -5198,7 +5118,6 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       name: 'external-settlement-producer-failure',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
-      externallyManagedTaskWebhooks: true,
       taskRegistry: {
         ...require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry(),
         durability: 'durable',
@@ -5206,12 +5125,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
       logger: { debug() {}, info() {}, warn() {}, error: message => errors.push(message) },
     });
 
-    const rejected = await dispatchCreate(server, {
-      push_notification_config: {
-        url: 'https://buyer.example/task-webhook',
-        operation_id: 'external-approval-failure-1',
-      },
-    });
+    const rejected = await dispatchCreate(server);
     assert.strictEqual(rejected.isError, true);
     assert.strictEqual(rejected.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
     assert.strictEqual(rejected.structuredContent.task_id, undefined);

@@ -34,7 +34,6 @@ import { sanitizeTaskProgressForStorage, type ScopedTaskRef, type TaskRegistry }
 import {
   _createTaskHandoff,
   throwTaskHandoffRejection,
-  type ExternalTaskWebhookDelivery,
   type ExternalTaskHandoffContext,
   type ExternalTaskHandoffOptions,
   type TaskHandoffContext,
@@ -299,14 +298,12 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
  */
 export function buildExternalHandoffContext(
   taskRegistry: TaskRegistry,
-  taskRef: ScopedTaskRef,
-  terminalWebhook?: ExternalTaskWebhookDelivery
+  taskRef: ScopedTaskRef
 ): ExternalTaskHandoffContext {
   const { taskId } = taskRef;
   return {
     id: taskId,
     taskRef,
-    ...(terminalWebhook !== undefined && { terminalWebhook: Object.freeze({ ...terminalWebhook }) }),
     update: async progress => {
       const sanitized = sanitizeTaskProgressForStorage(progress);
       try {

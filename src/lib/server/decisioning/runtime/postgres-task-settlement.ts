@@ -118,7 +118,6 @@ interface LockedTaskRow {
   error: unknown;
   status_message: string | null;
   has_webhook: boolean;
-  webhook_delivery: 'framework' | 'external' | null;
 }
 
 const TERMINAL = new Set<TaskStatus>(['completed', 'failed', 'rejected', 'canceled']);
@@ -228,11 +227,6 @@ export function createPostgresTaskSettlementCoordinator(
           'Crash-safe push settlement requires a task created with hasWebhook: true'
         );
       }
-      if (observed.webhook_delivery === 'external') {
-        throw new TaskPushSettlementConfigurationError(
-          'SDK push settlement is unavailable for externally managed task webhooks; the external delivery owner must settle and deliver the terminal notification.'
-        );
-      }
 
       let result: unknown;
       let error: AdcpStructuredError | undefined;
@@ -339,11 +333,6 @@ export function createPostgresTaskSettlementCoordinator(
         if (row.has_webhook !== true) {
           throw new TaskPushSettlementConfigurationError(
             'Crash-safe push settlement requires a task created with hasWebhook: true'
-          );
-        }
-        if (row.webhook_delivery === 'external') {
-          throw new TaskPushSettlementConfigurationError(
-            'SDK push settlement is unavailable for externally managed task webhooks; the external delivery owner must settle and deliver the terminal notification.'
           );
         }
         if (row.tool !== observed.tool) {
@@ -745,7 +734,7 @@ async function readTaskRow(
   lock: boolean
 ): Promise<LockedTaskRow | undefined> {
   const found = await db.query(
-    `SELECT tool, status, result, error, status_message, has_webhook, webhook_delivery
+    `SELECT tool, status, result, error, status_message, has_webhook
        FROM ${table}
       WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4${lock ? '\n      FOR UPDATE' : ''}`,
     [ref.taskId, namespace, ref.accountId, ref.ownerScope]

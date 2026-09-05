@@ -79,7 +79,7 @@ async function createCompletedTask(server, accountId) {
   return result.structuredContent.task_id;
 }
 
-async function createTaskWithPushConfig(server, accountId) {
+async function createTaskWithPushConfig(server, accountId, withPushConfig = true) {
   const result = await server.dispatchTestRequest({
     method: 'tools/call',
     params: {
@@ -91,10 +91,12 @@ async function createTaskWithPushConfig(server, accountId) {
         start_time: '2026-05-01T00:00:00Z',
         end_time: '2026-06-01T00:00:00Z',
         account: { account_id: accountId },
-        push_notification_config: {
-          url: 'https://buyer.example.com/webhook',
-          operation_id: 'op_has_webhook',
-        },
+        ...(withPushConfig && {
+          push_notification_config: {
+            url: 'https://buyer.example.com/webhook',
+            operation_id: 'op_has_webhook',
+          },
+        }),
       },
     },
   });
@@ -325,45 +327,31 @@ describe('tasks_get — agent forwarding to accounts.resolve', () => {
 });
 
 describe('tasks_get — webhook availability', () => {
-  it('reports has_webhook true only for externally settled, explicitly owned delivery (#2836)', async () => {
+  it('reports has_webhook false for polling-only external settlement (#2836)', async () => {
     let sdkWebhookEmits = 0;
-    let capturedWebhook;
     const platform = buildHitlPlatform(
       {},
       {
         taskFn: async () => {},
       }
     );
-    platform.sales.createMediaBuy = (_req, ctx) =>
-      ctx.handoffToTask(
-        async taskCtx => {
-          capturedWebhook = structuredClone(taskCtx.terminalWebhook);
-        },
-        { settlement: 'external' }
-      );
+    platform.sales.createMediaBuy = (_req, ctx) => ctx.handoffToTask(async () => {}, { settlement: 'external' });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'p',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
-      externallyManagedTaskWebhooks: true,
       taskRegistry: {
         ...require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry(),
         durability: 'durable',
       },
       observability: { onWebhookEmit: () => (sdkWebhookEmits += 1) },
     });
-    const taskId = await createTaskWithPushConfig(server, 'acc_owner');
+    const taskId = await createTaskWithPushConfig(server, 'acc_owner', false);
 
     const result = await dispatchTasksGet(server, taskId, 'acc_owner');
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
-    assert.strictEqual(result.structuredContent.has_webhook, true);
-    assert.deepStrictEqual(capturedWebhook, {
-      url: 'https://buyer.example.com/webhook',
-      taskType: 'create_media_buy',
-      operationId: 'op_has_webhook',
-      servedAdcpVersion: '3.2-rc.0',
-    });
-    assert.strictEqual(sdkWebhookEmits, 0, 'external delivery must not be reported as an SDK webhook emission');
+    assert.strictEqual(result.structuredContent.has_webhook, false);
+    assert.strictEqual(sdkWebhookEmits, 0);
   });
 
   it('reports has_webhook false for polling-only handoffs (#2836)', async () => {

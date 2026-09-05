@@ -40,21 +40,6 @@ the handoff marker—but the framework has not created a task or run the handoff
 callback. Keep irreversible effects in that callback. Proposal-backed framework
 reservations are unwound on this refusal.
 
-`externallyManagedTaskWebhooks: true` is only for a durable external-settlement
-handoff (`ctx.handoffToTask(producer, { settlement: 'external' })`). It cannot
-be combined with SDK `webhooks`/`taskWebhookEmitter` and does not make a normal
-background handoff deliverable. The producer receives `taskCtx.terminalWebhook`
-when the buyer supplied a valid URL; atomically persist it with `taskCtx.taskRef`
-and the job. The external worker MUST use
-`settleScopedExternallyManagedWebhookTask()` to stage its durable delivery
-record before task completion, then provide signed, at-least-once terminal
-delivery, retries, durability, and `operation_id` correlation. Do not enable
-it for a reference adapter unless it actually owns that delivery worker.
-`terminalWebhook.token` and any future credential fields are buyer secrets:
-encrypt persistent records, restrict worker access, redact logs and errors,
-delete records after the retry window, and never put them in buyer-visible task
-results.
-
 ## When a tool is HITL-capable
 
 Only tools whose wire response defines a `Submitted` arm: `create_media_buy`, `sync_creatives`. Other tools (`update_media_buy`, `get_products`) are sync-only — operator re-approval flows surface eventual transitions via `publishStatusChange(...)` rather than HITL on the call itself.

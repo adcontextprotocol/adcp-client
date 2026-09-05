@@ -21,7 +21,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AdcpStructuredError, ExternalTaskWebhookDelivery, TaskHandoffProgress } from '../async-outcome';
+import type { AdcpStructuredError, TaskHandoffProgress } from '../async-outcome';
 import { stripCtxMetadata, stripImplementationConfig } from '../../ctx-metadata';
 import { sanitizeStructuredAdcpError } from '../../errors';
 
@@ -152,19 +152,10 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
    * single-shot polling.
    */
   hasWebhook?: boolean;
-  /**
-   * Internal terminal-delivery owner for a push-enabled task. `external`
-   * means the adopter has explicitly assumed delivery, so registry-only
-   * worker settlement must not redirect it to SDK push settlement.
-   */
-  webhookDelivery?: TaskWebhookDelivery;
   /** ISO 8601 timestamps. */
   createdAt: string;
   updatedAt: string;
 }
-
-/** Internal owner of a task's terminal push notification delivery. */
-export type TaskWebhookDelivery = 'framework' | 'external';
 
 export interface TaskRegistryListOptions {
   accountId: string;
@@ -233,14 +224,6 @@ export interface TaskRegistry {
   /** Confirms that lifecycle methods use the account/principal-scoped v1 signatures. */
   readonly scopeVersion: 1;
 
-  /**
-   * Declares support for the external-webhook ownership contract. Version 1
-   * requires create() to durably preserve `webhookDelivery: 'external'`.
-   * Required before externally managed webhook handoffs can be acknowledged;
-   * custom registries that do not explicitly advertise it fail before create().
-   */
-  readonly webhookDeliveryVersion?: 1;
-
   /** Whether stored rows can be reopened by a different process after restart. */
   readonly durability?: 'durable' | 'process-local';
 
@@ -257,10 +240,8 @@ export interface TaskRegistry {
    * framework passes to the handoff context. Initial status is `submitted`.
    *
    * `hasWebhook: true` when dispatch has both a buyer
-   * `push_notification_config.url` and a configured delivery owner
-   * — surfaced via `tasks_get`'s `has_webhook` field. `webhookDelivery`
-   * records whether that owner is the framework or an explicitly attested
-   * external adopter. Defaults to no webhook.
+   * `push_notification_config.url` and an emitter capable of delivering it
+   * — surfaced via `tasks_get`'s `has_webhook` field. Defaults to `false`.
    *
    * `overrideTaskId` — when set, the registry uses this exact string as the
    * task id instead of minting a fresh one. Throws if the id is already
@@ -272,7 +253,6 @@ export interface TaskRegistry {
     accountId: string;
     ownerScope?: string;
     hasWebhook?: boolean;
-    webhookDelivery?: TaskWebhookDelivery;
     overrideTaskId?: string;
   }): Promise<ScopedTaskRef>;
 
@@ -373,7 +353,6 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
 
   return {
     scopeVersion: 1,
-    webhookDeliveryVersion: 1,
     durability: 'process-local',
     get registryId(): string {
       return registryId;
@@ -383,7 +362,6 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
       accountId: string;
       ownerScope?: string;
       hasWebhook?: boolean;
-      webhookDelivery?: TaskWebhookDelivery;
       overrideTaskId?: string;
     }): Promise<ScopedTaskRef> {
       const taskId = opts.overrideTaskId ?? `task_${randomUUID()}`;
@@ -400,7 +378,6 @@ export function createInMemoryTaskRegistry(): TaskRegistry {
         ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
         status: 'submitted',
         ...(opts.hasWebhook && { hasWebhook: true }),
-        ...(opts.webhookDelivery !== undefined && { webhookDelivery: opts.webhookDelivery }),
         createdAt: now,
         updatedAt: now,
       });
@@ -556,101 +533,12 @@ async function ensureWorkerSettlementIsSafe(
   if (mismatch) return mismatch;
   const record = await registry.getTask(ref.taskId, ref);
   if (record == null) return { outcome: 'not_found_in_scope' };
-  if (record.webhookDelivery === 'external') {
-    throw new Error(
-      'Externally managed task webhooks must use settleScopedExternallyManagedWebhookTask() so terminal delivery is durably recorded before task completion.'
-    );
-  }
   if (record.hasWebhook) {
     throw new Error(
       'Registry-only scoped settlement is unavailable for tasks with push notifications. Use createPostgresTaskSettlementCoordinator() with completeScopedPushTask()/failScopedPushTask() for crash-safe PostgreSQL settlement.'
     );
   }
   return undefined;
-}
-
-/** Terminal state supplied to an adopter-owned external webhook outbox. */
-export type ExternallyManagedTaskWebhookTerminal =
-  | { status: 'completed'; result: unknown }
-  | { status: 'failed'; error: AdcpStructuredError; result?: unknown }
-  | { status: 'rejected'; result: unknown; reason?: string };
-
-/**
- * Adapter boundary that stages a terminal webhook in the adopter's durable
- * outbox. It MUST commit the task reference, terminal state, validated webhook
- * configuration, and a retryable at-least-once delivery record together.
- */
-export interface ExternallyManagedTaskWebhookDeliveryStore {
-  recordTerminalDelivery(input: {
-    taskRef: ScopedTaskRef;
-    webhook: ExternalTaskWebhookDelivery;
-    terminal: ExternallyManagedTaskWebhookTerminal;
-  }): Promise<void>;
-}
-
-async function ensureExternalWorkerSettlementIsSafe(
-  registry: TaskRegistry,
-  ref: ScopedTaskRef
-): Promise<TaskMutationOutcome | undefined> {
-  const mismatch = verifyWorkerRefBinding(registry, ref);
-  if (mismatch) return mismatch;
-  const record = await registry.getTask(ref.taskId, ref);
-  if (record == null) return { outcome: 'not_found_in_scope' };
-  if (record.webhookDelivery !== 'external') {
-    throw new Error('External webhook settlement requires a task created with externally managed webhook delivery.');
-  }
-  return undefined;
-}
-
-/**
- * Settle an externally owned push task only after its terminal notification is
- * durably staged by the adopter. The SDK never sends or observes that delivery.
- */
-export async function settleScopedExternallyManagedWebhookTask(
-  registry: TaskRegistry,
-  ref: ScopedTaskRef,
-  webhook: ExternalTaskWebhookDelivery,
-  terminal: ExternallyManagedTaskWebhookTerminal,
-  deliveryStore: ExternallyManagedTaskWebhookDeliveryStore
-): Promise<TaskMutationOutcome> {
-  const refused = await ensureExternalWorkerSettlementIsSafe(registry, ref);
-  if (refused) return refused;
-  if (deliveryStore == null || typeof deliveryStore.recordTerminalDelivery !== 'function') {
-    throw new TypeError('Externally managed webhook settlement requires deliveryStore.recordTerminalDelivery().');
-  }
-
-  const sanitizedTerminal: ExternallyManagedTaskWebhookTerminal =
-    terminal.status === 'completed'
-      ? { status: 'completed', result: sanitizeTaskResultForWire(terminal.result, ref) }
-      : terminal.status === 'failed'
-        ? {
-            status: 'failed',
-            error: sanitizeStructuredAdcpError(terminal.error),
-            ...(terminal.result !== undefined && { result: sanitizeTaskResultForWire(terminal.result, ref) }),
-          }
-        : {
-            status: 'rejected',
-            result: sanitizeTaskResultForWire(terminal.result, ref),
-            ...(terminal.reason !== undefined && { reason: terminal.reason }),
-          };
-  await deliveryStore.recordTerminalDelivery({ taskRef: ref, webhook, terminal: sanitizedTerminal });
-
-  if (sanitizedTerminal.status === 'completed') {
-    return requireMutationOutcome(await registry.complete(ref.taskId, ref, sanitizedTerminal.result));
-  }
-  if (sanitizedTerminal.status === 'failed') {
-    return requireMutationOutcome(
-      await registry.fail(ref.taskId, ref, sanitizedTerminal.error, sanitizedTerminal.result)
-    );
-  }
-  if (typeof registry.reject !== 'function') {
-    throw new Error(
-      'TaskRegistry does not implement reject(). Upgrade the custom registry before using externally managed rejection settlement.'
-    );
-  }
-  return requireMutationOutcome(
-    await registry.reject(ref.taskId, ref, sanitizedTerminal.result, sanitizedTerminal.reason)
-  );
 }
 
 function stripIssuedTaskRef(value: unknown, ref: ScopedTaskRef): void {
@@ -713,14 +601,11 @@ function sanitizeEmbeddedStructuredErrors(value: unknown): void {
  * A terminal task artifact is itself buyer-visible, rather than necessarily a
  * Product carrier. Strip its root implementation configuration explicitly;
  * the generic product sanitizer intentionally only strips known carriers.
- * `terminalWebhook` is server-only external-worker configuration and can
- * contain a buyer token, so it must never become a task result either.
  */
 export function sanitizeTaskResultForWire<T>(result: T, taskRef?: ScopedTaskRef): T {
   if (result != null && typeof result === 'object') {
     const record = result as Record<string, unknown>;
     delete record.implementation_config;
-    delete record.terminalWebhook;
     stripCtxMetadata(record);
     stripImplementationConfig(record);
     sanitizeEmbeddedStructuredErrors(result);
