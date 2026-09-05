@@ -204,7 +204,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
   }
 });
 
-test('e2e: getProducts rejects wholesale push before proposal finalization (#2836)', async () => {
+test('e2e: public preflight rejects wholesale refine finalize before proposal finalization', async () => {
   const store = new InMemoryProposalStore();
   store.putDraft({
     proposalId: 'p1',
@@ -228,15 +228,6 @@ test('e2e: getProducts rejects wholesale push before proposal finalization (#283
       version: '1.0',
       proposalStore: store,
       validation: { requests: 'off', responses: 'off' },
-      taskWebhookEmitter: {
-        emit: async params => ({
-          delivery_id: params.delivery_id,
-          idempotency_key: 'test-delivery',
-          attempts: 1,
-          delivered: true,
-          errors: [],
-        }),
-      },
     }
   );
 
@@ -261,11 +252,10 @@ test('e2e: getProducts rejects wholesale push before proposal finalization (#283
 
   assert.strictEqual(response.isError, true);
   assert.strictEqual(response.structuredContent.adcp_error.code, 'INVALID_REQUEST');
-  assert.strictEqual(response.structuredContent.adcp_error.field, 'push_notification_config');
-  assert.strictEqual(response.structuredContent.adcp_error.recovery, 'correctable');
+  assert.strictEqual(response.structuredContent.adcp_error.field, 'refine');
   assert.strictEqual(
     response.structuredContent.adcp_error.message,
-    'get_products buying_mode=wholesale is synchronous and does not support push_notification_config; use incomplete[] for partial feed results.'
+    'get_products finalize requires buying_mode refine and an exclusive array of proposal-scoped finalize entries with non-empty proposal_id values'
   );
   assert.strictEqual(finalizeCalls, 0, 'finalizeProposal must not run');
 });
