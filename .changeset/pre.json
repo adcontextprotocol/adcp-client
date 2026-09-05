@@ -91,6 +91,7 @@
     "gentle-tasks-keep-account-scope",
     "grader-standalone-transport-default",
     "green-queues-preserve-context",
+    "harden-codeql-findings",
     "honest-betas-preserve",
     "live-signals-cancel",
     "quick-gap-schemas",

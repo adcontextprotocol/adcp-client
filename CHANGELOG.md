@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-rc.33
+
+### Patch Changes
+
+- 2466113: Harden diagnostic parsing, Markdown escaping, OAuth logging, credential-derived MCP cache identifiers, and structured logger metadata against CodeQL-identified security risks. Logger handlers now receive credential-redacted, non-mutating metadata copies by default; custom handlers that provide equivalent protection can opt out with `redactCredentials: false`.
+
 ## 14.0.0-rc.32
 
 ### Major Changes
