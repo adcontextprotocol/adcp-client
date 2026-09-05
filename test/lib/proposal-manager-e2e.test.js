@@ -163,7 +163,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
       },
     };
     const server = createAdcpServerFromPlatform(
-      buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.0' } }),
+      buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.1' } }),
       {
         name: `push-before-finalize-${label}`,
         version: '1.0',
@@ -179,7 +179,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
         params: {
           name: 'get_products',
           arguments: {
-            adcp_version: '3.2.0-rc.0',
+            adcp_version: '3.2.0-rc.1',
             buying_mode: 'refine',
             refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
             push_notification_config,
@@ -198,7 +198,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
         method: 'tools/call',
         params: {
           name: 'get_products',
-          arguments: { adcp_version: '3.2.0-rc.0', buying_mode: 'brief', push_notification_config },
+          arguments: { adcp_version: '3.2.0-rc.1', buying_mode: 'brief', push_notification_config },
         },
       },
       { authInfo }
@@ -390,7 +390,7 @@ test('e2e: response summaries fail closed outside native getProducts', async () 
     proposalManager: undefined,
     sales: { getProducts: async () => ({ products: [], cache_scope: 'public' }) },
   });
-  platform.capabilities.adcp_version = '3.2.0-rc.0';
+  platform.capabilities.adcp_version = '3.2.0-rc.1';
   platform.mediaBuyLifecycle = {
     listProducts: async () =>
       withResponseSummary({ products: [], feed_version: 'feed_1' }, 'Unsupported summary text.'),
@@ -410,7 +410,7 @@ test('e2e: response summaries fail closed outside native getProducts', async () 
   assert.strictEqual(response.isError, true);
   assert.notStrictEqual(response.content[0].text, 'Unsupported summary text.');
   assert.notDeepStrictEqual(response.structuredContent, {
-    adcp_version: '3.2-rc.0',
+    adcp_version: '3.2-rc.1',
   });
 
   const proposalStore = new InMemoryProposalStore();

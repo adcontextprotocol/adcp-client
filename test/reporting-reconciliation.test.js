@@ -47,6 +47,7 @@ const digest = {
 };
 const revision = {
   reporting_revision_id: 'revision-august-official',
+  revision_content_sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
   report_definition_id: 'billing-v1',
   report_definition_uri: 'https://schemas.example/report-definitions/billing-v1.json',
   report_definition_sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
@@ -231,7 +232,18 @@ function response(receipts = []) {
 
 test('runtime response validation requires the current reporting evidence overlay', () => {
   const schema = TOOL_RESPONSE_SCHEMAS.get_reporting_status;
-  assert.equal(schema.safeParse(response([])).success, true);
+  const valid = response([]);
+  valid.periods[0].health = 'action_required';
+  valid.periods[0].issues = [
+    {
+      issue_id: 'receipt-required-billing',
+      code: 'RECEIPT_REQUIRED',
+      severity: 'action_required',
+      responsible_party: 'buyer',
+      recommended_action: 'wait_for_retry',
+    },
+  ];
+  assert.equal(schema.safeParse(valid).success, true);
 
   const missingCoverage = response([]);
   delete missingCoverage.periods[0].coverage;

@@ -234,10 +234,10 @@ describe('schema-driven validation', () => {
     test('accepts SDK-stamped adcp_version through nested compact commitment aliases', () => {
       for (const tool of ['buy_products', 'accept_proposal']) {
         for (const response of [
-          compactCommitmentResponse({ adcp_version: '3.2-rc.0' }),
-          failedCompactCommitmentResponse({ adcp_version: '3.2-rc.0' }),
+          compactCommitmentResponse({ adcp_version: '3.2-rc.1' }),
+          failedCompactCommitmentResponse({ adcp_version: '3.2-rc.1' }),
         ]) {
-          const outcome = validateResponse(tool, response, '3.2.0-rc.0');
+          const outcome = validateResponse(tool, response, '3.2.0-rc.1');
           assert.strictEqual(outcome.valid, true, `${tool} ${response.status}: ${formatIssues(outcome.issues)}`);
         }
       }
@@ -246,7 +246,7 @@ describe('schema-driven validation', () => {
     test('compact commitment relaxation does not make nested bodies permissive', () => {
       const response = compactCommitmentResponse();
       response.accepted_proposal.commercial_terms.unknown_nested_field = 'typo';
-      const outcome = validateResponse('buy_products', response, '3.2.0-rc.0');
+      const outcome = validateResponse('buy_products', response, '3.2.0-rc.1');
       assert.ok(
         outcome.issues.some(
           issue =>

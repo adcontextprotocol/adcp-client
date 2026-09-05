@@ -2313,6 +2313,11 @@ export function coalesceDefinitionKeywords(schema: any): any {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return schema;
   if (!schema.definitions || !schema.$defs) return schema;
 
+  // Work on an emit-only copy. RC.1 bundles can contain both definition
+  // keywords in nested response schemas; callers also use this helper to
+  // inspect source contracts, which must remain untouched.
+  schema = JSON.parse(JSON.stringify(schema));
+
   const collisions = Object.keys(schema.definitions).filter(name => name in schema.$defs);
   if (collisions.length > 0) {
     throw new Error(`Cannot merge definitions and $defs with duplicate names: ${collisions.join(', ')}`);

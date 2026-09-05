@@ -1,11 +1,11 @@
 {
   "mode": "pre",
-  "tag": "beta",
+  "tag": "rc",
   "initialVersions": {
-    "@adcp/sdk": "13.0.0",
+    "@adcp/sdk": "14.0.0-beta.31",
     "@adcp/client": "6.0.0",
-    "@adcp/eslint-plugin": "0.1.7",
-    "@adcp/reference-renderers": "0.0.0"
+    "@adcp/eslint-plugin": "0.1.8-beta.1",
+    "@adcp/reference-renderers": "1.0.0-beta.1"
   },
   "changesets": [
     "add-reference-renderers",

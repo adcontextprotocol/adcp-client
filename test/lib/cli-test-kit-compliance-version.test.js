@@ -327,7 +327,7 @@ describe('storyboard run --test-kit compliance-line selection', () => {
   });
 
   test('malformed test-kit YAML never echoes source credentials', () => {
-    const fixture = createTestKitCache('3.2.0-rc.0');
+    const fixture = createTestKitCache('3.2.0-rc.1');
     const secret = 'sk-cli-secret-that-must-not-reach-stderr';
     writeFileSync(fixture.testKitPath, `auth: [${secret}`);
     try {
@@ -350,7 +350,7 @@ describe('storyboard run --test-kit compliance-line selection', () => {
   });
 
   test('a falsy parsed --test-kit is forwarded and rejected instead of falling back to disk', () => {
-    const fixture = createTestKitCache('3.2.0-rc.0');
+    const fixture = createTestKitCache('3.2.0-rc.1');
     writeFileSync(fixture.testKitPath, 'null\n');
     try {
       const result = runCli([

@@ -583,11 +583,11 @@ Request parameters for retrieving media buy status, creative approvals, and deli
 Request parameters for retrieving comprehensive delivery metrics.
 
 **Request:**
-- Optional: `account: Account Ref`, `media_buy_ids: string[]`, `status_filter: Media Buy Status | Media Buy Status[]`, `start_date: string`, `end_date: string`, `include_package_daily_breakdown: boolean`, `requested_metrics: Available Metric[]`, `time_granularity: Reporting Frequency`, +4 more
+- Optional: `account: Account Ref`, `media_buy_ids: string[]`, `reporting_revision_id: string`, `pagination: Pagination Request`, `status_filter: Media Buy Status | Media Buy Status[]`, `start_date: string`, `end_date: string`, `include_package_daily_breakdown: boolean`, +6 more
 
 **Response (success branch):**
-- Required: `reporting_period: object`, `currency: string`, `media_buy_deliveries: object[]`
-- Optional: `notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update'`, `partial_data: boolean`, `unavailable_count: integer`, `sequence_number: integer`, `next_expected_at: string`, `attribution_window: Attribution Window`, `aggregated_totals: object`, `errors: Error[]`, +2 more
+- Required: `reporting_period: object`, `media_buy_deliveries: object[]`
+- Optional: `notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update'`, `partial_data: boolean`, `unavailable_count: integer`, `sequence_number: integer`, `next_expected_at: string`, `reporting_revision_binding: object`, `reporting_revision: Reporting Revision`, `reporting_rows: object[]`, +7 more
 
 #### `get_reporting_status`
 
@@ -595,22 +595,22 @@ Request parameters for reconciling managed reporting obligations, revisions, and
 
 **Request:**
 - Required: `account: Canonical Account Ref`, `view: 'summary' | 'periods' | 'revision'`
-- Optional: `media_buy_ids: string[]`, `delivery_config_ids: string[]`, `feed_purposes: ('pacing' | 'analytics' | 'billing')[]`, `period: object`, `health: Reporting Health[]`, `finality: Reporting Finality[]`, `reporting_revision_id: string`, `pagination: Pagination Request`, +1 more
+- Optional: `media_buy_ids: string[]`, `delivery_config_ids: string[]`, `feed_purposes: ('pacing' | 'analytics' | 'billing')[]`, `period: object`, `health: Reporting Health[]`, `finality: Reporting Finality[]`, `reporting_revision_id: string`, `changes_after: string`, +2 more
 
 **Response (success branch):**
 - Required: `status: 'completed'`
-- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, `data_through: string,null`, +11 more
+- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `changes_checkpoint: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, +14 more
 
 #### `sync_reporting_receipts`
 
 Submit authenticated consumer reconciliation receipts for durable reporting materializations.
 
 **Request:**
-- Required: `account: Canonical Account Ref`, `idempotency_key: string`, `receipts: object[]`
-- Optional: `adcp_version: string`, `context: Context`
+- Required: `account: Canonical Account Ref`, `idempotency_key: string`
+- Optional: `adcp_version: string`, `receipts: object[]`, `adjustment_receipts: object[]`, `context: Context`
 
 **Response (success branch):**
-- Required: `status: 'completed'`, `results: (Recorded reporting receipt | Unchanged reporting receipt | Failed reporting receipt)[]`
+- Required: `status: 'completed'`, `results: union[]`
 - Optional: `context: Context`
 
 #### `provide_performance_feedback`
@@ -1595,6 +1595,12 @@ Flow: `get_media_buys → comply_test_controller → get_media_buy_delivery`
 **End-to-end vendor-metric accountability: declaration → commitment → delivery audit** — Buyer commits vendor metrics on two packages, then verifies one clean package, one overdue gap, and one not-yet-measurable omission.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
+**Reliable Reporting: Managed Delivery** — Validates the Managed Delivery tier's explicit capability, atomic managed offering, resource retention, and authorization-revocation contract.
+Flow: `get_adcp_capabilities → comply_test_controller → get_reporting_status → comply_test_controller`
+
+**Reliable Reporting: Reconciled Billing** — Validates the Reconciled Billing tier's canonical evidence and authenticated receipt path for official revisions and later adjustments.
+Flow: `get_adcp_capabilities → comply_test_controller → get_reporting_status → sync_reporting_receipts → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_receipts → get_reporting_status → sync_reporting_receipts → get_reporting_status`
+
 ### Products
 
 **Canonical formats and deprecated named-format compatibility** — Validates canonical product formats and the optional, explicitly deprecated named-format compatibility projection.
@@ -1706,11 +1712,11 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 **Read-tool idempotency_key tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade accept an optional idempotency_key without strict wrapper rejection.
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
 
-**Reporting Core declaration** — Validates that reporting.core is advertised without requiring optional reporting tiers or a sandbox controller.
+**Reliable Reporting: Core declaration** — Validates the proper-name Reliable Reporting 1.0 declaration and its required Core tier without requiring optional tiers or a sandbox controller.
 Flow: `get_adcp_capabilities`
 
-**Reporting Core lifecycle** — Validates reporting.core obligation-before-report behavior, clock-derived health, and explicit zero-row reporting.
-Flow: `comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status`
+**Reliable Reporting: Core lifecycle** — Validates reporting.core obligation-before-report behavior, clock-derived health, and explicit zero-row reporting.
+Flow: `comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → get_media_buy_delivery → comply_test_controller → get_reporting_status → get_media_buy_delivery → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status`
 
 **Schema compliance — signals protocol** — Validates that signals agent responses conform to AdCP schemas with all required fields present and correctly typed.
 Flow: `get_adcp_capabilities → get_signals`

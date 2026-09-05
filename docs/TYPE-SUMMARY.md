@@ -1221,6 +1221,8 @@ _Request:_
 {
   account: Account Ref
   media_buy_ids: string[]
+  reporting_revision_id: string
+  pagination: Pagination Request
   status_filter: Media Buy Status | Media Buy Status[]
   start_date: string
   end_date: string
@@ -1238,13 +1240,17 @@ _Response (success branch):_
 ```
 {
   reporting_period: object  // required
-  currency: string  // required
   media_buy_deliveries: object[]  // required
   notification_type: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update'
   partial_data: boolean
   unavailable_count: integer
   sequence_number: integer
   next_expected_at: string
+  reporting_revision_binding: object
+  reporting_revision: Reporting Revision
+  reporting_rows: object[]
+  pagination: Pagination Response
+  currency: string
   attribution_window: Attribution Window
   aggregated_totals: object
   errors: Error[]
@@ -1269,6 +1275,7 @@ _Request:_
   health: Reporting Health[]
   finality: Reporting Finality[]
   reporting_revision_id: string
+  changes_after: string
   pagination: Pagination Request
   context: Context
 }
@@ -1281,6 +1288,7 @@ _Response (success branch):_
   view: 'summary' | 'periods' | 'revision'
   ledger_snapshot_id: string
   ledger_as_of: string
+  changes_checkpoint: string
   account_id: string
   scope: object
   health: Reporting Health
@@ -1291,6 +1299,8 @@ _Response (success branch):_
   issues: Reporting Status Issue[]
   periods: Reporting Obligation[]
   revisions: Reporting Revision[]
+  adjustments: Reporting Adjustment[]
+  adjustment_receipts: Reporting Adjustment Receipt[]
   pagination: Pagination Response
   revision: Reporting Revision
   materializations: Reporting Materialization[]
@@ -1309,8 +1319,9 @@ _Request:_
 {
   account: Canonical Account Ref  // required
   idempotency_key: string  // required
-  receipts: object[]  // required
   adcp_version: string
+  receipts: object[]
+  adjustment_receipts: object[]
   context: Context
 }
 ```
@@ -1319,7 +1330,7 @@ _Response (success branch):_
 ```
 {
   status: 'completed'  // required
-  results: (Recorded reporting receipt | Unchanged reporting receipt | Failed reporting receipt)[]  // required
+  results: union[]  // required
   context: Context
 }
 ```

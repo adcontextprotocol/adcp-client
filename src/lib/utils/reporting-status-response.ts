@@ -59,6 +59,10 @@ function isReportingStatusIssue(value: unknown): boolean {
       'RESOURCE_EXPIRED',
       'READER_INCOMPATIBLE',
       'HISTORY_UNAVAILABLE',
+      'RECEIPT_REQUIRED',
+      'RECEIPT_REJECTED',
+      'ADJUSTMENT_RECEIPT_REQUIRED',
+      'ADJUSTMENT_RECEIPT_REJECTED',
     ].includes(String(value.code)) &&
     ['delayed', 'action_required'].includes(String(value.severity)) &&
     ['buyer', 'seller', 'provider'].includes(String(value.responsible_party)) &&
@@ -306,6 +310,7 @@ function isCanonicalDigest(value: unknown): boolean {
 function isReportingRevision(value: unknown): boolean {
   const fields = [
     'reporting_revision_id',
+    'revision_content_sha256',
     'report_definition_id',
     'report_definition_uri',
     'report_definition_sha256',
@@ -349,6 +354,8 @@ function isReportingRevision(value: unknown): boolean {
   }
   return (
     isNonEmptyString(value.reporting_revision_id) &&
+    typeof value.revision_content_sha256 === 'string' &&
+    SHA256_HEX.test(value.revision_content_sha256) &&
     isNonEmptyString(value.report_definition_id) &&
     isNonEmptyString(value.report_definition_uri) &&
     typeof value.report_definition_sha256 === 'string' &&

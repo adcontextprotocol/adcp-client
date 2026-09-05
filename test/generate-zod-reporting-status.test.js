@@ -89,20 +89,29 @@ function response() {
         required_finality: 'official',
         reconciliation_mode: 'consumer_receipt',
         reconciliation_status: 'pending',
-        health: 'waiting',
+        health: 'action_required',
         production_status: 'published',
         revision_count: 1,
         materialization_count: 1,
         successful_materialization_count: 1,
         receipt_count: 0,
         accepted_receipt_count: 0,
-        issues: [],
+        issues: [
+          {
+            issue_id: 'receipt-required-billing',
+            code: 'RECEIPT_REQUIRED',
+            severity: 'action_required',
+            responsible_party: 'buyer',
+            recommended_action: 'wait_for_retry',
+          },
+        ],
         resource_retained_until: '2026-12-01T00:00:00Z',
       },
     ],
     revisions: [
       {
         reporting_revision_id: 'revision-august-official',
+        revision_content_sha256: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
         report_definition_id: 'billing-v1',
         report_definition_uri: 'https://schemas.example/report-definitions/billing-v1.json',
         report_definition_sha256: 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
@@ -292,6 +301,8 @@ test('generated reporting-status Zod matches authoritative required and closed e
   delete missingCoverageTimestamp.periods[0].coverage.evaluated_at;
   const missingCanonicalizationUri = response();
   delete missingCanonicalizationUri.revisions[0].canonical_content_digest.canonicalization_uri;
+  const missingRevisionContentSha256 = response();
+  delete missingRevisionContentSha256.revisions[0].revision_content_sha256;
   const digestWithExtraField = response();
   digestWithExtraField.revisions[0].canonical_content_digest.untrusted_extra = true;
   const coverageWithExtraField = response();
@@ -354,6 +365,7 @@ test('generated reporting-status Zod matches authoritative required and closed e
     missingCoverage,
     missingCoverageTimestamp,
     missingCanonicalizationUri,
+    missingRevisionContentSha256,
     digestWithExtraField,
     coverageWithExtraField,
     materializationWithExtraField,
@@ -385,7 +397,7 @@ test('generated reporting-status Zod matches authoritative required and closed e
 
   assert.deepEqual(authoritative, [
     true,
-    ...Array(8).fill(false),
+    ...Array(9).fill(false),
     true,
     false,
     true,
