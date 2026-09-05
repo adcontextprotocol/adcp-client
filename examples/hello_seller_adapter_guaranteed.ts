@@ -1380,6 +1380,11 @@ const storyboardTaskWebhookEmitter =
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify(payload),
+            // This emitter exists only for the local compliance storyboard.
+            // Never follow a buyer-controlled redirect, and bound a stalled
+            // receiver so the development process can cleanly terminate.
+            redirect: 'error',
+            signal: AbortSignal.timeout(10_000),
           });
           if (!response.ok) throw new Error(`Storyboard webhook receiver returned HTTP ${response.status}`);
           return {

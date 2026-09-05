@@ -4465,6 +4465,21 @@ function pushOperationIdError(
   if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
   const config = params.push_notification_config;
   if (config === undefined) return undefined;
+  // The decisioning runtime owns the full push-config shape validation so it
+  // can reject malformed supplied config at the precise field before any
+  // platform handler runs. Do not let this beta.5 operation-id guard mask a
+  // null/primitive/array config, a non-string URL, or an invalid own token.
+  // Once the basic delivery shape is valid, preserve the early operation-id
+  // refusal required by beta.5+ even when request-schema validation is off.
+  if (
+    config === null ||
+    typeof config !== 'object' ||
+    Array.isArray(config) ||
+    typeof (config as { url?: unknown }).url !== 'string' ||
+    (Object.prototype.hasOwnProperty.call(config, 'token') && typeof (config as { token?: unknown }).token !== 'string')
+  ) {
+    return undefined;
+  }
   if (
     !isPlainObject(config) ||
     typeof config.operation_id !== 'string' ||

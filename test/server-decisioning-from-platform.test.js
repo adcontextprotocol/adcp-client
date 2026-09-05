@@ -8264,7 +8264,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
     };
   }
 
-  async function dispatchWithPushConfig(server, pushNotificationConfig) {
+  async function dispatchWithPushConfig(server, pushNotificationConfig, { includePushConfig = true } = {}) {
     return server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -8276,7 +8276,7 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: 'acc_1' },
-          push_notification_config: pushNotificationConfig,
+          ...(includePushConfig && { push_notification_config: pushNotificationConfig }),
         },
       },
     });
@@ -8315,6 +8315,108 @@ describe('Push notification webhook URL/token validation (B5/B6)', () => {
       }
     );
   }
+
+  it('rejects every malformed supplied push config before platform or task work when request validation is off (#2836)', async () => {
+    const malformedConfigs = [
+      ['null config', null, 'push_notification_config'],
+      ['string config', 'not-an-object', 'push_notification_config'],
+      ['number config', 42, 'push_notification_config'],
+      ['boolean config', true, 'push_notification_config'],
+      ['array config', [], 'push_notification_config'],
+      ['object without url', { operation_id: 'op_missing_url' }, 'push_notification_config.url'],
+      ['undefined url', { url: undefined, operation_id: 'op_undefined_url' }, 'push_notification_config.url'],
+      ['null url', { url: null, operation_id: 'op_null_url' }, 'push_notification_config.url'],
+      ['numeric url', { url: 42, operation_id: 'op_numeric_url' }, 'push_notification_config.url'],
+      ['array url', { url: [], operation_id: 'op_array_url' }, 'push_notification_config.url'],
+      [
+        'undefined own token',
+        { url: 'https://buyer.example.com/webhook', token: undefined, operation_id: 'op_undefined_token' },
+        'push_notification_config.token',
+      ],
+      [
+        'null own token',
+        { url: 'https://buyer.example.com/webhook', token: null, operation_id: 'op_null_token' },
+        'push_notification_config.token',
+      ],
+      [
+        'numeric own token',
+        { url: 'https://buyer.example.com/webhook', token: 42, operation_id: 'op_numeric_token' },
+        'push_notification_config.token',
+      ],
+      [
+        'array own token',
+        { url: 'https://buyer.example.com/webhook', token: [], operation_id: 'op_array_token' },
+        'push_notification_config.token',
+      ],
+    ];
+
+    for (const [label, pushNotificationConfig, field] of malformedConfigs) {
+      let handlerCalls = 0;
+      let callbackCalls = 0;
+      let createCalls = 0;
+      const taskRegistry = createInMemoryTaskRegistry();
+      const create = taskRegistry.create.bind(taskRegistry);
+      taskRegistry.create = async args => {
+        createCalls += 1;
+        return create(args);
+      };
+      const platform = buildHitlPlatform(async () => {
+        callbackCalls += 1;
+        return { media_buy_id: 'must-not-run' };
+      });
+      platform.sales.createMediaBuy = (_req, ctx) => {
+        handlerCalls += 1;
+        return ctx.handoffToTask(async () => {
+          callbackCalls += 1;
+          return { media_buy_id: 'must-not-run' };
+        });
+      };
+      const server = createAdcpServerFromPlatform(platform, {
+        name: `malformed-push-config-${label}`,
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+        taskWebhookEmitter: { emit: async () => ({ delivered: true, attempts: 1, errors: [] }) },
+      });
+
+      const result = await dispatchWithPushConfig(server, pushNotificationConfig);
+      assert.strictEqual(result.isError, true, label);
+      assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+      assert.strictEqual(result.structuredContent.adcp_error.field, field, label);
+      assert.strictEqual(handlerCalls, 0, `${label}: platform handler must not run`);
+      assert.strictEqual(createCalls, 0, `${label}: TaskRegistry.create must not run`);
+      assert.strictEqual(callbackCalls, 0, `${label}: handoff callback must not run`);
+    }
+  });
+
+  it('keeps omitted and explicit undefined push config polling-only when request validation is off (#2836)', async () => {
+    for (const [label, pushNotificationConfig, includePushConfig] of [
+      ['omitted', undefined, false],
+      ['explicit undefined', undefined, true],
+    ]) {
+      let handlerCalls = 0;
+      let callbackCalls = 0;
+      const platform = buildHitlPlatform(async () => ({ media_buy_id: 'unused' }));
+      platform.sales.createMediaBuy = (_req, ctx) => {
+        handlerCalls += 1;
+        return ctx.handoffToTask(async () => {
+          callbackCalls += 1;
+          return { media_buy_id: 'polling-only' };
+        });
+      };
+      const server = createAdcpServerFromPlatform(platform, {
+        name: `undefined-push-config-${label}`,
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+      });
+      const result = await dispatchWithPushConfig(server, pushNotificationConfig, { includePushConfig });
+      assert.notStrictEqual(result.isError, true, label);
+      assert.strictEqual(result.structuredContent.status, 'submitted', label);
+      await server.awaitTaskUnsafe(result.structuredContent.task_id);
+      assert.strictEqual(handlerCalls, 1, label);
+      assert.strictEqual(callbackCalls, 1, label);
+    }
+  });
 
   for (const [label, url, reasonFragment] of [
     ['RFC 1918 10/8', 'https://10.0.0.1/hook', 'RFC 1918 private range 10/8'],

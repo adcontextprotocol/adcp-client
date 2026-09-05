@@ -5827,32 +5827,51 @@ function extractPushConfig(
 ): { url?: string; token?: string; operationId?: string } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
-  if (!cfg || typeof cfg !== 'object') return {};
+  // `undefined` is the one supplied value that preserves the absent-config
+  // polling semantics. Every other supplied shape is an attempt to opt into
+  // terminal delivery and must fail visibly instead of being silently
+  // reinterpreted as polling-only when request validation is disabled.
+  if (cfg === undefined) return {};
+  if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config must be an object',
+      field: 'push_notification_config',
+    });
+  }
   const cfgObj = cfg as { url?: unknown; token?: unknown; operation_id?: unknown };
   const rawUrl = cfgObj.url;
   const rawToken = cfgObj.token;
   const rawOperationId = cfgObj.operation_id;
 
-  let url: string | undefined;
-  if (typeof rawUrl === 'string') {
-    const validation = validatePushNotificationUrl(rawUrl, { allowPrivate: opts.allowPrivateWebhookUrls === true });
-    if (!validation.ok) {
-      // Fail fast: buyers thought they wired push and never saw it under
-      // the previous silent-skip posture. Rejecting upfront with
-      // `INVALID_REQUEST` and `field: 'push_notification_config.url'`
-      // surfaces the problem at the request boundary so buyers can fix
-      // their config before relying on webhooks. Buyers can still poll
-      // via `tasks_get` if they need a fallback path.
-      throw new AdcpError('INVALID_REQUEST', {
-        message: `push_notification_config.url rejected: ${validation.reason}`,
-        field: 'push_notification_config.url',
-      });
-    }
-    url = rawUrl;
+  if (typeof rawUrl !== 'string') {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.url rejected: url must be a string',
+      field: 'push_notification_config.url',
+    });
   }
+  const validation = validatePushNotificationUrl(rawUrl, { allowPrivate: opts.allowPrivateWebhookUrls === true });
+  if (!validation.ok) {
+    // Fail fast: buyers thought they wired push and never saw it under
+    // the previous silent-skip posture. Rejecting upfront with
+    // `INVALID_REQUEST` and `field: 'push_notification_config.url'`
+    // surfaces the problem at the request boundary so buyers can fix
+    // their config before relying on webhooks. Buyers can still poll
+    // via `tasks_get` if they need a fallback path.
+    throw new AdcpError('INVALID_REQUEST', {
+      message: `push_notification_config.url rejected: ${validation.reason}`,
+      field: 'push_notification_config.url',
+    });
+  }
+  const url = rawUrl;
 
   let token: string | undefined;
-  if (typeof rawToken === 'string') {
+  if (Object.prototype.hasOwnProperty.call(cfgObj, 'token')) {
+    if (typeof rawToken !== 'string') {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'push_notification_config.token rejected: token must be a string',
+        field: 'push_notification_config.token',
+      });
+    }
     const validation = validatePushNotificationToken(rawToken);
     if (!validation.ok) {
       throw new AdcpError('INVALID_REQUEST', {
