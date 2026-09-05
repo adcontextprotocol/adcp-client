@@ -2584,6 +2584,9 @@ export class TaskExecutor {
   private externalTaskObservationKey(observation: ExternalTaskSettlementObservation): string {
     return createHmac('sha256', EXTERNAL_TASK_OBSERVATION_HMAC_KEY)
       .update(
+        // This keyed digest deduplicates canonical task observations; it does
+        // not store or verify passwords. Agent responses are over-tainted.
+        // codeql[js/insufficient-password-hash]
         canonicalize({
           status: observation.status,
           serverTaskId: observation.serverTaskId ?? null,

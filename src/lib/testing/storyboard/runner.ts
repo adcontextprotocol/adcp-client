@@ -8196,6 +8196,10 @@ function collectUpstreamIdentifierDigests(
 }
 
 function sha256Hex(value: string): string {
+  // Protocol-defined identifier proof: the receiver compares this exact
+  // SHA-256 value with `identifier_value_sha256`. It is not a credential or
+  // password verifier and cannot be replaced with a salted/KDF construction.
+  // codeql[js/insufficient-password-hash]
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 

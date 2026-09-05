@@ -186,6 +186,8 @@ export class CLIFlowHandler implements OAuthFlowHandler {
 
       this.server.listen(this.port, '127.0.0.1', () => {
         if (!this.quiet) {
+          // `port` is a numeric listener coordinate, not credential material.
+          // codeql[js/clear-text-logging]
           console.log(`Waiting for authorization callback on port ${this.port}...`);
           console.log('(Press Ctrl+C to cancel)');
           console.log('');

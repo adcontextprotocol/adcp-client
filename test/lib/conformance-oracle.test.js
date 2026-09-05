@@ -96,6 +96,47 @@ describe('conformance: oracle', () => {
     assert.ok(out.invariantFailures.some(f => f.includes('stack trace leak')));
   });
 
+  test('unindented JVM frame after an escaped newline → invariant failure', () => {
+    const out = accepted('get_signals', {
+      signals: [],
+      errors: [{ code: 'INTERNAL', message: 'failure\nat com.example.Handler.process(Handler.java:42)' }],
+    });
+    assert.equal(out.verdict, 'invalid');
+    assert.ok(out.invariantFailures.some(failure => failure.includes('stack trace leak')));
+  });
+
+  test('long indented non-frame lines do not trigger the JVM detector', () => {
+    const out = accepted('get_signals', {
+      signals: [],
+      errors: [{ code: 'NOTE', message: `documentation\n${' '.repeat(100_000)}not a stack frame` }],
+    });
+    assert.equal(out.verdict, 'accepted');
+    assert.deepEqual(out.invariantFailures, []);
+  });
+
+  test('JVM-looking prose with trailing text is not treated as a stack frame', () => {
+    const out = accepted('get_signals', {
+      signals: [],
+      errors: [
+        {
+          code: 'NOTE',
+          message: 'documentation\nat com.example.Handler.process(Handler.java:42) is shown as an example',
+        },
+      ],
+    });
+    assert.equal(out.verdict, 'accepted');
+    assert.deepEqual(out.invariantFailures, []);
+  });
+
+  test('JVM-looking prose punctuation is not mistaken for JSON framing', () => {
+    const out = accepted('get_signals', {
+      signals: [],
+      errors: [{ code: 'NOTE', message: 'documentation\nat com.example.Handler.process(Handler.java:42)},' }],
+    });
+    assert.equal(out.verdict, 'accepted');
+    assert.deepEqual(out.invariantFailures, []);
+  });
+
   test('.NET stack trace in response body → invariant failure', () => {
     const out = accepted('get_signals', {
       signals: [],

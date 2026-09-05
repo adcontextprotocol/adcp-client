@@ -1682,6 +1682,9 @@ function canonicalProposalTerms(value: unknown): string {
 }
 
 function digestCanonicalTerms(canonical: string): string {
+  // The negotiation protocol requires a SHA-256 digest of canonical proposal
+  // terms. This is content integrity, not password storage or verification.
+  // codeql[js/insufficient-password-hash]
   return `sha256:${createHash('sha256').update(canonical).digest('base64url')}`;
 }
 

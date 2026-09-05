@@ -19,6 +19,7 @@ const { writeFileSync } = require('node:fs');
 
 function escapeMarkdownCell(s) {
   return String(s ?? '')
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .replace(/\n/g, ' ');
 }
