@@ -204,6 +204,72 @@ test('e2e: getProducts validates push config before proposal finalization and no
   }
 });
 
+test('e2e: getProducts rejects wholesale push before proposal finalization (#2836)', async () => {
+  const store = new InMemoryProposalStore();
+  store.putDraft({
+    proposalId: 'p1',
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: 'p1' },
+  });
+  let finalizeCalls = 0;
+  const proposalManager = {
+    capabilities: { salesSpecialism: 'sales-guaranteed', finalize: true },
+    getProducts: async () => ({ products: [], proposals: [] }),
+    finalizeProposal: async () => {
+      finalizeCalls += 1;
+      throw new Error('must not finalize');
+    },
+  };
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.0' } }),
+    {
+      name: 'wholesale-push-before-finalize',
+      version: '1.0',
+      proposalStore: store,
+      validation: { requests: 'off', responses: 'off' },
+      taskWebhookEmitter: {
+        emit: async params => ({
+          delivery_id: params.delivery_id,
+          idempotency_key: 'test-delivery',
+          attempts: 1,
+          delivered: true,
+          errors: [],
+        }),
+      },
+    }
+  );
+
+  const response = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'get_products',
+        arguments: {
+          adcp_version: '3.2.0-rc.0',
+          buying_mode: 'wholesale',
+          refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+          push_notification_config: {
+            url: 'https://buyer.example.com/webhook',
+            operation_id: 'op_wholesale_finalize',
+          },
+        },
+      },
+    },
+    { authInfo }
+  );
+
+  assert.strictEqual(response.isError, true);
+  assert.strictEqual(response.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+  assert.strictEqual(response.structuredContent.adcp_error.field, 'push_notification_config');
+  assert.strictEqual(response.structuredContent.adcp_error.recovery, 'correctable');
+  assert.strictEqual(
+    response.structuredContent.adcp_error.message,
+    'get_products buying_mode=wholesale is synchronous and does not support push_notification_config; use incomplete[] for partial feed results.'
+  );
+  assert.strictEqual(finalizeCalls, 0, 'finalizeProposal must not run');
+});
+
 test('e2e: native getProducts can customize MCP text without changing structured payload', async () => {
   const disclosure = 'Synthetic sample data for demonstration only.';
   const sales = {
