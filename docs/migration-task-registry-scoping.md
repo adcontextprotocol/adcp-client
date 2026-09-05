@@ -112,10 +112,13 @@ The direct `completeScopedTask()` / `failScopedTask()` path is polling-only and
 continues to reject push-enabled tasks. A registry write by itself cannot
 durably promise the terminal webhook.
 
-For PostgreSQL deployments, use the transactional push coordinator. It writes
-the terminal task row and the webhook recovery outbox entry in one transaction,
-then lets the ordinary webhook recovery worker publish it. Both tables must use
-the same `pg.Pool` and database/schema:
+For application-managed push settlement, use the transactional PostgreSQL
+coordinator. This lower-level path is for integrations that independently
+create and own both the task and protected push registration outside the
+framework `TaskHandoff` path. It writes the terminal task row and webhook
+recovery outbox entry in one transaction, then lets the ordinary webhook
+recovery worker publish it. Both tables must use the same `pg.Pool` and
+database/schema:
 
 ```ts
 import {
@@ -130,9 +133,10 @@ import {
   TaskPushSettlementConfigurationError,
 } from '@adcp/sdk/server';
 
-// Integration sketch: pool, approvals, taskCtx, request, approvalInput,
+// Integration sketch: pool, approvals, applicationCreatedTask, approvalInput,
 // seal/openPushRoute, the KMS adapter, and signerKey are application-owned.
-// The queue must persist encrypted push state before the request process exits.
+// The application must have durably created the task and protected push route
+// before it schedules this worker path.
 
 await pool.query(getWebhookDeliveryRecoveryMigration({
   tableName: 'my_agent_task_webhook_outbox',
@@ -153,25 +157,14 @@ const settlements = createPostgresTaskSettlementCoordinator({
   authenticationAdapter: kmsWebhookAuthenticationAdapter,
 });
 
-// In the specialism handler, the submitted response waits until the queue
-// transaction durably stores the complete taskRef plus encrypted push route.
-// The callback's return leaves the task submitted; only the worker below may
-// make it terminal. A callback rejection fails the initial invocation.
-return ctx.handoffToTask(async taskCtx => {
-  await approvals.enqueue({
-    taskRef: taskCtx.taskRef,
-    push: await sealPushRoute({
-      url: request.push_notification_config.url,
-      operationId: request.push_notification_config.operation_id,
-      // Always persist the negotiated version. A valid pre-3.2 version is
-      // required when operationId is absent and the stable fallback is used.
-      servedAdcpVersion,
-      token: request.push_notification_config.token,
-      authentication: request.push_notification_config.authentication,
-    }),
-    request: approvalInput,
-  });
-}, { settlement: 'external' });
+// The application-managed task creation flow has already persisted the
+// complete scoped handle and encrypted push route. Queue only opaque protected
+// route state; never copy credentials into task results, logs, or dead letters.
+await approvals.enqueue({
+  taskRef: applicationCreatedTask.taskRef,
+  push: applicationCreatedTask.protectedPushRoute,
+  request: approvalInput,
+});
 
 // A different process, including after the request process restarted:
 const item = await approvals.claim();
@@ -262,14 +255,16 @@ queue, task result, logs, metrics, or dead-letter metadata.
 
 `updateScopedTaskProgress()` remains available for push-enabled tasks because
 progress does not create a terminal delivery obligation. Use
-`{ settlement: 'external' }` for every handoff owned by these helpers. Its
-registry must declare `durability: 'durable'` and issue a stable `registryId`;
-the built-in in-memory registry is process-local and is rejected before the
-producer runs or the buyer receives `submitted`. Its
+`{ settlement: 'external' }` only for polling-only framework handoffs; omit
+`push_notification_config`. Its registry must declare `durability: 'durable'`
+and issue a stable `registryId`; the built-in in-memory registry is process-local
+and is rejected before the producer runs or the buyer receives `submitted`. Its
 producer callback may enqueue work but cannot return a terminal artifact; even
 if that callback throws, the framework rejects the initial invocation, leaves
 the task internally submitted, and writes no webhook. The buyer never receives
-an acknowledgment before recoverable work exists.
+an acknowledgment before recoverable work exists. The push coordinator helpers
+above are instead for application-managed tasks and protected registrations;
+they do not make an external framework handoff push-capable.
 
 The framework owns normal in-process handoff settlement. The direct registry
 surface is specifically for trusted webhook/queue workers and explicit

@@ -121,6 +121,95 @@ test('e2e: getProducts routes through ProposalManager when wired', async () => {
   assert.strictEqual(calls.sales, 0, 'sales.getProducts should NOT fire when manager is wired');
 });
 
+test('e2e: getProducts validates push config before proposal finalization and normal manager dispatch (#2836)', async () => {
+  const invalidPushConfigs = [
+    ['malformed config', null, 'push_notification_config'],
+    [
+      'unsupported URL scheme',
+      { url: 'ftp://buyer.example.com/webhook', operation_id: 'op_unsupported_scheme' },
+      'push_notification_config.url',
+    ],
+    [
+      'link-local URL',
+      { url: 'http://169.254.169.254/webhook', operation_id: 'op_private_host' },
+      'push_notification_config.url',
+    ],
+    [
+      'invalid token',
+      { url: 'https://buyer.example.com/webhook', token: 'short', operation_id: 'op_short_token' },
+      'push_notification_config.token',
+    ],
+  ];
+
+  for (const [label, push_notification_config, field] of invalidPushConfigs) {
+    const store = new InMemoryProposalStore();
+    store.putDraft({
+      proposalId: 'p1',
+      accountId: 'acct_1',
+      recipes: new Map(),
+      proposalPayload: { proposal_id: 'p1' },
+    });
+    let finalizeCalls = 0;
+    let getProductsCalls = 0;
+    const proposalManager = {
+      capabilities: { salesSpecialism: 'sales-guaranteed', finalize: true },
+      getProducts: async () => {
+        getProductsCalls += 1;
+        return { products: [], proposals: [] };
+      },
+      finalizeProposal: async () => {
+        finalizeCalls += 1;
+        throw new Error('must not finalize');
+      },
+    };
+    const server = createAdcpServerFromPlatform(
+      buildPlatform({ proposalManager, sales: {}, capabilities: { adcp_version: '3.2.0-rc.0' } }),
+      {
+        name: `push-before-finalize-${label}`,
+        version: '1.0',
+        proposalStore: store,
+        idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const intercepted = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: {
+            adcp_version: '3.2.0-rc.0',
+            buying_mode: 'refine',
+            refine: [{ scope: 'proposal', action: 'finalize', proposal_id: 'p1' }],
+            push_notification_config,
+          },
+        },
+      },
+      { authInfo }
+    );
+    assert.strictEqual(intercepted.isError, true, label);
+    assert.strictEqual(intercepted.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+    assert.strictEqual(intercepted.structuredContent.adcp_error.field, field, label);
+    assert.strictEqual(finalizeCalls, 0, `${label}: finalizeProposal must not run`);
+
+    const normal = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_products',
+          arguments: { adcp_version: '3.2.0-rc.0', buying_mode: 'brief', push_notification_config },
+        },
+      },
+      { authInfo }
+    );
+    assert.strictEqual(normal.isError, true, label);
+    assert.strictEqual(normal.structuredContent.adcp_error.code, 'INVALID_REQUEST', label);
+    assert.strictEqual(normal.structuredContent.adcp_error.field, field, label);
+    assert.strictEqual(getProductsCalls, 0, `${label}: proposalManager.getProducts must not run`);
+  }
+});
+
 test('e2e: native getProducts can customize MCP text without changing structured payload', async () => {
   const disclosure = 'Synthetic sample data for demonstration only.';
   const sales = {
@@ -556,6 +645,86 @@ test('e2e: invalid push configuration is rejected before proposal reservation', 
   assert.strictEqual(response.isError, true);
   assert.strictEqual(calls, 0);
   assert.strictEqual(store.get('p-invalid-push', { expectedAccountId: 'acct_1' }).state, 'committed');
+});
+
+test('e2e: proposal-backed push handoff refusal releases its reservation and permits a polling retry (#2836)', async () => {
+  const store = new InMemoryProposalStore();
+  const proposalId = 'p-handoff-no-webhook-owner';
+  store.putDraft({
+    proposalId,
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: proposalId },
+  });
+  store.commit(proposalId, {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: proposalId },
+  });
+  let callbackRuns = 0;
+  let createCalls = 0;
+  const taskRegistry = createInMemoryTaskRegistry();
+  const create = taskRegistry.create.bind(taskRegistry);
+  taskRegistry.create = async args => {
+    createCalls += 1;
+    return create(args);
+  };
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async () => {
+            callbackRuns += 1;
+            return { media_buy_id: 'mb-after-webhook-refusal', packages: [] };
+          }),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      proposalStore: store,
+      taskRegistry,
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+
+  const refused = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          proposal_id: proposalId,
+          idempotency_key: 'idem-handoff-no-webhook-owner-0001',
+          push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'no-webhook-owner' },
+        },
+      },
+    },
+    { authInfo }
+  );
+  assert.strictEqual(refused.isError, true);
+  assert.strictEqual(refused.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+  assert.strictEqual(refused.structuredContent.adcp_error.field, 'push_notification_config');
+  assert.strictEqual(createCalls, 0, 'refusal must not allocate a task');
+  assert.strictEqual(callbackRuns, 0, 'refusal must not run the handoff callback');
+  assert.strictEqual(store.get(proposalId, { expectedAccountId: 'acct_1' }).state, 'committed');
+
+  const retried = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: proposalId, idempotency_key: 'idem-handoff-no-webhook-owner-0002' },
+      },
+    },
+    { authInfo }
+  );
+  assert.notStrictEqual(retried.isError, true);
+  await server.awaitTaskUnsafe(retried.structuredContent.task_id);
+  assert.strictEqual(callbackRuns, 1);
+  assert.strictEqual(store.get(proposalId, { expectedAccountId: 'acct_1' }).state, 'consumed');
 });
 
 test('e2e: proposal-backed createMediaBuy handoff releases after task failure', async () => {

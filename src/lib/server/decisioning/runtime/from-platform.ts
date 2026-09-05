@@ -2912,16 +2912,17 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // (TenantRegistry) get one closure per server, so per-tenant store
   // routing is preserved.
   const ctxFor = makeCtxFor(effectiveCtxMetadata);
+  const taskPushOptions = {
+    allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
+    autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
+  };
   const platformProposalNegotiation = buildProposalNegotiationHandlers(
     platform,
     taskRegistry,
     taskWebhookEmit,
     observability,
     fwLogger,
-    {
-      allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-      autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
-    },
+    taskPushOptions,
     ctxFor
   );
   if (platformProposalNegotiation && opts.proposalNegotiation) {
@@ -3101,10 +3102,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         taskWebhookEmit,
         observability,
         fwLogger,
-        {
-          allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
-        },
+        taskPushOptions,
         ctxFor,
         effectiveCtxMetadata,
         opts.mediaBuyStore,
@@ -3141,10 +3139,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         taskWebhookEmit,
         observability,
         fwLogger,
-        {
-          allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
-        },
+        taskPushOptions,
         ctxFor,
         opts.legacyCreativeFormatConverter,
         opts.canonicalFormatLegacyResolver,
@@ -3167,10 +3162,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         taskWebhookEmit,
         observability,
         fwLogger,
-        {
-          allowPrivateWebhookUrls: opts.allowPrivateWebhookUrls === true,
-          autoEmitCompletionWebhooks: opts.autoEmitCompletionWebhooks === true,
-        },
+        taskPushOptions,
         ctxFor,
         effectiveCtxMetadata
       ),
@@ -4609,6 +4601,58 @@ interface DispatchHitlOpts {
   autoEmitCompletion?: boolean;
 }
 
+function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, suggestion: string): never {
+  try {
+    opts.logger.warn(
+      '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
+        'settlement, or remove push_notification_config and retry with a new idempotency_key.'
+    );
+  } catch {
+    // Logging is adopter-controlled diagnostics. It must not replace the
+    // structured protocol error that protects this pre-create boundary.
+  }
+  throw new AdcpError('UNSUPPORTED_FEATURE', {
+    recovery: 'correctable',
+    field: 'push_notification_config',
+    message,
+    suggestion,
+    details: { feature: 'task_webhook_delivery' },
+  });
+}
+
+function resolveTaskWebhookDelivery(opts: DispatchHitlOpts, settlement: 'framework' | 'external'): boolean {
+  // This value is populated only by extractPushConfig after URL validation.
+  // A malformed or missing URL cannot turn an accepted task into has_webhook.
+  if (opts.pushNotificationUrl === undefined) return false;
+  // Request-schema validation may be disabled by an adopter. Keep the
+  // beta.5+ operation-id requirement at this pre-create seam so a task cannot
+  // start and later fail only while constructing its terminal webhook.
+  if (opts.pushNotificationOperationId === undefined && isAdcpVersionAtLeast(opts.servedAdcpVersion, '3.2.0-beta.5')) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.operation_id is required for webhook delivery',
+      field: 'push_notification_config.operation_id',
+    });
+  }
+  // An external producer has no SDK-owned terminal webhook delivery path.
+  // Do not let a framework emitter make its submitted task claim delivery it
+  // will never receive; polling-only external settlement remains supported.
+  if (settlement === 'external') {
+    return refuseTaskWebhookHandoff(
+      opts,
+      'This seller cannot submit an externally settled task with push_notification_config because the SDK cannot deliver its terminal webhook. ' +
+        'Remove push_notification_config to use polling, or use framework task settlement with configured task webhooks.',
+      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to use framework task settlement with task webhooks.'
+    );
+  }
+  if (typeof opts.emitWebhook === 'function') return true;
+  return refuseTaskWebhookHandoff(
+    opts,
+    'This seller cannot submit a task with push_notification_config because no task webhook delivery path is configured. ' +
+      'Remove push_notification_config to use polling, or configure task webhooks on the seller.',
+    'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to configure task webhooks.'
+  );
+}
+
 function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): string {
   if (ctx.sessionKey !== undefined) return `session:${ctx.sessionKey}`;
   if (ctx.agent?.agent_url) return `agent:${ctx.agent.agent_url}`;
@@ -4781,7 +4825,17 @@ async function dispatchHitl<TResult>(
   overrideTaskId?: string,
   settlement: 'framework' | 'external' = 'framework'
 ): Promise<SubmittedEnvelope> {
+  // Fail before task creation, external producer callbacks, or any terminal
+  // state can be persisted. A buyer gets Submitted only after a validated
+  // destination has exactly one terminal-delivery owner.
+  const hasWebhook = resolveTaskWebhookDelivery(opts, settlement);
   if (settlement === 'external' && taskRegistry.durability !== 'durable') {
+    throw new Error('External task settlement requires a durable task registry with a stable identity');
+  }
+  if (
+    settlement === 'external' &&
+    (typeof taskRegistry.registryId !== 'string' || taskRegistry.registryId.length === 0)
+  ) {
     throw new Error('External task settlement requires a durable task registry with a stable identity');
   }
   const createStart = Date.now();
@@ -4789,10 +4843,9 @@ async function dispatchHitl<TResult>(
     tool: opts.tool,
     accountId: opts.accountId,
     ownerScope: opts.ownerScope ?? `account:${opts.accountId}`,
-    // `tasks_get.has_webhook` promises a usable completion-delivery path,
-    // not merely that the buyer supplied a destination. Keep accepting the
-    // request without an emitter, but report false when nothing can emit it.
-    hasWebhook: opts.pushNotificationUrl !== undefined && typeof opts.emitWebhook === 'function',
+    // `tasks_get.has_webhook` promises a validated destination with an actual
+    // owner, not merely buyer intent.
+    hasWebhook,
     ...(overrideTaskId !== undefined && { overrideTaskId }),
   });
   if (
@@ -4815,6 +4868,11 @@ async function dispatchHitl<TResult>(
   if (createdRef.accountId !== opts.accountId || createdRef.ownerScope !== expectedOwnerScope) {
     throw new Error(
       'TaskRegistry.create() must return accountId and ownerScope exactly matching the trusted request scope'
+    );
+  }
+  if (settlement === 'external' && createdRef.registryId !== taskRegistry.registryId) {
+    throw new Error(
+      'TaskRegistry.create() returned a registryId that does not match the durable external-settlement registry'
     );
   }
   const taskRef: ScopedTaskRef = createdRef;
@@ -5769,32 +5827,51 @@ function extractPushConfig(
 ): { url?: string; token?: string; operationId?: string } {
   if (!params || typeof params !== 'object') return {};
   const cfg = (params as { push_notification_config?: unknown }).push_notification_config;
-  if (!cfg || typeof cfg !== 'object') return {};
+  // `undefined` is the one supplied value that preserves the absent-config
+  // polling semantics. Every other supplied shape is an attempt to opt into
+  // terminal delivery and must fail visibly instead of being silently
+  // reinterpreted as polling-only when request validation is disabled.
+  if (cfg === undefined) return {};
+  if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config must be an object',
+      field: 'push_notification_config',
+    });
+  }
   const cfgObj = cfg as { url?: unknown; token?: unknown; operation_id?: unknown };
   const rawUrl = cfgObj.url;
   const rawToken = cfgObj.token;
   const rawOperationId = cfgObj.operation_id;
 
-  let url: string | undefined;
-  if (typeof rawUrl === 'string') {
-    const validation = validatePushNotificationUrl(rawUrl, { allowPrivate: opts.allowPrivateWebhookUrls === true });
-    if (!validation.ok) {
-      // Fail fast: buyers thought they wired push and never saw it under
-      // the previous silent-skip posture. Rejecting upfront with
-      // `INVALID_REQUEST` and `field: 'push_notification_config.url'`
-      // surfaces the problem at the request boundary so buyers can fix
-      // their config before relying on webhooks. Buyers can still poll
-      // via `tasks_get` if they need a fallback path.
-      throw new AdcpError('INVALID_REQUEST', {
-        message: `push_notification_config.url rejected: ${validation.reason}`,
-        field: 'push_notification_config.url',
-      });
-    }
-    url = rawUrl;
+  if (typeof rawUrl !== 'string') {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.url rejected: url must be a string',
+      field: 'push_notification_config.url',
+    });
   }
+  const validation = validatePushNotificationUrl(rawUrl, { allowPrivate: opts.allowPrivateWebhookUrls === true });
+  if (!validation.ok) {
+    // Fail fast: buyers thought they wired push and never saw it under
+    // the previous silent-skip posture. Rejecting upfront with
+    // `INVALID_REQUEST` and `field: 'push_notification_config.url'`
+    // surfaces the problem at the request boundary so buyers can fix
+    // their config before relying on webhooks. Buyers can still poll
+    // via `tasks_get` if they need a fallback path.
+    throw new AdcpError('INVALID_REQUEST', {
+      message: `push_notification_config.url rejected: ${validation.reason}`,
+      field: 'push_notification_config.url',
+    });
+  }
+  const url = rawUrl;
 
   let token: string | undefined;
-  if (typeof rawToken === 'string') {
+  if (Object.prototype.hasOwnProperty.call(cfgObj, 'token')) {
+    if (typeof rawToken !== 'string') {
+      throw new AdcpError('INVALID_REQUEST', {
+        message: 'push_notification_config.token rejected: token must be a string',
+        field: 'push_notification_config.token',
+      });
+    }
     const validation = validatePushNotificationToken(rawToken);
     if (!validation.ok) {
       throw new AdcpError('INVALID_REQUEST', {
@@ -5978,7 +6055,10 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
+  pushOpts: {
+    allowPrivateWebhookUrls: boolean;
+    autoEmitCompletionWebhooks: boolean;
+  },
   ctxFor: CtxForFn
 ): ProposalNegotiationHandlers<Account> | undefined {
   const lifecycle = platform.mediaBuyLifecycle;
@@ -6054,7 +6134,10 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
+  pushOpts: {
+    allowPrivateWebhookUrls: boolean;
+    autoEmitCompletionWebhooks: boolean;
+  },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined,
   mediaBuyStore: MediaBuyStore | undefined,
@@ -6193,6 +6276,27 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         );
         const canonicalParams = asCanonicalGetProductsRequest(params as unknown as Record<string, unknown>);
         const reqCtx = ctxFor(ctx, params as Readonly<Record<string, unknown>>);
+        // Validate once before either proposal-finalize interception or normal
+        // getProducts dispatch. Finalization is adopter-controlled and can
+        // commit side effects, so malformed/unsafe buyer delivery config must
+        // not reach it.
+        const pushOrError = await projectSync<
+          ReturnType<typeof extractPushConfig>,
+          ReturnType<typeof extractPushConfig>
+        >(
+          async () =>
+            extractPushConfig(params, logger, {
+              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
+            }),
+          value => value
+        );
+        // The interception branch is outside its normal projectSync wrapper;
+        // preserve the extractor's structured request error there too.
+        if ('isError' in pushOrError && pushOrError.isError === true) return pushOrError;
+        // `AdcpErrorResponse` carries an open wire shape, so TypeScript cannot
+        // narrow the successful extractor result from the property check even
+        // though projectSync returns it only on the error path.
+        const push = pushOrError as ReturnType<typeof extractPushConfig>;
         // v1.5 seam: intercept refine[i].action='finalize' before
         // dispatching to the manager / sales. When the framework
         // commits the proposal inline, project the response directly.
@@ -6226,9 +6330,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             // requires propagating an AbortSignal into the projection
             // — framework-level work tracked separately, not finalize-
             // specific.
-            const push = extractPushConfig(params, logger, {
-              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-            });
             const out = await routeIfHandoff(
               taskRegistry,
               {
@@ -6261,9 +6362,6 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 recovery: 'correctable',
               });
             }
-            const push = extractPushConfig(params, logger, {
-              allowPrivateWebhookUrls: pushOpts.allowPrivateWebhookUrls,
-            });
             // Pick dispatch target: ProposalManager (when wired) takes
             // ownership of get_products; sales is the v1 fallback.
             // Refine routing per Python's _select_proposal_method:
@@ -6935,7 +7033,10 @@ function buildCreativeHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
+  pushOpts: {
+    allowPrivateWebhookUrls: boolean;
+    autoEmitCompletionWebhooks: boolean;
+  },
   ctxFor: CtxForFn,
   legacyFormatConverter: LegacyFormatConverter | undefined,
   canonicalFormatLegacyResolver: CanonicalFormatLegacyResolver | undefined,
@@ -7195,7 +7296,10 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
   taskWebhookEmit: NonNullable<HandlerContext<Account>['emitWebhook']> | undefined,
   observability: DecisioningObservabilityHooks | undefined,
   logger: AdcpLogger,
-  pushOpts: { allowPrivateWebhookUrls: boolean; autoEmitCompletionWebhooks: boolean },
+  pushOpts: {
+    allowPrivateWebhookUrls: boolean;
+    autoEmitCompletionWebhooks: boolean;
+  },
   ctxFor: CtxForFn,
   ctxMetadataStore: CtxMetadataStore | undefined
 ): SignalsHandlers<Account> | undefined {
