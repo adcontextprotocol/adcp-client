@@ -5,10 +5,10 @@ routes it can still **call**. A 3.2 seller should make the compact lifecycle the
 obvious path for new buyers without breaking a 3.0 or 3.1 buyer that already
 calls the established names.
 
-The SDK is pinned to the signed `3.2.0-rc.0` bundle. That exact prerelease
-supersedes beta.11 and adds product identity, daypart timezone declarations,
-and flat-rate loop-position and slot-span parameters on top of the converged
-beta surface. Beta.5 introduced the normative async identity,
+The SDK is pinned to the signed `3.2.0-rc.1` bundle. It retains the converged
+RC.0 product-identity, daypart-timezone, and flat-rate loop-position and
+slot-span surface, and adds the Reliable Reporting 1.0 core, managed-delivery,
+and reconciled-billing schema contracts. Beta.5 introduced the normative async identity,
 cross-channel convergence, webhook retry-horizon, and continuation-generation
 contract; beta.4 introduced flexible-window availability and the products-only
 legacy purchase-continuation contract.
@@ -76,7 +76,7 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
-  adcpVersion: '3.2.0-rc.0',
+  adcpVersion: '3.2.0-rc.1',
 });
 ```
 

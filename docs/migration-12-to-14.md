@@ -1,6 +1,6 @@
 # Migrating from 12.x to the 14 prerelease
 
-This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-rc.0` release-candidate surface. Treat it as two review checkpoints even if you deploy one package update.
+This is the direct upgrade path for applications skipping SDK 13. SDK 14 includes both SDK 13's canonical-creative and security boundary changes and the AdCP `3.2.0-rc.1` release-candidate surface. Treat it as two review checkpoints even if you deploy one package update.
 
 AdCP prerelease pins are exact: beta.6 supersedes beta.5. Beta.2 added canonical
 compact proposal and direct-buy lifecycle storyboards through operational

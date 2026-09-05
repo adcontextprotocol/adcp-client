@@ -1108,7 +1108,7 @@ export const NativeInFeedFormatDeclaration_FormatKindValues = ["native_in_feed"]
 // ====== NotificationConfig ======
 
 /** array of | NotificationConfig.event_types */
-export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "reporting.delivery_ready", "reporting.status_changed"] as const;
+export const NotificationConfig_EventTypesValues = ["creative.status_changed", "creative.assignment_changed", "indicators.changed", "creative.purged", "account.status_changed", "account.change_recorded", "product.created", "product.updated", "product.priced", "product.removed", "signal.created", "signal.updated", "signal.priced", "signal.removed", "wholesale_feed.bulk_change", "reporting.delivery_ready", "reporting.status_changed", "reporting.ledger_changed"] as const;
 /** single | NotificationConfig.product_payload_view */
 export const NotificationConfig_ProductPayloadViewValues = ["canonical", "legacy"] as const;
 
@@ -1405,10 +1405,10 @@ export const RealEstateItem_PropertyTypeValues = ["house", "apartment", "condo",
 /** single | RecognizedPrincipalWithoutStandingConfiguration.kind */
 export const RecognizedPrincipalWithoutStandingConfiguration_KindValues = ["recognized"] as const;
 
-// ====== RecordedReportingReceipt ======
+// ====== RecordedReportingAdjustmentReceipt ======
 
-/** single | RecordedReportingReceipt.result */
-export const RecordedReportingReceipt_ResultValues = ["recorded"] as const;
+/** single | RecordedReportingAdjustmentReceipt.result */
+export const RecordedReportingAdjustmentReceipt_ResultValues = ["recorded"] as const;
 
 // ====== ReferenceAsset ======
 
@@ -1437,6 +1437,11 @@ export const ReplaceAssignment_OperationValues = ["replace"] as const;
 /** single | ReportedOutcomeError.classification_source */
 export const ReportedOutcomeError_ClassificationSourceValues = ["seller_response_copy", "buyer_classification"] as const;
 
+// ====== ReportingAdjustment ======
+
+/** single | ReportingAdjustment.reason_code */
+export const ReportingAdjustment_ReasonCodeValues = ["invalid_traffic", "late_attribution", "source_correction", "mapping_correction", "commercial_adjustment", "other"] as const;
+
 // ====== ReportingCanonicalContentDigest ======
 
 /** single | ReportingCanonicalContentDigest.algorithm */
@@ -1456,10 +1461,14 @@ export const ReportingCoverage_StatusValues = ["full", "partial", "none", "unkno
 
 // ====== ReportingDeliveryCapabilities ======
 
+/** single | ReportingDeliveryCapabilities.ledger_notification */
+export const ReportingDeliveryCapabilities_LedgerNotificationValues = ["reporting.ledger_changed"] as const;
 /** single | ReportingDeliveryCapabilities.readiness_notification */
 export const ReportingDeliveryCapabilities_ReadinessNotificationValues = ["reporting.delivery_ready"] as const;
 /** single | ReportingDeliveryCapabilities.receipt_task */
 export const ReportingDeliveryCapabilities_ReceiptTaskValues = ["sync_reporting_receipts"] as const;
+/** single | ReportingDeliveryCapabilities.revision_content_task */
+export const ReportingDeliveryCapabilities_RevisionContentTaskValues = ["get_media_buy_delivery"] as const;
 /** single | ReportingDeliveryCapabilities.status_notification */
 export const ReportingDeliveryCapabilities_StatusNotificationValues = ["reporting.status_changed"] as const;
 /** single | ReportingDeliveryCapabilities.status_task */
@@ -1474,6 +1483,11 @@ export const ReportingDeliveryConfiguration_CoverageRequirementValues = ["full",
 
 /** single | ReportingDeliveryReadyWebhook.readiness */
 export const ReportingDeliveryReadyWebhook_ReadinessValues = ["available", "delivered"] as const;
+
+// ====== ReportingLedgerChangedWebhook ======
+
+/** single | ReportingLedgerChangedWebhook.change_kind */
+export const ReportingLedgerChangedWebhook_ChangeKindValues = ["revision_published", "adjustment_published"] as const;
 
 // ====== ReportingMaterialization ======
 
@@ -1516,11 +1530,13 @@ export const ReportingRevision_SchemaRefPolicyValues = ["local_fragment_only"] a
 
 /** single | ReportingScheduleOffering.period_anchor_policy */
 export const ReportingScheduleOffering_PeriodAnchorPolicyValues = ["fixed", "configurable"] as const;
+/** single | ReportingScheduleOffering.period_timezone_policy */
+export const ReportingScheduleOffering_PeriodTimezonePolicyValues = ["fixed", "account_resolved"] as const;
 
 // ====== ReportingStatusIssue ======
 
 /** single | ReportingStatusIssue.code */
-export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE"] as const;
+export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE", "RECEIPT_REQUIRED", "RECEIPT_REJECTED", "ADJUSTMENT_RECEIPT_REQUIRED", "ADJUSTMENT_RECEIPT_REJECTED"] as const;
 /** single | ReportingStatusIssue.recommended_action */
 export const ReportingStatusIssue_RecommendedActionValues = ["wait_for_retry", "contact_buyer", "contact_seller", "contact_provider", "repair_access", "update_configuration", "change_reporting_scope", "use_supported_reader"] as const;
 /** single | ReportingStatusIssue.responsible_party */
@@ -1766,10 +1782,10 @@ export const UnavailableLookup_FailureKindValues = ["lookup_unavailable"] as con
 /** single | UnavailableLookup.message */
 export const UnavailableLookup_MessageValues = ["Reporting status resource is unavailable."] as const;
 
-// ====== UnchangedReportingReceipt ======
+// ====== UnchangedReportingAdjustmentReceipt ======
 
-/** single | UnchangedReportingReceipt.result */
-export const UnchangedReportingReceipt_ResultValues = ["unchanged"] as const;
+/** single | UnchangedReportingAdjustmentReceipt.result */
+export const UnchangedReportingAdjustmentReceipt_ResultValues = ["unchanged"] as const;
 
 // ====== UnconfiguredPrincipal ======
 
@@ -2316,6 +2332,9 @@ export const ProvisionRecipient_ModeValues = ProvisionBinding_ModeValues;
 export const RawAttestation_MethodValues = DigestAttestation_MethodValues;
 /** @deprecated use `DigestAttestation_PurposeValues` — same literal set, RawAttestation.purpose duplicates the canonical export. */
 export const RawAttestation_PurposeValues = DigestAttestation_PurposeValues;
+// --- RecordedReportingReceipt ---
+/** @deprecated use `RecordedReportingAdjustmentReceipt_ResultValues` — same literal set, RecordedReportingReceipt.result duplicates the canonical export. */
+export const RecordedReportingReceipt_ResultValues = RecordedReportingAdjustmentReceipt_ResultValues;
 // --- RefineProposalsAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, RefineProposalsAsyncSubmitted.status duplicates the canonical export. */
 export const RefineProposalsAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;
@@ -2325,6 +2344,9 @@ export const ReplaceTargetingValue_OperationValues = ReplaceAssignment_Operation
 // --- ReportedOutcomeError ---
 /** @deprecated use `CatalogItemAvailabilityError_RecoveryValues` — same literal set, ReportedOutcomeError.recovery duplicates the canonical export. */
 export const ReportedOutcomeError_RecoveryValues = CatalogItemAvailabilityError_RecoveryValues;
+// --- ReportingAdjustmentReceipt ---
+/** @deprecated use `CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues` — same literal set, ReportingAdjustmentReceipt.status duplicates the canonical export. */
+export const ReportingAdjustmentReceipt_StatusValues = CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues;
 // --- ReportingCanonicalizationContract ---
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingCanonicalizationContract.contract_version duplicates the canonical export. */
 export const ReportingCanonicalizationContract_ContractVersionValues = PlacementPresentationDocument_SchemaVersionValues;
@@ -2334,6 +2356,8 @@ export const ReportingCapabilities_DateRangeSupportValues = CanonicalReportingCa
 // --- ReportingDeliveryCapabilities ---
 /** @deprecated use `AccountChangeFeedSupported_RegistrationTaskValues` — same literal set, ReportingDeliveryCapabilities.configuration_task duplicates the canonical export. */
 export const ReportingDeliveryCapabilities_ConfigurationTaskValues = AccountChangeFeedSupported_RegistrationTaskValues;
+/** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingDeliveryCapabilities.reliable_reporting_version duplicates the canonical export. */
+export const ReportingDeliveryCapabilities_ReliableReportingVersionValues = PlacementPresentationDocument_SchemaVersionValues;
 // --- ReportingDeliveryReadyWebhook ---
 /** @deprecated use `ReportingDeliveryCapabilities_ReadinessNotificationValues` — same literal set, ReportingDeliveryReadyWebhook.notification_type duplicates the canonical export. */
 export const ReportingDeliveryReadyWebhook_NotificationTypeValues = ReportingDeliveryCapabilities_ReadinessNotificationValues;
@@ -2347,12 +2371,12 @@ export const ReportingFileManifest_ManifestVersionValues = PlacementPresentation
 export const ReportingFileTransfer_FormatValues = FileTransferDestination_AcceptedFormatsValues;
 /** @deprecated use `FileTransfer_PatternValues` — same literal set, ReportingFileTransfer.pattern duplicates the canonical export. */
 export const ReportingFileTransfer_PatternValues = FileTransfer_PatternValues;
+// --- ReportingLedgerChangedWebhook ---
+/** @deprecated use `ReportingDeliveryCapabilities_LedgerNotificationValues` — same literal set, ReportingLedgerChangedWebhook.notification_type duplicates the canonical export. */
+export const ReportingLedgerChangedWebhook_NotificationTypeValues = ReportingDeliveryCapabilities_LedgerNotificationValues;
 // --- ReportingReceipt ---
 /** @deprecated use `CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues` — same literal set, ReportingReceipt.status duplicates the canonical export. */
 export const ReportingReceipt_StatusValues = CanonicalFormatHostedAudio_BuyerAssetAcceptanceValues;
-// --- ReportingReportDefinition ---
-/** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingReportDefinition.contract_version duplicates the canonical export. */
-export const ReportingReportDefinition_ContractVersionValues = PlacementPresentationDocument_SchemaVersionValues;
 // --- ReportingResource ---
 /** @deprecated use `PlacementPresentationDocument_SchemaVersionValues` — same literal set, ReportingResource.manifest_version duplicates the canonical export. */
 export const ReportingResource_ManifestVersionValues = PlacementPresentationDocument_SchemaVersionValues;
@@ -2436,6 +2460,9 @@ export const TimeForecastDimension_KindValues = TimeBasedPricingOption_PricingMo
 // --- UnavailableLookup ---
 /** @deprecated use `CommitmentError_StatusValues` — same literal set, UnavailableLookup.status duplicates the canonical export. */
 export const UnavailableLookup_StatusValues = CommitmentError_StatusValues;
+// --- UnchangedReportingReceipt ---
+/** @deprecated use `UnchangedReportingAdjustmentReceipt_ResultValues` — same literal set, UnchangedReportingReceipt.result duplicates the canonical export. */
+export const UnchangedReportingReceipt_ResultValues = UnchangedReportingAdjustmentReceipt_ResultValues;
 // --- UpdateMediaBuyAsyncSubmitted ---
 /** @deprecated use `BuildCreativeAsyncSubmitted_StatusValues` — same literal set, UpdateMediaBuyAsyncSubmitted.status duplicates the canonical export. */
 export const UpdateMediaBuyAsyncSubmitted_StatusValues = BuildCreativeAsyncSubmitted_StatusValues;

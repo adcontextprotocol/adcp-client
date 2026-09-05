@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-04T20:17:49.581Z
+// Generated at: 2026-09-05T10:49:56.581Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -299,7 +299,7 @@ export const MoovAtomPositionSchema = z.union([z.literal("start"), z.literal("en
 
 export const CreativeMotionLevelSchema = z.union([z.literal("static"), z.literal("limited_motion"), z.literal("full_motion")]);
 
-export const NotificationTypeSchema = z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update"), z.literal("impairment"), z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("capabilities.changed"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("principal.changed")]);
+export const NotificationTypeSchema = z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update"), z.literal("impairment"), z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("capabilities.changed"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed"), z.literal("principal.changed")]);
 
 export const OfferingAvailabilityStatusSchema = z.union([z.literal("available"), z.literal("limited"), z.literal("sold_out"), z.literal("expired"), z.literal("region_restricted"), z.literal("inactive")]);
 
@@ -342,6 +342,8 @@ export const ProposalStatusSchema = z.union([z.literal("draft"), z.literal("comm
 export const PublisherIdentifierTypesSchema = z.union([z.literal("tag_id"), z.literal("duns"), z.literal("lei"), z.literal("seller_id"), z.literal("gln")]);
 
 export const PurchaseTypeSchema = z.union([z.literal("media_buy"), z.literal("rights_license"), z.literal("signal_activation"), z.literal("creative_services")]);
+
+export const ReachAggregationSchema = z.union([z.literal("deduplicated"), z.literal("sum_of_constituent_reach")]);
 
 export const ReachUnitSchema = z.union([z.literal("individuals"), z.literal("households"), z.literal("devices"), z.literal("accounts"), z.literal("cookies"), z.literal("custom")]);
 
@@ -418,6 +420,8 @@ export const VASTMediaDeliveryMethodSchema = z.union([z.literal("progressive"), 
 export const VASTTrackingEventSchema = z.union([z.literal("impression"), z.literal("creativeView"), z.literal("loaded"), z.literal("start"), z.literal("firstQuartile"), z.literal("midpoint"), z.literal("thirdQuartile"), z.literal("complete"), z.literal("mute"), z.literal("unmute"), z.literal("pause"), z.literal("resume"), z.literal("rewind"), z.literal("skip"), z.literal("playerExpand"), z.literal("playerCollapse"), z.literal("fullscreen"), z.literal("exitFullscreen"), z.literal("progress"), z.literal("acceptInvitation"), z.literal("adExpand"), z.literal("adCollapse"), z.literal("minimize"), z.literal("overlayViewDuration"), z.literal("otherAdInteraction"), z.literal("interactiveStart"), z.literal("clickTracking"), z.literal("customClick"), z.literal("close"), z.literal("closeLinear"), z.literal("error"), z.literal("viewable"), z.literal("notViewable"), z.literal("viewUndetermined"), z.literal("measurableImpression"), z.literal("viewableImpression")]);
 
 export const VASTVersionSchema = z.union([z.literal("2.0"), z.literal("3.0"), z.literal("4.0"), z.literal("4.1"), z.literal("4.2"), z.literal("4.3")]);
+
+export const VendorRelationshipSchema = z.union([z.literal("first_party"), z.literal("affiliated"), z.literal("third_party")]);
 
 export const VideoPlacementTypeSchema = z.union([z.literal("instream"), z.literal("accompanying_content"), z.literal("interstitial"), z.literal("standalone")]);
 
@@ -2522,7 +2526,7 @@ export const MacroResolutionResultSchema = z.object({}).passthrough().merge(z.ob
 export const NotificationConfigSchema = z.object({}).passthrough().merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2533,7 +2537,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2544,7 +2548,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2555,7 +2559,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2566,7 +2570,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2577,7 +2581,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2588,7 +2592,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2599,7 +2603,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2610,7 +2614,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2621,7 +2625,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2632,7 +2636,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2643,7 +2647,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2654,7 +2658,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2665,7 +2669,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2676,7 +2680,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2687,7 +2691,7 @@ export const NotificationConfigSchema = z.object({}).passthrough().merge(z.objec
 }).passthrough()).merge(z.object({
     subscriber_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed")])),
+    event_types: z.array(z.union([z.literal("creative.status_changed"), z.literal("creative.assignment_changed"), z.literal("indicators.changed"), z.literal("creative.purged"), z.literal("account.status_changed"), z.literal("account.change_recorded"), z.literal("product.created"), z.literal("product.updated"), z.literal("product.priced"), z.literal("product.removed"), z.literal("signal.created"), z.literal("signal.updated"), z.literal("signal.priced"), z.literal("signal.removed"), z.literal("wholesale_feed.bulk_change"), z.literal("reporting.delivery_ready"), z.literal("reporting.status_changed"), z.literal("reporting.ledger_changed")])),
     product_payload_view: z.union([z.literal("canonical"), z.literal("legacy")]).optional(),
     authentication: z.object({
         schemes: z.tuple([AuthenticationSchemeSchema]),
@@ -2705,7 +2709,7 @@ export const ReportingMediaBuyIDSchema = z.string();
 
 export const ReportingReconciliationModeSchema = z.union([z.literal("delivery_only"), z.literal("consumer_receipt")]);
 
-export const ReportingScheduleAlignmentSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("billing_cycle")]);
+export const ReportingScheduleAlignmentSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("source_timezone"), z.literal("billing_cycle")]);
 
 export const ReportingPackageIDSchema = z.string();
 
@@ -2795,6 +2799,7 @@ export const CommittedMetricSchema = z.union([z.object({
         scope: z.literal("vendor"),
         vendor: BrandReferenceSchema,
         metric_id: VendorMetricIDSchema,
+        methodology_version: z.string().optional(),
         qualifier: z.object({
             viewability_standard: ViewabilityStandardSchema.optional(),
             completion_source: CompletionSourceSchema.optional(),
@@ -3012,7 +3017,7 @@ export const ReportingCoverageSchema = z.object({
 
 export const ReportingStatusIssueSchema = z.object({
     issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
-    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE")]),
+    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE"), z.literal("RECEIPT_REQUIRED"), z.literal("RECEIPT_REJECTED"), z.literal("ADJUSTMENT_RECEIPT_REQUIRED"), z.literal("ADJUSTMENT_RECEIPT_REJECTED")]),
     severity: ReportingStatusSeveritySchema,
     responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
     recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
@@ -3717,6 +3722,25 @@ export const UpdateMediaBuyAsyncInputRequiredSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const MediaBuyDeliveryWebhookResultSchema = z.object({
+    notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update")]),
+    partial_data: z.boolean().optional(),
+    unavailable_count: z.number().int().gte(0).optional(),
+    sequence_number: z.number().int().gte(1).optional(),
+    next_expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    reporting_period: z.object({
+        start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+    }).passthrough(),
+    currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
+    attribution_window: AttributionWindowSchema.optional(),
+    media_buy_deliveries: z.array(z.object({}).passthrough()),
+    errors: z.array(ErrorSchema).optional(),
+    sandbox: z.boolean().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const BuildCreativeAsyncWorkingSchema = z.object({
     percentage: z.number().optional(),
     current_step: z.string().optional(),
@@ -4197,7 +4221,7 @@ export const BuildCreativeSubmittedSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const BrandReference14Schema = BrandReferenceSchema;
+export const BrandReference13Schema = BrandReferenceSchema;
 
 export const NamedFormatManifestSchema = z.object({}).passthrough();
 
@@ -4351,8 +4375,6 @@ export const BrandReference12Schema = BrandReferenceSchema;
 
 export const UpdateMediaBuyAsyncSubmittedSchema = UpdateMediaBuySubmittedSchema;
 
-export const BrandReference13Schema = BrandReferenceSchema;
-
 export const PreviewRenderSchema = z.union([z.object({
         render_id: z.string(),
         output_format: z.literal("url"),
@@ -4411,7 +4433,7 @@ export const CreativeConsumptionSchema = z.object({
     duration_seconds: z.number().gte(0).optional()
 }).passthrough();
 
-export const BrandReference15Schema = BrandReferenceSchema;
+export const BrandReference14Schema = BrandReferenceSchema;
 
 export const BuildCreativeEstimateSchema = z.object({
     mode: z.literal("estimate"),
@@ -6189,6 +6211,23 @@ export const OpportunityContextSchema = z.object({}).passthrough().merge(z.objec
     close_detail: z.string().min(1).max(500).optional()
 }).passthrough());
 
+export const PackageDeliveryMetricValueSchema = z.object({}).passthrough().merge(z.object({
+    scope: z.literal("standard"),
+    metric_id: AvailableMetricSchema.and(z.object({}).passthrough()),
+    qualifier: CanonicalMetricQualifierSchema.optional(),
+    value: z.number(),
+    measurable_impressions: z.number().optional(),
+    viewable_impressions: z.number().optional(),
+    impressions: z.number().optional(),
+    completed_views: z.number().optional(),
+    spend: z.number().optional(),
+    conversions: z.number().optional(),
+    conversion_value: z.number().optional(),
+    clicks: z.number().optional()
+}).passthrough()).and(z.object({
+    qualifier: z.object({}).passthrough()
+}).passthrough());
+
 export const PerformanceFeedbackMetricSchema = z.union([z.object({
         scope: z.literal("standard"),
         metric_id: AvailableMetricSchema,
@@ -6523,6 +6562,36 @@ export const CompliancePayloadSchema = z.object({
 
 export const Property1Schema = PropertySchema;
 
+export const ReportingAdjustmentRejectionCodeSchema = z.string().min(1).max(128).regex(/^[A-Z][A-Z0-9_]*$/);
+
+export const ReportingAdjustmentReceiptSchema = z.object({}).passthrough().merge(z.object({
+    reporting_receipt_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")),
+    reporting_adjustment_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    adjusts_reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    supersedes_reporting_receipt_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
+    status: z.union([z.literal("accepted"), z.literal("rejected")]),
+    observed_adjustment_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
+    rejection_codes: z.array(z.string()).optional(),
+    observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    received_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough());
+
+export const IntegerReportingControlTotalSchema = z.object({
+    name: z.string(),
+    value: z.string(),
+    value_type: z.literal("integer"),
+    unit: z.string().optional()
+}).strict();
+
+export const DecimalReportingControlTotalSchema = z.object({
+    name: z.string(),
+    value: z.string(),
+    value_type: z.literal("decimal"),
+    unit: z.string().optional()
+}).strict();
+
+export const ReportingControlTotalSchema = z.union([IntegerReportingControlTotalSchema, DecimalReportingControlTotalSchema]);
+
 export const ReportingCanonicalContentDigestSchema = z.object({
     algorithm: z.literal("sha256"),
     value: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
@@ -6557,28 +6626,25 @@ export const AdditionalGoldenVectorSchema = z.object({
     sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
 }).passthrough();
 
-export const IntegerReportingControlTotalSchema = z.object({
-    name: z.string(),
-    value: z.string(),
-    value_type: z.literal("integer"),
-    unit: z.string().optional()
-}).strict();
-
-export const DecimalReportingControlTotalSchema = z.object({
-    name: z.string(),
-    value: z.string(),
-    value_type: z.literal("decimal"),
-    unit: z.string().optional()
-}).strict();
-
 export const ReportingScheduleOfferingSchema = z.object({}).passthrough().merge(z.object({
     period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
     alignment: ReportingScheduleAlignmentSchema,
     period_anchor_policy: z.union([z.literal("fixed"), z.literal("configurable")]).optional(),
+    period_timezone_policy: z.union([z.literal("fixed"), z.literal("account_resolved")]).optional(),
     period_anchor: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     period_timezone: z.string().min(1).max(255).optional(),
     delivery_sla: z.string().regex(new RegExp("^P(?=\\d|T)(?=.*\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"))
 }).passthrough());
+
+export const ReportingReliabilityMeasurementPeriodSchema = z.object({
+    start: z.string(),
+    end: z.string()
+}).passthrough();
+
+export const LatencyPercentilesSchema = z.object({
+    p50: z.number(),
+    p95: z.number()
+}).passthrough();
 
 export const ReportingDeliveryOfferingSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
     offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
@@ -6632,6 +6698,25 @@ export const ReportingDeliveryOfferingSchema = z.object({}).passthrough().merge(
     method: z.object({}).passthrough().and(z.object({}).passthrough()).and(z.object({}).passthrough()).optional()
 }).passthrough());
 
+export const ReportingReliabilityStatisticsSchema = z.object({}).passthrough().merge(z.object({
+    offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
+    measurement_period: ReportingReliabilityMeasurementPeriodSchema,
+    obligations_due: z.number().int().gte(1),
+    obligations_on_time: z.number().int().gte(0),
+    official_revisions_published: z.number().int().gte(0),
+    official_revisions_adjusted: z.number().int().gte(0),
+    publication_latency_seconds: LatencyPercentilesSchema,
+    adjustment_latency_seconds: LatencyPercentilesSchema.optional(),
+    adjustment_magnitude: z.array(z.object({
+        control_total_name: z.string().min(1).max(128),
+        unit: z.string().min(1).max(32),
+        sample_count: z.number().int().gte(1),
+        p50_absolute_delta: z.string().regex(new RegExp("^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$")),
+        p95_absolute_delta: z.string().regex(new RegExp("^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"))
+    }).passthrough()).optional(),
+    evidence: z.object({}).passthrough()
+}).passthrough());
+
 export const ReportingDeliveryReadyWebhookSchema = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
@@ -6651,28 +6736,67 @@ export const ReportingDeliveryReadyWebhookSchema = z.object({
 
 export const ReportingFileCompressionSchema = z.union([z.literal("none"), z.literal("gzip"), z.literal("zstd"), z.literal("snappy")]);
 
+export const ReportingFileObjectReferenceSchema = z.string().min(1).max(1024);
+
+export const ReportingNativeVersionReferenceSchema = z.string().min(1).max(1024);
+
 export const ReportingFileEntrySchema = z.object({
-    object_ref: z.string().min(1).max(1024),
+    object_ref: ReportingFileObjectReferenceSchema,
+    native_version_ref: ReportingNativeVersionReferenceSchema.optional(),
     size_bytes: z.int().min(0),
     sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
     row_count: z.int().min(0),
     partition: z.record(z.string(), z.string()).optional()
 }).passthrough();
 
-export const ReportingControlTotalSchema = z.union([IntegerReportingControlTotalSchema, DecimalReportingControlTotalSchema]);
+export const ReportingFileManifestSchema = z.object({
+    manifest_version: z.literal("1.0"),
+    complete: z.literal(true),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    period: z.object({
+        start: z.iso.datetime(),
+        end: z.iso.datetime(),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]),
+    compression: ReportingFileCompressionSchema,
+    files: z.array(ReportingFileEntrySchema),
+    total_size_bytes: z.int().min(0),
+    row_count: z.int().min(0),
+    control_totals: z.array(ReportingControlTotalSchema),
+    created_at: z.iso.datetime()
+}).passthrough();
+
+export const ReportingLedgerChangedWebhookSchema = z.object({
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    notification_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
+    notification_type: z.literal("reporting.ledger_changed"),
+    fired_at: z.iso.datetime(),
+    subscriber_id: z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]{1,64}$/),
+    account_id: z.string().min(1),
+    change_kind: z.union([z.literal("revision_published"), z.literal("adjustment_published")]),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    supersedes_reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    finality: ReportingFinalitySchema.optional(),
+    reporting_adjustment_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    adjusts_reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const ReportingReaderCompatibilityItemSchema = z.string();
 
 export const ReportingVerificationProfileSchema = z.union([z.literal("native_commit"), z.literal("manifest_checksums"), z.literal("canonical_digest")]);
 
 export const SHA256PhysicalChecksumSchema = z.object({
-    object_ref: z.string(),
+    object_ref: ReportingFileObjectReferenceSchema,
     algorithm: z.literal("sha256"),
     value: z.string()
 }).strict();
 
 export const SHA512PhysicalChecksumSchema = z.object({
-    object_ref: z.string(),
+    object_ref: ReportingFileObjectReferenceSchema,
     algorithm: z.literal("sha512"),
     value: z.string()
 }).strict();
@@ -6681,7 +6805,7 @@ export const ReportingResourceSchema = z.object({}).strict().merge(z.object({
     resource_ref: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     kind: z.union([z.literal("manifest"), z.literal("dataset"), z.literal("warehouse_relation")]),
     location: z.string().min(1).max(2048),
-    native_version_ref: z.string().min(1).max(512).optional(),
+    native_version_ref: ReportingNativeVersionReferenceSchema.optional(),
     manifest_version: z.literal("1.0").optional(),
     manifest_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
     immutability: z.union([z.literal("immutable_location"), z.literal("native_version")]),
@@ -6698,7 +6822,7 @@ export const ReportingVerificationSchema = z.object({}).strict().merge(z.object(
     canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
     physical_checksums: z.array(z.union([SHA256PhysicalChecksumSchema, SHA512PhysicalChecksumSchema])).optional(),
     native_commit_evidence: z.object({
-        native_version_ref: z.string().min(1).max(512),
+        native_version_ref: ReportingNativeVersionReferenceSchema,
         observed_through: z.union([z.literal("representative_consumer"), z.literal("destination")])
     }).strict().optional()
 }).strict());
@@ -6716,23 +6840,24 @@ export const ReportingReceiptSchema = z.object({}).strict().merge(z.object({
     reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     reporting_materialization_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    supersedes_reporting_receipt_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
     status: z.union([z.literal("accepted"), z.literal("rejected")]),
     verification_profile: ReportingVerificationProfileSchema,
     observed_row_count: z.number().int().gte(0),
     observed_control_totals: z.array(ReportingControlTotalSchema),
     observed_canonical_content_digest: ReportingCanonicalContentDigestSchema.optional(),
     observed_manifest_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
-    observed_native_version_ref: z.string().min(1).max(512).optional(),
+    observed_native_version_ref: ReportingNativeVersionReferenceSchema.optional(),
     consumer_commit_ref: z.string().min(1).max(512).optional(),
     rejection_codes: z.array(z.string()).optional(),
     observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
     received_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).strict());
 
-export const ReportCalendarTimezoneBasisSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("configured_timezone")]);
+export const ReportCalendarTimezoneBasisSchema = z.union([z.literal("utc"), z.literal("account_timezone"), z.literal("schedule_timezone"), z.literal("configured_timezone")]);
 
 export const ReportingReportDefinitionSchema = z.object({
-    contract_version: z.literal("1.0"),
+    contract_version: z.union([z.literal("1.0"), z.literal("1.1")]),
     media_type: z.literal("application/vnd.adcp.reporting-definition+json"),
     report_definition_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
     reporting_profile: z.string().min(1).max(128),
@@ -6758,7 +6883,8 @@ export const ReportingReportDefinitionSchema = z.object({
     dimensions: z.array(z.string()),
     restatement_policy: z.object({
         source_requery_duration: z.string().regex(/^P(?=\d|T)(?=.*\d)(?:\d+Y)?(?:\d+M)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+S)?)?$/),
-        emit_only_on_content_change: z.literal(true)
+        emit_only_on_content_change: z.literal(true),
+        official_correction_mode: z.literal("adjustments_only").optional()
     }).passthrough(),
     finality_policies: z.array(z.union([z.object({
             finality_policy_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
@@ -6778,6 +6904,7 @@ export const ReportingReportDefinitionSchema = z.object({
 
 export const ReportingRevisionSchema = z.object({}).strict().merge(z.object({
     reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    revision_content_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
     report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
     report_definition_uri: z.string().regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI"),
     report_definition_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")),
@@ -7191,7 +7318,7 @@ export const CacheLayerScopeSchema = z.union([z.object({
 
 export const RemovalReasonSchema = z.union([z.literal("withdrawn"), z.literal("cancellation"), z.literal("expired"), z.literal("depublication"), z.literal("policy_takedown")]);
 
-export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
+export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_adjustment"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
 
 export const CreativeAuditObservationSchema = z.object({
     code: z.literal("OVERSIGHT_DISCLOSURE_CARVEOUT_CLAIMED"),
@@ -8240,7 +8367,8 @@ export const ReportingCapabilitiesSchema = z.object({
     available_metrics: z.array(AvailableMetricSchema),
     vendor_metrics: z.array(z.object({
         vendor: BrandReferenceSchema,
-        metric_id: VendorMetricIDSchema
+        metric_id: VendorMetricIDSchema,
+        vendor_relationship: VendorRelationshipSchema.optional()
     }).passthrough()).optional(),
     supports_creative_breakdown: z.boolean().optional(),
     supports_format_breakdown: z.boolean().optional(),
@@ -8395,6 +8523,8 @@ export const ForecastVendorMetricValueSchema = z.object({
     value: ForecastRangeSchema,
     unit: z.string().optional(),
     measurable_impressions: ForecastRangeSchema.optional(),
+    measurable_plays: ForecastRangeSchema.optional(),
+    measurable_play_seconds: ForecastRangeSchema.optional(),
     breakdown: z.object({}).passthrough().optional()
 }).passthrough();
 
@@ -8820,6 +8950,8 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
     adcp_major_version: z.number().int().gte(1).lte(99).optional(),
     account: AccountReferenceSchema.optional(),
     media_buy_ids: z.array(z.string()).optional(),
+    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    pagination: PaginationRequestSchema.optional(),
     status_filter: z.union([MediaBuyStatusSchema, z.array(MediaBuyStatusSchema)]).optional(),
     start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -8945,6 +9077,9 @@ export const VendorMetricValueSchema = z.object({
     value: z.number(),
     unit: z.string().optional(),
     measurable_impressions: z.number().gte(0).optional(),
+    measurable_plays: z.number().gte(0).optional(),
+    measurable_play_seconds: z.number().gte(0).optional(),
+    vendor_relationship: VendorRelationshipSchema.optional(),
     qualifier: CanonicalMetricQualifierSchema.optional(),
     breakdown: z.object({}).passthrough().optional()
 }).passthrough();
@@ -8966,6 +9101,7 @@ export const GetReportingStatusRequestSchema = z.object({
     health: z.array(ReportingHealthSchema).optional(),
     finality: z.array(ReportingFinalitySchema).optional(),
     reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+    changes_after: z.string().min(1).max(2048).optional(),
     pagination: PaginationRequestSchema.optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
@@ -8996,13 +9132,32 @@ export const ReportingObligationSchema = z.object({}).strict().merge(z.object({
     health: ReportingHealthSchema,
     production_status: z.union([z.literal("not_due"), z.literal("pending"), z.literal("published"), z.literal("failed")]),
     revision_count: z.number().int().gte(0),
+    adjustment_count: z.number().int().gte(0).optional(),
     materialization_count: z.number().int().gte(0).optional(),
     successful_materialization_count: z.number().int().gte(0).optional(),
     receipt_count: z.number().int().gte(0).optional(),
     accepted_receipt_count: z.number().int().gte(0).optional(),
+    adjustment_receipt_count: z.number().int().gte(0).optional(),
+    accepted_adjustment_receipt_count: z.number().int().gte(0).optional(),
+    pending_adjustment_count: z.number().int().gte(0).optional(),
     issues: z.array(ReportingStatusIssueSchema),
     resource_retained_until: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).strict());
+
+export const ReportingAdjustmentSchema = z.object({
+    reporting_adjustment_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    adjusts_reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    reason_code: z.union([z.literal("invalid_traffic"), z.literal("late_attribution"), z.literal("source_correction"), z.literal("mapping_correction"), z.literal("commercial_adjustment"), z.literal("other")]),
+    reason_detail: z.string().min(1).max(1024).optional(),
+    accounting_period: z.object({
+        start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+    }).passthrough(),
+    control_total_deltas: z.array(ReportingControlTotalSchema),
+    canonical_adjustment_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
+    correction_observed_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    created_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
+}).passthrough();
 
 export const ReportingMaterializationSchema = z.object({}).strict().merge(z.object({
     reporting_materialization_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
@@ -9103,7 +9258,8 @@ export const SyncReportingReceiptsRequestSchema = z.object({
     adcp_major_version: z.number().optional(),
     account: CanonicalAccountReferenceSchema,
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
-    receipts: z.array(ReportingReceiptSchema).max(100),
+    receipts: z.array(ReportingReceiptSchema).max(100).optional(),
+    adjustment_receipts: z.array(ReportingAdjustmentReceiptSchema).max(100).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
@@ -9116,6 +9272,16 @@ export const RecordedReportingReceiptSchema = z.object({
 export const UnchangedReportingReceiptSchema = z.object({
     result: z.literal("unchanged"),
     receipt: ReportingReceiptSchema.and(z.object({}).passthrough())
+}).passthrough();
+
+export const RecordedReportingAdjustmentReceiptSchema = z.object({
+    result: z.literal("recorded"),
+    adjustment_receipt: ReportingAdjustmentReceiptSchema.and(z.object({}).passthrough())
+}).passthrough();
+
+export const UnchangedReportingAdjustmentReceiptSchema = z.object({
+    result: z.literal("unchanged"),
+    adjustment_receipt: ReportingAdjustmentReceiptSchema.and(z.object({}).passthrough())
 }).passthrough();
 
 export const FailedReportingReceiptSchema = z.object({
@@ -11076,16 +11242,20 @@ export const CapabilityReportingDeliveryMethodSchema = z.union([z.literal("webho
 
 export const ReportingDeliveryCapabilitiesSchema = z.object({}).passthrough().merge(z.object({
     supported: z.literal(true),
+    reliable_reporting_version: z.literal("1.0").optional(),
     managed_delivery: z.boolean().optional(),
     reconciled_billing: z.boolean().optional(),
     configuration_task: z.literal("sync_accounts"),
     status_task: z.literal("get_reporting_status"),
+    revision_content_task: z.literal("get_media_buy_delivery").optional(),
     receipt_task: z.literal("sync_reporting_receipts").optional(),
     readiness_notification: z.literal("reporting.delivery_ready").optional(),
     status_notification: z.literal("reporting.status_changed").optional(),
+    ledger_notification: z.literal("reporting.ledger_changed").optional(),
     offerings: z.array(ReportingDeliveryOfferingSchema),
     automated_recovery_window_seconds: z.number().int().gte(0),
     status_retention_days: z.number().int().gte(1),
+    reliability_statistics: z.array(ReportingReliabilityStatisticsSchema).optional(),
     resource_retention_days: z.number().int().gte(1).optional(),
     supports_webhook_activity: z.boolean().optional(),
     authorization_revocation_seconds: z.number().int().gte(0).optional()
@@ -12313,50 +12483,6 @@ export const GetSignalsResponseSchema = z.object({
     unchanged: z.literal(true).optional(),
     pagination: PaginationResponseSchema.optional(),
     sandbox: z.boolean().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const MediaBuyDeliveryWebhookResultSchema = z.object({
-    notification_type: z.union([z.literal("scheduled"), z.literal("final"), z.literal("delayed"), z.literal("adjusted"), z.literal("window_update")]),
-    partial_data: z.boolean().optional(),
-    unavailable_count: z.number().int().gte(0).optional(),
-    sequence_number: z.number().int().gte(1).optional(),
-    next_expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    reporting_period: z.object({
-        start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
-        end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")
-    }).passthrough(),
-    currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
-    attribution_window: AttributionWindowSchema.optional(),
-    media_buy_deliveries: z.array(z.object({
-        media_buy_id: z.string(),
-        status: z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled"), z.literal("failed"), z.literal("reporting_delayed")]),
-        expected_availability: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-        is_adjusted: z.boolean().optional(),
-        is_final: z.boolean().optional(),
-        finalized_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-        pricing_model: PricingModelSchema.optional(),
-        pacing_index: z.number().gte(0).optional(),
-        totals: DeliveryMetricsSchema.merge(z.object({
-            effective_rate: z.number().optional()
-        }).passthrough()),
-        by_package: z.array(DeliveryMetricsSchema.merge(z.object({
-            package_id: z.string().optional(),
-            pacing_index: z.number().gte(0).optional(),
-            pricing_model: PricingModelSchema.optional(),
-            rate: z.number().optional(),
-            currency: z.string().regex(new RegExp("^[A-Z]{3}$")).optional(),
-            delivery_status: DeliveryStatusSchema.optional(),
-            paused: z.boolean().optional(),
-            is_final: z.boolean().optional(),
-            finalized_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-            measurement_window: z.string().optional(),
-            supersedes_window: z.string().optional()
-        }).passthrough()))
-    }).passthrough()),
-    errors: z.array(ErrorSchema).optional(),
-    sandbox: z.boolean().optional(),
-    context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -13728,26 +13854,6 @@ export const ReportingCanonicalizationContractSchema = z.object({
     }).passthrough()
 }).passthrough();
 
-export const ReportingFileManifestSchema = z.object({
-    manifest_version: z.literal("1.0"),
-    complete: z.literal(true),
-    reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
-    reporting_obligation_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
-    reporting_materialization_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/),
-    period: z.object({
-        start: z.iso.datetime(),
-        end: z.iso.datetime(),
-        source_timezone: z.string().min(1)
-    }).passthrough(),
-    format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]),
-    compression: ReportingFileCompressionSchema,
-    files: z.array(ReportingFileEntrySchema),
-    total_size_bytes: z.int().min(0),
-    row_count: z.int().min(0),
-    control_totals: z.array(ReportingControlTotalSchema),
-    created_at: z.iso.datetime()
-}).passthrough();
-
 export const RepresentationDestinationSchema = z.object({
     product_id: z.string().min(1),
     format_option: ProductFormatDeclarationSchema,
@@ -14400,6 +14506,7 @@ export const PackageRequestSchema: z.ZodObject<{ [K in keyof PackageRequest]-?: 
             scope: z.literal("vendor"),
             vendor: BrandReferenceSchema,
             metric_id: VendorMetricIDSchema,
+            methodology_version: z.string().optional(),
             qualifier: z.object({
                 viewability_standard: ViewabilityStandardSchema.optional(),
                 completion_source: CompletionSourceSchema.optional(),
@@ -14415,7 +14522,7 @@ export const PackageRequestSchema: z.ZodObject<{ [K in keyof PackageRequest]-?: 
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
-export const ReportingDeliveryConfigurationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
+export const ReportingDeliveryConfigurationSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
     delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
     delivery_config_version: z.number().int().gte(1),
     offering_id: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")),
@@ -14994,6 +15101,15 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         start: z.iso.datetime(),
         end: z.iso.datetime()
     }).passthrough(),
+    reporting_revision_binding: z.object({
+        reporting_revision_id: z.string().min(1).max(255),
+        row_count: z.int().min(0),
+        control_totals: z.array(ReportingControlTotalSchema),
+        content_sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
+    }).passthrough().optional(),
+    reporting_revision: ReportingRevisionSchema.optional(),
+    reporting_rows: z.array(z.object({}).passthrough()).optional(),
+    pagination: PaginationResponseSchema.optional(),
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     attribution_window: AttributionWindowSchema.optional(),
     aggregated_totals: z.object({
@@ -15010,6 +15126,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
         cost_per_acquisition: z.number().min(0).optional(),
         completion_rate: z.number().min(0).max(1).optional().nullable(),
         reach: z.number().min(0).optional(),
+        reach_aggregation: ReachAggregationSchema.optional(),
         reach_unit: ReachUnitSchema.optional(),
         frequency: z.number().min(0).optional(),
         media_buy_count: z.int().min(0),
@@ -15017,6 +15134,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
     }).passthrough().optional(),
     media_buy_deliveries: z.array(z.object({
         media_buy_id: z.string(),
+        currency: z.string().regex(/^[A-Z]{3}$/).optional(),
         status: z.union([z.literal("pending_creatives"), z.literal("pending_start"), z.literal("pending"), z.literal("active"), z.literal("paused"), z.literal("completed"), z.literal("rejected"), z.literal("canceled"), z.literal("failed"), z.literal("reporting_delayed")]),
         expected_availability: z.iso.datetime().optional(),
         is_adjusted: z.boolean().optional(),
@@ -15040,6 +15158,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             measurement_window: z.string().max(50).optional(),
             supersedes_window: z.string().max(50).optional(),
             missing_metrics: z.array(MissingMetricSchema).optional(),
+            metric_values: z.array(PackageDeliveryMetricValueSchema).optional(),
             by_catalog_item: z.array(GetMediaBuyDeliveryCatalogItemMetricsSchema).optional(),
             by_catalog_item_truncated: z.boolean().optional(),
             by_catalog_item_sorted_by: SortMetricSchema.optional(),
@@ -15140,7 +15259,8 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             window_end: z.iso.datetime(),
             totals: DeliveryMetricsSchema,
             by_package: z.array(DeliveryMetricsSchema.merge(z.object({
-                package_id: z.string()
+                package_id: z.string(),
+                currency: z.string().regex(/^[A-Z]{3}$/).optional()
             }).passthrough())).optional(),
             is_final: z.boolean().optional(),
             measurement_window: z.string().max(50).optional()
@@ -15179,7 +15299,7 @@ export const SyncReportingReceiptsResponseSchema = z.object({
     payload: z.object({}).passthrough().optional(),
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
     adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    results: z.array(z.union([RecordedReportingReceiptSchema, UnchangedReportingReceiptSchema, FailedReportingReceiptSchema])).max(100),
+    results: z.array(z.union([RecordedReportingReceiptSchema, UnchangedReportingReceiptSchema, RecordedReportingAdjustmentReceiptSchema, UnchangedReportingAdjustmentReceiptSchema, FailedReportingReceiptSchema])).max(100),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
@@ -17461,7 +17581,7 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
       });
     }
   }).describe("Canonical fixed or seller-optimized allocation using only canonical optimization goals.").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "invoice_recipient": z.object({ "legal_name": z.string().max(200).describe("Registered legal name of the business entity"), "vat_id": z.string().regex(new RegExp("^[A-Z]{2}[A-Z0-9]{2,13}$")).describe("VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.").optional(), "tax_id": z.string().max(30).describe("Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)").optional(), "registration_number": z.string().max(50).describe("Company registration number (e.g., HRB 12345 for German Handelsregister)").optional(), "address": z.object({ "street": z.string().max(200).describe("Street address including building number"), "city": z.string().max(100), "postal_code": z.string().max(20), "region": z.string().max(100).describe("State, province, or region").optional(), "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code") }).passthrough().describe("Postal address for invoicing and legal correspondence").optional(), "contacts": z.array(z.object({ "role": z.enum(["billing","legal","creative","general"]).describe("Contact's functional role in the business relationship"), "name": z.string().max(200).describe("Full name of the contact").optional(), "email": z.string().email().max(254).optional(), "phone": z.string().max(30).optional() }).passthrough()).max(10).describe("Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.").optional(), "bank": z.object({ "account_holder": z.string().max(200).describe("Name on the bank account"), "iban": z.string().regex(new RegExp("^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$")).describe("International Bank Account Number (SEPA markets)").optional(), "bic": z.string().regex(new RegExp("^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$")).describe("Bank Identifier Code / SWIFT code (SEPA markets)").optional(), "routing_number": z.string().max(30).describe("Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)").optional(), "account_number": z.string().max(30).describe("Bank account number for non-SEPA markets").optional() }).passthrough().describe("Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Structured business identity for B2B invoicing and contracts. Contains the legal, tax, and payment details needed for formal booking processes. Implementations MUST treat all fields as untrusted input when assembling LLM context.").optional(), "purchase_order_ref": z.string().min(1).max(255).optional(), "agency_estimate_number": z.string().max(100).optional(), "reporting_commitments": z.array(z.object({ "purchase_index": z.number().int().gte(0), "metrics": z.array(z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("standard"), "metric_id": z.enum(["impressions","spend","clicks","ctr","views","completed_views","completion_rate","conversions","conversion_value","commissionable_value","roas","cost_per_acquisition","new_to_brand_rate","leads","reach","frequency","grps","engagements","engagement_rate","follows","saves","profile_visits","viewability","viewable_rate","viewable_impressions","measurable_impressions","viewed_seconds","viewed_seconds_percentiles","viewed_seconds_histogram","quartile_data","quartile_25","quartile_50","quartile_75","quartile_100","time_based_views","dooh_metrics","ooh_metrics","cost_per_click","cost_per_completed_view","cpm","downloads","units_sold","new_to_brand_units","plays","incremental_sales_lift","brand_lift","foot_traffic","conversion_lift","brand_search_lift"]).describe("Standard delivery and performance metrics available for reporting. Most values name flat numeric fields of `core/delivery-metrics.json`. Leaf identities address a single numeric value nested inside an object-shaped metric so it can be declared, committed, aggregated, and sorted individually: `quartile_25`/`quartile_50`/`quartile_75`/`quartile_100` resolve to `quartile_data.q1_views`–`q4_views`, and `viewable_rate`/`viewable_impressions`/`measurable_impressions`/`viewed_seconds` resolve to the same-named fields of `viewability`. Structured nested identities `viewed_seconds_percentiles` and `viewed_seconds_histogram` make the corresponding optional distribution carriers discoverable, committable, and requestable, but not aggregatable or sortable. The nested object or array remains the canonical carrier — nested identities never introduce duplicate flat response fields. Container tokens such as `viewability`, `quartile_data`, `dooh_metrics`, and `time_based_views` declare their documented nested surface. **Container subsumption applies only to numeric leaves**: `viewability` subsumes `viewable_rate`, `viewable_impressions`, `measurable_impressions`, and `viewed_seconds`; `quartile_data` subsumes `quartile_25`, `quartile_50`, `quartile_75`, and `quartile_100`. This rule applies to capability declaration, `required_metrics` filtering, format `reported_metrics` intersection, and `requested_metrics` selection. Optional structured identities MUST be declared explicitly: `viewability` alone does not satisfy `viewed_seconds_percentiles` or `viewed_seconds_histogram`. Requesting any nested identity selects its canonical carrier in the response. A nested identity declaration does not imply sibling values or the carrier's non-metric fields."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and `metric_aggregates` to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, `metric_aggregates`, and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, `metric_aggregates`, and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough(), z.object({ "scope": z.literal("vendor"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and `metric_aggregates` to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, `metric_aggregates`, and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, `metric_aggregates`, and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough()];
+    const schemas = [z.object({ "scope": z.literal("standard"), "metric_id": z.enum(["impressions","spend","clicks","ctr","views","completed_views","completion_rate","conversions","conversion_value","commissionable_value","roas","cost_per_acquisition","new_to_brand_rate","leads","reach","frequency","grps","engagements","engagement_rate","follows","saves","profile_visits","viewability","viewable_rate","viewable_impressions","measurable_impressions","viewed_seconds","viewed_seconds_percentiles","viewed_seconds_histogram","quartile_data","quartile_25","quartile_50","quartile_75","quartile_100","time_based_views","dooh_metrics","ooh_metrics","cost_per_click","cost_per_completed_view","cpm","downloads","units_sold","new_to_brand_units","plays","incremental_sales_lift","brand_lift","foot_traffic","conversion_lift","brand_search_lift"]).describe("Standard delivery and performance metrics available for reporting. Most values name flat numeric fields of `core/delivery-metrics.json`. Leaf identities address a single numeric value nested inside an object-shaped metric so it can be declared, committed, aggregated, and sorted individually: `quartile_25`/`quartile_50`/`quartile_75`/`quartile_100` resolve to `quartile_data.q1_views`–`q4_views`, and `viewable_rate`/`viewable_impressions`/`measurable_impressions`/`viewed_seconds` resolve to the same-named fields of `viewability`. Structured nested identities `viewed_seconds_percentiles` and `viewed_seconds_histogram` make the corresponding optional distribution carriers discoverable, committable, and requestable, but not aggregatable or sortable. The nested object or array remains the canonical carrier — nested identities never introduce duplicate flat response fields. Container tokens such as `viewability`, `quartile_data`, `dooh_metrics`, and `time_based_views` declare their documented nested surface. **Container subsumption applies only to numeric leaves**: `viewability` subsumes `viewable_rate`, `viewable_impressions`, `measurable_impressions`, and `viewed_seconds`; `quartile_data` subsumes `quartile_25`, `quartile_50`, `quartile_75`, and `quartile_100`. This rule applies to capability declaration, `required_metrics` filtering, format `reported_metrics` intersection, and `requested_metrics` selection. Optional structured identities MUST be declared explicitly: `viewability` alone does not satisfy `viewed_seconds_percentiles` or `viewed_seconds_histogram`. Requesting any nested identity selects its canonical carrier in the response. A nested identity declaration does not imply sibling values or the carrier's non-metric fields."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and package-level delivery values (`metric_values` or `vendor_metric_values`) to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough(), z.object({ "scope": z.literal("vendor"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and package-level delivery values (`metric_values` or `vendor_metric_values`) to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough()];
     const { errors, failed } = schemas.reduce<{
       errors: z.core.$ZodIssue[];
       failed: number;
@@ -18754,6 +18874,7 @@ export const GetReportingStatusResponseSchema = z.object({
     view: ReportingStatusViewSchema.optional(),
     ledger_snapshot_id: z.string().min(1).max(255).optional(),
     ledger_as_of: z.iso.datetime().optional(),
+    changes_checkpoint: z.string().min(1).max(2048).optional(),
     account_id: z.string().min(1).optional(),
     scope: z.object({
         period_start: z.iso.datetime(),
@@ -18786,6 +18907,8 @@ export const GetReportingStatusResponseSchema = z.object({
     issues: z.array(ReportingStatusIssueSchema).optional(),
     periods: z.array(ReportingObligationSchema).optional(),
     revisions: z.array(ReportingRevisionSchema).optional(),
+    adjustments: z.array(ReportingAdjustmentSchema).optional(),
+    adjustment_receipts: z.array(ReportingAdjustmentReceiptSchema).optional(),
     pagination: PaginationResponseSchema.optional(),
     revision: ReportingRevisionSchema.optional(),
     materializations: z.array(ReportingMaterializationSchema).optional(),
@@ -19105,7 +19228,7 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         plan_id: z.string().optional(),
         rights_id: z.string().optional(),
         fixture: z.object({}).passthrough().optional(),
-        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("omit_obligation")]).optional(),
+        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("omit_obligation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
         target_health: z.union([z.literal("delayed"), z.literal("action_required")]).optional(),
         catalog_id: z.string().min(1).max(255).optional(),
         catalog_generation: z.string().min(1).max(255).optional(),
