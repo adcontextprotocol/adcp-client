@@ -13,6 +13,9 @@ export const SLOW_NODE_TESTS = new Set([
   'test/generate-zod-object-intersections.test.js',
   'test/generate-zod-reporting-status.test.js',
   'test/server-decisioning-from-platform.test.js',
+  // Starts a real seller, storyboard receiver, and terminal webhook delivery.
+  // Its integration baseline exceeds the fast-suite 60s ceiling.
+  'test/examples/hello-seller-adapter-guaranteed.test.js',
   'test/lib/cli-auth-scheme.test.js',
   'test/lib/cli-removed-flags.test.js',
   'test/lib/cli-soft-fail.test.js',

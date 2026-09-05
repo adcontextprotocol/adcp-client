@@ -4462,9 +4462,75 @@ function pushOperationIdError(
   params: Record<string, unknown>,
   release: ServedAdcpRelease
 ): McpToolResponse | undefined {
-  if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
   const config = params.push_notification_config;
   if (config === undefined) return undefined;
+  // This generic server seam runs before arbitrary custom handlers too; it
+  // cannot assume a downstream runtime will validate the push shape. Keep
+  // malformed supplied configs fail-closed, with the same precise fields as
+  // the decisioning extractor. Explicit `undefined` above remains absent.
+  if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config must be an object',
+      field: 'push_notification_config',
+    });
+  }
+  if (typeof (config as { url?: unknown }).url !== 'string') {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.url must be a string',
+      field: 'push_notification_config.url',
+    });
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(config, 'token') &&
+    typeof (config as { token?: unknown }).token !== 'string'
+  ) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token must be a string',
+      field: 'push_notification_config.token',
+    });
+  }
+  // Framework handlers can receive a release-projected request shape, which
+  // may omit this beta-era field before it reaches a domain adapter. Reject
+  // universally-invalid delivery values here, while the decisioning runtime
+  // applies its stricter deployment-aware SSRF policy to the extracted URL.
+  const pushConfig = config as { url: string; token?: string };
+  try {
+    const parsed = new URL(pushConfig.url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return adcpError('INVALID_REQUEST', {
+        message:
+          `push_notification_config.url rejected: unsupported scheme "${parsed.protocol}" ` + '(only http: / https:)',
+        field: 'push_notification_config.url',
+      });
+    }
+  } catch {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.url rejected: malformed URL',
+      field: 'push_notification_config.url',
+    });
+  }
+  if (typeof pushConfig.token === 'string' && pushConfig.token.length < 16) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token rejected: token shorter than 16 chars',
+      field: 'push_notification_config.token',
+    });
+  }
+  if (typeof pushConfig.token === 'string' && pushConfig.token.length > 4096) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token rejected: token longer than 4096 chars',
+      field: 'push_notification_config.token',
+    });
+  }
+  if (typeof pushConfig.token === 'string' && /[\x00-\x1f\x7f]/.test(pushConfig.token)) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token rejected: token contains control characters',
+      field: 'push_notification_config.token',
+    });
+  }
+  // Only operation_id itself is beta.5+. The basic supplied-config shape is
+  // always checked above so version negotiation cannot turn malformed input
+  // into an unvalidated call when request validation is disabled.
+  if (!releaseRequiresPushOperationId(release.validationVersion)) return undefined;
   if (
     !isPlainObject(config) ||
     typeof config.operation_id !== 'string' ||

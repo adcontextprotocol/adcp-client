@@ -12,6 +12,14 @@ created an AdCP task. There are three distinct durability boundaries:
 `createPostgresTaskSettlementCoordinator()` protects the second. The webhook
 delivery recovery worker protects the third.
 
+This guide's push coordinator is a lower-level application-managed path: the
+application must already own both task creation and protected push-route
+registration outside `createAdcpServerFromPlatform`'s `TaskHandoff` flow. It
+does not make `ctx.handoffToTask(producer, { settlement: 'external' })`
+push-capable. That framework handoff is polling-only and must omit
+`push_notification_config`; its producer can durably queue the complete scoped
+reference and workers settle it with `completeScopedTask()` / `failScopedTask()`.
+
 ## Provision the queue
 
 Run the bootstrap SQL during database provisioning:
@@ -132,12 +140,14 @@ This registry form is only for tasks without push notifications.
 `completeScopedTask()` and `failScopedTask()` reject registry-only settlement
 for a push-enabled task.
 
-## Settle push-enabled tasks safely
+## Settle application-managed push tasks safely
 
-For push-enabled tasks, persist the original push route and its protected
-authentication configuration in durable application state in the same domain
-transaction as the intent. Recovery must reconstruct that configuration; an
-in-memory callback route can disappear in the exact crash this queue protects.
+For an application-managed push task, persist the original push route and its
+protected authentication configuration in durable application state in the same
+domain transaction as the intent. Recovery must reconstruct that configuration;
+an in-memory callback route can disappear in the exact crash this queue
+protects. Do not use this path to add push delivery to an external framework
+handoff.
 
 Use the PostgreSQL settlement coordinator instead of the polling helper. Its
 compatible `already_terminal` outcome proves both the exact task artifact and
@@ -191,9 +201,9 @@ const metrics = await settlementIntents.recover({
 });
 ```
 
-For push-enabled recovery, load the protected push configuration by the full
-`intent.taskRef` and call `applyTaskSettlementIntent()` with `{ coordinator,
-push }` instead. Run multiple
+For application-managed push recovery, load the protected push configuration by
+the full `intent.taskRef` and call `applyTaskSettlementIntent()` with
+`{ coordinator, push }` instead. Run multiple
 workers for concurrency; each worker should use a stable, unique `workerId`.
 Throwing keeps the intent recoverable and reports through `onError` until the
 underlying configuration is corrected.

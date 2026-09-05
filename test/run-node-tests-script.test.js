@@ -30,9 +30,11 @@ test('fast and slow selections are complementary and scope-aware', async () => {
   const slow = selectNodeTests(all, 'slow');
 
   assert.deepEqual([...fast, ...slow].sort(), all.slice().sort());
+  // `test:examples` owns example-adapter execution, but focused `test:file`
+  // still uses this set to grant their integration tests the right timeout.
   assert.deepEqual(
     [...SLOW_NODE_TESTS].filter(file => !all.includes(file)),
-    []
+    ['test/examples/hello-seller-adapter-guaranteed.test.js']
   );
   assert.equal(
     fast.some(file => SLOW_NODE_TESTS.has(file)),
@@ -74,7 +76,7 @@ test('runner arguments support CI sharding and focused files', async () => {
 
 test('focused slow tests retain the extended timeout', async () => {
   const { buildNodeTestArgs, parseRunnerArgs } = await import(runnerUrl);
-  const options = parseRunnerArgs(['test/lib/conformance-cli.test.js']);
+  const options = parseRunnerArgs(['test/examples/hello-seller-adapter-guaranteed.test.js']);
   const invocation = buildNodeTestArgs(options, {});
 
   assert.equal(invocation.timeoutMs, 180_000);

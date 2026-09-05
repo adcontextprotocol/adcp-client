@@ -184,6 +184,13 @@ Beta.5-or-later sellers return `INVALID_REQUEST` before handler dispatch when th
 is missing or malformed. Explicitly negotiated older bundles keep their prior
 wire behavior.
 
+Regardless of negotiated version, a supplied malformed
+`push_notification_config` now returns a precise `INVALID_REQUEST` at
+`push_notification_config`, `.url`, or `.token` even when server request
+validation is `off`. Omit the field, or set it explicitly to `undefined`, to
+keep the polling-only behavior; a supplied object must include a string URL,
+and an own `token` property must be a string.
+
 Receivers continue to fence exact delivery retries by seller plus
 `idempotency_key`, and additionally fence terminal publication by authenticated
 seller, buyer `operation_id`, and seller `task_id`. This prevents a beta.5
@@ -201,6 +208,25 @@ npm install '@adcp/sdk@^14.0.0-0'
 ```
 
 The untagged npm install remains SDK 13. Keep that line for production AdCP 3.1 deployments until the 3.2 application and its counterparties have completed beta validation.
+
+### Breaking: push-enabled task handoffs require a terminal delivery owner
+
+SDK 14 now fails closed when a handler returns `ctx.handoffToTask(...)` for a
+request whose `push_notification_config.url` was validated but the server has
+no configured task-webhook delivery path. The initial response is a structured
+`UNSUPPORTED_FEATURE` error at `push_notification_config`; no task is created
+and the handoff callback does not run. The platform handler has already run to
+produce its handoff marker, so it must not make irreversible effects before
+returning it; framework-managed proposal reservations are unwound. Remove the
+push configuration and retry with a **new** `idempotency_key` to retain the
+polling-only path, or configure the framework `webhooks` emitter.
+
+This framework delivery path applies only to framework-settled handoffs.
+External settlement has no SDK terminal webhook delivery path, even when an
+emitter is configured; omit `push_notification_config` and use polling.
+
+Synchronous responses remain successful and silent on the task webhook channel
+even when a request includes `push_notification_config`.
 
 ## Compound compliance capability gates
 
@@ -245,7 +271,7 @@ loading; keep using `requires_capability` for a singular predicate.
 13. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
 14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
 15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or after reading back an `already_terminal` task and proving its exact result/error artifact. Matching terminal status alone is insufficient. Retry or dead-letter scoped misses and conflicting terminal outcomes. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
-16. For out-of-process settlement, return `ctx.handoffToTask(producer, { settlement: 'external' })`; the producer must durably queue the complete handle before returning, and the framework withholds `submitted` until that commit succeeds. For a push-enabled task, configure `createPostgresTaskSettlementCoordinator()` on the same PostgreSQL pool as the task registry and use `completeScopedPushTask()`, `failScopedPushTask()`, or `rejectScopedPushTask()` for a business decline. Run the webhook recovery outbox migration and recovery worker; the polling-only scoped helpers still reject push tasks. Before first use of rejection, run `getDecisioningTaskRegistryStatusWidenV61Migration()` against legacy task tables; its bounded `ACCESS EXCLUSIVE` lock can briefly block task reads and writes. See [task registry scope migration](./migration-task-registry-scoping.md#out-of-process-settlement).
+16. For out-of-process settlement, return `ctx.handoffToTask(producer, { settlement: 'external' })`; the producer must durably queue the complete handle before returning, and the framework withholds `submitted` until that commit succeeds. External settlement is polling-only: omit `push_notification_config`. Its custom durable registry must expose a stable non-empty `registryId` and return that exact ID in every `create()` reference; a mismatch is a custom create-contract violation, rejected before the producer runs or `submitted` is acknowledged. Framework-settled push handoffs configure production `webhooks`; `taskWebhookEmitter` is test/development-only. `dispatchHitl` owns their terminal task mutation and delivery. `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()`, `failScopedPushTask()`, or `rejectScopedPushTask()` is a lower-level application-managed push-settlement path, not a requirement for framework-settled handoffs and not a way to make external settlement push-capable. Before first use of rejection, run `getDecisioningTaskRegistryStatusWidenV61Migration()` against legacy task tables; its bounded `ACCESS EXCLUSIVE` lock can briefly block task reads and writes. See [task registry scope migration](./migration-task-registry-scoping.md#out-of-process-settlement).
 17. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
 
 ### Webhook delivery identity and retry horizons

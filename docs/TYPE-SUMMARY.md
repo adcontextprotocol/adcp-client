@@ -246,7 +246,7 @@ interface TaskPushSettlementConfig {
   token?: string; // protected at rest by WebhookAuthenticationAdapter
   authentication?: WebhookAuthentication;
 }
-interface ExternalTaskHandoffOptions { settlement: 'external'; task_id?: string; }
+interface ExternalTaskHandoffOptions { settlement: 'external'; task_id?: string; } // polling-only; omit push_notification_config
 interface ExternalTaskHandoffContext { id: string; taskRef: ScopedTaskRef; update(progress: TaskHandoffProgress): Promise<void>; heartbeat(): Promise<void>; /* no reject() */ }
 type TaskPushSettlementOutcome =
   | { outcome: 'applied'; delivery: 'durably_bound' }
@@ -268,7 +268,7 @@ if (await settlements.hasTerminalCheckpoint(scopedTaskRef)) {
 }
 ```
 
-The registry and outbox must share one PostgreSQL pool. Run the task-registry status-widen migration and webhook-recovery migrations before settling legacy tables, return `ctx.handoffToTask(producer, { settlement: 'external' })`, and persist the complete `ScopedTaskRef` plus encrypted push route before the producer returns. The producer receives `ExternalTaskHandoffContext`, which deliberately has no `reject()`; a trusted worker uses `rejectScopedPushTask()` for a business decline. The framework waits for that durable producer commit before returning `submitted`. Poll `settlements.recovery` from a worker. After intentionally deleting a settled task's push config, first compare the stored terminal result/error and rejected message with the intended artifact; then `hasTerminalCheckpoint()` proves that the scoped task still has its deterministic durable webhook checkpoint without reconstructing the secret route. It does not prove artifact compatibility or delivery. Reconstructed coordinators must retain the same publisher scope, registry storage ID/namespace, and outbox table, and checkpoint tombstones must remain through the intent replay horizon. See `docs/migration-task-registry-scoping.md`.
+The registry and outbox must share one PostgreSQL pool. Run the task-registry status-widen migration and webhook-recovery migrations before settling legacy tables. These push helpers are for an application-managed integration that independently created the task and durably registered the protected push route; they do not make `ctx.handoffToTask(producer, { settlement: 'external' })` push-capable. That framework handoff remains polling-only and its producer receives `ExternalTaskHandoffContext`, which deliberately has no `reject()`. Poll `settlements.recovery` from a worker. After intentionally deleting an application-managed settled task's push config, first compare the stored terminal result/error and rejected message with the intended artifact; then `hasTerminalCheckpoint()` proves that the scoped task still has its deterministic durable webhook checkpoint without reconstructing the secret route. It does not prove artifact compatibility or delivery. Reconstructed coordinators must retain the same publisher scope, registry storage ID/namespace, and outbox table, and checkpoint tombstones must remain through the intent replay horizon. See `docs/migration-task-registry-scoping.md`.
 
 ## PostgreSQL Webhook Runtime
 
