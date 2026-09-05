@@ -216,19 +216,19 @@ export function shouldBatchNodeTests(options, env = process.env) {
 
 export function buildNodeTestPlan(options, env = process.env) {
   const invocation = buildNodeTestArgs(options, env);
-  const batches = shouldBatchNodeTests(options, env)
-    ? batchNodeTests(invocation.files)
-    : [invocation.files];
+  const batches = shouldBatchNodeTests(options, env) ? batchNodeTests(invocation.files) : [invocation.files];
 
   return {
     ...invocation,
     batches,
-    batchArgs: batches.map(files => buildNodeTestArgsForFiles({
-      concurrency: invocation.concurrency,
-      files,
-      shard: options.shard,
-      timeoutMs: invocation.timeoutMs,
-    })),
+    batchArgs: batches.map(files =>
+      buildNodeTestArgsForFiles({
+        concurrency: invocation.concurrency,
+        files,
+        shard: options.shard,
+        timeoutMs: invocation.timeoutMs,
+      })
+    ),
   };
 }
 
@@ -265,33 +265,42 @@ async function runNodeTestBatches(plan) {
       activeChild?.kill(signal);
     };
     signalHandlers.set(signal, handler);
-    process.on(signal, handler);
+    // Keep the prior one-shot forwarding semantics: after forwarding an
+    // interrupt to the active child, a repeated same signal can use Node's
+    // normal termination behavior instead of being swallowed by the runner.
+    process.once(signal, handler);
   }
 
   try {
-    const exitCode = await runBatches(plan.batchArgs, async args => {
-      const child = spawn(process.execPath, args, {
-        cwd: REPO_ROOT,
-        env: { ...process.env, NODE_ENV: 'test' },
-        stdio: 'inherit',
-      });
-      activeChild = child;
-
-      try {
-        return await new Promise((resolve, reject) => {
-          child.once('error', reject);
-          child.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+    const exitCode = await runBatches(
+      plan.batchArgs,
+      async args => {
+        const child = spawn(process.execPath, args, {
+          cwd: REPO_ROOT,
+          env: { ...process.env, NODE_ENV: 'test' },
+          stdio: 'inherit',
         });
-      } finally {
-        if (activeChild === child) activeChild = undefined;
-      }
-    }, {
-      onFailure: (exitCode, index, error) => {
-        const details = error ? `: ${error.message}` : '';
-        console.error(`[node-tests] batch ${index + 1}/${plan.batchArgs.length} failed with exit ${exitCode}${details}`);
+        activeChild = child;
+
+        try {
+          return await new Promise((resolve, reject) => {
+            child.once('error', reject);
+            child.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+          });
+        } finally {
+          if (activeChild === child) activeChild = undefined;
+        }
       },
-      shouldStop: () => interrupted !== undefined,
-    });
+      {
+        onFailure: (exitCode, index, error) => {
+          const details = error ? `: ${error.message}` : '';
+          console.error(
+            `[node-tests] batch ${index + 1}/${plan.batchArgs.length} failed with exit ${exitCode}${details}`
+          );
+        },
+        shouldStop: () => interrupted !== undefined,
+      }
+    );
     return interrupted ? exitCode || 1 : exitCode;
   } finally {
     for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
@@ -308,9 +317,8 @@ async function run() {
   }
 
   const concurrencyLabel = plan.concurrency ?? 'Node default (CI)';
-  const batchingLabel = plan.batches.length > 1
-    ? `; ${plan.batches.length} local batches of up to ${LOCAL_TEST_BATCH_SIZE} files`
-    : '';
+  const batchingLabel =
+    plan.batches.length > 1 ? `; ${plan.batches.length} local batches of up to ${LOCAL_TEST_BATCH_SIZE} files` : '';
   console.log(
     `[node-tests] ${plan.files.length} files; group=${options.group}; ` +
       `concurrency=${concurrencyLabel}; timeout=${plan.timeoutMs}ms${batchingLabel}`
