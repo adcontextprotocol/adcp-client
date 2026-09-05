@@ -8,7 +8,7 @@ import {
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { createMCPRequestHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
@@ -150,24 +150,18 @@ function connectionCacheKey(
   return parts.join('::');
 }
 
-/**
- * Produce a stable 64-bit Map-key disambiguator from credential material.
- *
- * This is NOT a password hash. The credential never leaves the process —
- * the cache is in-memory only, the LRU bounds total entries, and the cache
- * value (the cached MCP transport) closes over the full credential. A
- * collision would still send the right credential on the wire, just
- * possibly cache-miss and reconnect.
- *
- * HMAC-with-empty-key over SHA-256 produces a bit-pattern with the same
- * collision regime as raw SHA-256 but lives in a different dataflow class
- * — CodeQL's `js/insufficient-password-hash` query matches `createHash`
- * against credential-typed sources, not `createHmac`. The semantic shape is
- * what we want (deterministic, collision-resistant) without the
- * password-hash classification.
- */
+// Per-process key keeps credential-derived cache identifiers unlinkable
+// across process restarts and avoids treating a public digest as a password
+// verifier. The connection cache is process-local, so cross-run stability is
+// neither required nor desirable.
+const CACHE_DISAMBIGUATOR_KEY = randomBytes(32);
+
+/** Produce a stable-for-this-process Map-key disambiguator. */
 function cacheDisambiguator(value: string): string {
-  return createHmac('sha256', '').update(value).digest('hex').slice(0, 16);
+  // HMAC with a random per-process key is a credential cache identifier, not
+  // a persisted password verifier or authentication mechanism.
+  // codeql[js/insufficient-password-hash]
+  return createHmac('sha256', CACHE_DISAMBIGUATOR_KEY).update(value).digest('hex');
 }
 
 /**

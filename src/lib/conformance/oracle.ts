@@ -41,17 +41,43 @@ const STACK_TRACE_REGEXES: readonly RegExp[] = [
   /\.go:\d+ \+0x[0-9a-f]+/,
   // PHP: `#7 /var/www/foo.php(42): Bar->baz()` — numbered frame with file:line
   /#\d+ [^\s]+\.php\(\d+\):/,
-  // JVM: `\n\tat com.foo.Bar.method(Bar.java:42)` — fully-qualified
-  // method with source:line. Anchored to whitespace/newline so an
-  // echoed Javadoc reference in prose (`"at com.foo.Bar(Bar.java:42)"`)
-  // doesn't trigger the detector — real stack frames sit on their own
-  // indented line.
-  /(?:\\n\s*|^\s+|\n\s+)at [\w$.]+\.[\w$]+\([\w$]+\.(?:java|kt|kts|scala|groovy):\d+\)/,
   // .NET: `at Foo.Bar.Baz() in /path/to/X.cs:line 42` — method invocation
   // followed by ` in ` and a file:line marker. The method-name charset
   // includes parens/brackets for generic and overloaded signatures.
   /at [\w.<>`,()[\]]+ in [^:\s]+\.(?:cs|vb|fs):line \d+/,
 ];
+
+const JVM_STACK_FRAME = /^at [\w$.]+\.[\w$]+\([\w$]+\.(?:java|kt|kts|scala|groovy):\d+\)\s*/;
+
+function isJsonFramingSuffix(value: string): boolean {
+  if (!value.startsWith('"')) return false;
+  for (let index = 1; index < value.length; index++) {
+    const char = value[index];
+    if (char !== '}' && char !== ']' && char !== ',' && char !== ' ' && char !== '\t') return false;
+  }
+  return true;
+}
+
+/**
+ * Detect an indented JVM frame without a regex that can repartition an
+ * arbitrary whitespace run. `safeStringify` encodes newlines as the two
+ * characters `\\n`, so normalize those separators before inspecting lines.
+ */
+function hasJvmStackFrame(haystack: string): boolean {
+  const lines = haystack.replaceAll('\\n', '\n').split('\n');
+  for (const [index, line] of lines.entries()) {
+    const candidate = line.trimStart();
+    // The JSON-escaped-newline branch of the previous detector intentionally
+    // accepted zero indentation; retain that coverage after normalization.
+    if (index > 0 || candidate !== line) {
+      const match = JVM_STACK_FRAME.exec(candidate);
+      if (match && (match[0].length === candidate.length || isJsonFramingSuffix(candidate.slice(match[0].length)))) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 const FS_PATH_SIGNATURES = [/\/Users\/[^ "']+/, /\/home\/[^ "']+/, /[A-Z]:\\\\Users\\\\/];
 
@@ -201,6 +227,10 @@ function checkNoStackLeak(result: TaskResult<unknown>, failures: string[]): void
       failures.push(`stack trace leak (matched ${JSON.stringify(sig)})`);
       return;
     }
+  }
+  if (hasJvmStackFrame(haystack)) {
+    failures.push(`stack trace leak (matched ${JVM_STACK_FRAME.source})`);
+    return;
   }
   for (const rx of STACK_TRACE_REGEXES) {
     if (rx.test(haystack)) {

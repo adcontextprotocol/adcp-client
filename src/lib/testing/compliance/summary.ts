@@ -204,14 +204,39 @@ function extractMissingToolNames(warning: string): string[] {
   // Storyboard-level: `agent does not advertise any of [sync_accounts, list_accounts]`
   // Each tool is a separate gap — emit one cause per tool so dashboards see
   // the full list, not a single comma-joined "tool name".
-  const sbMatch = warning.match(/agent does not advertise any of \[([^\]]+)\]/i);
-  if (sbMatch) {
-    return sbMatch[1]!
-      .split(/,\s*/)
+  const prefix = 'agent does not advertise any of [';
+  const contentStart = indexOfAsciiCaseInsensitive(warning, prefix);
+  if (contentStart !== -1) {
+    // Lowercasing Unicode can change string length. Locate the ASCII `[` in
+    // the original warning so offsets never depend on the folded copy.
+    const valueStart = warning.indexOf('[', contentStart) + 1;
+    if (valueStart === 0) return [];
+    const valueEnd = warning.indexOf(']', valueStart);
+    if (valueEnd === -1) return [];
+    return warning
+      .slice(valueStart, valueEnd)
+      .split(',')
       .map(t => t.trim())
       .filter(Boolean);
   }
   return [];
+}
+
+function indexOfAsciiCaseInsensitive(value: string, needle: string): number {
+  const lastStart = value.length - needle.length;
+  for (let start = 0; start <= lastStart; start++) {
+    let matched = true;
+    for (let offset = 0; offset < needle.length; offset++) {
+      const code = value.charCodeAt(start + offset);
+      const folded = code >= 65 && code <= 90 ? code + 32 : code;
+      if (folded !== needle.charCodeAt(offset)) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return start;
+  }
+  return -1;
 }
 
 function skipCauseDetail(reason: string): string {
@@ -312,9 +337,18 @@ function buildSkipCauses(result: ComplianceResult): ComplianceSummarySkipCause[]
 }
 
 function parseMissingRequiredToolFamilyCause(warning: string): string | null {
-  const match = warning.match(/^missing_required_tool_family: needs\s+([\s\S]*)$/);
-  if (!match) return null;
-  const family = match[1]!.replace(/\s*[;(][\s\S]*$/, '').trim();
+  const prefix = 'missing_required_tool_family: needs';
+  if (!warning.startsWith(prefix)) return null;
+
+  const suffix = warning.slice(prefix.length);
+  const familyStart = suffix.trimStart();
+  if (familyStart.length === suffix.length) return null;
+
+  const semicolon = familyStart.indexOf(';');
+  const parenthesis = familyStart.indexOf('(');
+  const terminators = [semicolon, parenthesis].filter(index => index !== -1);
+  const familyEnd = terminators.length > 0 ? Math.min(...terminators) : familyStart.length;
+  const family = familyStart.slice(0, familyEnd).trim();
   return family ? `missing_required_tool_family: needs ${family}` : null;
 }
 

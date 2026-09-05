@@ -14,6 +14,7 @@
 import { config as loadEnv } from 'dotenv';
 loadEnv();
 import { ADCPMultiAgentClient } from '../src/lib';
+import { redactCredentialPatterns } from '../src/lib/server/redact';
 
 interface ToolProbe {
   label: string;
@@ -49,9 +50,12 @@ async function probeOne(label: string, fn: () => Promise<any>): Promise<void> {
         console.log(`      • ${i.pointer ?? ''}  ${i.keyword ?? ''}  ${i.message ?? ''}`);
       }
     }
-  } catch (err: any) {
+  } catch (err) {
     const elapsed = Date.now() - t0;
-    console.log(`   ❌ threw after ${elapsed}ms: ${err?.message ?? err}`);
+    const detail = redactCredentialPatterns(err instanceof Error ? err.message : String(err));
+    // Diagnostic detail is scrubbed before this development-only sink.
+    // codeql[js/clear-text-logging]
+    console.log(`   ❌ probe failed after ${elapsed}ms: ${detail}`);
   }
 }
 
@@ -103,7 +107,9 @@ async function main(): Promise<void> {
 }
 
 main().catch(err => {
-  console.error('❌ smoke test failed:', err?.message ?? err);
-  if (err?.stack) console.error(err.stack);
+  const detail = redactCredentialPatterns(err instanceof Error ? err.message : String(err));
+  // Diagnostic detail is scrubbed before this development-only sink.
+  // codeql[js/clear-text-logging]
+  console.error(`❌ smoke test failed: ${detail}`);
   process.exit(1);
 });

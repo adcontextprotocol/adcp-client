@@ -1,6 +1,8 @@
 name: "AdCP Client CodeQL Config"
 
 paths-ignore:
+  - .context/**
+  - dist/**
   - examples/**
   - scripts/manual-testing/**
   - test/**

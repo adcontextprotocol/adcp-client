@@ -74,11 +74,15 @@ class CatalogRequirementConflict extends Error {}
 /**
  * Stable identity disambiguator, not a password hash. The input is a public
  * creative-format tuple and the output is a product-local routing label. As
- * with the transport cache disambiguators, HMAC-SHA256 with an empty key gives
- * deterministic collision resistance without placing this non-secret value
- * in CodeQL's password-storage dataflow class.
+ * HMAC-SHA256 with an empty key gives deterministic collision resistance
+ * without placing this non-secret value in CodeQL's password-storage dataflow
+ * class. Unlike the process-local transport cache key, this identity must stay
+ * stable across process restarts.
  */
 function formatIdentityDisambiguator(identity: string): string {
+  // This digest gives a public creative-format tuple a deterministic migration
+  // identity; it is not used to store or verify credentials.
+  // codeql[js/insufficient-password-hash]
   return createHmac('sha256', '').update(identity).digest('hex').slice(0, 32);
 }
 

@@ -763,6 +763,28 @@ describe('buildComplianceSummary — skip causes', () => {
     assert.ok(list, 'missing_tool: list_accounts should be present');
   });
 
+  test('malformed long missing-tool warning without a closing bracket stays ungrouped', () => {
+    const result = resultWithSkips();
+    result.tracks[0].scenarios[0].steps[0].warnings = [`agent does not advertise any of [${'\\'.repeat(100_000)}`];
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.ok(s.skip_causes);
+    assert.equal(s.skip_causes[0].cause, 'missing_tool');
+  });
+
+  test('Unicode before a mixed-case missing-tool prefix does not shift parsing offsets', () => {
+    const result = resultWithSkips();
+    result.tracks[0].scenarios = [result.tracks[0].scenarios[0]];
+    result.tracks[0].scenarios[0].steps = [result.tracks[0].scenarios[0].steps[0]];
+    result.tracks[0].scenarios[0].steps[0].warnings = [
+      '\u0130 AGENT DOES NOT ADVERTISE ANY OF [sync_accounts, list_accounts]',
+    ];
+    const s = buildComplianceSummary(result, { sdkVersion: '6.9.0', adcpVersion: '3.0.6' });
+    assert.deepEqual(
+      s.skip_causes?.map(cause => cause.cause),
+      ['missing_tool: sync_accounts', 'missing_tool: list_accounts']
+    );
+  });
+
   test('detailed skip reasons normalize to canonical actionability (controller_seeding_failed)', () => {
     // The runner writes detailed RunnerDetailedSkipReason values directly
     // to step.skip_reason. The aggregator must map them through

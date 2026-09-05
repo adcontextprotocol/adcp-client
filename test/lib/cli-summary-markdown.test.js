@@ -281,6 +281,10 @@ test('escapeMarkdownCell: pipes are backslash-escaped so they do not split cells
   assert.strictEqual(escapeMarkdownCell('a | b | c'), 'a \\| b \\| c');
 });
 
+test('escapeMarkdownCell: backslashes are escaped before pipes', () => {
+  assert.strictEqual(escapeMarkdownCell('sneaky \\| literal'), 'sneaky \\\\\\| literal');
+});
+
 test('escapeMarkdownCell: newlines collapse to spaces so a multi-line reason stays on one row', () => {
   assert.strictEqual(escapeMarkdownCell('first line\nsecond line'), 'first line second line');
 });
