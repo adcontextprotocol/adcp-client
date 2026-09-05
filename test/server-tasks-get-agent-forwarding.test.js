@@ -325,14 +325,54 @@ describe('tasks_get — agent forwarding to accounts.resolve', () => {
 });
 
 describe('tasks_get — webhook availability', () => {
-  it('reports has_webhook false when a push URL is accepted without an emitter (#2836)', async () => {
+  it('reports has_webhook true only for externally settled, explicitly owned delivery (#2836)', async () => {
+    let sdkWebhookEmits = 0;
+    let capturedWebhook;
+    const platform = buildHitlPlatform(
+      {},
+      {
+        taskFn: async () => {},
+      }
+    );
+    platform.sales.createMediaBuy = (_req, ctx) =>
+      ctx.handoffToTask(
+        async taskCtx => {
+          capturedWebhook = structuredClone(taskCtx.terminalWebhook);
+        },
+        { settlement: 'external' }
+      );
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'p',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+      externallyManagedTaskWebhooks: true,
+      taskRegistry: {
+        ...require('../dist/lib/server/decisioning/runtime/task-registry').createInMemoryTaskRegistry(),
+        durability: 'durable',
+      },
+      observability: { onWebhookEmit: () => (sdkWebhookEmits += 1) },
+    });
+    const taskId = await createTaskWithPushConfig(server, 'acc_owner');
+
+    const result = await dispatchTasksGet(server, taskId, 'acc_owner');
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.strictEqual(result.structuredContent.has_webhook, true);
+    assert.deepStrictEqual(capturedWebhook, {
+      url: 'https://buyer.example.com/webhook',
+      taskType: 'create_media_buy',
+      operationId: 'op_has_webhook',
+      servedAdcpVersion: '3.2-rc.0',
+    });
+    assert.strictEqual(sdkWebhookEmits, 0, 'external delivery must not be reported as an SDK webhook emission');
+  });
+
+  it('reports has_webhook false for polling-only handoffs (#2836)', async () => {
     const server = createAdcpServerFromPlatform(buildHitlPlatform({}), {
       name: 'p',
       version: '0.0.1',
       validation: { requests: 'off', responses: 'off' },
     });
-    const taskId = await createTaskWithPushConfig(server, 'acc_owner');
-
+    const taskId = await createCompletedTask(server, 'acc_owner');
     const result = await dispatchTasksGet(server, taskId, 'acc_owner');
     assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
     assert.strictEqual(result.structuredContent.has_webhook, false);

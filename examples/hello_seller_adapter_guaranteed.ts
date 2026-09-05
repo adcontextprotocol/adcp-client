@@ -1359,6 +1359,41 @@ const mediaBuyStore = createMediaBuyStore({ store: stateStore });
 // in-flight tasks are lost on process restart.
 const taskRegistry = createInMemoryTaskRegistry();
 
+// TEST-ONLY: The storyboard runner supplies a local webhook receiver for the
+// guaranteed-sales async scenario. Deliver its terminal task notification for
+// real; do not use externallyManagedTaskWebhooks, which is only for an
+// application-owned durable external worker. Production uses the SDK `webhooks`
+// configuration with signing, durable delivery binding, and recovery instead.
+const storyboardTaskWebhookEmitter =
+  process.env['NODE_ENV'] === 'development'
+    ? {
+        unsigned: true,
+        emit: async ({
+          url,
+          payload,
+          delivery_id,
+        }: {
+          url: string;
+          payload: Record<string, unknown>;
+          delivery_id: string;
+        }) => {
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!response.ok) throw new Error(`Storyboard webhook receiver returned HTTP ${response.status}`);
+          return {
+            delivery_id,
+            idempotency_key: `storyboard-${delivery_id}`,
+            attempts: 1,
+            delivered: true,
+            errors: [],
+          };
+        },
+      }
+    : undefined;
+
 serve(
   ({ taskStore }) =>
     createAdcpServerFromPlatform(platform, {
@@ -1366,6 +1401,7 @@ serve(
       version: '1.0.0',
       taskStore,
       taskRegistry,
+      ...(storyboardTaskWebhookEmitter !== undefined && { taskWebhookEmitter: storyboardTaskWebhookEmitter }),
       idempotency: idempotencyStore,
       mediaBuyStore,
       canonicalFormatLegacyResolver: context => {

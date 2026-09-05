@@ -370,10 +370,13 @@ describe('decisioning task registry schema management', () => {
       getDecisioningTaskRegistryBootstrap,
       getDecisioningTaskRegistryMigration,
       getDecisioningTaskRegistryStatusWidenV61Migration,
+      getDecisioningTaskRegistryWebhookDeliveryV14Migration,
     } = require('../dist/lib/server/decisioning');
     const sql = getDecisioningTaskRegistryBootstrap({ namespace: NAMESPACE });
     assert.ok(sql.includes('PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)'));
     assert.ok(sql.includes('idx_adcp_decisioning_tasks_owner_account'));
+    assert.match(sql, /webhook_delivery TEXT/);
+    assert.match(sql, /CONSTRAINT adcp_decisioning_tasks_valid_webhook_delivery CHECK/);
     assert.doesNotMatch(sql, /UPDATE adcp_decisioning_tasks/);
     assert.doesNotMatch(sql, /DROP CONSTRAINT/);
     for (const status of [
@@ -401,6 +404,13 @@ describe('decisioning task registry schema management', () => {
     assert.match(upgrade, /ADD CONSTRAINT adcp_decisioning_tasks_valid_status CHECK/);
     assert.match(upgrade, /COMMIT;/);
     assert.throws(() => getDecisioningTaskRegistryStatusWidenV61Migration({ lockTimeoutMs: 0 }), /lockTimeoutMs/);
+    const webhookDeliveryUpgrade = getDecisioningTaskRegistryWebhookDeliveryV14Migration({
+      lockTimeoutMs: 2500,
+      statementTimeoutMs: 60000,
+    });
+    assert.match(webhookDeliveryUpgrade, /ADD COLUMN IF NOT EXISTS webhook_delivery TEXT/);
+    assert.match(webhookDeliveryUpgrade, /DROP CONSTRAINT IF EXISTS adcp_decisioning_tasks_valid_webhook_delivery/);
+    assert.match(webhookDeliveryUpgrade, /ADD CONSTRAINT adcp_decisioning_tasks_valid_webhook_delivery/);
     assert.throws(
       () => getDecisioningTaskRegistryMigration({ namespace: NAMESPACE }),
       /unsafe and no longer returns SQL/
@@ -422,6 +432,8 @@ describe('decisioning task registry schema management', () => {
     assert.match(upgrade.preflightSql, /duplicate target keys/);
     assert.match(upgrade.prepareSql, /SET LOCAL lock_timeout = '2500ms'/);
     assert.match(upgrade.prepareSql, /SET owner_scope = 'account:' \|\| account_id/);
+    assert.match(upgrade.prepareSql, /ADD COLUMN IF NOT EXISTS webhook_delivery TEXT/);
+    assert.match(upgrade.prepareSql, /ADD CONSTRAINT adcp_decisioning_tasks_valid_webhook_delivery/);
     assert.match(upgrade.prepareSql, /do not reassign tenant ownership/);
     assert.ok(upgrade.concurrentIndexSql.every(sql => sql.includes('CONCURRENTLY')));
     assert.ok(upgrade.concurrentIndexSql.every(sql => !sql.includes('BEGIN')));
@@ -451,6 +463,7 @@ describe('decisioning task registry schema management', () => {
                 error: null,
                 progress: null,
                 has_webhook: false,
+                webhook_delivery: null,
                 created_at: now,
                 updated_at: now,
               },
@@ -475,6 +488,7 @@ describe('decisioning task registry schema management', () => {
       'acct_1',
       'api_key:buyer-1',
       false,
+      null,
       'test',
     ]);
 

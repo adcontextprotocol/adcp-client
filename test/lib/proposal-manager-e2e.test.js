@@ -558,6 +558,86 @@ test('e2e: invalid push configuration is rejected before proposal reservation', 
   assert.strictEqual(store.get('p-invalid-push', { expectedAccountId: 'acct_1' }).state, 'committed');
 });
 
+test('e2e: proposal-backed push handoff refusal releases its reservation and permits a polling retry (#2836)', async () => {
+  const store = new InMemoryProposalStore();
+  const proposalId = 'p-handoff-no-webhook-owner';
+  store.putDraft({
+    proposalId,
+    accountId: 'acct_1',
+    recipes: new Map(),
+    proposalPayload: { proposal_id: proposalId },
+  });
+  store.commit(proposalId, {
+    expectedAccountId: 'acct_1',
+    expiresAt: new Date(Date.now() + 60_000),
+    proposalPayload: { proposal_id: proposalId },
+  });
+  let callbackRuns = 0;
+  let createCalls = 0;
+  const taskRegistry = createInMemoryTaskRegistry();
+  const create = taskRegistry.create.bind(taskRegistry);
+  taskRegistry.create = async args => {
+    createCalls += 1;
+    return create(args);
+  };
+  const server = createAdcpServerFromPlatform(
+    buildPlatform({
+      proposalManager: undefined,
+      sales: {
+        getProducts: async () => ({ products: [] }),
+        createMediaBuy: async (_params, ctx) =>
+          ctx.handoffToTask(async () => {
+            callbackRuns += 1;
+            return { media_buy_id: 'mb-after-webhook-refusal', packages: [] };
+          }),
+      },
+    }),
+    {
+      name: 'e2e',
+      version: '1.0',
+      proposalStore: store,
+      taskRegistry,
+      validation: { requests: 'off', responses: 'off' },
+    }
+  );
+
+  const refused = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: {
+          proposal_id: proposalId,
+          idempotency_key: 'idem-handoff-no-webhook-owner-0001',
+          push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'no-webhook-owner' },
+        },
+      },
+    },
+    { authInfo }
+  );
+  assert.strictEqual(refused.isError, true);
+  assert.strictEqual(refused.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+  assert.strictEqual(refused.structuredContent.adcp_error.field, 'push_notification_config');
+  assert.strictEqual(createCalls, 0, 'refusal must not allocate a task');
+  assert.strictEqual(callbackRuns, 0, 'refusal must not run the handoff callback');
+  assert.strictEqual(store.get(proposalId, { expectedAccountId: 'acct_1' }).state, 'committed');
+
+  const retried = await server.dispatchTestRequest(
+    {
+      method: 'tools/call',
+      params: {
+        name: 'create_media_buy',
+        arguments: { proposal_id: proposalId, idempotency_key: 'idem-handoff-no-webhook-owner-0002' },
+      },
+    },
+    { authInfo }
+  );
+  assert.notStrictEqual(retried.isError, true);
+  await server.awaitTaskUnsafe(retried.structuredContent.task_id);
+  assert.strictEqual(callbackRuns, 1);
+  assert.strictEqual(store.get(proposalId, { expectedAccountId: 'acct_1' }).state, 'consumed');
+});
+
 test('e2e: proposal-backed createMediaBuy handoff releases after task failure', async () => {
   const store = new InMemoryProposalStore();
   store.putDraft({

@@ -25,7 +25,35 @@ createMediaBuy: async (req, ctx) => {
 2. Allocates a `task_id`, returns `{ task_id, status: 'submitted' }` to the buyer.
 3. Runs your handoff `fn` in the background.
 4. `fn`'s return value becomes the task's terminal `result`. Thrown `AdcpError` becomes terminal `error`.
-5. Buyer polls `tasks_get` OR receives a webhook (if they passed `push_notification_config.url` in the request).
+5. Buyer polls `tasks_get` OR receives a webhook when the seller owns a configured delivery path.
+
+## Push-enabled handoffs
+
+`push_notification_config.url` is a delivery obligation, not merely a buyer
+preference. If its URL validates and your handler returns a `TaskHandoff`, the
+framework fails closed with `UNSUPPORTED_FEATURE` unless SDK task webhooks are
+configured. Remove the push config for polling-only work and retry the modified
+request with a new `idempotency_key`.
+
+The platform method has already run when this boundary is checked—it returned
+the handoff marker—but the framework has not created a task or run the handoff
+callback. Keep irreversible effects in that callback. Proposal-backed framework
+reservations are unwound on this refusal.
+
+`externallyManagedTaskWebhooks: true` is only for a durable external-settlement
+handoff (`ctx.handoffToTask(producer, { settlement: 'external' })`). It cannot
+be combined with SDK `webhooks`/`taskWebhookEmitter` and does not make a normal
+background handoff deliverable. The producer receives `taskCtx.terminalWebhook`
+when the buyer supplied a valid URL; atomically persist it with `taskCtx.taskRef`
+and the job. The external worker MUST use
+`settleScopedExternallyManagedWebhookTask()` to stage its durable delivery
+record before task completion, then provide signed, at-least-once terminal
+delivery, retries, durability, and `operation_id` correlation. Do not enable
+it for a reference adapter unless it actually owns that delivery worker.
+`terminalWebhook.token` and any future credential fields are buyer secrets:
+encrypt persistent records, restrict worker access, redact logs and errors,
+delete records after the retry window, and never put them in buyer-visible task
+results.
 
 ## When a tool is HITL-capable
 

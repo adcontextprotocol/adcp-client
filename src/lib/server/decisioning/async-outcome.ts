@@ -301,8 +301,32 @@ export interface ExternalTaskHandoffContext {
   readonly id: string;
   /** Trusted serializable handle for the durable worker settlement record. */
   readonly taskRef: ScopedTaskRef;
+  /**
+   * Validated push-delivery inputs for an explicitly externally managed task.
+   * When present, the producer MUST durably persist this value with `taskRef`
+   * and its work item. Its worker—not the SDK—MUST provide at-least-once
+   * terminal delivery, signing/security, retry/durability, and operation-id
+   * correlation. Treat `token` and any future credential fields as secrets:
+   * encrypt durable storage, restrict access, redact logs/errors, delete them
+   * after the retry-retention window, and never put them in buyer-visible task
+   * results. It is absent for polling-only and SDK-owned webhook tasks.
+   */
+  readonly terminalWebhook?: ExternalTaskWebhookDelivery;
   update(progress: TaskHandoffProgress): Promise<void>;
   heartbeat(): Promise<void>;
+}
+
+/**
+ * Validated, server-only inputs an external task worker needs for terminal
+ * delivery. These may contain buyer credentials and are never task-result or
+ * wire-response fields.
+ */
+export interface ExternalTaskWebhookDelivery {
+  readonly url: string;
+  readonly taskType: string;
+  readonly operationId?: string;
+  readonly token?: string;
+  readonly servedAdcpVersion?: string;
 }
 
 export interface TaskHandoffProgress {

@@ -109,6 +109,7 @@ CREATE TABLE adcp_decisioning_tasks (
   error          JSONB,
   progress       JSONB,
   has_webhook    BOOLEAN NOT NULL DEFAULT FALSE,
+  webhook_delivery TEXT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT adcp_decisioning_tasks_valid_status CHECK (
@@ -116,6 +117,9 @@ CREATE TABLE adcp_decisioning_tasks (
       'submitted', 'working', 'input-required', 'completed', 'canceled',
       'failed', 'rejected', 'auth-required', 'unknown'
     )
+  ),
+  CONSTRAINT adcp_decisioning_tasks_valid_webhook_delivery CHECK (
+    webhook_delivery IS NULL OR webhook_delivery IN ('framework', 'external')
   ),
   PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)
 );
@@ -129,6 +133,7 @@ The status constraint admits all nine AdCP `TaskStatus` values. Built-in registr
 - **Index on `account_id`** — tenant-scoped operational queries.
 - **Index on `(status, created_at)`** — "pending tasks oldest first" queue queries for cron / monitoring.
 - **CHECK constraint on status** — guards against invalid status writes while preserving the full AdCP enum.
+- **CHECK constraint on webhook delivery** — records whether a push task is framework- or adopter-owned.
 
 **Sizing.** Bounded by HITL traffic. Tasks accumulate forever unless adopter prunes — the SDK doesn't auto-delete completed tasks. Run a periodic `DELETE FROM adcp_decisioning_tasks WHERE status IN ('completed', 'failed', 'rejected') AND updated_at < NOW() - INTERVAL '30 days'`.
 
@@ -145,6 +150,20 @@ await pool.query(getDecisioningTaskRegistryStatusWidenV61Migration({
 ```
 
 The helper replaces only the named status CHECK with the full nine-value enum; it does not rewrite rows. It uses a transaction-scoped advisory lock plus bounded lock and statement timeouts, and is safe to rerun after a successful or interrupted attempt. `ALTER TABLE` needs an `ACCESS EXCLUSIVE` lock, so run it outside application boot during a brief maintenance window: it can block reads and writers until commit, and it fails rather than waiting indefinitely when `lockTimeoutMs` elapses.
+
+### Adding external webhook ownership to an existing task table
+
+Before enabling `externallyManagedTaskWebhooks` for a populated registry, run the idempotent owner-column migration during a maintenance window:
+
+```ts
+await pool.query(getDecisioningTaskRegistryWebhookDeliveryV14Migration({
+  tableName: 'adcp_decisioning_tasks',
+  lockTimeoutMs: 5_000,
+  statementTimeoutMs: 30_000,
+}));
+```
+
+It adds `webhook_delivery` if absent and replaces its named CHECK constraint. The built-in registry advertises `webhookDeliveryVersion: 1`; custom registries must advertise the same explicit contract and durably retain `webhookDelivery: 'external'` in `create()` before an externally owned push handoff is accepted.
 
 ### Upgrading a populated pre-scope task table
 

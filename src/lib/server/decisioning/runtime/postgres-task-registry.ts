@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   error           JSONB,
   progress        JSONB,
   has_webhook     BOOLEAN NOT NULL DEFAULT FALSE,
+  webhook_delivery TEXT,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
@@ -237,6 +238,9 @@ CREATE TABLE IF NOT EXISTS ${table} (
       'submitted', 'working', 'input-required', 'completed', 'canceled',
       'failed', 'rejected', 'auth-required', 'unknown'
     )
+  ),
+  CONSTRAINT ${table}_valid_webhook_delivery CHECK (
+    webhook_delivery IS NULL OR webhook_delivery IN ('framework', 'external')
   ),
   CONSTRAINT ${table}_scope_pkey
     PRIMARY KEY (registry_namespace, account_id, owner_scope, task_id)
@@ -293,6 +297,40 @@ ALTER TABLE ${table} ADD CONSTRAINT ${table}_valid_status CHECK (
     'failed', 'rejected', 'auth-required', 'unknown'
   )
 );
+COMMIT;
+`.trim();
+}
+
+export interface DecisioningTaskRegistryWebhookDeliveryV14MigrationOptions {
+  tableName?: string;
+  /** Abort rather than wait indefinitely for the required table lock. Default 5000. */
+  lockTimeoutMs?: number;
+  /** Bound the column add and constraint validation. Default 30000. */
+  statementTimeoutMs?: number;
+}
+
+/**
+ * Add the terminal webhook-delivery owner column required for explicit
+ * externally managed task webhooks. Existing rows remain `NULL`, which is
+ * treated as framework-owned and therefore cannot bypass SDK push settlement.
+ */
+export function getDecisioningTaskRegistryWebhookDeliveryV14Migration(
+  options: DecisioningTaskRegistryWebhookDeliveryV14MigrationOptions = {}
+): string {
+  const table = options.tableName ?? DEFAULT_TABLE;
+  assertValidIdentifier(table);
+  const lockTimeoutMs = positiveTimeout(options.lockTimeoutMs, 5_000, 'lockTimeoutMs');
+  const statementTimeoutMs = positiveTimeout(options.statementTimeoutMs, 30_000, 'statementTimeoutMs');
+  return `
+BEGIN;
+SET LOCAL lock_timeout = '${lockTimeoutMs}ms';
+SET LOCAL statement_timeout = '${statementTimeoutMs}ms';
+SELECT pg_advisory_xact_lock(hashtext('adcp-task-registry:${table}:webhook-delivery-v14'));
+
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS webhook_delivery TEXT;
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_valid_webhook_delivery;
+ALTER TABLE ${table} ADD CONSTRAINT ${table}_valid_webhook_delivery
+  CHECK (webhook_delivery IS NULL OR webhook_delivery IN ('framework', 'external'));
 COMMIT;
 `.trim();
 }
@@ -465,6 +503,10 @@ SELECT pg_advisory_xact_lock(hashtext('adcp-task-registry:${table}:scope-v1'));
 
 ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS registry_namespace TEXT;
 ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS owner_scope TEXT;
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS webhook_delivery TEXT;
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_valid_webhook_delivery;
+ALTER TABLE ${table} ADD CONSTRAINT ${table}_valid_webhook_delivery
+  CHECK (webhook_delivery IS NULL OR webhook_delivery IN ('framework', 'external'));
 
 DO $$
 DECLARE
@@ -595,6 +637,7 @@ interface DbTaskRow {
   error: AdcpStructuredError | null;
   progress: TaskHandoffProgress | null;
   has_webhook: boolean;
+  webhook_delivery: 'framework' | 'external' | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -618,6 +661,7 @@ function rowToRecord<TResult>(row: DbTaskRow): TaskRecord<TResult> {
     ...(row.error !== null && row.error !== undefined && { error: row.error }),
     ...(row.progress !== null && row.progress !== undefined && { progress: row.progress }),
     ...(row.has_webhook && { hasWebhook: true }),
+    ...(row.webhook_delivery != null && { webhookDelivery: row.webhook_delivery }),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -682,6 +726,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
 
   const registry = {
     scopeVersion: 1,
+    webhookDeliveryVersion: 1 as const,
     durability: 'durable' as const,
     registryId,
     async create(createOpts: {
@@ -689,14 +734,23 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       accountId: string;
       ownerScope?: string;
       hasWebhook?: boolean;
+      webhookDelivery?: 'framework' | 'external';
       overrideTaskId?: string;
     }): Promise<ScopedTaskRef> {
       const taskId = createOpts.overrideTaskId ?? `task_${randomUUID()}`;
       const ownerScope = createOpts.ownerScope ?? `account:${createOpts.accountId}`;
       const result = await query(
         'create',
-        `INSERT INTO ${table} (task_id, tool, account_id, owner_scope, status, has_webhook, registry_namespace) VALUES ($1, $2, $3, $4, 'submitted', $5, $6) ON CONFLICT (registry_namespace, account_id, owner_scope, task_id) DO NOTHING`,
-        [taskId, createOpts.tool, createOpts.accountId, ownerScope, createOpts.hasWebhook === true, namespace]
+        `INSERT INTO ${table} (task_id, tool, account_id, owner_scope, status, has_webhook, webhook_delivery, registry_namespace) VALUES ($1, $2, $3, $4, 'submitted', $5, $6, $7) ON CONFLICT (registry_namespace, account_id, owner_scope, task_id) DO NOTHING`,
+        [
+          taskId,
+          createOpts.tool,
+          createOpts.accountId,
+          ownerScope,
+          createOpts.hasWebhook === true,
+          createOpts.webhookDelivery ?? null,
+          namespace,
+        ]
       );
       if ((result.rowCount ?? 0) === 0) {
         throw new Error(`task_id already registered: ${taskId}`);
@@ -714,7 +768,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       const { rows } = await query(
         'getTask',
         `SELECT task_id, tool, account_id, owner_scope, status, status_message, result,
-                result IS NOT NULL AS has_result, error, progress, has_webhook, created_at, updated_at
+                result IS NOT NULL AS has_result, error, progress, has_webhook, webhook_delivery, created_at, updated_at
          FROM ${table} WHERE task_id = $1 AND registry_namespace = $2 AND account_id = $3 AND owner_scope = $4`,
         [taskId, namespace, scope.accountId, scope.ownerScope]
       );
@@ -726,7 +780,7 @@ export function createPostgresTaskRegistry(opts: CreatePostgresTaskRegistryOptio
       const { rows } = await query(
         'list',
         `SELECT task_id, tool, account_id, owner_scope, status, status_message, result,
-                result IS NOT NULL AS has_result, error, progress, has_webhook, created_at, updated_at
+                result IS NOT NULL AS has_result, error, progress, has_webhook, webhook_delivery, created_at, updated_at
          FROM ${table}
          WHERE registry_namespace = $1 AND account_id = $2 AND owner_scope = $3
          ORDER BY created_at DESC, task_id DESC`,

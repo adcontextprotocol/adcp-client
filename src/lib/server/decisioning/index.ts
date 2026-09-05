@@ -21,6 +21,7 @@
 // task lifecycle and dispatches the `*Task` method in the background.
 export { type AdcpStructuredError, type ErrorCode, AdcpError } from './async-outcome';
 export type {
+  ExternalTaskWebhookDelivery,
   ExternalTaskHandoffOptions,
   ExternalTaskHandoffContext,
   TaskHandoffOptions,
@@ -368,6 +369,7 @@ export {
   createInMemoryTaskRegistry,
   failScopedTask,
   rejectScopedTask,
+  settleScopedExternallyManagedWebhookTask,
   updateScopedTaskProgress,
   type ScopedTaskRef,
   type TaskMutationOutcome,
@@ -376,6 +378,9 @@ export {
   type TaskRegistryScope,
   type TaskRecord,
   type TaskStatus,
+  type TaskWebhookDelivery,
+  type ExternallyManagedTaskWebhookDeliveryStore,
+  type ExternallyManagedTaskWebhookTerminal,
 } from './runtime/task-registry';
 export {
   createPostgresTaskRegistry,
@@ -383,10 +388,12 @@ export {
   getDecisioningTaskRegistryMigration,
   getDecisioningTaskRegistryScopeV1Upgrade,
   getDecisioningTaskRegistryStatusWidenV61Migration,
+  getDecisioningTaskRegistryWebhookDeliveryV14Migration,
   type CreatePostgresTaskRegistryOptions,
   type DecisioningTaskRegistryScopeV1Upgrade,
   type DecisioningTaskRegistryScopeV1UpgradeOptions,
   type DecisioningTaskRegistryStatusWidenV61MigrationOptions,
+  type DecisioningTaskRegistryWebhookDeliveryV14MigrationOptions,
   type PgQueryable,
   type PgTransactionClient,
   type PgTransactionalPool,
