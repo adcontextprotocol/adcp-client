@@ -130,6 +130,11 @@ test('e2e: getProducts validates push config before proposal finalization and no
       'push_notification_config.url',
     ],
     [
+      'link-local URL',
+      { url: 'http://169.254.169.254/webhook', operation_id: 'op_private_host' },
+      'push_notification_config.url',
+    ],
+    [
       'invalid token',
       { url: 'https://buyer.example.com/webhook', token: 'short', operation_id: 'op_short_token' },
       'push_notification_config.token',
@@ -163,6 +168,7 @@ test('e2e: getProducts validates push config before proposal finalization and no
         name: `push-before-finalize-${label}`,
         version: '1.0',
         proposalStore: store,
+        idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
         validation: { requests: 'off', responses: 'off' },
       }
     );
