@@ -213,7 +213,7 @@ function copyEnumerableDataProperties(
   if (truncated) target['[Entry limit exceeded]'] = true;
 }
 
-function prepareLogMetadata(value: unknown): unknown {
+function redactLogMetadata(value: unknown): unknown {
   try {
     return normalizeLogMetadata(value, { nodes: 0, seen: new WeakSet(), stringUnits: 0 });
   } catch {
@@ -235,16 +235,12 @@ class Logger {
       enabled: config.enabled !== false,
       redactCredentials: config.redactCredentials !== false,
       handler: config.handler || {
-        // Logger inputs are scrubbed immediately before handler dispatch. The
-        // generic logging API itself is not a credential-storage primitive.
-        // codeql[js/clear-text-logging]
-        debug: (msg, meta) => console.log(msg, meta ?? ''),
-        // codeql[js/clear-text-logging]
-        info: (msg, meta) => console.log(msg, meta ?? ''),
-        // codeql[js/clear-text-logging]
-        warn: (msg, meta) => console.warn(msg, meta ?? ''),
-        // codeql[js/clear-text-logging]
-        error: (msg, meta) => console.error(msg, meta ?? ''),
+        // Scrub again at the concrete sink as defense in depth. This keeps the
+        // default handler safe even if a future call site bypasses dispatch.
+        debug: (msg, meta) => console.log(redactLogMessage(msg), redactLogMetadata(meta) ?? ''),
+        info: (msg, meta) => console.log(redactLogMessage(msg), redactLogMetadata(meta) ?? ''),
+        warn: (msg, meta) => console.warn(redactLogMessage(msg), redactLogMetadata(meta) ?? ''),
+        error: (msg, meta) => console.error(redactLogMessage(msg), redactLogMetadata(meta) ?? ''),
       },
     };
   }
@@ -261,7 +257,7 @@ class Logger {
     if (this.shouldLog('debug')) {
       this.config.handler.debug(
         this.config.redactCredentials ? redactLogMessage(message) : message,
-        this.config.redactCredentials ? prepareLogMetadata(meta) : meta
+        this.config.redactCredentials ? redactLogMetadata(meta) : meta
       );
     }
   }
@@ -273,7 +269,7 @@ class Logger {
     if (this.shouldLog('info')) {
       this.config.handler.info(
         this.config.redactCredentials ? redactLogMessage(message) : message,
-        this.config.redactCredentials ? prepareLogMetadata(meta) : meta
+        this.config.redactCredentials ? redactLogMetadata(meta) : meta
       );
     }
   }
@@ -285,7 +281,7 @@ class Logger {
     if (this.shouldLog('warn')) {
       this.config.handler.warn(
         this.config.redactCredentials ? redactLogMessage(message) : message,
-        this.config.redactCredentials ? prepareLogMetadata(meta) : meta
+        this.config.redactCredentials ? redactLogMetadata(meta) : meta
       );
     }
   }
@@ -297,7 +293,7 @@ class Logger {
     if (this.shouldLog('error')) {
       this.config.handler.error(
         this.config.redactCredentials ? redactLogMessage(message) : message,
-        this.config.redactCredentials ? prepareLogMetadata(meta) : meta
+        this.config.redactCredentials ? redactLogMetadata(meta) : meta
       );
     }
   }

@@ -8,7 +8,7 @@ import {
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
-import { createHmac, randomBytes } from 'node:crypto';
+import { hkdfSync, randomBytes } from 'node:crypto';
 import { createMCPRequestHeaders } from '../auth';
 import { is401Error } from '../errors';
 import type { DebugLogEntry } from '../types/adcp';
@@ -154,14 +154,14 @@ function connectionCacheKey(
 // across process restarts and avoids treating a public digest as a password
 // verifier. The connection cache is process-local, so cross-run stability is
 // neither required nor desirable.
-const CACHE_DISAMBIGUATOR_KEY = randomBytes(32);
+const CACHE_DISAMBIGUATOR_SALT = randomBytes(32);
 
 /** Produce a stable-for-this-process Map-key disambiguator. */
 function cacheDisambiguator(value: string): string {
-  // HMAC with a random per-process key is a credential cache identifier, not
-  // a persisted password verifier or authentication mechanism.
-  // codeql[js/insufficient-password-hash]
-  return createHmac('sha256', CACHE_DISAMBIGUATOR_KEY).update(value).digest('hex');
+  // OAuth tokens and client secrets are high-entropy key material. HKDF with
+  // a random per-process salt yields a stable process-local identifier without
+  // exposing a portable credential digest or retaining the credential as a key.
+  return Buffer.from(hkdfSync('sha256', value, CACHE_DISAMBIGUATOR_SALT, 'adcp-mcp-cache-key', 32)).toString('hex');
 }
 
 /**
