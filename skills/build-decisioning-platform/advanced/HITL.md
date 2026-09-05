@@ -40,6 +40,10 @@ the handoff marker—but the framework has not created a task or run the handoff
 callback. Keep irreversible effects in that callback. Proposal-backed framework
 reservations are unwound on this refusal.
 
+External settlement (`handoffToTask(..., { settlement: 'external' })`) is
+polling-only. It cannot use `push_notification_config`, even when framework
+webhooks are configured, because its producer is not the SDK delivery path.
+
 ## When a tool is HITL-capable
 
 Only tools whose wire response defines a `Submitted` arm: `create_media_buy`, `sync_creatives`. Other tools (`update_media_buy`, `get_products`) are sync-only — operator re-approval flows surface eventual transitions via `publishStatusChange(...)` rather than HITL on the call itself.

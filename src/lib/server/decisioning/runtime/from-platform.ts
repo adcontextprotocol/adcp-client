@@ -4602,10 +4602,15 @@ interface DispatchHitlOpts {
 }
 
 function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, suggestion: string): never {
-  opts.logger.warn(
-    '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
-      'settlement, or remove push_notification_config and retry with a new idempotency_key.'
-  );
+  try {
+    opts.logger.warn(
+      '[adcp/decisioning] refusing push-enabled TaskHandoff before task creation: configure SDK webhooks for framework ' +
+        'settlement, or remove push_notification_config and retry with a new idempotency_key.'
+    );
+  } catch {
+    // Logging is adopter-controlled diagnostics. It must not replace the
+    // structured protocol error that protects this pre-create boundary.
+  }
   throw new AdcpError('UNSUPPORTED_FEATURE', {
     recovery: 'correctable',
     field: 'push_notification_config',
@@ -4615,10 +4620,30 @@ function refuseTaskWebhookHandoff(opts: DispatchHitlOpts, message: string, sugge
   });
 }
 
-function resolveTaskWebhookDelivery(opts: DispatchHitlOpts): boolean {
+function resolveTaskWebhookDelivery(opts: DispatchHitlOpts, settlement: 'framework' | 'external'): boolean {
   // This value is populated only by extractPushConfig after URL validation.
   // A malformed or missing URL cannot turn an accepted task into has_webhook.
   if (opts.pushNotificationUrl === undefined) return false;
+  // Request-schema validation may be disabled by an adopter. Keep the
+  // beta.5+ operation-id requirement at this pre-create seam so a task cannot
+  // start and later fail only while constructing its terminal webhook.
+  if (opts.pushNotificationOperationId === undefined && isAdcpVersionAtLeast(opts.servedAdcpVersion, '3.2.0-beta.5')) {
+    throw new AdcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.operation_id is required for webhook delivery',
+      field: 'push_notification_config.operation_id',
+    });
+  }
+  // An external producer has no SDK-owned terminal webhook delivery path.
+  // Do not let a framework emitter make its submitted task claim delivery it
+  // will never receive; polling-only external settlement remains supported.
+  if (settlement === 'external') {
+    return refuseTaskWebhookHandoff(
+      opts,
+      'This seller cannot submit an externally settled task with push_notification_config because the SDK cannot deliver its terminal webhook. ' +
+        'Remove push_notification_config to use polling, or use framework task settlement with configured task webhooks.',
+      'Remove push_notification_config and retry with a new idempotency_key, or ask the seller to use framework task settlement with task webhooks.'
+    );
+  }
   if (typeof opts.emitWebhook === 'function') return true;
   return refuseTaskWebhookHandoff(
     opts,
@@ -4803,8 +4828,14 @@ async function dispatchHitl<TResult>(
   // Fail before task creation, external producer callbacks, or any terminal
   // state can be persisted. A buyer gets Submitted only after a validated
   // destination has exactly one terminal-delivery owner.
-  const hasWebhook = resolveTaskWebhookDelivery(opts);
+  const hasWebhook = resolveTaskWebhookDelivery(opts, settlement);
   if (settlement === 'external' && taskRegistry.durability !== 'durable') {
+    throw new Error('External task settlement requires a durable task registry with a stable identity');
+  }
+  if (
+    settlement === 'external' &&
+    (typeof taskRegistry.registryId !== 'string' || taskRegistry.registryId.length === 0)
+  ) {
     throw new Error('External task settlement requires a durable task registry with a stable identity');
   }
   const createStart = Date.now();

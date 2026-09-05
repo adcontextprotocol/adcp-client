@@ -4368,6 +4368,161 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(callbackRan, false, 'refusal must not start the background handoff');
   });
 
+  it('rejects beta.5+ push handoffs without operation_id before task creation when request validation is off (#2836)', async () => {
+    let callbackRan = false;
+    let createCalls = 0;
+    const taskRegistry = createInMemoryTaskRegistry();
+    const create = taskRegistry.create.bind(taskRegistry);
+    taskRegistry.create = async args => {
+      createCalls += 1;
+      return create(args);
+    };
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform({
+        createMediaBuy: async (_req, ctx) =>
+          ctx.handoffToTask(async () => {
+            callbackRan = true;
+            return { media_buy_id: 'must-not-run' };
+          }),
+      }),
+      {
+        name: 'missing-operation-id-pre-create',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+        taskWebhookEmitter: {
+          emit: async params => ({
+            delivery_id: params.delivery_id,
+            idempotency_key: 'unused',
+            attempts: 1,
+            delivered: true,
+            errors: [],
+          }),
+        },
+      }
+    );
+
+    const result = await dispatchCreate(server, {
+      push_notification_config: { url: 'https://buyer.example.com/webhook' },
+    });
+
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config.operation_id');
+    assert.strictEqual(createCalls, 0, 'operation_id refusal must happen before TaskRegistry.create');
+    assert.strictEqual(callbackRan, false, 'operation_id refusal must not start the background handoff');
+  });
+
+  it('keeps the push-delivery refusal structured when the operator logger throws (#2836)', async () => {
+    let throwWarnings = false;
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform({
+        createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'must-not-run' })),
+      }),
+      {
+        name: 'throwing-refusal-logger',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        logger: {
+          debug() {},
+          info() {},
+          warn() {
+            if (throwWarnings) throw new Error('logger failure');
+          },
+          error() {},
+        },
+      }
+    );
+    throwWarnings = true;
+    const result = await dispatchCreate(server, {
+      push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'throwing-logger' },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'push_notification_config');
+  });
+
+  it('refuses an external push handoff even when a framework emitter is configured (#2836)', async () => {
+    let producerCalled = false;
+    let createCalls = 0;
+    const taskRegistry = {
+      ...createInMemoryTaskRegistry(),
+      durability: 'durable',
+      registryId: 'external-emitter-refusal',
+    };
+    const create = taskRegistry.create.bind(taskRegistry);
+    taskRegistry.create = async args => {
+      createCalls += 1;
+      return create(args);
+    };
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform({
+        createMediaBuy: async (_req, ctx) =>
+          ctx.handoffToTask(
+            async () => {
+              producerCalled = true;
+            },
+            { settlement: 'external' }
+          ),
+      }),
+      {
+        name: 'external-settlement-framework-emitter',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+        taskWebhookEmitter: {
+          emit: async params => ({
+            delivery_id: params.delivery_id,
+            idempotency_key: 'unused',
+            attempts: 1,
+            delivered: true,
+            errors: [],
+          }),
+        },
+      }
+    );
+    const result = await dispatchCreate(server, {
+      push_notification_config: { url: 'https://buyer.example.com/webhook', operation_id: 'external-emitter' },
+    });
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'UNSUPPORTED_FEATURE');
+    assert.strictEqual(createCalls, 0);
+    assert.strictEqual(producerCalled, false);
+  });
+
+  it('refuses external settlement before create when the registry has no stable registryId (#2836)', async () => {
+    let producerCalled = false;
+    let createCalls = 0;
+    const taskRegistry = { ...createInMemoryTaskRegistry(), durability: 'durable', registryId: '' };
+    const create = taskRegistry.create.bind(taskRegistry);
+    taskRegistry.create = async args => {
+      createCalls += 1;
+      return create(args);
+    };
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform({
+        createMediaBuy: async (_req, ctx) =>
+          ctx.handoffToTask(
+            async () => {
+              producerCalled = true;
+            },
+            { settlement: 'external' }
+          ),
+      }),
+      {
+        name: 'external-settlement-no-registry-id',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+      }
+    );
+    const result = await dispatchCreate(server);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.strictEqual(createCalls, 0);
+    assert.strictEqual(producerCalled, false);
+  });
+
   it('keeps polling-only handoffs available without a task webhook emitter (#2836)', async () => {
     const platform = buildHitlPlatform({
       createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'polling-only' })),
