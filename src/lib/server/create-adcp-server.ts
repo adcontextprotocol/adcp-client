@@ -4498,22 +4498,32 @@ function pushOperationIdError(
     const parsed = new URL(pushConfig.url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return adcpError('INVALID_REQUEST', {
-        message: 'push_notification_config.url must use http: or https:',
+        message:
+          `push_notification_config.url rejected: unsupported scheme "${parsed.protocol}" ` + '(only http: / https:)',
         field: 'push_notification_config.url',
       });
     }
   } catch {
     return adcpError('INVALID_REQUEST', {
-      message: 'push_notification_config.url must be a valid URL',
+      message: 'push_notification_config.url rejected: malformed URL',
       field: 'push_notification_config.url',
     });
   }
-  if (
-    typeof pushConfig.token === 'string' &&
-    (pushConfig.token.length < 16 || pushConfig.token.length > 4096 || /[\x00-\x1f\x7f]/.test(pushConfig.token))
-  ) {
+  if (typeof pushConfig.token === 'string' && pushConfig.token.length < 16) {
     return adcpError('INVALID_REQUEST', {
-      message: 'push_notification_config.token is invalid',
+      message: 'push_notification_config.token rejected: token shorter than 16 chars',
+      field: 'push_notification_config.token',
+    });
+  }
+  if (typeof pushConfig.token === 'string' && pushConfig.token.length > 4096) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token rejected: token longer than 4096 chars',
+      field: 'push_notification_config.token',
+    });
+  }
+  if (typeof pushConfig.token === 'string' && /[\x00-\x1f\x7f]/.test(pushConfig.token)) {
+    return adcpError('INVALID_REQUEST', {
+      message: 'push_notification_config.token rejected: token contains control characters',
       field: 'push_notification_config.token',
     });
   }
