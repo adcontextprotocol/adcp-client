@@ -4870,6 +4870,11 @@ async function dispatchHitl<TResult>(
       'TaskRegistry.create() must return accountId and ownerScope exactly matching the trusted request scope'
     );
   }
+  if (settlement === 'external' && createdRef.registryId !== taskRegistry.registryId) {
+    throw new Error(
+      'TaskRegistry.create() returned a registryId that does not match the durable external-settlement registry'
+    );
+  }
   const taskRef: ScopedTaskRef = createdRef;
   const { taskId } = taskRef;
   safeFire(

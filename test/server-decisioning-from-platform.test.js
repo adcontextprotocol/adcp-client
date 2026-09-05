@@ -4523,6 +4523,45 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assert.strictEqual(producerCalled, false);
   });
 
+  it('rejects an external custom registry reference with a mismatched registryId before producer execution (#2836)', async () => {
+    let producerCalled = false;
+    let createCalls = 0;
+    const taskRegistry = { ...createInMemoryTaskRegistry(), durability: 'durable', registryId: 'expected-registry' };
+    const create = taskRegistry.create.bind(taskRegistry);
+    taskRegistry.create = async args => {
+      createCalls += 1;
+      return { ...(await create(args)), registryId: 'different-registry' };
+    };
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform({
+        createMediaBuy: async (_req, ctx) =>
+          ctx.handoffToTask(
+            async () => {
+              producerCalled = true;
+            },
+            { settlement: 'external' }
+          ),
+      }),
+      {
+        name: 'external-settlement-mismatched-registry-id',
+        version: '0.0.1',
+        validation: { requests: 'off', responses: 'off' },
+        taskRegistry,
+      }
+    );
+
+    const result = await dispatchCreate(server);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+    assert.notStrictEqual(
+      result.structuredContent.status,
+      'submitted',
+      'a mismatched task ref must not acknowledge submitted'
+    );
+    assert.strictEqual(createCalls, 1, 'the custom create contract is checked immediately after allocation');
+    assert.strictEqual(producerCalled, false, 'a mismatched task ref must not reach the external producer');
+  });
+
   it('keeps polling-only handoffs available without a task webhook emitter (#2836)', async () => {
     const platform = buildHitlPlatform({
       createMediaBuy: async (_req, ctx) => ctx.handoffToTask(async () => ({ media_buy_id: 'polling-only' })),
