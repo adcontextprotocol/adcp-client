@@ -7,6 +7,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// Keep a local test-runner process well below the cumulative heap footprint of
+// the whole suite.  Each batch is a fresh Node process, so its heap is released
+// before the next batch starts.  This intentionally does not apply to CI
+// shards or focused-file runs, whose one-process behavior is useful and
+// established.
+export const LOCAL_TEST_BATCH_SIZE = 25;
 
 export const SLOW_NODE_TESTS = new Set([
   'test/canonical-creatives-a2a-e2e.test.js',
@@ -66,6 +72,10 @@ function parsePositiveInteger(value, label) {
   return parsed;
 }
 
+function isCiEnvironment(env) {
+  return env.CI !== undefined && !['', '0', 'false'].includes(String(env.CI).toLowerCase());
+}
+
 export function resolveTestConcurrency({
   cliValue,
   env = process.env,
@@ -79,8 +89,7 @@ export function resolveTestConcurrency({
 
   // Preserve CI's existing machine-derived behavior. Local runs are deliberately
   // conservative because many test files spawn their own tsc or CLI processes.
-  const isCi = env.CI !== undefined && !['', '0', 'false'].includes(String(env.CI).toLowerCase());
-  if (isCi) return undefined;
+  if (isCiEnvironment(env)) return undefined;
   if (group === 'slow') return 1;
   return Math.max(1, Math.min(2, parallelism));
 }
@@ -178,44 +187,144 @@ export function buildNodeTestArgs(options, env = process.env) {
     env,
     group: options.group,
   });
-  const args = [`--test-timeout=${timeoutMs}`, '--test-force-exit'];
-  if (concurrency !== undefined) args.push(`--test-concurrency=${concurrency}`);
-  if (options.shard !== undefined) args.push(`--test-shard=${options.shard}`);
-  args.push('--test', ...files);
+  const args = buildNodeTestArgsForFiles({ concurrency, files, shard: options.shard, timeoutMs });
 
   return { args, concurrency, files, timeoutMs };
 }
 
+export function buildNodeTestArgsForFiles({ concurrency, files, shard, timeoutMs }) {
+  const args = [`--test-timeout=${timeoutMs}`, '--test-force-exit'];
+  if (concurrency !== undefined) args.push(`--test-concurrency=${concurrency}`);
+  if (shard !== undefined) args.push(`--test-shard=${shard}`);
+  args.push('--test', ...files);
+
+  return args;
+}
+
+export function batchNodeTests(files, batchSize = LOCAL_TEST_BATCH_SIZE) {
+  const size = parsePositiveInteger(batchSize, 'batch size');
+  const batches = [];
+  for (let index = 0; index < files.length; index += size) {
+    batches.push(files.slice(index, index + size));
+  }
+  return batches;
+}
+
+export function shouldBatchNodeTests(options, env = process.env) {
+  return !isCiEnvironment(env) && options.shard === undefined && options.files.length === 0;
+}
+
+export function buildNodeTestPlan(options, env = process.env) {
+  const invocation = buildNodeTestArgs(options, env);
+  const batches = shouldBatchNodeTests(options, env) ? batchNodeTests(invocation.files) : [invocation.files];
+
+  return {
+    ...invocation,
+    batches,
+    batchArgs: batches.map(files =>
+      buildNodeTestArgsForFiles({
+        concurrency: invocation.concurrency,
+        files,
+        shard: options.shard,
+        timeoutMs: invocation.timeoutMs,
+      })
+    ),
+  };
+}
+
+// Run every planned batch even after a test failure, matching Node's normal
+// behavior of completing the requested files before returning a non-zero exit.
+// Exported separately so failure aggregation can be tested without subprocesses.
+export async function runBatches(batches, runBatch, { onFailure, shouldStop = () => false } = {}) {
+  let exitCode = 0;
+
+  for (let index = 0; index < batches.length && !shouldStop(); index += 1) {
+    try {
+      const batchExitCode = await runBatch(batches[index], index);
+      if (batchExitCode !== 0) {
+        if (exitCode === 0) exitCode = batchExitCode ?? 1;
+        onFailure?.(batchExitCode, index);
+      }
+    } catch (error) {
+      if (exitCode === 0) exitCode = 1;
+      onFailure?.(1, index, error);
+    }
+  }
+
+  return exitCode;
+}
+
+async function runNodeTestBatches(plan) {
+  let activeChild;
+  let interrupted;
+  const signalHandlers = new Map();
+
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const handler = () => {
+      interrupted = signal;
+      activeChild?.kill(signal);
+    };
+    signalHandlers.set(signal, handler);
+    // Keep the prior one-shot forwarding semantics: after forwarding an
+    // interrupt to the active child, a repeated same signal can use Node's
+    // normal termination behavior instead of being swallowed by the runner.
+    process.once(signal, handler);
+  }
+
+  try {
+    const exitCode = await runBatches(
+      plan.batchArgs,
+      async args => {
+        const child = spawn(process.execPath, args, {
+          cwd: REPO_ROOT,
+          env: { ...process.env, NODE_ENV: 'test' },
+          stdio: 'inherit',
+        });
+        activeChild = child;
+
+        try {
+          return await new Promise((resolve, reject) => {
+            child.once('error', reject);
+            child.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+          });
+        } finally {
+          if (activeChild === child) activeChild = undefined;
+        }
+      },
+      {
+        onFailure: (exitCode, index, error) => {
+          const details = error ? `: ${error.message}` : '';
+          console.error(
+            `[node-tests] batch ${index + 1}/${plan.batchArgs.length} failed with exit ${exitCode}${details}`
+          );
+        },
+        shouldStop: () => interrupted !== undefined,
+      }
+    );
+    return interrupted ? exitCode || 1 : exitCode;
+  } finally {
+    for (const [signal, handler] of signalHandlers) process.removeListener(signal, handler);
+  }
+}
+
 async function run() {
   const options = parseRunnerArgs(process.argv.slice(2));
-  const invocation = buildNodeTestArgs(options);
+  const plan = buildNodeTestPlan(options);
 
   if (options.list) {
-    process.stdout.write(`${invocation.files.join('\n')}\n`);
+    process.stdout.write(`${plan.files.join('\n')}\n`);
     return;
   }
 
-  const concurrencyLabel = invocation.concurrency ?? 'Node default (CI)';
+  const concurrencyLabel = plan.concurrency ?? 'Node default (CI)';
+  const batchingLabel =
+    plan.batches.length > 1 ? `; ${plan.batches.length} local batches of up to ${LOCAL_TEST_BATCH_SIZE} files` : '';
   console.log(
-    `[node-tests] ${invocation.files.length} files; group=${options.group}; ` +
-      `concurrency=${concurrencyLabel}; timeout=${invocation.timeoutMs}ms`
+    `[node-tests] ${plan.files.length} files; group=${options.group}; ` +
+      `concurrency=${concurrencyLabel}; timeout=${plan.timeoutMs}ms${batchingLabel}`
   );
 
-  const child = spawn(process.execPath, invocation.args, {
-    cwd: REPO_ROOT,
-    env: { ...process.env, NODE_ENV: 'test' },
-    stdio: 'inherit',
-  });
-
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    process.once(signal, () => child.kill(signal));
-  }
-
-  const exitCode = await new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
-  });
-  process.exitCode = exitCode;
+  process.exitCode = await runNodeTestBatches(plan);
 }
 
 const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
