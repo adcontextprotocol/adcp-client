@@ -267,6 +267,18 @@ describe('Response schema registration', () => {
       'comply_test_controller should have a registered response schema'
     );
   });
+
+  test('comply_test_controller accepts unknown list_scenarios values', () => {
+    const { validateResponseSchema } = require('../../dist/lib/testing/client.js');
+
+    const result = validateResponseSchema('comply_test_controller', {
+      status: 'completed',
+      success: true,
+      scenarios: ['vendor_future_scenario'],
+    });
+
+    assert.strictEqual(result.passed, true, result.details);
+  });
 });
 
 // ============================================================

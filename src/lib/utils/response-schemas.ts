@@ -56,6 +56,14 @@ const GetProductsResponseStrictSchema = schemas.GetProductsResponseSchema.superR
   }
 });
 
+// The protocol deliberately leaves `list_scenarios.scenarios` open-ended:
+// sellers can advertise scenarios introduced after this SDK's generated schema
+// snapshot (or vendor extensions). Keep the generated union for every other
+// controller response arm, while widening only this discovery response.
+const ComplyTestControllerResponseSchema = schemas.ComplyTestControllerResponseSchema.or(
+  schemas.ListScenariosSuccessSchema.extend({ scenarios: z.array(z.string()) })
+);
+
 export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // Product discovery & media buy
   list_products: schemas.ListProductsResponseSchema,
@@ -160,7 +168,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   sync_principal: schemas.SyncPrincipalResponseSchema,
 
   // Test controller
-  comply_test_controller: schemas.ComplyTestControllerResponseSchema,
+  comply_test_controller: ComplyTestControllerResponseSchema,
 
   // Property governance
   validate_property_delivery: schemas.ValidatePropertyDeliveryResponseSchema,
