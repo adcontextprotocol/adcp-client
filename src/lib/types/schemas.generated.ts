@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-05T10:49:56.581Z
+// Generated at: 2026-09-06T23:28:20.345Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6747,7 +6747,7 @@ export const ReportingFileEntrySchema = z.object({
     sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/),
     row_count: z.int().min(0),
     partition: z.record(z.string(), z.string()).optional()
-}).passthrough();
+}).strict();
 
 export const ReportingFileManifestSchema = z.object({
     manifest_version: z.literal("1.0"),
@@ -6759,7 +6759,7 @@ export const ReportingFileManifestSchema = z.object({
         start: z.iso.datetime(),
         end: z.iso.datetime(),
         source_timezone: z.string().min(1)
-    }).passthrough(),
+    }).strict(),
     format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")]),
     compression: ReportingFileCompressionSchema,
     files: z.array(ReportingFileEntrySchema),
@@ -6767,7 +6767,7 @@ export const ReportingFileManifestSchema = z.object({
     row_count: z.int().min(0),
     control_totals: z.array(ReportingControlTotalSchema),
     created_at: z.iso.datetime()
-}).passthrough();
+}).strict();
 
 export const ReportingLedgerChangedWebhookSchema = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),

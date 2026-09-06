@@ -186,6 +186,65 @@ function postProcessReportingEvidenceStrictness(input) {
   return runPostProcess('postProcessReportingEvidenceStrictness', input, '.zod-reporting-strictness-');
 }
 
+function reportingFileManifestClosedStructures(manifest, fileEntry, controlTotal) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-manifest-closed-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.json');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingFileManifestClosedStructures(
+  ${JSON.stringify(manifest)},
+  ${JSON.stringify(fileEntry)},
+  ${JSON.stringify(controlTotal)}
+)));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return JSON.parse(fs.readFileSync(outPath, 'utf8'));
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+function postProcessReportingFileManifestStrictness(input, closedStructures) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-manifest-strict-'));
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  const outPath = path.join(harnessDir, 'out.txt');
+  const generateZodPath = path.join(REPO_ROOT, 'scripts/generate-zod-from-ts.ts');
+
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { writeFileSync } from 'fs';
+import { __test__ } from ${JSON.stringify(generateZodPath)};
+writeFileSync(${JSON.stringify(outPath)}, __test__.postProcessReportingFileManifestStrictness(
+  ${JSON.stringify(input)},
+  ${JSON.stringify(closedStructures)}
+));
+`
+  );
+
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error(`harness failed (${result.status}): ${result.stderr}\n${result.stdout}`);
+    }
+    return fs.readFileSync(outPath, 'utf8');
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
 test('postProcessForNullish keeps never optional constraints strict', () => {
   const output = postProcessForNullish(`
 export const ExampleSchema = z.object({
@@ -355,6 +414,52 @@ export const ExtensionFriendlySchema = z.object({}).passthrough();
     );
   }
   assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
+});
+
+test('reporting file manifest strictness is source-derived and preserves extension-friendly schemas', () => {
+  const manifest = {
+    additionalProperties: false,
+    properties: { period: { additionalProperties: false } },
+  };
+  const fileEntry = { additionalProperties: false };
+  const controlTotal = { oneOf: [{ additionalProperties: false }, { additionalProperties: false }] };
+  const closedStructures = reportingFileManifestClosedStructures(manifest, fileEntry, controlTotal);
+  assert.deepEqual(closedStructures, {
+    manifest: { root: true, period: true },
+    fileEntry: { root: true },
+    controlTotalVariants: ['IntegerReportingControlTotal', 'DecimalReportingControlTotal'],
+  });
+
+  const output = postProcessReportingFileManifestStrictness(
+    `
+export const ReportingFileEntrySchema = z.object({ object_ref: z.string() }).passthrough();
+
+export const ReportingFileManifestSchema = z.object({
+  period: z.object({ start: z.string(), end: z.string() }).passthrough(),
+  files: z.array(ReportingFileEntrySchema)
+}).passthrough();
+
+export const IntegerReportingControlTotalSchema = z.object({ value_type: z.literal("integer") }).strict();
+
+export const DecimalReportingControlTotalSchema = z.object({ value_type: z.literal("decimal") }).strict();
+
+export const ExtensionFriendlySchema = z.object({}).passthrough();
+`,
+    closedStructures
+  );
+  assert.match(
+    output,
+    /ReportingFileManifestSchema = z\.object\(\{[\s\S]*period: z\.object\([\s\S]*\}\)\.strict\(\),[\s\S]*\}\)\.strict\(\)/
+  );
+  assert.match(output, /ReportingFileEntrySchema = z\.object\(\{ object_ref: z\.string\(\) \}\)\.strict\(\)/);
+  assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
+
+  const unclosedPeriod = structuredClone(manifest);
+  unclosedPeriod.properties.period.additionalProperties = true;
+  assert.throws(
+    () => reportingFileManifestClosedStructures(unclosedPeriod, fileEntry, controlTotal),
+    /source must close manifest\.period/
+  );
 });
 
 test('postProcessMarkerUnionObjectIntersections collapses opaque marker unions', () => {

@@ -1919,6 +1919,96 @@ function postProcessReportingEvidenceStrictness(content: string): string {
   return result;
 }
 
+type ReportingFileManifestClosedStructures = {
+  manifest: { root: true; period: true };
+  fileEntry: { root: true };
+  controlTotalVariants: readonly ['IntegerReportingControlTotal', 'DecimalReportingControlTotal'];
+};
+
+/**
+ * Read the closed-object boundaries from the normative reporting manifest
+ * documents. The TypeScript intermediary does not retain
+ * `additionalProperties: false` for anonymous objects, so retain the source
+ * contract here rather than treating the generated TypeScript shape as the
+ * authority.
+ */
+function reportingFileManifestClosedStructures(
+  manifestSource: unknown,
+  fileEntrySource: unknown,
+  controlTotalSource: unknown
+): ReportingFileManifestClosedStructures {
+  const object = (value: unknown, name: string): Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`reporting-file-manifest source is missing ${name}.`);
+    }
+    return value as Record<string, unknown>;
+  };
+  const assertClosed = (value: unknown, name: string): void => {
+    if (object(value, name).additionalProperties !== false) {
+      throw new Error(`reporting-file-manifest source must close ${name}.`);
+    }
+  };
+
+  const manifest = object(manifestSource, 'manifest');
+  assertClosed(manifest, 'manifest');
+  assertClosed(object(manifest.properties, 'manifest.properties').period, 'manifest.period');
+
+  assertClosed(fileEntrySource, 'file entry');
+
+  const controlTotal = object(controlTotalSource, 'control total');
+  const variants = controlTotal.oneOf;
+  if (!Array.isArray(variants) || variants.length !== 2) {
+    throw new Error('reporting-file-manifest source must contain exactly two control-total variants.');
+  }
+  for (const variant of variants) {
+    assertClosed(variant, 'control-total variant');
+  }
+
+  return {
+    manifest: { root: true, period: true },
+    fileEntry: { root: true },
+    controlTotalVariants: ['IntegerReportingControlTotal', 'DecimalReportingControlTotal'],
+  };
+}
+
+/**
+ * Restore the closed boundaries of the public file-transfer manifest. This
+ * remains deliberately narrow: ordinary AdCP payloads retain the global
+ * extension-friendly passthrough policy, while this manifest is an audited
+ * commit point whose signed source forbids unknown keys.
+ */
+function postProcessReportingFileManifestStrictness(
+  content: string,
+  closedStructures: ReportingFileManifestClosedStructures
+): string {
+  const strictSchema = (source: string, schemaName: string): string => {
+    const target = findSchemaExportExpressions(source).find(entry => entry.name === schemaName);
+    if (!target) throw new Error(`postProcessReportingFileManifestStrictness: ${schemaName} was not generated.`);
+    const expression = source.slice(target.expressionStart, target.expressionEnd);
+    const strict = expression.replaceAll('.passthrough()', '.strict()');
+    if (strict === expression) {
+      throw new Error(`postProcessReportingFileManifestStrictness: ${schemaName} has no passthrough boundary.`);
+    }
+    return source.slice(0, target.expressionStart) + strict + source.slice(target.expressionEnd);
+  };
+
+  let result = content;
+  if (closedStructures.manifest.root && closedStructures.manifest.period) {
+    result = strictSchema(result, 'ReportingFileManifestSchema');
+  }
+  if (closedStructures.fileEntry.root) {
+    result = strictSchema(result, 'ReportingFileEntrySchema');
+  }
+  for (const variant of closedStructures.controlTotalVariants) {
+    const target = findSchemaExportExpressions(result).find(entry => entry.name === `${variant}Schema`);
+    if (!target) throw new Error(`postProcessReportingFileManifestStrictness: ${variant}Schema was not generated.`);
+    if (!result.slice(target.expressionStart, target.expressionEnd).includes('.strict()')) {
+      throw new Error(`postProcessReportingFileManifestStrictness: ${variant}Schema must remain strict.`);
+    }
+  }
+  return result;
+}
+
 /**
  * The generated response composes the root object with the loose view union
  * using `and()`. Zod's intersection does not retain the nested strict-object
@@ -4588,6 +4678,15 @@ async function generateZodSchemas() {
     );
     const reportingStatusRequiredByView = reportingStatusViewRequiredFields(reportingStatusResponseSource);
     const reportingStatusClosedStructuresBySource = reportingStatusClosedStructures(reportingStatusResponseSource);
+    const reportingFileManifestClosedStructuresBySource = reportingFileManifestClosedStructures(
+      JSON.parse(
+        readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-file-manifest.json'), 'utf8')
+      ),
+      JSON.parse(readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-file-entry.json'), 'utf8')),
+      JSON.parse(
+        readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-control-total.json'), 'utf8')
+      )
+    );
     const refineResponseSource = JSON.parse(
       readFileSync(
         path.join(__dirname, '../schemas/cache/latest/bundled/media-buy/refine-proposals-response.json'),
@@ -4896,6 +4995,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
     zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
     zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas, reportingStatusClosedStructuresBySource);
+    zodSchemas = postProcessReportingFileManifestStrictness(zodSchemas, reportingFileManifestClosedStructuresBySource);
 
     // Preserve the image format's beta.6 motion-level refinement without
     // regressing its public ZodObject composition surface.
@@ -4999,9 +5099,11 @@ export const __test__ = {
   postProcessCreativeBriefRequiredDisclosures,
   reportingStatusViewRequiredFields,
   reportingStatusClosedStructures,
+  reportingFileManifestClosedStructures,
   postProcessGetReportingStatusViewRequiredFields,
   postProcessReportingEvidenceStrictness,
   postProcessGetReportingStatusEvidenceStrictness,
+  postProcessReportingFileManifestStrictness,
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
   postProcessRecordSizeConstraints,
