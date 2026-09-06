@@ -655,6 +655,10 @@ function generateLlmsTxt(
   );
   ln();
   ln(
+    `Standing caller- and account-level notification subscribers require a durable control plane in addition to webhook delivery. Use \`createPostgresPersistentNotificationRuntime()\` for declarative replacement, exact-tuple proof generations, write-only credential bindings, anchor-safe fanout, and live authorization before every attempt/retry. See \`docs/guides/PERSISTENT-NOTIFICATION-RUNTIME.md\`; do not implement a second subscriber writer behind the raw \`syncAgentNotificationConfigs\` hook.`
+  );
+  ln();
+  ln(
     `Lower-level option: \`createAdcpServer({ signals: { getSignals: ... } })\` from \`@adcp/sdk/server/legacy/v5\` — handler-bag API. Still fully supported, the substrate the platform path calls into. Use when you need fine control over individual handlers, mid-migration from a v5 codebase, or custom-shaped tools the platform interface doesn't yet model. \`wrapEnvelope(inner, { replayed, context, operationId })\` from \`@adcp/sdk/server\` attaches protocol envelope fields with the per-error-code allowlist (IDEMPOTENCY_CONFLICT drops \`replayed\`).`
   );
   ln();
@@ -1270,6 +1274,7 @@ function generateLlmsTxt(
     ['Buyer quick start (AdCP 3.2)', 'guides/BUYER-QUICKSTART-3.2.md'],
     ['Seller quick start (AdCP 3.2)', 'guides/SELLER-QUICKSTART-3.2.md'],
     ['Production durability checklist', 'guides/PRODUCTION-DURABILITY.md'],
+    ['Persistent notification subscriptions', 'guides/PERSISTENT-NOTIFICATION-RUNTIME.md'],
     ['Migrating SDK 13 → 14', 'migration-13-to-14.md'],
     ['Getting started / install', 'getting-started.md'],
     ['Build a server-side agent', 'guides/BUILD-AN-AGENT.md'],
@@ -1689,6 +1694,32 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `\`createPostgresWebhookRuntime()\` assembles the durable delivery store, encrypted recovery outbox, emitter, ready-to-pass server configuration, probes, migrations, fenced poller, and \`WebhookEmitResult\`-to-disposition mapping. Pass \`webhooks.serverConfig\` as the framework's \`webhooks\` option and schedule bounded \`recoverOnce()\` calls. Direct multi-tenant sends bind with \`webhooks.emitter.forTenantScope(trustedTenant)\`.`
+  );
+  ln();
+
+  ln(`## Persistent Notification Subscription Runtime`);
+  ln();
+  ln('```typescript');
+  ln(`const notifications = createPostgresPersistentNotificationRuntime({`);
+  ln(`  db: pool, publisherScope: 'seller-production',`);
+  ln(`  subscriptions: { tableName: 'seller_notification_subscriptions' },`);
+  ln(`  webhooks: {`);
+  ln(`    deliveries: { tableName: 'seller_webhook_deliveries' },`);
+  ln(`    outbox: { tableName: 'seller_webhook_outbox' },`);
+  ln(`    signerProvider,`);
+  ln(`  },`);
+  ln(`  proofAdapter, credentialAdapter,`);
+  ln(`  authorizeDelivery: liveApplicationAuthorization,`);
+  ln(`  // Optional allowlist for invalidation-only later-version caller events:`);
+  ln(`  futureCallerInvalidationEventTypes: ['catalog.invalidated'],`);
+  ln(`});`);
+  ln(`for (const sql of notifications.migrations.all) await pool.query(sql);`);
+  ln(`await notifications.probe();`);
+  ln(`await notifications.recoverOnce({ ownerToken: stableWorkerId });`);
+  ln('```');
+  ln();
+  ln(
+    `The runtime keeps caller and caller+account anchors separate, applies full-set replacement with generation CAS, proves the exact normalized destination tuple before activation, and keeps legacy credentials behind an opaque application binding. Its non-secret subscription generation is stored in the webhook outbox; every live and recovered attempt re-reads subscription state and calls the required application authorization callback before network access. Pause, removal, authorization loss, or destination replacement terminally suppresses unclaimed old-generation work. \`include_future_event_types\` remains fail closed unless the server explicitly classifies invalidation-only later-version caller events with \`futureCallerInvalidationEventTypes\`. See \`docs/guides/PERSISTENT-NOTIFICATION-RUNTIME.md\`.`
   );
   ln();
 

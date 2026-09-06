@@ -98,6 +98,13 @@ export interface WebhookDeliverySnapshot {
   payload: Record<string, unknown>;
   authentication: WebhookAuthentication;
   retries: Required<WebhookRetryOptions>;
+  /**
+   * Non-secret application context used to re-authorize every external
+   * attempt, including attempts reconstructed from a durable outbox. This is
+   * stored with the recovery snapshot but is never included in the webhook
+   * body. Callers MUST NOT put credentials or bearer material here.
+   */
+  attemptAuthorizationContext?: Record<string, unknown>;
 }
 
 /**
@@ -321,6 +328,17 @@ export interface WebhookEmitterOptions {
   /** Observability hook called AFTER each attempt completes. */
   onAttemptResult?: (info: WebhookEmitAttemptResult) => void;
   /**
+   * Fail-closed authorization hook invoked immediately before every external
+   * POST, including each in-process retry and every recovered attempt. A
+   * suppression is terminal for this delivery identity. Throwing is treated
+   * as `authorization_error` and never falls through to network delivery.
+   *
+   * The hook may resolve write-only authentication just in time. This lets a
+   * persistent subscription runtime keep only an opaque credential binding in
+   * its store and keep the clear credential out of recovery snapshots.
+   */
+  authorizeAttempt?: WebhookAttemptAuthorizer;
+  /**
    * Sleeper override. Production uses `setTimeout`; tests inject a stub to
    * skip real backoff. Takes (ms, abortSignal) and resolves when slept.
    */
@@ -357,6 +375,12 @@ export interface WebhookEmitParams {
   authentication?: WebhookAuthentication;
   /** Per-emit retries override. */
   retries?: WebhookRetryOptions;
+  /**
+   * Non-secret context for `authorizeAttempt`. It is durably snapshotted so a
+   * restarted worker can re-check the exact subscription generation. It is
+   * never serialized into the webhook payload.
+   */
+  attemptAuthorizationContext?: Record<string, unknown>;
 }
 
 export interface WebhookEmitAttempt {
@@ -364,7 +388,30 @@ export interface WebhookEmitAttempt {
   idempotency_key: string;
   attempt: number;
   url: string;
+  /** Durable non-secret context supplied by the emission owner. */
+  attemptAuthorizationContext?: Record<string, unknown>;
 }
+
+export type WebhookAttemptSuppressionReason =
+  | 'authorization_denied'
+  | 'authorization_error'
+  | 'subscription_missing'
+  | 'subscription_inactive'
+  | 'subscription_stale'
+  | 'event_not_allowed'
+  | 'credential_unavailable';
+
+export type WebhookAttemptAuthorizationDecision =
+  | {
+      decision: 'allow';
+      /** Optional just-in-time override; `null` explicitly selects RFC 9421. */
+      authentication?: WebhookAuthentication;
+    }
+  | { decision: 'suppress'; reason: WebhookAttemptSuppressionReason };
+
+export type WebhookAttemptAuthorizer = (
+  info: Readonly<WebhookEmitAttempt>
+) => Promise<WebhookAttemptAuthorizationDecision> | WebhookAttemptAuthorizationDecision;
 
 export interface WebhookEmitAttemptResult extends WebhookEmitAttempt {
   status?: number;
@@ -376,6 +423,7 @@ export interface WebhookEmitAttemptResult extends WebhookEmitAttempt {
 export interface WebhookEmitResult {
   delivery_id: string;
   idempotency_key: string;
+  /** Number of external HTTP attempts; authorization suppression before network access reports zero. */
   attempts: number;
   delivered: boolean;
   /** True only when the final outcome is known to be non-retryable. */
@@ -383,6 +431,8 @@ export interface WebhookEmitResult {
   final_status?: number;
   /** Sanitized per-attempt failure classifications; nested provider/backend messages are never copied here. */
   errors: string[];
+  /** Present when live delivery authority failed closed before an external attempt. */
+  suppression?: { reason: WebhookAttemptSuppressionReason };
 }
 
 export interface WebhookEmitter {
@@ -459,6 +509,9 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
         payload: delivery.snapshot.payload,
         authentication: delivery.snapshot.authentication,
         retries: delivery.snapshot.retries,
+        ...(delivery.snapshot.attemptAuthorizationContext === undefined
+          ? {}
+          : { attemptAuthorizationContext: delivery.snapshot.attemptAuthorizationContext }),
         delivery_id: delivery.key.deliveryId,
         __recoveryClaim: delivery,
       } as WebhookEmitParams & { __recoveryClaim: WebhookDeliveryRecoveryClaim });
@@ -479,8 +532,13 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
       const url = params.url;
       const payloadSnapshot = structuredClone(params.payload);
       const authentication = params.authentication == null ? null : structuredClone(params.authentication);
+      const attemptAuthorizationContext =
+        params.attemptAuthorizationContext === undefined
+          ? undefined
+          : structuredClone(params.attemptAuthorizationContext);
       const retries = resolveRetries(params.retries === undefined ? options.retries : structuredClone(params.retries));
       assertIJson(payloadSnapshot);
+      if (attemptAuthorizationContext !== undefined) assertIJson(attemptAuthorizationContext);
       const deliveryKey = { publisherScope, tenantScope: boundTenantScope, deliveryId };
       const recoveredClaim = (params as WebhookEmitParams & { __recoveryClaim?: WebhookDeliveryRecoveryClaim })
         .__recoveryClaim;
@@ -491,6 +549,9 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
           payload: structuredClone(payloadSnapshot),
           authentication: authentication === null ? null : structuredClone(authentication),
           retries: { ...retries },
+          ...(attemptAuthorizationContext === undefined
+            ? {}
+            : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
         }));
       const recoveryHeartbeat = recoveryClaim ? startRecoveryClaimHeartbeat(recoveryClaim) : undefined;
       try {
@@ -529,7 +590,6 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
         let attempts = 0;
 
         for (let attempt = 1; attempt <= retries.maxAttempts; attempt++) {
-          attempts = attempt;
           await recoveryHeartbeat?.renewNow();
           if (attempt > 1) {
             binding = await refreshDeliveryBinding(store, deliveryKey, binding, retryHorizonSeconds);
@@ -540,7 +600,49 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             idempotency_key,
             attempt,
             url,
+            ...(attemptAuthorizationContext === undefined
+              ? {}
+              : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
           };
+
+          let attemptAuthentication = authentication;
+          if (options.authorizeAttempt) {
+            let authorization: WebhookAttemptAuthorizationDecision;
+            try {
+              authorization = await options.authorizeAttempt(attemptInfo);
+              assertAttemptAuthorizationDecision(authorization);
+            } catch {
+              authorization = { decision: 'suppress', reason: 'authorization_error' };
+            }
+            if (authorization.decision === 'suppress') {
+              await recoveryHeartbeat?.stop();
+              const heartbeatError = recoveryHeartbeat?.lossMessage();
+              if (heartbeatError) errors.push(heartbeatError);
+              if (!recoveredClaim) {
+                if (recoveryClaim) {
+                  if (!heartbeatError && !(await recoveryClaim.settle('terminal'))) {
+                    errors.push('suppressed delivery could not settle its recovery lease');
+                  }
+                } else {
+                  await options.deliveryRecovery?.settle(deliveryKey, 'terminal');
+                }
+              }
+              return {
+                delivery_id: deliveryId,
+                idempotency_key,
+                attempts,
+                delivered: false,
+                terminal: true,
+                errors,
+                suppression: { reason: authorization.reason },
+              };
+            }
+            if ('authentication' in authorization) {
+              attemptAuthentication =
+                authorization.authentication == null ? null : structuredClone(authorization.authentication);
+            }
+          }
+          attempts = attempt;
           options.onAttempt?.(attemptInfo);
 
           const started = Date.now();
@@ -554,7 +656,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
               bodyBytes,
               signerKey: options.signerKey,
               signerProvider: options.signerProvider,
-              authentication,
+              authentication: attemptAuthentication,
               tag: options.tag,
               userAgent: options.userAgent,
               fetch: fetchImpl,
@@ -653,6 +755,42 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
     },
   });
   return makeEmitter(tenantScope);
+}
+
+function assertAttemptAuthorizationDecision(value: unknown): asserts value is WebhookAttemptAuthorizationDecision {
+  if (value == null || typeof value !== 'object') {
+    throw new TypeError('authorizeAttempt must return an authorization decision');
+  }
+  const decision = value as { decision?: unknown; reason?: unknown; authentication?: unknown };
+  if (decision.decision === 'allow') {
+    if ('authentication' in decision) assertWebhookAuthentication(decision.authentication);
+    return;
+  }
+  if (
+    decision.decision !== 'suppress' ||
+    ![
+      'authorization_denied',
+      'authorization_error',
+      'subscription_missing',
+      'subscription_inactive',
+      'subscription_stale',
+      'event_not_allowed',
+      'credential_unavailable',
+    ].includes(String(decision.reason))
+  ) {
+    throw new TypeError('authorizeAttempt returned an invalid authorization decision');
+  }
+}
+
+function assertWebhookAuthentication(value: unknown): asserts value is WebhookAuthentication {
+  if (value === null) return;
+  if (value == null || typeof value !== 'object') {
+    throw new TypeError('authorizeAttempt authentication must be null, bearer, or hmac_sha256');
+  }
+  const auth = value as { type?: unknown; token?: unknown; secret?: unknown };
+  if (auth.type === 'bearer' && typeof auth.token === 'string' && auth.token.length > 0) return;
+  if (auth.type === 'hmac_sha256' && typeof auth.secret === 'string' && auth.secret.length > 0) return;
+  throw new TypeError('authorizeAttempt authentication must be null, bearer, or hmac_sha256');
 }
 
 interface RecoveryClaimHeartbeat {

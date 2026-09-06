@@ -15,6 +15,11 @@ Use this after the compact seller works locally.
   checkpoint only after it returns `settled`.
 - Protect webhook bearer/HMAC material through a
   `WebhookAuthenticationAdapter`. The SDK does not own KMS keys.
+- For standing caller/account notification subscribers, use
+  `createPostgresPersistentNotificationRuntime()` and run its subscription,
+  delivery, and outbox migrations from one PostgreSQL pool. The runtime
+  re-authorizes every retry; see
+  [persistent notification subscriptions](./PERSISTENT-NOTIFICATION-RUNTIME.md).
 - Re-derive credentials per request. Never put secrets in `ctx_metadata`; see
   [ctx_metadata safety](./CTX-METADATA-SAFETY.md).
 - Configure RFC 9421 signing and SSRF-safe webhook delivery using the

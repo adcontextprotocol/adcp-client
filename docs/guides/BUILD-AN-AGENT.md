@@ -29,6 +29,13 @@ before runtime. The `definePlatform` / `defineSalesCorePlatform` /
 sibling helpers let you write inline platform literals without
 `req: unknown` casts.
 
+Standing caller- and account-level notification subscribers need durable
+control-plane state in addition to the webhook delivery outbox. Use
+`createPostgresPersistentNotificationRuntime()`; it owns declarative
+replacement, proof generations, and per-attempt authorization while composing
+with the existing delivery kernel. See
+[Persistent notification subscriptions](./PERSISTENT-NOTIFICATION-RUNTIME.md).
+
 For multi-specialism production agents (sales + creative + governance +
 brand-rights), the `examples/hello_*` family is the copy-paste
 starting point for each specialism.
