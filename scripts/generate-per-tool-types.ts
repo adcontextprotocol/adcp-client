@@ -388,6 +388,45 @@ function loadToolList(): string[] {
 }
 
 /**
+ * Keep the AdCP wire error distinct from the JavaScript global `Error` in
+ * self-contained declaration slices. The upstream schema's title is `Error`,
+ * which is a valid public export, but an unresolved reference silently binds
+ * to the JavaScript error class and makes wire-valid `{ code, message }`
+ * values unassignable. Emit the protocol shape under an unambiguous local name
+ * and leave the old name as an alias for consumers that imported it directly.
+ */
+function renderSliceBody(ordered: readonly string[], allExports: Map<string, ExportInfo>): string {
+  const protocolError = allExports.get('Error');
+  const hasProtocolError = ordered.includes('Error') && protocolError?.kind === 'interface';
+
+  const declarations = ordered.map(name => {
+    const body = allExports.get(name)!.body;
+    if (!hasProtocolError) return body;
+
+    if (name === 'Error') {
+      return body.replace(/^export interface Error\b/m, 'export interface AdcpError');
+    }
+
+    return replaceProtocolErrorReferences(body);
+  });
+
+  if (hasProtocolError) {
+    declarations.push(
+      '/** @deprecated Use AdcpError to avoid ambiguity with the JavaScript global Error. */\nexport type Error = AdcpError;'
+    );
+  }
+
+  return declarations.join('\n\n') + '\n';
+}
+
+/** Rename type identifiers without rewriting schema prose or literal values. */
+function replaceProtocolErrorReferences(body: string): string {
+  return body.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|(["'])(?:\\[\s\S]|(?!\1)[\s\S])*\1|\bError\b/g, match =>
+    match === 'Error' ? 'AdcpError' : match
+  );
+}
+
+/**
  * For a given tool, emit a `.d.ts` slice containing every type the
  * tool's request and response reference transitively.
  */
@@ -430,7 +469,7 @@ function emitToolSlice(
     `// hit memory pressure on the full surface.\n` +
     `\n`;
 
-  const body = ordered.map(n => allExports.get(n)!.body).join('\n\n') + '\n';
+  const body = renderSliceBody(ordered, allExports);
 
   mkdirSync(OUT_DIR, { recursive: true });
   const outPath = path.join(OUT_DIR, `${toolNameToKebab(toolName)}.d.ts`);
@@ -577,4 +616,4 @@ if (require.main === module) {
   main();
 }
 
-export const __test__ = { stripComments, shouldWarnOnExportCollision, closure };
+export const __test__ = { stripComments, shouldWarnOnExportCollision, closure, renderSliceBody };
