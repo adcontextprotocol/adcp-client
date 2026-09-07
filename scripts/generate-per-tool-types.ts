@@ -114,20 +114,29 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
     // dropped from the slice when the upstream emitter ever changed
     // formatting style.
     let jsdocStart = -1;
+    let inlineExportLine: string | undefined;
     if (/^\s*\/\*\*/.test(lines[i] ?? '')) {
       let j = i;
       while (j < lines.length && !(lines[j] ?? '').includes('*/')) j++;
       if (j < lines.length) {
-        let k = j + 1;
-        while (k < lines.length && (lines[k] ?? '').trim() === '') k++;
-        if (k < lines.length && /^export /.test(lines[k] ?? '')) {
+        const closingLine = lines[j] ?? '';
+        const inlineExport = closingLine.slice(closingLine.indexOf('*/') + 2).trimStart();
+        if (/^export /.test(inlineExport)) {
           jsdocStart = i;
-          i = k;
+          inlineExportLine = inlineExport;
+          i = j;
+        } else {
+          let k = j + 1;
+          while (k < lines.length && (lines[k] ?? '').trim() === '') k++;
+          if (k < lines.length && /^export /.test(lines[k] ?? '')) {
+            jsdocStart = i;
+            i = k;
+          }
         }
       }
     }
 
-    const headerMatch = (lines[i] ?? '').match(/^export (interface|type|enum) (\w+)/);
+    const headerMatch = (inlineExportLine ?? lines[i] ?? '').match(/^export (interface|type|enum) (\w+)/);
     if (!headerMatch) {
       i++;
       continue;
@@ -142,7 +151,8 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
       let depth = 0;
       let started = false;
       outer: for (let line = i; line < lines.length; line++) {
-        for (const ch of lines[line] ?? '') {
+        const declarationLine = line === i && inlineExportLine ? inlineExportLine : (lines[line] ?? '');
+        for (const ch of declarationLine) {
           if (ch === '{') {
             depth++;
             started = true;
@@ -168,7 +178,7 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
       let inBlockComment = false;
       let found = false;
       for (let line = i; line < lines.length; line++) {
-        let s = lines[line] ?? '';
+        let s = line === i && inlineExportLine ? inlineExportLine : (lines[line] ?? '');
         // Drop line comments.
         s = s.replace(/\/\/.*$/, '');
         // Drop block-comment content per-line (`/* ... */` and `/** ... */`),
@@ -624,4 +634,4 @@ if (require.main === module) {
   main();
 }
 
-export const __test__ = { stripComments, shouldWarnOnExportCollision, closure, renderSliceBody };
+export const __test__ = { parseExports, stripComments, shouldWarnOnExportCollision, closure, renderSliceBody };

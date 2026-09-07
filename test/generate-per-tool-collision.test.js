@@ -44,7 +44,7 @@ const RESULTS = (() => {
 import { readFileSync, writeFileSync } from 'fs';
 import { __test__ } from ${JSON.stringify(targetPath)};
 
-const { stripComments, shouldWarnOnExportCollision, closure, renderSliceBody } = __test__;
+const { parseExports, stripComments, shouldWarnOnExportCollision, closure, renderSliceBody } = __test__;
 const cases = ${JSON.stringify(cases)};
 const stripResults = cases.map(({ label, a, b }) => ({
   label,
@@ -128,6 +128,10 @@ const protocolErrorClosure = [...closure(new Map([
     sourceFile: 'core.generated.d.ts',
   }],
 ]), ['GetReportingStatusResponse'])];
+const inlineErrorPath = ${JSON.stringify(path.join(harnessDir, 'inline-error.d.ts'))};
+writeFileSync(inlineErrorPath, '/** Protocol error declaration. */ export interface Error { code: string; message: string; }\\n');
+const inlineErrorExport = parseExports(inlineErrorPath).get('Error');
+if (!inlineErrorExport) throw new Error('single-line JSDoc protocol Error declaration was not parsed');
 const protocolErrorExports = new Map([
   ['GetReportingStatusResponse', {
     name: 'GetReportingStatusResponse',
@@ -142,10 +146,7 @@ const protocolErrorExports = new Map([
     sourceFile: 'tools.generated.d.ts',
   }],
   ['Error', {
-    name: 'Error',
-    kind: 'interface',
-    body: '/** Protocol error declaration. */ export interface Error { code: string; message: string; }',
-    sourceFile: 'core.generated.d.ts',
+    ...inlineErrorExport,
   }],
 ]);
 const protocolErrorSlice = renderSliceBody(
