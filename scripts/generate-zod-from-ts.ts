@@ -1919,23 +1919,72 @@ function postProcessReportingEvidenceStrictness(content: string): string {
   return result;
 }
 
-type ReportingFileManifestClosedStructures = {
-  manifest: { root: true; period: true };
-  fileEntry: { root: true };
-  controlTotalVariants: readonly ['IntegerReportingControlTotal', 'DecimalReportingControlTotal'];
+type ReportingFileManifestStrictnessTarget = {
+  schemaName: string;
+  path: string[];
 };
 
+type ReportingFileManifestClosedStructures = {
+  strictTargets: ReportingFileManifestStrictnessTarget[];
+};
+
+const JSON_SCHEMA_STRUCTURAL_KEYS = new Set([
+  '$schema',
+  '$id',
+  'title',
+  'description',
+  'x-status',
+  'x-adcp-validation',
+  'type',
+  'required',
+  'additionalProperties',
+  'minProperties',
+  'maxProperties',
+  'minItems',
+  'maxItems',
+  'uniqueItems',
+  'enum',
+  'const',
+  'format',
+  'pattern',
+  'minLength',
+  'maxLength',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'multipleOf',
+  'default',
+]);
+
+function sourceSchemaDocumentsById(cacheRoot: string): Record<string, unknown> {
+  const documents: Record<string, unknown> = {};
+  const visitDirectory = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visitDirectory(absolute);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+      const document = JSON.parse(readFileSync(absolute, 'utf8')) as Record<string, unknown>;
+      if (typeof document.$id === 'string') documents[document.$id] = document;
+    }
+  };
+  visitDirectory(cacheRoot);
+  return documents;
+}
+
 /**
- * Read the closed-object boundaries from the normative reporting manifest
- * documents. The TypeScript intermediary does not retain
- * `additionalProperties: false` for anonymous objects, so retain the source
- * contract here rather than treating the generated TypeScript shape as the
- * authority.
+ * Map every source-closed object reachable from the reporting manifest to
+ * its generated Zod export and precise inline property path. The TypeScript
+ * intermediary loses `additionalProperties`, so this signed JSON Schema
+ * traversal is the authority. New closed references are mapped by title or
+ * cause generation to fail rather than silently becoming permissive.
  */
 function reportingFileManifestClosedStructures(
   manifestSource: unknown,
-  fileEntrySource: unknown,
-  controlTotalSource: unknown
+  documentsById: Record<string, unknown>
 ): ReportingFileManifestClosedStructures {
   const object = (value: unknown, name: string): Record<string, unknown> => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1943,70 +1992,157 @@ function reportingFileManifestClosedStructures(
     }
     return value as Record<string, unknown>;
   };
-  const assertClosed = (value: unknown, name: string): void => {
-    if (object(value, name).additionalProperties !== false) {
-      throw new Error(`reporting-file-manifest source must close ${name}.`);
+  const schemaName = (schema: Record<string, unknown>, label: string): string => {
+    if (typeof schema.title !== 'string' || !schema.title.trim()) {
+      throw new Error(`reporting-file-manifest source has a closed ${label} without a title.`);
+    }
+    return schema.title.replace(/[^A-Za-z0-9]/g, '');
+  };
+  const targets = new Map<string, ReportingFileManifestStrictnessTarget>();
+  const addTarget = (name: string, path: string[]): void => {
+    targets.set(`${name}:${path.join('.')}`, { schemaName: name, path });
+  };
+  const containsClosedObject = (value: unknown, seen = new WeakSet<object>()): boolean => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return false;
+    seen.add(value);
+    if (Array.isArray(value)) return value.some(item => containsClosedObject(item, seen));
+    const schema = value as Record<string, unknown>;
+    return (
+      schema.additionalProperties === false || Object.values(schema).some(item => containsClosedObject(item, seen))
+    );
+  };
+  const collectInlineTargets = (value: unknown, name: string, path: string[]): void => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const schema = value as Record<string, unknown>;
+    if (typeof schema.$ref === 'string') return;
+    if (schema.additionalProperties === false) addTarget(name, path);
+    if (
+      schema.additionalProperties &&
+      typeof schema.additionalProperties === 'object' &&
+      containsClosedObject(schema.additionalProperties)
+    ) {
+      throw new Error(
+        `reporting-file-manifest source has an unsupported closed catchall at ${name}.${path.join('.') || '<root>'}.`
+      );
+    }
+    if (schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) {
+      for (const [property, child] of Object.entries(schema.properties as Record<string, unknown>)) {
+        collectInlineTargets(child, name, [...path, property]);
+      }
+    }
+    for (const [key, child] of Object.entries(schema)) {
+      if (JSON_SCHEMA_STRUCTURAL_KEYS.has(key) || key === 'properties' || key === '$ref') continue;
+      if (containsClosedObject(child)) {
+        throw new Error(
+          `reporting-file-manifest source has an unsupported closed boundary at ${name}.${[...path, key].join('.')}.`
+        );
+      }
     }
   };
+  const visitedDocuments = new Set<string>();
+  const visitDocument = (value: unknown, label: string): void => {
+    const schema = object(value, label);
+    if (Array.isArray(schema.oneOf)) {
+      for (const [index, variant] of schema.oneOf.entries()) {
+        const variantSchema = object(variant, `${label}.oneOf[${index}]`);
+        collectInlineTargets(variantSchema, schemaName(variantSchema, `${label}.oneOf[${index}]`), []);
+      }
+    } else {
+      collectInlineTargets(schema, schemaName(schema, label), []);
+    }
 
-  const manifest = object(manifestSource, 'manifest');
-  assertClosed(manifest, 'manifest');
-  assertClosed(object(manifest.properties, 'manifest.properties').period, 'manifest.period');
-
-  assertClosed(fileEntrySource, 'file entry');
-
-  const controlTotal = object(controlTotalSource, 'control total');
-  const variants = controlTotal.oneOf;
-  if (!Array.isArray(variants) || variants.length !== 2) {
-    throw new Error('reporting-file-manifest source must contain exactly two control-total variants.');
-  }
-  for (const variant of variants) {
-    assertClosed(variant, 'control-total variant');
-  }
-
-  return {
-    manifest: { root: true, period: true },
-    fileEntry: { root: true },
-    controlTotalVariants: ['IntegerReportingControlTotal', 'DecimalReportingControlTotal'],
+    const visitReferences = (candidate: unknown): void => {
+      if (!candidate || typeof candidate !== 'object') return;
+      if (Array.isArray(candidate)) {
+        candidate.forEach(visitReferences);
+        return;
+      }
+      const node = candidate as Record<string, unknown>;
+      if (typeof node.$ref === 'string') {
+        const referenced = documentsById[node.$ref];
+        if (!referenced) {
+          throw new Error(`reporting-file-manifest source cannot resolve referenced schema ${node.$ref}.`);
+        }
+        if (!visitedDocuments.has(node.$ref)) {
+          visitedDocuments.add(node.$ref);
+          visitDocument(referenced, node.$ref);
+        }
+      }
+      Object.values(node).forEach(visitReferences);
+    };
+    visitReferences(schema);
   };
+
+  visitDocument(manifestSource, 'manifest');
+  return { strictTargets: [...targets.values()] };
 }
 
-/**
- * Restore the closed boundaries of the public file-transfer manifest. This
- * remains deliberately narrow: ordinary AdCP payloads retain the global
- * extension-friendly passthrough policy, while this manifest is an audited
- * commit point whose signed source forbids unknown keys.
- */
+function zodObjectBase(expression: ts.Expression): ts.CallExpression | undefined {
+  if (isZodObjectCall(expression)) return expression;
+  if (
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    expression.expression.expression
+  ) {
+    return zodObjectBase(expression.expression.expression);
+  }
+  if (ts.isParenthesizedExpression(expression)) return zodObjectBase(expression.expression);
+  return undefined;
+}
+
+/** Restore only the exact source-closed Zod objects, leaving adjacent inline extension objects loose. */
 function postProcessReportingFileManifestStrictness(
   content: string,
   closedStructures: ReportingFileManifestClosedStructures
 ): string {
-  const strictSchema = (source: string, schemaName: string): string => {
-    const target = findSchemaExportExpressions(source).find(entry => entry.name === schemaName);
-    if (!target) throw new Error(`postProcessReportingFileManifestStrictness: ${schemaName} was not generated.`);
-    const expression = source.slice(target.expressionStart, target.expressionEnd);
-    const strict = expression.replaceAll('.passthrough()', '.strict()');
-    if (strict === expression) {
-      throw new Error(`postProcessReportingFileManifestStrictness: ${schemaName} has no passthrough boundary.`);
-    }
-    return source.slice(0, target.expressionStart) + strict + source.slice(target.expressionEnd);
-  };
+  const sourceFile = ts.createSourceFile(
+    'adcp-generated-zod.ts',
+    content,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const replacements = new Map<number, { end: number; text: string }>();
 
-  let result = content;
-  if (closedStructures.manifest.root && closedStructures.manifest.period) {
-    result = strictSchema(result, 'ReportingFileManifestSchema');
-  }
-  if (closedStructures.fileEntry.root) {
-    result = strictSchema(result, 'ReportingFileEntrySchema');
-  }
-  for (const variant of closedStructures.controlTotalVariants) {
-    const target = findSchemaExportExpressions(result).find(entry => entry.name === `${variant}Schema`);
-    if (!target) throw new Error(`postProcessReportingFileManifestStrictness: ${variant}Schema was not generated.`);
-    if (!result.slice(target.expressionStart, target.expressionEnd).includes('.strict()')) {
-      throw new Error(`postProcessReportingFileManifestStrictness: ${variant}Schema must remain strict.`);
+  for (const { schemaName, path } of closedStructures.strictTargets) {
+    const schema = findSchemaVariable(sourceFile, `${schemaName}Schema`);
+    if (!schema) {
+      throw new Error(`postProcessReportingFileManifestStrictness: ${schemaName}Schema was not generated.`);
     }
+    const candidates = (path.length === 0 ? [schema] : collectObjectPropertyValues(schema, path))
+      .map(zodObjectBase)
+      .filter((candidate): candidate is ts.CallExpression => candidate !== undefined);
+    if (candidates.length !== 1) {
+      throw new Error(
+        `postProcessReportingFileManifestStrictness: expected one Zod object at ${schemaName}Schema.${path.join('.') || '<root>'}.`
+      );
+    }
+    const objectCall = candidates[0];
+    const access = objectCall.parent;
+    const call = access?.parent;
+    if (
+      ts.isPropertyAccessExpression(access) &&
+      access.expression === objectCall &&
+      ts.isCallExpression(call) &&
+      call.expression === access
+    ) {
+      if (access.name.text === 'strict') continue;
+      if (access.name.text === 'passthrough') {
+        replacements.set(objectCall.end, { end: call.end, text: '.strict()' });
+        continue;
+      }
+    }
+    throw new Error(
+      `postProcessReportingFileManifestStrictness: ${schemaName}Schema.${path.join('.') || '<root>'} is not a strict or passthrough Zod object.`
+    );
   }
-  return result;
+
+  return [...replacements.entries()]
+    .sort(([left], [right]) => right - left)
+    .reduce(
+      (result, [start, replacement]) => result.slice(0, start) + replacement.text + result.slice(replacement.end),
+      content
+    );
 }
 
 /**
@@ -4682,10 +4818,7 @@ async function generateZodSchemas() {
       JSON.parse(
         readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-file-manifest.json'), 'utf8')
       ),
-      JSON.parse(readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-file-entry.json'), 'utf8')),
-      JSON.parse(
-        readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-control-total.json'), 'utf8')
-      )
+      sourceSchemaDocumentsById(path.join(__dirname, '../schemas/cache/latest'))
     );
     const refineResponseSource = JSON.parse(
       readFileSync(

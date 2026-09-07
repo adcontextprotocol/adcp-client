@@ -186,7 +186,7 @@ function postProcessReportingEvidenceStrictness(input) {
   return runPostProcess('postProcessReportingEvidenceStrictness', input, '.zod-reporting-strictness-');
 }
 
-function reportingFileManifestClosedStructures(manifest, fileEntry, controlTotal) {
+function reportingFileManifestClosedStructures(manifest, documentsById) {
   const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.zod-reporting-manifest-closed-'));
   const scriptPath = path.join(harnessDir, 'harness.ts');
   const outPath = path.join(harnessDir, 'out.json');
@@ -199,8 +199,7 @@ import { writeFileSync } from 'fs';
 import { __test__ } from ${JSON.stringify(generateZodPath)};
 writeFileSync(${JSON.stringify(outPath)}, JSON.stringify(__test__.reportingFileManifestClosedStructures(
   ${JSON.stringify(manifest)},
-  ${JSON.stringify(fileEntry)},
-  ${JSON.stringify(controlTotal)}
+  ${JSON.stringify(documentsById)}
 )));
 `
   );
@@ -416,50 +415,102 @@ export const ExtensionFriendlySchema = z.object({}).passthrough();
   assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
 });
 
-test('reporting file manifest strictness is source-derived and preserves extension-friendly schemas', () => {
+test('reporting file manifest strictness follows exact source boundaries and fails safely for new closed references', () => {
+  const fileEntryRef = 'https://schemas.example/reporting-file-entry.json';
+  const controlTotalRef = 'https://schemas.example/reporting-control-total.json';
+  const newlyReferencedClosedObjectRef = 'https://schemas.example/newly-referenced-closed-object.json';
   const manifest = {
+    title: 'Reporting File Manifest',
+    type: 'object',
     additionalProperties: false,
-    properties: { period: { additionalProperties: false } },
+    properties: {
+      period: { type: 'object', additionalProperties: false },
+      extension: { type: 'object', additionalProperties: true },
+      files: { type: 'array', items: { $ref: fileEntryRef } },
+      control_totals: { $ref: controlTotalRef },
+      newly_referenced_closed_object: { $ref: newlyReferencedClosedObjectRef },
+    },
   };
-  const fileEntry = { additionalProperties: false };
-  const controlTotal = { oneOf: [{ additionalProperties: false }, { additionalProperties: false }] };
-  const closedStructures = reportingFileManifestClosedStructures(manifest, fileEntry, controlTotal);
+  const documentsById = {
+    [fileEntryRef]: {
+      title: 'Reporting File Entry',
+      type: 'object',
+      additionalProperties: false,
+      properties: { extension: { type: 'object', additionalProperties: true } },
+    },
+    [controlTotalRef]: {
+      title: 'Reporting Control Total',
+      oneOf: [
+        { title: 'Integer Reporting Control Total', type: 'object', additionalProperties: false },
+        { title: 'Decimal Reporting Control Total', type: 'object', additionalProperties: false },
+      ],
+    },
+    [newlyReferencedClosedObjectRef]: {
+      title: 'Newly Referenced Closed Object',
+      type: 'object',
+      additionalProperties: false,
+    },
+  };
+  const closedStructures = reportingFileManifestClosedStructures(manifest, documentsById);
   assert.deepEqual(closedStructures, {
-    manifest: { root: true, period: true },
-    fileEntry: { root: true },
-    controlTotalVariants: ['IntegerReportingControlTotal', 'DecimalReportingControlTotal'],
+    strictTargets: [
+      { schemaName: 'ReportingFileManifest', path: [] },
+      { schemaName: 'ReportingFileManifest', path: ['period'] },
+      { schemaName: 'ReportingFileEntry', path: [] },
+      { schemaName: 'IntegerReportingControlTotal', path: [] },
+      { schemaName: 'DecimalReportingControlTotal', path: [] },
+      { schemaName: 'NewlyReferencedClosedObject', path: [] },
+    ],
   });
 
-  const output = postProcessReportingFileManifestStrictness(
-    `
-export const ReportingFileEntrySchema = z.object({ object_ref: z.string() }).passthrough();
+  const generated = `
+export const ReportingFileEntrySchema = z.object({
+  extension: z.object({}).passthrough()
+}).passthrough();
 
 export const ReportingFileManifestSchema = z.object({
   period: z.object({ start: z.string(), end: z.string() }).passthrough(),
+  extension: z.object({}).passthrough(),
   files: z.array(ReportingFileEntrySchema)
 }).passthrough();
 
-export const IntegerReportingControlTotalSchema = z.object({ value_type: z.literal("integer") }).strict();
+export const IntegerReportingControlTotalSchema = z.object({ value_type: z.literal("integer") }).passthrough();
 
-export const DecimalReportingControlTotalSchema = z.object({ value_type: z.literal("decimal") }).strict();
+export const DecimalReportingControlTotalSchema = z.object({ value_type: z.literal("decimal") }).passthrough();
 
-export const ExtensionFriendlySchema = z.object({}).passthrough();
-`,
-    closedStructures
+export const NewlyReferencedClosedObjectSchema = z.object({ value: z.string() }).passthrough();
+`;
+  const output = postProcessReportingFileManifestStrictness(generated, closedStructures);
+  assert.match(
+    output,
+    /ReportingFileManifestSchema = z\.object\(\{[\s\S]*period: z\.object\([\s\S]*\}\)\.strict\(\),[\s\S]*extension: z\.object\(\{\}\)\.passthrough\(\),[\s\S]*\}\)\.strict\(\)/
   );
   assert.match(
     output,
-    /ReportingFileManifestSchema = z\.object\(\{[\s\S]*period: z\.object\([\s\S]*\}\)\.strict\(\),[\s\S]*\}\)\.strict\(\)/
+    /ReportingFileEntrySchema = z\.object\(\{[\s\S]*extension: z\.object\(\{\}\)\.passthrough\(\)[\s\S]*\}\)\.strict\(\)/
   );
-  assert.match(output, /ReportingFileEntrySchema = z\.object\(\{ object_ref: z\.string\(\) \}\)\.strict\(\)/);
-  assert.match(output, /ExtensionFriendlySchema = z\.object\(\{\}\)\.passthrough\(\)/);
+  assert.match(output, /IntegerReportingControlTotalSchema = z\.object\([\s\S]*\)\.strict\(\)/);
+  assert.match(output, /DecimalReportingControlTotalSchema = z\.object\([\s\S]*\)\.strict\(\)/);
+  assert.match(output, /NewlyReferencedClosedObjectSchema = z\.object\([\s\S]*\)\.strict\(\)/);
+  assert.throws(
+    () =>
+      postProcessReportingFileManifestStrictness(
+        generated.replace(/\nexport const NewlyReferencedClosedObjectSchema[\s\S]*?;\n/, '\n'),
+        closedStructures
+      ),
+    /NewlyReferencedClosedObjectSchema was not generated/
+  );
 
   const unclosedPeriod = structuredClone(manifest);
   unclosedPeriod.properties.period.additionalProperties = true;
-  assert.throws(
-    () => reportingFileManifestClosedStructures(unclosedPeriod, fileEntry, controlTotal),
-    /source must close manifest\.period/
-  );
+  assert.doesNotThrow(() => reportingFileManifestClosedStructures(unclosedPeriod, documentsById));
+  assert.deepEqual(reportingFileManifestClosedStructures(unclosedPeriod, documentsById).strictTargets, [
+    { schemaName: 'ReportingFileManifest', path: [] },
+    { schemaName: 'ReportingFileEntry', path: [] },
+    { schemaName: 'IntegerReportingControlTotal', path: [] },
+    { schemaName: 'DecimalReportingControlTotal', path: [] },
+    { schemaName: 'NewlyReferencedClosedObject', path: [] },
+  ]);
 });
 
 test('postProcessMarkerUnionObjectIntersections collapses opaque marker unions', () => {
