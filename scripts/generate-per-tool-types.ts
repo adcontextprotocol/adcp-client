@@ -404,7 +404,7 @@ function renderSliceBody(ordered: readonly string[], allExports: Map<string, Exp
     if (!hasProtocolError) return body;
 
     if (name === 'Error') {
-      return body.replace(/^export interface Error\b/m, 'export interface AdcpError');
+      return renameProtocolErrorDeclaration(body);
     }
 
     return replaceProtocolErrorReferences(body);
@@ -417,6 +417,14 @@ function renderSliceBody(ordered: readonly string[], allExports: Map<string, Exp
   }
 
   return declarations.join('\n\n') + '\n';
+}
+
+/** Rename the Error declaration without touching JSDoc, comments, or strings. */
+function renameProtocolErrorDeclaration(body: string): string {
+  return body.replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|(["'])(?:\\[\s\S]|(?!\1)[\s\S])*\1|\bexport\s+interface\s+Error\b/g,
+    match => (/^export\s+interface\s+Error$/.test(match) ? match.replace(/\bError$/, 'AdcpError') : match)
+  );
 }
 
 /** Rename type identifiers without rewriting schema prose or literal values. */

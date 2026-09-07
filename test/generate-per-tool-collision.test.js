@@ -144,7 +144,7 @@ const protocolErrorExports = new Map([
   ['Error', {
     name: 'Error',
     kind: 'interface',
-    body: 'export interface Error { code: string; message: string; }',
+    body: '/** Protocol error declaration. */ export interface Error { code: string; message: string; }',
     sourceFile: 'core.generated.d.ts',
   }],
 ]);
@@ -252,6 +252,7 @@ test('operational failure slices use the AdCP error shape under strict TypeScrip
   assert.match(RESULTS.protocolErrorSlice, /errors: AdcpError\[\];/);
   assert.match(RESULTS.protocolErrorSlice, /export type Error = AdcpError;/);
   assert.match(RESULTS.protocolErrorSlice, /\/\*\* Error response\. \*\//);
+  assert.match(RESULTS.protocolErrorSlice, /\/\*\* Protocol error declaration\. \*\/ export interface AdcpError/);
 
   const fixtureDir = fs.mkdtempSync(path.join(REPO_ROOT, '.per-tool-error-type-'));
   const slicePath = path.join(fixtureDir, 'get-reporting-status.d.ts');
