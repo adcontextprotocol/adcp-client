@@ -17,6 +17,7 @@ import type {
   NotificationDeliveryAuthorizer,
   NotificationProofAdapter,
   PersistentNotificationRuntime,
+  PersistentNotificationRuntimeOptions,
 } from './types';
 
 export interface CreatePostgresPersistentNotificationRuntimeOptions {
@@ -32,6 +33,9 @@ export interface CreatePostgresPersistentNotificationRuntimeOptions {
   supportedAccountEventTypes?: readonly string[];
   futureCallerInvalidationEventTypes?: readonly string[];
   maxFanoutCandidates?: number;
+  fanoutConcurrency?: number;
+  adopterCallbackTimeoutMs?: number;
+  onCredentialStageError?: PersistentNotificationRuntimeOptions['onCredentialStageError'];
 }
 
 export interface PostgresPersistentNotificationRuntime extends PersistentNotificationRuntime {
@@ -77,6 +81,11 @@ export function createPostgresPersistentNotificationRuntime(
       ? {}
       : { futureCallerInvalidationEventTypes: options.futureCallerInvalidationEventTypes }),
     ...(options.maxFanoutCandidates === undefined ? {} : { maxFanoutCandidates: options.maxFanoutCandidates }),
+    ...(options.fanoutConcurrency === undefined ? {} : { fanoutConcurrency: options.fanoutConcurrency }),
+    ...(options.adopterCallbackTimeoutMs === undefined
+      ? {}
+      : { adopterCallbackTimeoutMs: options.adopterCallbackTimeoutMs }),
+    ...(options.onCredentialStageError === undefined ? {} : { onCredentialStageError: options.onCredentialStageError }),
     createEmitter(authorizeAttempt) {
       webhooks = createPostgresWebhookRuntime({
         ...options.webhooks,

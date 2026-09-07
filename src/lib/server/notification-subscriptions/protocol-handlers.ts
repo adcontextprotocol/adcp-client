@@ -16,8 +16,10 @@ type SyncNotificationPayload = ServerPayload<SyncAgentNotificationConfigsRespons
  * double-write race created by layering it behind an adopter handler.
  *
  * `sync_principal` may replace several sections atomically, so applications
- * should call `runtime.replace()` from their broader principal transaction
- * rather than use this single-section helper for that task.
+ * must call `runtime.replace()` from their broader principal transaction and
+ * advance the shared `configuration_version` there. This compatibility helper
+ * cannot make that multi-section update atomic and must not be used as its
+ * notification sub-transaction.
  */
 export function createPersistentNotificationProtocolHandlers<TAccount = unknown>(
   runtime: PersistentNotificationRuntime,

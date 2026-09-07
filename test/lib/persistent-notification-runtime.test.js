@@ -1,6 +1,6 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { createHash, generateKeyPairSync, randomBytes } = require('node:crypto');
+const { generateKeyPairSync, randomBytes } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const {
@@ -55,6 +55,7 @@ function makeRuntime({
   retries = { maxAttempts: 1, initialDelayMs: 0, maxDelayMs: 0, jitter: 0 },
   sleep = async () => {},
   runtimeOptions = {},
+  emitterFactory,
 } = {}) {
   const store = memoryNotificationSubscriptionStore();
   const runtime = createPersistentNotificationRuntime({
@@ -64,16 +65,68 @@ function makeRuntime({
     validateDestination: async () => ({ allowed: true }),
     credentialAdapter,
     ...runtimeOptions,
-    createEmitter: authorizeAttempt =>
-      createWebhookEmitter({
-        signerKey: signerKey(),
-        fetch,
-        retries,
-        sleep,
-        authorizeAttempt,
-      }),
+    createEmitter:
+      emitterFactory ??
+      (authorizeAttempt =>
+        createWebhookEmitter({
+          signerKey: signerKey(),
+          fetch,
+          retries,
+          sleep,
+          authorizeAttempt,
+        })),
   });
   return { runtime, store, fetch };
+}
+
+function createVersionedCredentialAdapter() {
+  let sequence = 0;
+  const bindings = new Map();
+  const calls = { previews: [], stages: [], commits: [], discards: [], resolves: [] };
+  const adapter = {
+    preview(input) {
+      calls.previews.push(input);
+      const previous = input.previousBindingId && bindings.get(input.previousBindingId);
+      return { outcome: previous?.credential === input.credential ? 'unchanged' : 'changed' };
+    },
+    stage(input) {
+      const previous = input.previousBindingId && bindings.get(input.previousBindingId);
+      if (previous?.credential === input.credential) {
+        const result = { outcome: 'unchanged', bindingId: input.previousBindingId };
+        calls.stages.push({ ...input, ...result });
+        return result;
+      }
+      sequence++;
+      const bindingId = `vault-binding-${sequence}`;
+      const stageId = `vault-stage-${sequence}`;
+      const record = { bindingId, stageId, credential: input.credential, committed: false };
+      bindings.set(bindingId, record);
+      const result = { outcome: 'staged', bindingId, stageId };
+      calls.stages.push({ ...input, ...result });
+      return result;
+    },
+    commit(input) {
+      calls.commits.push(input);
+      const record = bindings.get(input.bindingId);
+      if (!record || record.stageId !== input.stageId) throw new Error('unknown stage');
+      record.committed = true;
+    },
+    discard(input) {
+      calls.discards.push(input);
+      const record = bindings.get(input.bindingId);
+      if (!record || record.committed) return;
+      bindings.delete(input.bindingId);
+    },
+    resolve(input) {
+      calls.resolves.push(input);
+      const record = bindings.get(input.bindingId);
+      if (!record) throw new Error('unknown binding');
+      return input.mode === 'bearer'
+        ? { type: 'bearer', token: record.credential }
+        : { type: 'hmac_sha256', secret: record.credential };
+    },
+  };
+  return { adapter, bindings, calls };
 }
 
 const callerA = { kind: 'caller', tenantId: 'seller-us', principalId: 'buyer-a' };
@@ -285,10 +338,18 @@ test('changed active tuple is proved before CAS and proof failure preserves the 
 });
 
 test('account event fans out independently to account and all-authorized caller subscribers', async () => {
-  const fetch = scriptedFetch([500, 204, 500, 204]);
+  const attemptsByUrl = new Map();
+  const calls = [];
+  const retryingFetch = async (url, init) => {
+    calls.push({ url, init, body: JSON.parse(init.body) });
+    const attempt = (attemptsByUrl.get(url) ?? 0) + 1;
+    attemptsByUrl.set(url, attempt);
+    return { status: attempt === 1 ? 500 : 204, headers: { get: () => undefined } };
+  };
+  retryingFetch.calls = calls;
   let authorizationChecks = 0;
   const { runtime } = makeRuntime({
-    fetch,
+    fetch: retryingFetch,
     retries: { maxAttempts: 2, initialDelayMs: 0, maxDelayMs: 0, jitter: 0 },
     authorize: async () => {
       authorizationChecks++;
@@ -323,14 +384,14 @@ test('account event fans out independently to account and all-authorized caller 
   });
   assert.equal(result.matched, 2);
   assert.equal(result.deliveries.length, 2);
-  assert.equal(fetch.calls.length, 4);
+  assert.equal(retryingFetch.calls.length, 4);
   assert.equal(authorizationChecks, 4, 'authorization is re-evaluated before every retry');
-  assert.deepEqual(new Set(fetch.calls.map(call => call.body.notification_id)), new Set(['change-42']));
-  assert.equal(new Set(fetch.calls.map(call => call.body.subscriber_id)).size, 2);
+  assert.deepEqual(new Set(retryingFetch.calls.map(call => call.body.notification_id)), new Set(['change-42']));
+  assert.equal(new Set(retryingFetch.calls.map(call => call.body.subscriber_id)).size, 2);
   for (const subscriber of ['account-hook', 'principal-hook']) {
-    const calls = fetch.calls.filter(call => call.body.subscriber_id === subscriber);
-    assert.equal(calls.length, 2);
-    assert.equal(calls[0].body.idempotency_key, calls[1].body.idempotency_key);
+    const subscriberCalls = retryingFetch.calls.filter(call => call.body.subscriber_id === subscriber);
+    assert.equal(subscriberCalls.length, 2);
+    assert.equal(subscriberCalls[0].body.idempotency_key, subscriberCalls[1].body.idempotency_key);
   }
 });
 
@@ -380,21 +441,8 @@ test('deactivation during retry suppresses old work before the second external a
 
 test('legacy credentials remain write-only and resolve only after per-attempt authorization', async () => {
   const secret = 'secret-material-with-at-least-32-characters';
-  let resolves = 0;
-  const credentialAdapter = {
-    preview({ credential }) {
-      return { bindingId: `vault_${createHash('sha256').update(credential).digest('hex')}` };
-    },
-    bind({ credential }) {
-      return { bindingId: `vault_${createHash('sha256').update(credential).digest('hex')}` };
-    },
-    resolve({ mode }) {
-      resolves++;
-      assert.equal(mode, 'bearer');
-      return { type: 'bearer', token: secret };
-    },
-  };
-  const { runtime, store } = makeRuntime({ credentialAdapter });
+  const credentials = createVersionedCredentialAdapter();
+  const { runtime, store } = makeRuntime({ credentialAdapter: credentials.adapter });
   await runtime.replace(accountA, [
     {
       subscriber_id: 'legacy',
@@ -418,29 +466,15 @@ test('legacy credentials remain write-only and resolve only after per-attempt au
     accountId: 'account-1',
     payload: { reporting_run_id: 'run-1' },
   });
-  assert.equal(resolves, 1);
+  assert.equal(credentials.calls.resolves.length, 1);
+  assert.equal(credentials.calls.resolves[0].mode, 'bearer');
 });
 
 test('legacy credential dry-run previews use the stable binding without writing', async () => {
   const secret = 'secret-material-with-at-least-32-characters';
   const rotatedSecret = 'rotated-material-with-at-least-32-characters';
-  let previews = 0;
-  let binds = 0;
-  const binding = credential => `vault_${createHash('sha256').update(credential).digest('hex')}`;
-  const credentialAdapter = {
-    preview({ credential }) {
-      previews++;
-      return { bindingId: binding(credential) };
-    },
-    bind({ credential }) {
-      binds++;
-      return { bindingId: binding(credential) };
-    },
-    resolve() {
-      return { type: 'bearer', token: secret };
-    },
-  };
-  const { runtime } = makeRuntime({ credentialAdapter });
+  const credentials = createVersionedCredentialAdapter();
+  const { runtime } = makeRuntime({ credentialAdapter: credentials.adapter });
   const config = credential => ({
     subscriber_id: 'legacy-preview',
     url: 'https://buyer.example/legacy-preview',
@@ -450,27 +484,30 @@ test('legacy credential dry-run previews use the stable binding without writing'
 
   const applied = await runtime.replace(accountA, [config(secret)]);
   assert.equal(applied.outcome, 'applied');
-  assert.equal(binds, 1);
+  assert.equal(credentials.calls.stages.length, 1);
+  assert.equal(credentials.calls.commits.length, 1);
 
   const unchanged = await runtime.replace(accountA, [config(secret)], { dryRun: true });
   assert.equal(unchanged.outcome, 'validated');
   assert.equal(unchanged.wouldChange, false);
-  assert.equal(binds, 1, 'dry-run must not persist or rotate a credential');
+  assert.equal(credentials.calls.stages.length, 1, 'dry-run must not stage or rotate a credential');
 
   const changed = await runtime.replace(accountA, [config(rotatedSecret)], { dryRun: true });
   assert.equal(changed.outcome, 'validated');
   assert.equal(changed.wouldChange, true);
-  assert.equal(binds, 1);
-  assert.equal(previews, 2);
+  assert.equal(credentials.calls.stages.length, 1);
+  assert.equal(credentials.calls.previews.length, 2);
 });
 
 test('legacy credential dry-run reports a missing preview adapter precisely', async () => {
   const secret = 'secret-material-with-at-least-32-characters';
   const { runtime } = makeRuntime({
     credentialAdapter: {
-      bind() {
-        return { bindingId: 'vault-binding' };
+      stage() {
+        return { outcome: 'staged', bindingId: 'vault-binding', stageId: 'vault-stage' };
       },
+      commit() {},
+      discard() {},
       resolve() {
         return { type: 'bearer', token: secret };
       },
@@ -495,6 +532,294 @@ test('legacy credential dry-run reports a missing preview adapter precisely', as
       error instanceof NotificationSubscriptionValidationError &&
       error.message === 'credentialAdapter.preview is required for dry-run legacy authentication'
   );
+});
+
+test('credential rotation stages an immutable version and discards it when proof fails', async () => {
+  const initialSecret = 'initial-secret-material-with-32-characters';
+  const rotatedSecret = 'rotated-secret-material-with-32-characters';
+  const credentials = createVersionedCredentialAdapter();
+  let rejectProof = false;
+  const { runtime, store } = makeRuntime({
+    credentialAdapter: credentials.adapter,
+    proof: async () => ({ proved: !rejectProof }),
+  });
+  const config = credential => ({
+    subscriber_id: 'immutable-credential',
+    url: 'https://buyer.example/immutable-credential',
+    event_types: ['reporting.delivery_ready'],
+    authentication: { schemes: ['Bearer'], credentials: credential },
+  });
+
+  const applied = await runtime.replace(accountA, [config(initialSecret)]);
+  const before = await store.get(accountA);
+  const initialBindingId = before.subscriptions[0].authentication.bindingId;
+  assert.equal(applied.outcome, 'applied');
+  assert.equal(initialBindingId, 'vault-binding-1');
+
+  rejectProof = true;
+  const rejected = await runtime.replace(accountA, [config(rotatedSecret)], {
+    expectedGeneration: applied.generation,
+  });
+  assert.deepEqual(rejected, { outcome: 'proof_failed', subscriberId: 'immutable-credential' });
+  assert.equal(credentials.calls.stages[1].previousBindingId, initialBindingId);
+  assert.equal(credentials.calls.discards.length, 1);
+  assert.equal(credentials.calls.discards[0].bindingId, 'vault-binding-2');
+  assert.notEqual(credentials.calls.discards[0].bindingId, initialBindingId);
+  assert.deepEqual([...credentials.bindings.keys()], [initialBindingId]);
+  assert.deepEqual(await store.get(accountA), before, 'failed proof preserves the prior binding and generation');
+});
+
+test('post-CAS credential commit failure is observable without reversing the replacement', async () => {
+  const secret = 'observable-commit-secret-material-32-characters';
+  const credentials = createVersionedCredentialAdapter();
+  const observed = [];
+  credentials.adapter.commit = input => {
+    credentials.calls.commits.push(input);
+    throw new Error('vault bookkeeping unavailable');
+  };
+  const { runtime, store } = makeRuntime({
+    credentialAdapter: credentials.adapter,
+    runtimeOptions: { onCredentialStageError: event => observed.push(event) },
+  });
+
+  const result = await runtime.replace(accountA, [
+    {
+      subscriber_id: 'observable-commit',
+      url: 'https://buyer.example/observable-commit',
+      event_types: ['reporting.delivery_ready'],
+      authentication: { schemes: ['Bearer'], credentials: secret },
+    },
+  ]);
+
+  assert.equal(result.outcome, 'applied');
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].operation, 'commit');
+  assert.equal(observed[0].subscriberId, 'observable-commit');
+  assert.match(observed[0].error.message, /bookkeeping unavailable/);
+  const stored = await store.get(accountA);
+  assert.equal(stored.subscriptions[0].authentication.bindingId, observed[0].bindingId);
+  assert.equal(credentials.bindings.has(observed[0].bindingId), true, 'the staged binding remains resolvable');
+});
+
+test('concurrent credential replacements commit only the CAS winner and discard the loser', async () => {
+  const initialSecret = 'initial-secret-material-with-32-characters';
+  const replacementA = 'replacement-a-material-with-32-characters';
+  const replacementB = 'replacement-b-material-with-32-characters';
+  const credentials = createVersionedCredentialAdapter();
+  let rotating = false;
+  let proofArrivals = 0;
+  let releaseProofs;
+  const proofBarrier = new Promise(resolve => {
+    releaseProofs = resolve;
+  });
+  const { runtime, store } = makeRuntime({
+    credentialAdapter: credentials.adapter,
+    proof: async () => {
+      if (!rotating) return { proved: true };
+      proofArrivals++;
+      if (proofArrivals === 2) releaseProofs();
+      await proofBarrier;
+      return { proved: true };
+    },
+  });
+  const config = credential => ({
+    subscriber_id: 'credential-race',
+    url: 'https://buyer.example/credential-race',
+    event_types: ['reporting.delivery_ready'],
+    authentication: { schemes: ['Bearer'], credentials: credential },
+  });
+  const initial = await runtime.replace(accountA, [config(initialSecret)]);
+  rotating = true;
+
+  const [first, second] = await Promise.all([
+    runtime.replace(accountA, [config(replacementA)], { expectedGeneration: initial.generation }),
+    runtime.replace(accountA, [config(replacementB)], { expectedGeneration: initial.generation }),
+  ]);
+
+  assert.deepEqual([first.outcome, second.outcome].sort(), ['applied', 'conflict']);
+  const rotatedStages = credentials.calls.stages.slice(1);
+  assert.equal(rotatedStages.length, 2);
+  assert.notEqual(rotatedStages[0].credential, rotatedStages[1].credential);
+  const committed = credentials.calls.commits.at(-1).bindingId;
+  const discarded = credentials.calls.discards.at(-1).bindingId;
+  assert.notEqual(committed, discarded);
+  assert.equal(credentials.bindings.has(committed), true);
+  assert.equal(credentials.bindings.has(discarded), false);
+  const final = await store.get(accountA);
+  assert.equal(final.subscriptions[0].authentication.bindingId, committed);
+  assert.equal(final.subscriptions[0].proofGeneration, final.subscriptions[0].destinationGeneration);
+});
+
+test('concurrent equal credential replacements use independent stages', async () => {
+  const initialSecret = 'initial-equal-race-secret-with-32-characters';
+  const replacement = 'shared-race-secret-material-with-32-characters';
+  const credentials = createVersionedCredentialAdapter();
+  let rotating = false;
+  let proofArrivals = 0;
+  let releaseProofs;
+  const proofBarrier = new Promise(resolve => {
+    releaseProofs = resolve;
+  });
+  const { runtime, store } = makeRuntime({
+    credentialAdapter: credentials.adapter,
+    proof: async () => {
+      if (!rotating) return { proved: true };
+      proofArrivals++;
+      if (proofArrivals === 2) releaseProofs();
+      await proofBarrier;
+      return { proved: true };
+    },
+  });
+  const config = credential => ({
+    subscriber_id: 'equal-credential-race',
+    url: 'https://buyer.example/equal-credential-race',
+    event_types: ['reporting.delivery_ready'],
+    authentication: { schemes: ['Bearer'], credentials: credential },
+  });
+  const initial = await runtime.replace(accountA, [config(initialSecret)]);
+  rotating = true;
+
+  const results = await Promise.all([
+    runtime.replace(accountA, [config(replacement)], { expectedGeneration: initial.generation }),
+    runtime.replace(accountA, [config(replacement)], { expectedGeneration: initial.generation }),
+  ]);
+
+  assert.deepEqual(results.map(result => result.outcome).sort(), ['applied', 'conflict']);
+  const rotatedBindings = credentials.calls.stages.slice(1).map(stage => stage.bindingId);
+  const committed = credentials.calls.commits.at(-1).bindingId;
+  const discarded = credentials.calls.discards.at(-1).bindingId;
+  assert.notEqual(committed, discarded);
+  assert.equal(credentials.bindings.has(committed), true);
+  assert.equal(credentials.bindings.has(discarded), false);
+  assert.deepEqual(new Set(rotatedBindings), new Set([committed, discarded]));
+  const final = await store.get(accountA);
+  assert.equal(final.subscriptions[0].authentication.bindingId, committed);
+});
+
+test('adopter callbacks time out fail closed and receive an aborted signal', async () => {
+  let authorizationSignal;
+  const { runtime, fetch } = makeRuntime({
+    runtimeOptions: { adopterCallbackTimeoutMs: 10 },
+    authorize: ({ signal }) => {
+      authorizationSignal = signal;
+      return new Promise(() => {});
+    },
+  });
+  await runtime.replace(callerA, [
+    {
+      subscriber_id: 'timed-out-authority',
+      url: 'https://buyer.example/timed-out-authority',
+      event_types: ['capabilities.changed'],
+    },
+  ]);
+
+  const result = await runtime.emit({
+    emissionId: 'emission-timeout',
+    notificationId: 'notification-timeout',
+    notificationType: 'capabilities.changed',
+    anchor: 'caller',
+    tenantId: callerA.tenantId,
+    principalId: callerA.principalId,
+    payload: { repair: '/capabilities' },
+  });
+  assert.equal(fetch.calls.length, 0);
+  assert.equal(authorizationSignal.aborted, true);
+  assert.deepEqual(result.deliveries[0].result.suppression, { reason: 'authorization_error' });
+});
+
+test('fanout runs subscriber retry cycles with bounded concurrency and stable ordering', async () => {
+  let active = 0;
+  let peak = 0;
+  const calls = [];
+  const fetch = async url => {
+    calls.push(url);
+    active++;
+    peak = Math.max(peak, active);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    active--;
+    return { status: 204, headers: { get: () => undefined } };
+  };
+  fetch.calls = calls;
+  const { runtime } = makeRuntime({ fetch, runtimeOptions: { fanoutConcurrency: 2 } });
+  await runtime.replace(
+    callerA,
+    Array.from({ length: 4 }, (_, index) => ({
+      subscriber_id: `parallel-${index}`,
+      url: `https://buyer.example/parallel-${index}`,
+      event_types: ['capabilities.changed'],
+    }))
+  );
+
+  const result = await runtime.emit({
+    emissionId: 'emission-parallel',
+    notificationId: 'notification-parallel',
+    notificationType: 'capabilities.changed',
+    anchor: 'caller',
+    tenantId: callerA.tenantId,
+    principalId: callerA.principalId,
+    payload: { repair: '/capabilities' },
+  });
+  assert.equal(calls.length, 4);
+  assert.equal(peak, 2);
+  assert.deepEqual(
+    result.deliveries.map(delivery => delivery.subscriberId),
+    ['parallel-0', 'parallel-1', 'parallel-2', 'parallel-3']
+  );
+});
+
+test('fanout isolates an emitter failure to its subscriber result', async () => {
+  const emitterFactory = () => {
+    const emitter = {
+      async emit(params) {
+        if (params.url.includes('/fails')) throw new Error('delivery binding mismatch with private details');
+        return {
+          delivery_id: params.delivery_id,
+          idempotency_key: 'isolated-fanout-idempotency-key',
+          attempts: 1,
+          delivered: true,
+          terminal: true,
+          final_status: 204,
+          errors: [],
+        };
+      },
+      async emitRecovered() {
+        throw new Error('unused');
+      },
+      forTenantScope() {
+        return emitter;
+      },
+    };
+    return emitter;
+  };
+  const { runtime } = makeRuntime({ emitterFactory });
+  await runtime.replace(callerA, [
+    {
+      subscriber_id: 'a-fails',
+      url: 'https://buyer.example/fails',
+      event_types: ['capabilities.changed'],
+    },
+    {
+      subscriber_id: 'b-succeeds',
+      url: 'https://buyer.example/succeeds',
+      event_types: ['capabilities.changed'],
+    },
+  ]);
+
+  const result = await runtime.emit({
+    emissionId: 'emission-isolated-failure',
+    notificationId: 'notification-isolated-failure',
+    notificationType: 'capabilities.changed',
+    anchor: 'caller',
+    tenantId: callerA.tenantId,
+    principalId: callerA.principalId,
+    payload: { changed: true },
+  });
+
+  assert.equal(result.matched, 2);
+  assert.deepEqual(result.deliveries[0].failure, { reason: 'delivery_runtime_error' });
+  assert.equal(result.deliveries[0].result, undefined);
+  assert.equal(result.deliveries[1].result.delivered, true);
+  assert.equal(result.deliveries[1].failure, undefined);
 });
 
 test('durable recovery round-trips non-secret authorization context and suppresses stale work', async () => {

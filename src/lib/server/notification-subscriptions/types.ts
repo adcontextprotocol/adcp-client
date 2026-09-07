@@ -95,9 +95,8 @@ export interface NotificationSubscriptionStore {
 
 export interface NotificationCredentialBindingAdapter {
   /**
-   * Resolve the stable opaque binding that `bind()` would return without
-   * persisting or rotating the credential. Dry-run replacement uses this to
-   * compare the exact destination tuple without causing a secret-store write.
+   * Compare a credential with the immutable binding already on the tuple.
+   * This MUST NOT write, rotate, hash, or otherwise expose the credential.
    */
   preview(input: {
     scope: Readonly<NotificationSubscriptionScope>;
@@ -105,19 +104,56 @@ export interface NotificationCredentialBindingAdapter {
     mode: Exclude<NotificationAuthenticationMode, 'rfc9421'>;
     credential: string;
     previousBindingId?: string;
-  }): MaybePromise<{ bindingId: string }>;
+    signal: AbortSignal;
+  }): MaybePromise<{ outcome: 'unchanged' } | { outcome: 'changed' }>;
   /**
-   * Store or rotate a write-only credential and return a stable opaque
-   * binding. It must return the same binding as `preview()` for the same
-   * credential and tuple, and rebinding that tuple must remain idempotent.
+   * Stage a write-only credential under an immutable, versioned opaque
+   * binding. Never mutate an existing binding in place. A new or changed
+   * credential MUST return `staged` with a bindingId different from
+   * previousBindingId. Every `staged` outcome owns a fresh binding that is not
+   * shared with another staging operation, even when concurrent operations
+   * supply the same credential. A stage must be durable and resolvable for
+   * proof and post-CAS delivery.
    */
-  bind(input: {
+  stage(input: {
     scope: Readonly<NotificationSubscriptionScope>;
     subscriberId: string;
     mode: Exclude<NotificationAuthenticationMode, 'rfc9421'>;
     credential: string;
     previousBindingId?: string;
-  }): MaybePromise<{ bindingId: string }>;
+    signal: AbortSignal;
+  }): MaybePromise<
+    { outcome: 'unchanged'; bindingId: string } | { outcome: 'staged'; bindingId: string; stageId: string }
+  >;
+  /**
+   * Finalize a stage after the subscription CAS references its binding.
+   * Idempotent. This is post-CAS bookkeeping and must own its monitoring and
+   * retry path; failure cannot roll back the durable subscription reference.
+   */
+  commit(input: {
+    scope: Readonly<NotificationSubscriptionScope>;
+    subscriberId: string;
+    mode: Exclude<NotificationAuthenticationMode, 'rfc9421'>;
+    bindingId: string;
+    stageId: string;
+    /** Retire only after a grace period for already-authorized in-flight sends. */
+    supersedesBindingId?: string;
+    signal: AbortSignal;
+  }): MaybePromise<void>;
+  /**
+   * Discard an unreferenced stage after validation/proof/CAS failure.
+   * Idempotent. It MUST NOT affect any other stage or committed binding. The
+   * adapter must reap abandoned stages because a process can fail before this
+   * callback, or a callback can ignore its aborted signal and complete late.
+   */
+  discard(input: {
+    scope: Readonly<NotificationSubscriptionScope>;
+    subscriberId: string;
+    mode: Exclude<NotificationAuthenticationMode, 'rfc9421'>;
+    bindingId: string;
+    stageId: string;
+    signal: AbortSignal;
+  }): MaybePromise<void>;
   /** Resolve only after live subscription and application authorization succeed. */
   resolve(input: {
     scope: Readonly<NotificationSubscriptionScope>;
@@ -125,6 +161,7 @@ export interface NotificationCredentialBindingAdapter {
     destinationGeneration: string;
     mode: Exclude<NotificationAuthenticationMode, 'rfc9421'>;
     bindingId: string;
+    signal: AbortSignal;
   }): MaybePromise<WebhookAuthentication>;
 }
 
@@ -136,6 +173,7 @@ export interface NotificationProofAdapter {
     eventTypes: readonly string[];
     authentication: Readonly<StoredNotificationAuthentication>;
     destinationGeneration: string;
+    signal: AbortSignal;
   }): MaybePromise<{ proved: true } | { proved: false }>;
 }
 
@@ -143,6 +181,7 @@ export type NotificationDestinationValidator = (input: {
   scope: Readonly<NotificationSubscriptionScope>;
   subscriberId: string;
   url: string;
+  signal: AbortSignal;
 }) => MaybePromise<{ allowed: true } | { allowed: false }>;
 
 export interface NotificationDeliveryAuthorizationInput {
@@ -154,6 +193,7 @@ export interface NotificationDeliveryAuthorizationInput {
   destinationGeneration: string;
   eventType: string;
   notificationId: string;
+  signal: AbortSignal;
 }
 
 export type NotificationDeliveryAuthorizer = (
@@ -209,12 +249,14 @@ export type NotificationReplacementResult =
   | { outcome: 'conflict'; currentGeneration?: string }
   | { outcome: 'proof_failed'; subscriberId: string };
 
-export interface NotificationFanoutDelivery {
+interface NotificationFanoutDeliveryBase {
   scope: NotificationSubscriptionScope;
   subscriberId: string;
   destinationGeneration: string;
-  result: WebhookEmitResult;
 }
+
+export type NotificationFanoutDelivery = NotificationFanoutDeliveryBase &
+  ({ result: WebhookEmitResult; failure?: never } | { result?: never; failure: { reason: 'delivery_runtime_error' } });
 
 export interface NotificationFanoutResult {
   notificationId: string;
@@ -241,6 +283,26 @@ export interface PersistentNotificationRuntimeOptions {
    */
   futureCallerInvalidationEventTypes?: readonly string[];
   maxFanoutCandidates?: number;
+  /** Maximum simultaneous subscriber retry cycles. Defaults to 8. */
+  fanoutConcurrency?: number;
+  /**
+   * Timeout for policy, credential, proof, and destination callbacks. Defaults
+   * to 30 seconds. Store operations must enforce transaction-level deadlines;
+   * the runtime cannot safely abandon a mutating CAS that may commit late.
+   */
+  adopterCallbackTimeoutMs?: number;
+  /**
+   * Non-blocking observer for failed post-stage commit/discard bookkeeping.
+   * Observer failures never change the already-decided replacement outcome.
+   */
+  onCredentialStageError?: (event: {
+    operation: 'commit' | 'discard';
+    scope: NotificationSubscriptionScope;
+    subscriberId: string;
+    bindingId: string;
+    stageId: string;
+    error: unknown;
+  }) => MaybePromise<void>;
 }
 
 export interface PersistentNotificationRuntime {
