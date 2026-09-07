@@ -35,6 +35,54 @@ describe('Zod Schema Validation', () => {
     assert.equal(schemas.ReportingDeliveryMethodSchema.safeParse(audienceTransfer).success, false);
   });
 
+  test('reporting file manifests reject unknown fields at every normative closed boundary', async () => {
+    if (!schemas) schemas = await import('../../dist/lib/types/schemas.generated.js');
+
+    const manifest = {
+      manifest_version: '1.0',
+      complete: true,
+      reporting_revision_id: 'revision-1',
+      reporting_obligation_id: 'obligation-1',
+      reporting_materialization_id: 'materialization-1',
+      period: {
+        start: '2026-09-02T00:00:00.000Z',
+        end: '2026-09-03T00:00:00.000Z',
+        source_timezone: 'UTC',
+      },
+      format: 'jsonl',
+      compression: 'none',
+      files: [
+        {
+          object_ref: 'reports/2026-09-02.jsonl',
+          size_bytes: 1,
+          sha256: 'a'.repeat(64),
+          row_count: 0,
+        },
+      ],
+      total_size_bytes: 1,
+      row_count: 0,
+      control_totals: [{ name: 'impressions', value: '0', value_type: 'integer' }],
+      created_at: '2026-09-03T00:00:00.000Z',
+    };
+
+    assert.equal(schemas.ReportingFileManifestSchema.safeParse(manifest).success, true);
+    for (const invalid of [
+      { ...manifest, not_in_protocol: true },
+      { ...manifest, period: { ...manifest.period, not_in_protocol: true } },
+      { ...manifest, files: [{ ...manifest.files[0], not_in_protocol: true }] },
+      {
+        ...manifest,
+        control_totals: [{ ...manifest.control_totals[0], not_in_protocol: true }],
+      },
+    ]) {
+      assert.equal(
+        schemas.ReportingFileManifestSchema.safeParse(invalid).success,
+        false,
+        `manifest should reject ${JSON.stringify(invalid)}`
+      );
+    }
+  });
+
   test('ESM package entry can be imported', async () => {
     const sdk = await import('../../dist/lib/index.mjs');
     assert.equal(typeof sdk.ADCP_VERSION, 'string', 'package root should expose its version');
