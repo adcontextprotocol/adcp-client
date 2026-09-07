@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-05
+> Generated at: 2026-09-06
 > @adcp/sdk v14.0.0-rc.32
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -292,6 +292,29 @@ await webhooks.recoverOnce({ ownerToken: instanceId });
 ```
 
 `createPostgresWebhookRuntime()` assembles the durable delivery store, encrypted recovery outbox, emitter, ready-to-pass server configuration, probes, migrations, fenced poller, and `WebhookEmitResult`-to-disposition mapping. Pass `webhooks.serverConfig` as the framework's `webhooks` option and schedule bounded `recoverOnce()` calls. Direct multi-tenant sends bind with `webhooks.emitter.forTenantScope(trustedTenant)`.
+
+## Persistent Notification Subscription Runtime
+
+```typescript
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool, publisherScope: 'seller-production',
+  subscriptions: { tableName: 'seller_notification_subscriptions' },
+  webhooks: {
+    deliveries: { tableName: 'seller_webhook_deliveries' },
+    outbox: { tableName: 'seller_webhook_outbox' },
+    signerProvider,
+  },
+  proofAdapter, credentialAdapter,
+  authorizeDelivery: liveApplicationAuthorization,
+  // Optional allowlist for invalidation-only later-version caller events:
+  futureCallerInvalidationEventTypes: ['catalog.invalidated'],
+});
+for (const sql of notifications.migrations.all) await pool.query(sql);
+await notifications.probe();
+await notifications.recoverOnce({ ownerToken: stableWorkerId });
+```
+
+The runtime keeps caller and caller+account anchors separate, applies full-set replacement with generation CAS, proves the exact normalized destination tuple before activation, and keeps legacy credentials behind an opaque application binding. Its non-secret subscription generation is stored in the webhook outbox; every live and recovered attempt re-reads subscription state and calls the required application authorization callback before network access. Pause, removal, authorization loss, or destination replacement terminally suppresses unclaimed old-generation work. `include_future_event_types` remains fail closed unless the server explicitly classifies invalidation-only later-version caller events with `futureCallerInvalidationEventTypes`. See `docs/guides/PERSISTENT-NOTIFICATION-RUNTIME.md`.
 
 ## Production Webhook Tenant Binding
 

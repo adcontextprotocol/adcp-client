@@ -60,6 +60,8 @@ export interface WebhookAuthenticationContext {
 export interface StoredWebhookDeliverySnapshot {
   url: string;
   payload: Record<string, unknown>;
+  /** Non-secret live-authorization context; never serialized into the webhook body. */
+  attemptAuthorizationContext?: Record<string, unknown>;
   authentication: { kind: 'none' } | { kind: 'protected'; protectedValue: unknown; fingerprint: string };
   /**
    * A top-level task-webhook `token`, protected independently from transport
@@ -537,6 +539,9 @@ async function protectSnapshot(
     url: snapshot.url,
     payload,
     retries: { ...snapshot.retries },
+    ...(snapshot.attemptAuthorizationContext === undefined
+      ? {}
+      : { attemptAuthorizationContext: structuredClone(snapshot.attemptAuthorizationContext) }),
   };
   // Canonicalization validates every stored field as plain JSON.
   canonicalJsonSha256(base);
@@ -601,6 +606,9 @@ async function resolveSnapshot(
       payload,
       authentication,
       retries: { ...snapshot.retries },
+      ...(snapshot.attemptAuthorizationContext === undefined
+        ? {}
+        : { attemptAuthorizationContext: structuredClone(snapshot.attemptAuthorizationContext) }),
     };
   } catch (cause) {
     if (cause instanceof WebhookAuthenticationResolutionError) throw cause;
@@ -610,7 +618,7 @@ async function resolveSnapshot(
 
 function authenticationContext(
   key: Readonly<WebhookDeliveryKey>,
-  snapshot: Pick<StoredWebhookDeliverySnapshot, 'url' | 'payload' | 'retries'>,
+  snapshot: Pick<StoredWebhookDeliverySnapshot, 'url' | 'payload' | 'retries' | 'attemptAuthorizationContext'>,
   purpose?: 'payload_token'
 ): WebhookAuthenticationContext {
   const base = {
@@ -627,6 +635,9 @@ function authenticationContext(
         url: snapshot.url,
         payload: snapshot.payload,
         retries: snapshot.retries,
+        ...(snapshot.attemptAuthorizationContext === undefined
+          ? {}
+          : { attemptAuthorizationContext: snapshot.attemptAuthorizationContext }),
       }),
     };
   }
@@ -639,6 +650,9 @@ function authenticationContext(
       url: snapshot.url,
       payload: snapshot.payload,
       retries: snapshot.retries,
+      ...(snapshot.attemptAuthorizationContext === undefined
+        ? {}
+        : { attemptAuthorizationContext: snapshot.attemptAuthorizationContext }),
     }),
   };
 }
@@ -703,6 +717,9 @@ function snapshotFingerprint(snapshot: StoredWebhookDeliverySnapshot): string {
     url: snapshot.url,
     payload: snapshot.payload,
     retries: snapshot.retries,
+    ...(snapshot.attemptAuthorizationContext === undefined
+      ? {}
+      : { attemptAuthorizationContext: snapshot.attemptAuthorizationContext }),
     authentication:
       snapshot.authentication.kind === 'none'
         ? { kind: 'none' }

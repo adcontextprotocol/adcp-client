@@ -1642,8 +1642,8 @@ export interface AdcpCustomToolConfig<
  *
  * Subset of {@link WebhookEmitterOptions} the framework lifts to the
  * server config: signing key/provider, retry policy, immutable delivery
- * store, fetch override, user-agent + tag, and the per-emit observability
- * hooks. Other emitter-internal knobs (rate limits, transport pool
+ * store, fetch override, user-agent + tag, per-attempt authorization, and
+ * the per-emit observability hooks. Other emitter-internal knobs (rate limits, transport pool
  * sizing) stay on `WebhookEmitterOptions` for direct emitter callers.
  *
  * @public
@@ -1658,6 +1658,7 @@ export type WebhooksConfig = Pick<
   | 'deliveryRetryHorizonSeconds'
   | 'deliveryRecovery'
   | 'generateIdempotencyKey'
+  | 'authorizeAttempt'
   | 'fetch'
   | 'userAgent'
   | 'tag'

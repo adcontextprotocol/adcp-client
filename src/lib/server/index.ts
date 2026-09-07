@@ -531,8 +531,53 @@ export type {
   WebhookIdempotencyKeyStore,
   WebhookRetryOptions,
   WebhookAuthentication,
+  WebhookAttemptAuthorizer,
+  WebhookAttemptAuthorizationDecision,
+  WebhookAttemptSuppressionReason,
 } from './webhook-emitter';
 export type { SigningProvider } from '../signing/provider';
+
+export {
+  ACCOUNT_NOTIFICATION_TYPES,
+  CALLER_NOTIFICATION_TYPES,
+  NOTIFICATION_SUBSCRIPTION_MIGRATION,
+  NotificationSubscriptionValidationError,
+  createPersistentNotificationRuntime,
+  createPersistentNotificationProtocolHandlers,
+  createPostgresPersistentNotificationRuntime,
+  getNotificationSubscriptionMigration,
+  memoryNotificationSubscriptionStore,
+  pgNotificationSubscriptionStore,
+  projectNotificationSubscriptionReadback,
+  validatePersistentNotificationDestination,
+} from './notification-subscriptions';
+export type {
+  CreatePostgresPersistentNotificationRuntimeOptions,
+  NotificationAuthenticationMode,
+  NotificationCredentialBindingAdapter,
+  NotificationDeliveryAuthorizationInput,
+  NotificationDeliveryAuthorizer,
+  NotificationDestinationValidator,
+  NotificationEvent,
+  NotificationEventAnchor,
+  NotificationFanoutDelivery,
+  NotificationFanoutResult,
+  NotificationProofAdapter,
+  NotificationReplacementResult,
+  NotificationSubscriptionConfigInput,
+  NotificationSubscriptionMatch,
+  NotificationSubscriptionScope,
+  NotificationSubscriptionSet,
+  NotificationSubscriptionStore,
+  NotificationSubscriptionStoreReplaceResult,
+  NotificationSubscriptionView,
+  PersistentNotificationRuntime,
+  PersistentNotificationRuntimeOptions,
+  PostgresNotificationSubscriptionStoreOptions,
+  PostgresPersistentNotificationRuntime,
+  StoredNotificationAuthentication,
+  StoredNotificationSubscription,
+} from './notification-subscriptions';
 
 export { createPinAndBindFetch, WEBHOOK_SSRF_POLICY, LOOPBACK_OK_WEBHOOK_SSRF_POLICY } from './pin-and-bind-fetch';
 export type { PinAndBindFetchOptions, DnsLookupAll } from './pin-and-bind-fetch';
