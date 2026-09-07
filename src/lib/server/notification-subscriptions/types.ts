@@ -95,9 +95,21 @@ export interface NotificationSubscriptionStore {
 
 export interface NotificationCredentialBindingAdapter {
   /**
+   * Resolve the stable opaque binding that `bind()` would return without
+   * persisting or rotating the credential. Dry-run replacement uses this to
+   * compare the exact destination tuple without causing a secret-store write.
+   */
+  preview(input: {
+    scope: Readonly<NotificationSubscriptionScope>;
+    subscriberId: string;
+    mode: Exclude<NotificationAuthenticationMode, 'rfc9421'>;
+    credential: string;
+    previousBindingId?: string;
+  }): MaybePromise<{ bindingId: string }>;
+  /**
    * Store or rotate a write-only credential and return a stable opaque
-   * binding. Rebinding the same credential for the same tuple should return
-   * the same binding so exact retries stay idempotent.
+   * binding. It must return the same binding as `preview()` for the same
+   * credential and tuple, and rebinding that tuple must remain idempotent.
    */
   bind(input: {
     scope: Readonly<NotificationSubscriptionScope>;

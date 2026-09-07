@@ -485,7 +485,6 @@ async function normalizeAuthentication(input: NormalizeConfigInput): Promise<Sto
   const previous = input.previous?.authentication.mode === mode ? input.previous.authentication : undefined;
   if (auth.credentials === undefined) {
     if (previous?.bindingId) return { mode, bindingId: previous.bindingId };
-    if (input.dryRun && input.credentialAdapter) return { mode, bindingId: 'dry-run-unissued-binding' };
     throw validation(
       'credentials are required for a new legacy authentication binding',
       input.index,
@@ -502,18 +501,33 @@ async function normalizeAuthentication(input: NormalizeConfigInput): Promise<Sto
   if (!input.credentialAdapter) {
     throw validation('legacy authentication requires a credentialAdapter', input.index, 'authentication');
   }
-  if (input.dryRun) return { mode, bindingId: 'dry-run-unissued-binding' };
+  if (input.dryRun && typeof input.credentialAdapter.preview !== 'function') {
+    throw validation(
+      'credentialAdapter.preview is required for dry-run legacy authentication',
+      input.index,
+      'authentication'
+    );
+  }
   let bound: { bindingId: string };
+  const bindingInput = {
+    scope: structuredClone(input.scope),
+    subscriberId: input.config.subscriber_id,
+    mode,
+    credential: auth.credentials,
+    ...(previous?.bindingId === undefined ? {} : { previousBindingId: previous.bindingId }),
+  };
   try {
-    bound = await input.credentialAdapter.bind({
-      scope: structuredClone(input.scope),
-      subscriberId: input.config.subscriber_id,
-      mode,
-      credential: auth.credentials,
-      ...(previous?.bindingId === undefined ? {} : { previousBindingId: previous.bindingId }),
-    });
+    if (input.dryRun) {
+      bound = await input.credentialAdapter.preview(bindingInput);
+    } else {
+      bound = await input.credentialAdapter.bind(bindingInput);
+    }
   } catch {
-    throw validation('credential binding failed', input.index, 'authentication');
+    throw validation(
+      input.dryRun ? 'credential binding preview failed' : 'credential binding failed',
+      input.index,
+      'authentication'
+    );
   }
   if (
     !bound ||
@@ -523,7 +537,7 @@ async function normalizeAuthentication(input: NormalizeConfigInput): Promise<Sto
     bound.bindingId.includes(auth.credentials)
   ) {
     throw validation(
-      'credentialAdapter.bind must return an opaque non-secret bindingId of at most 512 bytes',
+      `credentialAdapter.${input.dryRun ? 'preview' : 'bind'} must return an opaque non-secret bindingId of at most 512 bytes`,
       input.index,
       'authentication'
     );

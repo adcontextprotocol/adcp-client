@@ -44,9 +44,15 @@ const notifications = createPostgresPersistentNotificationRuntime({
     },
   },
   credentialAdapter: {
+    async preview({ credential, ...context }) {
+      // Return the same stable handle as bind(), without writing or rotating
+      // anything. This keeps dry-run would_change exact and side-effect free.
+      return vault.previewBinding(credential, context);
+    },
     async bind({ credential, ...context }) {
       // Store through KMS/secret manager. Return a stable opaque handle, not
-      // the credential and not a diagnostic string containing it.
+      // the credential and not a diagnostic string containing it. For the
+      // same tuple, this must equal previewBinding()'s handle.
       return vault.bind(credential, context);
     },
     async resolve(binding) {

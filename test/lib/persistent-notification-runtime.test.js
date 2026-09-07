@@ -382,6 +382,9 @@ test('legacy credentials remain write-only and resolve only after per-attempt au
   const secret = 'secret-material-with-at-least-32-characters';
   let resolves = 0;
   const credentialAdapter = {
+    preview({ credential }) {
+      return { bindingId: `vault_${createHash('sha256').update(credential).digest('hex')}` };
+    },
     bind({ credential }) {
       return { bindingId: `vault_${createHash('sha256').update(credential).digest('hex')}` };
     },
@@ -416,6 +419,82 @@ test('legacy credentials remain write-only and resolve only after per-attempt au
     payload: { reporting_run_id: 'run-1' },
   });
   assert.equal(resolves, 1);
+});
+
+test('legacy credential dry-run previews use the stable binding without writing', async () => {
+  const secret = 'secret-material-with-at-least-32-characters';
+  const rotatedSecret = 'rotated-material-with-at-least-32-characters';
+  let previews = 0;
+  let binds = 0;
+  const binding = credential => `vault_${createHash('sha256').update(credential).digest('hex')}`;
+  const credentialAdapter = {
+    preview({ credential }) {
+      previews++;
+      return { bindingId: binding(credential) };
+    },
+    bind({ credential }) {
+      binds++;
+      return { bindingId: binding(credential) };
+    },
+    resolve() {
+      return { type: 'bearer', token: secret };
+    },
+  };
+  const { runtime } = makeRuntime({ credentialAdapter });
+  const config = credential => ({
+    subscriber_id: 'legacy-preview',
+    url: 'https://buyer.example/legacy-preview',
+    event_types: ['reporting.delivery_ready'],
+    authentication: { schemes: ['Bearer'], credentials: credential },
+  });
+
+  const applied = await runtime.replace(accountA, [config(secret)]);
+  assert.equal(applied.outcome, 'applied');
+  assert.equal(binds, 1);
+
+  const unchanged = await runtime.replace(accountA, [config(secret)], { dryRun: true });
+  assert.equal(unchanged.outcome, 'validated');
+  assert.equal(unchanged.wouldChange, false);
+  assert.equal(binds, 1, 'dry-run must not persist or rotate a credential');
+
+  const changed = await runtime.replace(accountA, [config(rotatedSecret)], { dryRun: true });
+  assert.equal(changed.outcome, 'validated');
+  assert.equal(changed.wouldChange, true);
+  assert.equal(binds, 1);
+  assert.equal(previews, 2);
+});
+
+test('legacy credential dry-run reports a missing preview adapter precisely', async () => {
+  const secret = 'secret-material-with-at-least-32-characters';
+  const { runtime } = makeRuntime({
+    credentialAdapter: {
+      bind() {
+        return { bindingId: 'vault-binding' };
+      },
+      resolve() {
+        return { type: 'bearer', token: secret };
+      },
+    },
+  });
+
+  await assert.rejects(
+    () =>
+      runtime.replace(
+        accountA,
+        [
+          {
+            subscriber_id: 'legacy-preview',
+            url: 'https://buyer.example/legacy-preview',
+            event_types: ['reporting.delivery_ready'],
+            authentication: { schemes: ['Bearer'], credentials: secret },
+          },
+        ],
+        { dryRun: true }
+      ),
+    error =>
+      error instanceof NotificationSubscriptionValidationError &&
+      error.message === 'credentialAdapter.preview is required for dry-run legacy authentication'
+  );
 });
 
 test('durable recovery round-trips non-secret authorization context and suppresses stale work', async () => {
