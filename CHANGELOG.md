@@ -1,5 +1,20 @@
 # Changelog
 
+## 14.0.0-rc.33
+
+### Minor Changes
+
+- 5b109e7: Separate a server's default served AdCP release from its maximum supported release, and expose the immutable selected release across handler contexts.
+- 61815f4: Add a durable persistent notification subscription runtime with caller/account isolation, generation-fenced declarative replacement, exact-tuple activation proof, staged immutable write-only credential bindings, PostgreSQL storage and migrations, bounded concurrent anchor-safe fanout, timed adopter callbacks, and live authorization on every webhook attempt and recovered retry.
+
+### Patch Changes
+
+- d7c5d64: Fix self-contained per-tool declarations so protocol errors do not resolve to the JavaScript global `Error` type.
+- 2466113: Harden diagnostic parsing, Markdown escaping, OAuth logging, credential-derived MCP cache identifiers, and structured logger metadata against CodeQL-identified security risks. Logger handlers now receive credential-redacted, non-mutating metadata copies by default; custom handlers that provide equivalent protection can opt out with `redactCredentials: false`.
+- 64b4400: Reject unknown properties in the public reporting file manifest Zod schema wherever the normative manifest contract is closed.
+- 21caf2e: Sync the AAO registry OpenAPI and generated registry types for newly verified buyer and orchestrator specialisms.
+- f7d2bac: Run ordinary local Node test discovery in bounded fresh-process batches so test heap usage is reclaimed between batches while focused runs and CI shards retain their existing execution shape.
+
 ## 14.0.0-rc.32
 
 ### Major Changes
