@@ -44,7 +44,7 @@ const RESULTS = (() => {
 import { readFileSync, writeFileSync } from 'fs';
 import { __test__ } from ${JSON.stringify(targetPath)};
 
-const { stripComments, shouldWarnOnExportCollision, closure } = __test__;
+const { parseExports, stripComments, shouldWarnOnExportCollision, closure, renderSliceBody } = __test__;
 const cases = ${JSON.stringify(cases)};
 const stripResults = cases.map(({ label, a, b }) => ({
   label,
@@ -128,9 +128,43 @@ const protocolErrorClosure = [...closure(new Map([
     sourceFile: 'core.generated.d.ts',
   }],
 ]), ['GetReportingStatusResponse'])];
+const inlineErrorPath = ${JSON.stringify(path.join(harnessDir, 'inline-error.d.ts'))};
+writeFileSync(
+  inlineErrorPath,
+  [
+    '/** Protocol error declaration. */ export interface Error {',
+    '  code: string;',
+    '  message: string;',
+    '}',
+    '',
+  ].join('\\n')
+);
+const inlineErrorExport = parseExports(inlineErrorPath).get('Error');
+if (!inlineErrorExport) throw new Error('inline-JSDoc protocol Error declaration was not parsed');
+const protocolErrorExports = new Map([
+  ['GetReportingStatusResponse', {
+    name: 'GetReportingStatusResponse',
+    kind: 'type',
+    body: 'export type GetReportingStatusResponse = OperationalFailure;',
+    sourceFile: 'tools.generated.d.ts',
+  }],
+  ['OperationalFailure', {
+    name: 'OperationalFailure',
+    kind: 'interface',
+    body: "/** Error response. */\\nexport interface OperationalFailure { status: 'failed'; view: 'summary' | 'periods' | 'revision'; failure_kind: 'operational'; errors: Error[]; }",
+    sourceFile: 'tools.generated.d.ts',
+  }],
+  ['Error', {
+    ...inlineErrorExport,
+  }],
+]);
+const protocolErrorSlice = renderSliceBody(
+  ['GetReportingStatusResponse', 'OperationalFailure', 'Error'],
+  protocolErrorExports
+);
 writeFileSync(
   ${JSON.stringify(outPath)},
-  JSON.stringify({ stripResults, collisionResults, generatedSurface, protocolRequiredClosure, protocolErrorClosure })
+  JSON.stringify({ stripResults, collisionResults, generatedSurface, protocolRequiredClosure, protocolErrorClosure, protocolErrorSlice })
 );
 `
   );
@@ -221,4 +255,45 @@ test('dependency closure keeps the AdCP Error protocol type in narrow slices', (
     ['Error', 'GetReportingStatusResponse', 'OperationalFailure'],
     'Error must resolve to the AdCP protocol export, not the JavaScript global Error'
   );
+});
+
+test('operational failure slices preserve an inline-JSDoc, multiline AdCP error shape under strict TypeScript', () => {
+  assert.match(RESULTS.protocolErrorSlice, /export interface AdcpError \{\s*code: string;\s*message: string;/);
+  assert.match(RESULTS.protocolErrorSlice, /errors: AdcpError\[\];/);
+  assert.match(RESULTS.protocolErrorSlice, /export type Error = AdcpError;/);
+  assert.match(RESULTS.protocolErrorSlice, /\/\*\* Error response\. \*\//);
+  assert.match(RESULTS.protocolErrorSlice, /\/\*\* Protocol error declaration\. \*\/ export interface AdcpError/);
+
+  const fixtureDir = fs.mkdtempSync(path.join(REPO_ROOT, '.per-tool-error-type-'));
+  const slicePath = path.join(fixtureDir, 'get-reporting-status.d.ts');
+  const fixturePath = path.join(fixtureDir, 'consumer.ts');
+  try {
+    fs.writeFileSync(slicePath, RESULTS.protocolErrorSlice);
+    fs.writeFileSync(
+      fixturePath,
+      `import type { OperationalFailure } from './get-reporting-status';
+
+const failure: OperationalFailure = {
+  status: 'failed',
+  view: 'summary',
+  failure_kind: 'operational',
+  errors: [{ code: 'SERVICE_UNAVAILABLE', message: 'Reporting ledger unavailable' }],
+};
+void failure;
+`
+    );
+    const result = spawnSync('npx', ['tsc', '--strict', '--skipLibCheck', 'false', '--noEmit', fixturePath], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (result.error) throw result.error;
+    assert.strictEqual(
+      result.status,
+      0,
+      `schema-valid OperationalFailure must type-check:\n${result.stderr}\n${result.stdout}`
+    );
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
 });

@@ -114,20 +114,29 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
     // dropped from the slice when the upstream emitter ever changed
     // formatting style.
     let jsdocStart = -1;
+    let inlineExportLine: string | undefined;
     if (/^\s*\/\*\*/.test(lines[i] ?? '')) {
       let j = i;
       while (j < lines.length && !(lines[j] ?? '').includes('*/')) j++;
       if (j < lines.length) {
-        let k = j + 1;
-        while (k < lines.length && (lines[k] ?? '').trim() === '') k++;
-        if (k < lines.length && /^export /.test(lines[k] ?? '')) {
+        const closingLine = lines[j] ?? '';
+        const inlineExport = closingLine.slice(closingLine.indexOf('*/') + 2).trimStart();
+        if (/^export /.test(inlineExport)) {
           jsdocStart = i;
-          i = k;
+          inlineExportLine = inlineExport;
+          i = j;
+        } else {
+          let k = j + 1;
+          while (k < lines.length && (lines[k] ?? '').trim() === '') k++;
+          if (k < lines.length && /^export /.test(lines[k] ?? '')) {
+            jsdocStart = i;
+            i = k;
+          }
         }
       }
     }
 
-    const headerMatch = (lines[i] ?? '').match(/^export (interface|type|enum) (\w+)/);
+    const headerMatch = (inlineExportLine ?? lines[i] ?? '').match(/^export (interface|type|enum) (\w+)/);
     if (!headerMatch) {
       i++;
       continue;
@@ -142,7 +151,8 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
       let depth = 0;
       let started = false;
       outer: for (let line = i; line < lines.length; line++) {
-        for (const ch of lines[line] ?? '') {
+        const declarationLine = line === i && inlineExportLine ? inlineExportLine : (lines[line] ?? '');
+        for (const ch of declarationLine) {
           if (ch === '{') {
             depth++;
             started = true;
@@ -168,7 +178,7 @@ function parseExports(filePath: string): Map<string, ExportInfo> {
       let inBlockComment = false;
       let found = false;
       for (let line = i; line < lines.length; line++) {
-        let s = lines[line] ?? '';
+        let s = line === i && inlineExportLine ? inlineExportLine : (lines[line] ?? '');
         // Drop line comments.
         s = s.replace(/\/\/.*$/, '');
         // Drop block-comment content per-line (`/* ... */` and `/** ... */`),
@@ -388,6 +398,53 @@ function loadToolList(): string[] {
 }
 
 /**
+ * Keep the AdCP wire error distinct from the JavaScript global `Error` in
+ * self-contained declaration slices. The upstream schema's title is `Error`,
+ * which is a valid public export, but an unresolved reference silently binds
+ * to the JavaScript error class and makes wire-valid `{ code, message }`
+ * values unassignable. Emit the protocol shape under an unambiguous local name
+ * and leave the old name as an alias for consumers that imported it directly.
+ */
+function renderSliceBody(ordered: readonly string[], allExports: Map<string, ExportInfo>): string {
+  const protocolError = allExports.get('Error');
+  const hasProtocolError = ordered.includes('Error') && protocolError?.kind === 'interface';
+
+  const declarations = ordered.map(name => {
+    const body = allExports.get(name)!.body;
+    if (!hasProtocolError) return body;
+
+    if (name === 'Error') {
+      return renameProtocolErrorDeclaration(body);
+    }
+
+    return replaceProtocolErrorReferences(body);
+  });
+
+  if (hasProtocolError) {
+    declarations.push(
+      '/** @deprecated Use AdcpError to avoid ambiguity with the JavaScript global Error. */\nexport type Error = AdcpError;'
+    );
+  }
+
+  return declarations.join('\n\n') + '\n';
+}
+
+/** Rename the Error declaration without touching JSDoc, comments, or strings. */
+function renameProtocolErrorDeclaration(body: string): string {
+  return body.replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|(["'])(?:\\[\s\S]|(?!\1)[\s\S])*\1|\bexport\s+interface\s+Error\b/g,
+    match => (/^export\s+interface\s+Error$/.test(match) ? match.replace(/\bError$/, 'AdcpError') : match)
+  );
+}
+
+/** Rename type identifiers without rewriting schema prose or literal values. */
+function replaceProtocolErrorReferences(body: string): string {
+  return body.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|(["'])(?:\\[\s\S]|(?!\1)[\s\S])*\1|\bError\b/g, match =>
+    match === 'Error' ? 'AdcpError' : match
+  );
+}
+
+/**
  * For a given tool, emit a `.d.ts` slice containing every type the
  * tool's request and response reference transitively.
  */
@@ -430,7 +487,7 @@ function emitToolSlice(
     `// hit memory pressure on the full surface.\n` +
     `\n`;
 
-  const body = ordered.map(n => allExports.get(n)!.body).join('\n\n') + '\n';
+  const body = renderSliceBody(ordered, allExports);
 
   mkdirSync(OUT_DIR, { recursive: true });
   const outPath = path.join(OUT_DIR, `${toolNameToKebab(toolName)}.d.ts`);
@@ -577,4 +634,4 @@ if (require.main === module) {
   main();
 }
 
-export const __test__ = { stripComments, shouldWarnOnExportCollision, closure };
+export const __test__ = { parseExports, stripComments, shouldWarnOnExportCollision, closure, renderSliceBody };
