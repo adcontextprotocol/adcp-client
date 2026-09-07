@@ -310,17 +310,27 @@ export interface AdcpServer {
   invoke(options: AdcpInvokeOptions): Promise<McpToolResponse>;
 
   /**
-   * Returns the AdCP protocol version this server is configured to speak.
+   * Returns the newest AdCP protocol version this server can serve.
    *
    * Defaults to {@link ADCP_VERSION} (the GA version the SDK ships against)
    * unless overridden via `createAdcpServer({ adcpVersion })`. This is the
    * protocol version, **not** the publisher's app version (`config.version`).
    *
    * Plumbing surface — Stage 2 of the multi-version refactor exposes the
-   * configured value but does not yet vary validator/schema selection by
+   * configured ceiling but does not yet vary validator/schema selection by
    * version. Wire-shape adapters key off this getter in subsequent stages.
    */
   getAdcpVersion(): string;
+
+  /**
+   * Returns the AdCP protocol version selected when a caller supplies no
+   * `adcp_version` or `adcp_major_version` claim.
+   *
+   * Defaults to {@link getAdcpVersion} unless the server config declares a
+   * lower `defaultAdcpVersion`. This lets one endpoint retain a conservative
+   * wire default while making newer explicitly versioned routes reachable.
+   */
+  getDefaultAdcpVersion(): string;
 }
 
 /**
@@ -446,10 +456,13 @@ export function setDiscoveryVersionResolver(server: AdcpServer, resolver: AdcpDi
   });
 }
 
-/** Resolve a requested discovery version, falling back to the server pin. @internal */
+/** Resolve a requested discovery version, falling back to the server default. @internal */
 export function resolveDiscoveryVersion(server: AdcpServer, requestedVersion?: string): string {
   const resolver = (server as AdcpServerInternal)[ADCP_DISCOVERY_VERSION_RESOLVER];
-  return resolver ? resolver(requestedVersion) : server.getAdcpVersion();
+  // The getter is required on current AdcpServer instances. Keep the runtime
+  // fallback for mixed dependency graphs that pass a wrapper created by an
+  // older SDK copy, while the public type exposes the new API as required.
+  return resolver ? resolver(requestedVersion) : (server.getDefaultAdcpVersion?.() ?? server.getAdcpVersion());
 }
 
 /** Attach the resolved static MCP catalog for transport adapters. @internal */
@@ -723,7 +736,10 @@ export function wrapMcpServer(
   inner: McpServer | AdcpServerInternal,
   compliance?: AdcpServerComplianceApi,
   adcpVersion: string = ADCP_VERSION,
-  options: { structuredContentTextFallback?: StructuredContentTextFallback } = {}
+  options: {
+    structuredContentTextFallback?: StructuredContentTextFallback;
+    defaultAdcpVersion?: string;
+  } = {}
 ): AdcpServerInternal {
   if (isAdcpServer(inner)) return inner;
   const mcp = inner as McpServer;
@@ -799,6 +815,7 @@ export function wrapMcpServer(
     dispatchTestRequest: dispatch as AdcpServerInternal['dispatchTestRequest'],
     invoke,
     getAdcpVersion: () => adcpVersion,
+    getDefaultAdcpVersion: () => options.defaultAdcpVersion ?? adcpVersion,
   };
   return wrapper;
 }

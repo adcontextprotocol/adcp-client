@@ -272,6 +272,8 @@ export interface TaskHandoff<TResult> {
  */
 export interface TaskHandoffContext {
   readonly id: string;
+  /** Immutable AdCP release selected for the request that created this task. */
+  readonly servedAdcpVersion?: string;
   /**
    * Trusted serializable handle for durable out-of-process settlement.
    * Persist the complete value; never project it onto the buyer wire.
@@ -299,6 +301,8 @@ export interface TaskHandoffContext {
  */
 export interface ExternalTaskHandoffContext {
   readonly id: string;
+  /** Immutable AdCP release selected for the request that created this task. */
+  readonly servedAdcpVersion?: string;
   /** Trusted serializable handle for the durable worker settlement record. */
   readonly taskRef: ScopedTaskRef;
   update(progress: TaskHandoffProgress): Promise<void>;

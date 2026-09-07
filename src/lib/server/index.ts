@@ -377,6 +377,8 @@ export type {
   AdcpCapabilitiesOverrides,
   AdcpToolVersionRange,
   AdcpCustomToolConfig as LegacyAdcpCustomToolConfig,
+  AdcpCustomToolHandler as LegacyAdcpCustomToolHandler,
+  AdcpCustomToolHandlerExtra as LegacyAdcpCustomToolHandlerExtra,
   McpAppUiMeta,
   McpAppMeta,
   AdcpLogger,

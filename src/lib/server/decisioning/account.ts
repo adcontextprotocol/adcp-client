@@ -386,6 +386,8 @@ export interface ResolveContext {
   authInfo?: ResolvedAuthInfo;
   /** Tool the buyer is calling — useful for tool-aware tenant routing. */
   toolName?: string;
+  /** Immutable AdCP release selected by the SDK for this request. */
+  readonly servedAdcpVersion?: string;
   /**
    * Resolved buyer agent from `BuyerAgentRegistry.resolve()`, when an
    * `agentRegistry` is configured (Phase 1 of #1269). The framework calls

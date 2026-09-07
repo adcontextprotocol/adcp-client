@@ -251,7 +251,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
       ? buildCtxMetadataAccessor(ctxMetadataStore, account.id)
       : undefined;
 
-  return {
+  const context: RequestContext<Account<TCtxMeta>> = {
     account,
     ...(handlerCtx.authInfo != null && { authInfo: cloneAndFreezeAuthValue(handlerCtx.authInfo) }),
     ...(handlerCtx.agent != null && { agent: handlerCtx.agent }),
@@ -276,6 +276,15 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
     ctxMetadata,
     handoffToTask: createContextTaskHandoff,
   };
+  if (handlerCtx.servedAdcpVersion !== undefined) {
+    Object.defineProperty(context, 'servedAdcpVersion', {
+      value: handlerCtx.servedAdcpVersion,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return context;
 }
 
 /**
@@ -298,10 +307,11 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
  */
 export function buildExternalHandoffContext(
   taskRegistry: TaskRegistry,
-  taskRef: ScopedTaskRef
+  taskRef: ScopedTaskRef,
+  servedAdcpVersion?: string
 ): ExternalTaskHandoffContext {
   const { taskId } = taskRef;
-  return {
+  const context: ExternalTaskHandoffContext = {
     id: taskId,
     taskRef,
     update: async progress => {
@@ -321,12 +331,24 @@ export function buildExternalHandoffContext(
       await Promise.resolve();
     },
   };
+  if (servedAdcpVersion !== undefined) {
+    Object.defineProperty(context, 'servedAdcpVersion', {
+      value: servedAdcpVersion,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return context;
 }
 
 /** @internal Construct the framework-settled context, including reject(). */
-export function buildHandoffContext(taskRegistry: TaskRegistry, taskRef: ScopedTaskRef): TaskHandoffContext {
-  return {
-    ...buildExternalHandoffContext(taskRegistry, taskRef),
-    reject: (result, reason) => throwTaskHandoffRejection(result, reason),
-  };
+export function buildHandoffContext(
+  taskRegistry: TaskRegistry,
+  taskRef: ScopedTaskRef,
+  servedAdcpVersion?: string
+): TaskHandoffContext {
+  return Object.assign(buildExternalHandoffContext(taskRegistry, taskRef, servedAdcpVersion), {
+    reject: <TResult = never>(result: TResult, reason?: string): never => throwTaskHandoffRejection(result, reason),
+  });
 }

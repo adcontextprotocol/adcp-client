@@ -51,6 +51,9 @@ export interface RequestContext<TAccount = Account> {
   /** Resolved account for this request. */
   account: TAccount;
 
+  /** Immutable AdCP release selected by the SDK for this request. */
+  readonly servedAdcpVersion?: string;
+
   /**
    * Verified incoming request principal, when the transport authenticated
    * the caller. This is the same request-local value supplied to

@@ -76,9 +76,22 @@ const platform = {
 createAdcpServerFromPlatform(platform, {
   name: 'seller',
   version: '1.0.0',
+  // `adcpVersion` is the newest release explicit callers may select.
   adcpVersion: '3.2.0-rc.1',
+  // Keep callers that omit a version on the established 3.1 contract.
+  defaultAdcpVersion: '3.1.18',
+  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.1'] },
 });
 ```
+
+`adcpVersion` is the server's supported ceiling; `defaultAdcpVersion` is the
+release selected when the request has neither `adcp_version` nor
+`adcp_major_version`. The default must be bundled, included in the server's
+effective advertised releases, and no newer than the ceiling. An explicit 3.2
+request still selects 3.2. The selected release is exposed as immutable
+`servedAdcpVersion` on standard handler contexts, custom-tool extras,
+DecisioningPlatform request contexts, task handoff contexts, account/session
+resolvers, and the second argument to `responseEnhancer`.
 
 With the default `mcpToolProfile: 'auto'`, registering any compact lifecycle
 handler on a 3.2 server selects the active media-buy profile. The legacy
@@ -624,6 +637,7 @@ trusted namespaces, never a buyer-supplied proposal ID alone.
 | Compact-first coordinator | AdCP 3.2 dual-surface | Compact tools are preferred; `preferredLifecycle: 'established'` exercises the compatibility facade | Native by default; the forced established lane has the same explicit boundaries as older sellers. |
 | Compact-first coordinator | AdCP 3.2 compact-only | Compact lifecycle tools | Native compact guarantees. |
 | Existing AdCP 3.0/3.1 buyer | Dual-surface SDK 14 seller | Hidden legacy names remain directly callable even though compact names are the advertised profile | Existing buyer code does not need lifecycle negotiation. |
+| Unversioned caller and explicit AdCP 3.2 caller | Dual-surface SDK 14 seller with `defaultAdcpVersion: '3.1.18'` and a 3.2 `adcpVersion` ceiling | Unversioned discovery and calls use the 3.1 established surface; explicit 3.2 discovery and calls use the compact surface | Unversioned callers are never upgraded implicitly, while the 3.2 feature set remains reachable by explicit opt-in. |
 
 “Same application lifecycle” therefore means one coordinator API and the same
 commercial intent wherever that intent is representable. It does **not** mean
@@ -633,7 +647,9 @@ never label the weaker mutation as equivalent.
 
 The coordinator test matrix covers SDK 14 compact-first callers against v2.5,
 3.0, 3.1, 3.2 legacy-only, 3.2 dual-surface (compact preferred and established
-forced), and 3.2 compact-only discovery. Honest raw-MCP 3.0.25, 3.1.18, and
+forced), and 3.2 compact-only discovery. The dual-surface MCP lane also holds
+the maximum at 3.2 while defaulting unversioned discovery and dispatch to 3.1,
+then proves an explicit 3.2 caller reaches the compact surface. Honest raw-MCP 3.0.25, 3.1.18, and
 3.2 legacy-only fixtures execute direct purchase; pause, resume, cancellation,
 and readback; plus request, finalize, decline, accept, post-accept control, and
 readback for ordinary legacy proposals while

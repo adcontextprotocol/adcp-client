@@ -50,25 +50,25 @@ export function isValidAdcpVersion(version: string | undefined): version is stri
  * 3.1.0-beta.1/` exists). Pins of the SDK's currently-pinned `ADCP_VERSION`
  * always succeed without an fs check — the bundle is guaranteed.
  */
-export function resolveAdcpVersion(adcpVersion: string | undefined): string {
+export function resolveAdcpVersion(adcpVersion: string | undefined, optionName = 'adcpVersion'): string {
   if (adcpVersion === undefined) return ADCP_VERSION;
 
   const currentReleasePrecision = toReleasePrecisionWire(ADCP_VERSION);
   if (isMovingAdcpPrereleaseFamilyAlias(adcpVersion)) {
     throw new ConfigurationError(
-      `adcpVersion ${JSON.stringify(adcpVersion)} is a moving prerelease-family alias. ` +
+      `${optionName} ${JSON.stringify(adcpVersion)} is a moving prerelease-family alias. ` +
         `Pin the exact 3.2 prerelease artifact (${JSON.stringify(currentReleasePrecision)}) instead.`,
-      'adcpVersion'
+      optionName
     );
   }
 
   const major = parseAdcpMajorVersion(adcpVersion);
   if (!Number.isFinite(major)) {
     throw new ConfigurationError(
-      `adcpVersion ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
+      `${optionName} ${JSON.stringify(adcpVersion)} is not a valid AdCP version. ` +
         `Expected a semver string (e.g. '3.0.1', '3.1.0-beta.1') or a legacy alias. ` +
         `Currently bundled: ${listBundledAdcpVersions().join(', ')}.`,
-      'adcpVersion'
+      optionName
     );
   }
 
@@ -83,13 +83,13 @@ export function resolveAdcpVersion(adcpVersion: string | undefined): string {
   if (!hasSchemaBundle(adcpVersion)) {
     const resolvedKey = resolveBundleKey(adcpVersion);
     throw new ConfigurationError(
-      `adcpVersion ${JSON.stringify(adcpVersion)} resolves to bundle key "${resolvedKey}", ` +
+      `${optionName} ${JSON.stringify(adcpVersion)} resolves to bundle key "${resolvedKey}", ` +
         `but no schema bundle for that key ships with this SDK build. ` +
         `Currently bundled: ${listBundledAdcpVersions().join(', ')}. ` +
         `If you're testing against a beta that the spec repo has tagged but the SDK hasn't synced yet, ` +
         `run \`npm run sync-schemas\` and \`npm run build:lib\` to populate the cache, ` +
         `then re-construct.`,
-      'adcpVersion'
+      optionName
     );
   }
 
