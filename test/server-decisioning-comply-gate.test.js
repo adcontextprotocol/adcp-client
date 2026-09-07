@@ -10,7 +10,7 @@ const { describe, it, beforeEach, after } = require('node:test');
 const assert = require('node:assert');
 const { createAdcpServerFromPlatform } = require('../dist/lib/server/decisioning/runtime/from-platform');
 const { __resetObservedAccountModes } = require('../dist/lib/server/decisioning/runtime/observed-modes');
-const { getSdkServer } = require('../dist/lib/server/adcp-server');
+const { getSdkServer, isToolAvailableForVersion } = require('../dist/lib/server/adcp-server');
 const { BuyerAgentRegistry } = require('../dist/lib/server/decisioning/buyer-agent');
 
 function makePlatform(resolveAccount, overrides = {}) {
@@ -197,6 +197,7 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (resolver path
 
     const listed = await listTools(server);
     assert.ok(listed.tools.some(tool => tool.name === 'comply_test_controller'));
+    assert.strictEqual(isToolAvailableForVersion(server, 'comply_test_controller', '3.2.0-rc.1'), true);
 
     const result = await callForceCreative(server, { account: { account_id: 'sb_acc' } });
 

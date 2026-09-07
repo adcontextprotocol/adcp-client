@@ -138,6 +138,13 @@ test('dual-surface seller defaults unversioned MCP callers to 3.1 while explicit
     '3.2.0-rc.1',
     '3.2.0-rc.1',
     async ({ mcpClient, calls }) => {
+      const sdkTools = await AgentClient.fromMCPClient(mcpClient, {
+        adcpVersion: '3.2.0-rc.1',
+        validation: { requests: 'strict', responses: 'off' },
+      }).getAgentInfo();
+      assert.ok(sdkTools.tools.some(tool => tool.name === 'list_products'));
+      assert.ok(!sdkTools.tools.some(tool => tool.name === 'get_products'));
+
       const defaultTools = await mcpClient.listTools();
       assert.strictEqual(defaultTools._meta.adcp_version, '3.1.18');
       assert.ok(defaultTools.tools.some(tool => tool.name === 'get_products'));

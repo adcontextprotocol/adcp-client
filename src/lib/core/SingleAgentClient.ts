@@ -4,7 +4,7 @@ import { z } from 'zod';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
-import { parseAdcpMajorVersion, type AdcpVersion } from '../version';
+import { parseAdcpMajorVersion, toReleasePrecisionVersion, type AdcpVersion } from '../version';
 import {
   isAdcpVersionSupported,
   isAdcpVersionAtLeast,
@@ -7993,6 +7993,11 @@ export class SingleAgentClient {
       ...(options?.signal && { signal: options.signal }),
       ...(clientRequestTimeoutMs !== undefined && { timeout: clientRequestTimeoutMs }),
     };
+    const discoveryAdcpVersion = this.getWireAdcpVersion();
+    const mcpListParams =
+      parseAdcpMajorVersion(discoveryAdcpVersion) >= 3
+        ? { _meta: { adcp_version: toReleasePrecisionVersion(discoveryAdcpVersion) } }
+        : undefined;
     const ensureReadAuthToken = async (): Promise<string | undefined> => {
       if (!this.normalizedAgent.oauth_client_credentials) return this.normalizedAgent.auth_token;
       const { ensureClientCredentialsTokens, getAgentStorage } = await import('../auth/oauth');
@@ -8009,7 +8014,7 @@ export class SingleAgentClient {
       if (this.normalizedAgent._inProcessMcpClient) {
         const mcpClient = this.normalizedAgent._inProcessMcpClient;
         const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
-          mcpClient.listTools(undefined, mcpRequestOptions)
+          mcpClient.listTools(mcpListParams, mcpRequestOptions)
         );
         const tools = toolsList.tools.map(tool => ({
           name: tool.name,
@@ -8076,6 +8081,9 @@ export class SingleAgentClient {
           : await withResponseSizeLimit(maxResponseBytes, () =>
               tryListModernMCPTools(agent.agent_uri, readAuthToken, this.normalizedAgent.headers, {
                 authProvider,
+                ...(mcpListParams?._meta.adcp_version !== undefined && {
+                  adcpVersion: mcpListParams._meta.adcp_version,
+                }),
                 signal: options?.signal,
                 requestTimeoutMs: transport?.requestTimeoutMs,
                 fetchFn: transport?.trustedFetchFn,
@@ -8101,7 +8109,7 @@ export class SingleAgentClient {
       const { client: mcpClient } = await connectMCP(connectOptions);
       try {
         const toolsList = await withResponseSizeLimit(maxResponseBytes, () =>
-          mcpClient.listTools(undefined, mcpRequestOptions)
+          mcpClient.listTools(mcpListParams, mcpRequestOptions)
         );
 
         const tools = toolsList.tools.map(tool => ({

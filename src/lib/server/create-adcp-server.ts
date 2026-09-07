@@ -8804,6 +8804,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   setToolVersionAvailabilityResolver(wrapped, (toolName, release) => {
     if (!toolAvailableForRelease(toolName, release)) return false;
     if (config.customTools?.[toolName] !== undefined) return true;
+    // Helpers such as createAdcpServerFromPlatform register gated or
+    // adopter-owned tools after createAdcpServer returns. They are not part of
+    // the canonical manifest snapshot above, so do not make modern discovery
+    // hide them merely because releaseDefinesTool cannot find a schema entry.
+    if (!registeredToolNames.has(toolName)) return true;
     return releaseDefinesTool(toolName, { validationVersion: release });
   });
   setDiscoveryVersionResolver(wrapped, requestedVersion => {
