@@ -320,7 +320,7 @@ describe('buyer_reason visibility in overrides', () => {
     let seen;
     const policy = new BuyerRetryPolicy({
       overrides: {
-        INVALID_REQUEST: (error) => {
+        INVALID_REQUEST: error => {
           seen = error.buyer_reason?.code;
           if (error.buyer_reason?.code === 'BUDGET_TOO_LOW') {
             return {

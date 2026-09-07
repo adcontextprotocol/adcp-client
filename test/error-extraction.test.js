@@ -708,9 +708,7 @@ describe('buyer_reason extraction', () => {
 
   it('preserves buyer_reason on the first entry of legacy `{ errors: [...] }` envelope', () => {
     const info = extractAdcpErrorInfo({
-      errors: [
-        { code: 'INVALID_REQUEST', message: 'Bad', buyer_reason: BUYER_REASON },
-      ],
+      errors: [{ code: 'INVALID_REQUEST', message: 'Bad', buyer_reason: BUYER_REASON }],
     });
     assert.ok(info);
     assert.deepStrictEqual(info.buyer_reason, BUYER_REASON);
@@ -816,9 +814,7 @@ describe('buyer_reason extraction', () => {
     // supports the field, the glue between the class and the builder is what
     // this line guards.
     const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
-    const {
-      __unstable__projectThrownAdcpError,
-    } = require('../dist/lib/server/create-adcp-server');
+    const { __unstable__projectThrownAdcpError } = require('../dist/lib/server/create-adcp-server');
     const err = new AdcpError('INVALID_REQUEST', {
       recovery: 'correctable',
       message: 'Bad request',
