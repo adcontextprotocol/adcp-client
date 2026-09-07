@@ -129,9 +129,18 @@ const protocolErrorClosure = [...closure(new Map([
   }],
 ]), ['GetReportingStatusResponse'])];
 const inlineErrorPath = ${JSON.stringify(path.join(harnessDir, 'inline-error.d.ts'))};
-writeFileSync(inlineErrorPath, '/** Protocol error declaration. */ export interface Error { code: string; message: string; }\\n');
+writeFileSync(
+  inlineErrorPath,
+  [
+    '/** Protocol error declaration. */ export interface Error {',
+    '  code: string;',
+    '  message: string;',
+    '}',
+    '',
+  ].join('\\n')
+);
 const inlineErrorExport = parseExports(inlineErrorPath).get('Error');
-if (!inlineErrorExport) throw new Error('single-line JSDoc protocol Error declaration was not parsed');
+if (!inlineErrorExport) throw new Error('inline-JSDoc protocol Error declaration was not parsed');
 const protocolErrorExports = new Map([
   ['GetReportingStatusResponse', {
     name: 'GetReportingStatusResponse',
@@ -248,7 +257,7 @@ test('dependency closure keeps the AdCP Error protocol type in narrow slices', (
   );
 });
 
-test('operational failure slices use the AdCP error shape under strict TypeScript', () => {
+test('operational failure slices preserve an inline-JSDoc, multiline AdCP error shape under strict TypeScript', () => {
   assert.match(RESULTS.protocolErrorSlice, /export interface AdcpError \{\s*code: string;\s*message: string;/);
   assert.match(RESULTS.protocolErrorSlice, /errors: AdcpError\[\];/);
   assert.match(RESULTS.protocolErrorSlice, /export type Error = AdcpError;/);
