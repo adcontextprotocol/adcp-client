@@ -58,14 +58,21 @@ import {
   isMovingAdcpPrereleaseFamilyAlias,
   resolveAdcpVersion,
 } from '../utils/adcp-version-config';
+import { ConfigurationError } from '../errors';
 import { getValidator, hasSchemaBundle, resolveBundleKey, getMcpProfileInputSchema } from '../validation/schema-loader';
 import { TOOL_INPUT_SHAPES } from '../schemas';
 import { TaskTypeValues } from '../types/enums.generated';
 import { bundleSupportsAdcpVersionField } from '../protocols';
 import { getToolsWithErrorArm, type ErrorArmDescriptor } from './error-arm-tools';
-import type { ToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { BaseToolCallback } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat, AnySchema } from '@modelcontextprotocol/sdk/server/zod-compat.js';
-import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type {
+  CallToolResult,
+  ServerNotification,
+  ServerRequest,
+  ToolAnnotations,
+} from '@modelcontextprotocol/sdk/types.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { applyStructuredContentTextFallback, type StructuredContentTextFallback } from './structured-content-fallback';
 import {
@@ -499,9 +506,11 @@ export interface HandlerContext<TAccount = unknown> {
   /**
    * AdCP release selected for this request after applying the buyer pin to
    * `capabilities.adcp.supported_versions`. This may be older than the
-   * server's configured maximum release when the seller downshifts.
+   * server's configured maximum release when the seller downshifts. The
+   * framework always supplies it for dispatched calls; optionality preserves
+   * compatibility with legacy code that manually constructs this context.
    */
-  servedAdcpVersion?: string;
+  readonly servedAdcpVersion?: string;
   /**
    * Resolved buyer agent for this request, populated by `BuyerAgentRegistry`
    * when an `agentRegistry` is configured on the server (Phase 1 of #1269).
@@ -557,6 +566,8 @@ export interface HandlerContext<TAccount = unknown> {
 export interface SessionKeyContext<TAccount = unknown> {
   toolName: AdcpServerToolName;
   params: Record<string, unknown>;
+  /** Immutable SDK-selected AdCP release for this request. */
+  readonly servedAdcpVersion?: string;
   account?: TAccount;
   /** Resolved buyer agent (Phase 1 of #1269), when `agentRegistry` is configured. */
   agent?: BuyerAgent;
@@ -574,6 +585,8 @@ export interface SessionKeyContext<TAccount = unknown> {
 export interface ResolveAccountContext {
   /** The AdCP tool being called. */
   toolName: AdcpServerToolName;
+  /** Immutable SDK-selected AdCP release for this request. */
+  readonly servedAdcpVersion?: string;
   /**
    * Authentication info for the caller, populated from `extra.authInfo` on the
    * MCP request. Undefined when no `authenticate` is configured on `serve()`.
@@ -1574,6 +1587,16 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
 
 export type AdcpMcpToolProfile = 'auto' | 'media-buy' | 'all';
 
+/** MCP request facts supplied to a custom-tool handler by the AdCP framework. */
+export type AdcpCustomToolHandlerExtra = RequestHandlerExtra<ServerRequest, ServerNotification> & {
+  /** Immutable SDK-selected AdCP release for this request. */
+  readonly servedAdcpVersion: string;
+};
+
+/** Version-aware custom-tool callback preserving the MCP SDK's schema inference. */
+export type AdcpCustomToolHandler<InputArgs extends undefined | ZodRawShapeCompat | AnySchema = undefined> =
+  BaseToolCallback<CallToolResult, AdcpCustomToolHandlerExtra, InputArgs>;
+
 /**
  * Declarative registration for a tool outside {@link AdcpToolMap} — seller
  * extensions (e.g. collection-list helpers), test-harness endpoints
@@ -1627,7 +1650,7 @@ export interface AdcpCustomToolConfig<
    * must return a `CallToolResult`. Use `capabilitiesResponse`,
    * `mediaBuyResponse`, `adcpError`, or a hand-built `{ content, structuredContent? }`.
    */
-  handler: ToolCallback<InputArgs>;
+  handler: AdcpCustomToolHandler<InputArgs>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1716,23 +1739,33 @@ export interface AdcpServerConfig<TAccount = unknown> {
   exposeToolSchemas?: boolean;
 
   /**
-   * AdCP protocol version this server speaks. Defaults to {@link ADCP_VERSION}
-   * — the GA version the SDK ships against. Override to pin to an older
-   * stable (e.g., `'3.0.0'`) or opt into a beta channel (`'3.1.0-beta.1'`)
-   * once that registry ships.
+   * Newest AdCP protocol version this server supports. Defaults to
+   * {@link ADCP_VERSION} — the version the SDK ships against. Override to pin
+   * the entire server to an older stable release or to set the supported
+   * ceiling independently from `defaultAdcpVersion`.
    *
    * Not the same as `version` (the publisher's app version, e.g., `'1.4.2'`).
    *
-   * Stage 2 plumbs the option through and validates it at construction
-   * time; cross-major pins (e.g. `'4.0.0-beta.1'` while the SDK ships
-   * against major 3) throw `ConfigurationError`. Stage 3 wires per-instance
-   * schema/validator selection off this field.
+   * Pins without a bundled schema release throw `ConfigurationError` at
+   * construction. Per-request schema and wire selection never exceeds this
+   * value.
    *
    * Typed as `AdcpVersion | (string & {})` so editors autocomplete
    * canonical values from {@link COMPATIBLE_ADCP_VERSIONS} while still
    * accepting forward-compatible strings.
    */
   adcpVersion?: AdcpVersion | (string & {});
+
+  /**
+   * AdCP release selected when a caller omits both version claims. Defaults
+   * to the newest release this server advertises at or below `adcpVersion`.
+   *
+   * Set this below `adcpVersion` to keep unversioned callers on a conservative
+   * wire contract while allowing explicit callers to opt into newer releases.
+   * The value must be bundled, included in the server's effective advertised
+   * releases, and no newer than `adcpVersion`.
+   */
+  defaultAdcpVersion?: AdcpVersion | (string & {});
 
   /**
    * Per-tool inclusive protocol-release availability. This narrows, but does
@@ -1990,7 +2023,10 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * returned. Runs for framework tools, custom tools, and generated discovery
    * responses registered by `createAdcpServer`.
    */
-  responseEnhancer?: (response: McpToolResponse) => void;
+  responseEnhancer?: (
+    response: McpToolResponse,
+    context: { readonly toolName: string; readonly servedAdcpVersion: string }
+  ) => void;
   /**
    * Mirror final MCP `structuredContent` into a marked compact-JSON text block
    * for hosts that do not expose the structured channel to the model.
@@ -4341,6 +4377,16 @@ interface ServedAdcpRelease {
   wireVersion?: string;
 }
 
+function withImmutableServedAdcpVersion<T extends object>(context: T, servedAdcpVersion: string): T {
+  Object.defineProperty(context, 'servedAdcpVersion', {
+    value: servedAdcpVersion,
+    enumerable: true,
+    configurable: false,
+    writable: false,
+  });
+  return context;
+}
+
 function isMcpToolResponse(value: ServedAdcpRelease | McpToolResponse): value is McpToolResponse {
   return Array.isArray((value as McpToolResponse).content);
 }
@@ -4576,7 +4622,8 @@ function bundledReleasesForMajors(majors: readonly number[], configured: ParsedA
 function selectServedAdcpRelease(
   params: Record<string, unknown>,
   capConfig: AdcpCapabilitiesConfig | undefined,
-  serverPin: string
+  serverPin: string,
+  defaultPin?: string
 ): ServedAdcpRelease | McpToolResponse {
   const configured = parseAdcpRelease(serverPin);
   if (!configured) {
@@ -4651,10 +4698,17 @@ function selectServedAdcpRelease(
     // the server never upgrades its wire shape implicitly.
     selected = supported.filter(candidate => candidate.major === requestedMajor).sort(compareAdcpRelease)[0];
   } else {
-    // With no buyer claim, serve the newest release the seller actually
-    // advertises rather than silently using a configured pin omitted from
-    // supported_versions.
-    selected = [...supported].sort((left, right) => compareAdcpRelease(right, left))[0];
+    // An explicit server default is a ceiling just like an explicit buyer
+    // pin. Without one, preserve the historical behavior: select the newest
+    // release the seller actually advertises below the configured maximum.
+    const parsedDefault = defaultPin === undefined ? undefined : parseAdcpRelease(defaultPin);
+    selected = (
+      parsedDefault === undefined
+        ? supported
+        : supported.filter(
+            candidate => candidate.major === parsedDefault.major && compareAdcpRelease(candidate, parsedDefault) <= 0
+          )
+    ).sort((left, right) => compareAdcpRelease(right, left))[0];
   }
 
   if (!selected) {
@@ -4724,6 +4778,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     name,
     version,
     adcpVersion: configuredAdcpVersion,
+    defaultAdcpVersion: configuredDefaultAdcpVersion,
     mcpToolProfile = 'auto',
     requireCompactMutationAccountScope = false,
     resolveAccount,
@@ -4859,6 +4914,48 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       `createAdcpServer: capabilities.supported_versions contains moving prerelease-family alias ${JSON.stringify(movingSupportedVersion)}; pin ${JSON.stringify(toReleasePrecisionVersion(ADCP_VERSION))} instead`
     );
   }
+  const configuredDefaultVersion =
+    configuredDefaultAdcpVersion === undefined
+      ? undefined
+      : resolveAdcpVersion(configuredDefaultAdcpVersion, 'defaultAdcpVersion');
+  const maximumRelease = parseAdcpRelease(adcpVersion);
+  const requestedDefaultRelease =
+    configuredDefaultVersion === undefined ? undefined : parseAdcpRelease(configuredDefaultVersion);
+  if (maximumRelease === undefined) {
+    throw new ConfigurationError(
+      `adcpVersion ${JSON.stringify(adcpVersion)} is not a selectable AdCP release`,
+      'adcpVersion'
+    );
+  }
+  if (requestedDefaultRelease !== undefined && compareAdcpRelease(requestedDefaultRelease, maximumRelease) > 0) {
+    throw new ConfigurationError(
+      `defaultAdcpVersion ${JSON.stringify(configuredDefaultVersion)} must not be newer than ` +
+        `adcpVersion ${JSON.stringify(adcpVersion)}`,
+      'defaultAdcpVersion'
+    );
+  }
+  const selectedDefault = selectServedAdcpRelease({}, capConfig, adcpVersion, configuredDefaultVersion);
+  if (isMcpToolResponse(selectedDefault)) {
+    throw new ConfigurationError(
+      `defaultAdcpVersion ${JSON.stringify(configuredDefaultVersion)} must be present in ` +
+        `capabilities.supported_versions; advertised releases are ` +
+        `${JSON.stringify(buildSupportedVersionsList(capConfig, adcpVersion))}`,
+      'defaultAdcpVersion'
+    );
+  }
+  if (
+    requestedDefaultRelease !== undefined &&
+    compareAdcpRelease(parseAdcpRelease(selectedDefault.validationVersion)!, requestedDefaultRelease) !== 0
+  ) {
+    throw new ConfigurationError(
+      `defaultAdcpVersion ${JSON.stringify(configuredDefaultVersion)} must be present in ` +
+        `capabilities.supported_versions; advertised releases are ` +
+        `${JSON.stringify(buildSupportedVersionsList(capConfig, adcpVersion))}`,
+      'defaultAdcpVersion'
+    );
+  }
+  const defaultAdcpVersion =
+    configuredDefaultVersion ?? selectedDefault.advertisedVersion ?? selectedDefault.validationVersion;
   const proposalRefinementCapabilities = config.proposalNegotiation
     ? defineProposalRefinementCapabilities(config.proposalNegotiation.capabilities)
     : undefined;
@@ -4902,17 +4999,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     );
   }
 
-  // Pre-resolved release-precision identifier the seller echoes on every
-  // response per AdCP 3.1 spec PR `adcontextprotocol/adcp#3493`. `undefined`
-  // when this seller pins a 3.0 bundle (3.0 schemas don't define the field).
-  // Computed once at construction since the seller's pin is fixed for the
-  // server's lifetime — every dispatch reuses the same value. Downshift
-  // (3.1 seller serving a 3.0 buyer at 3.0) is a follow-up; today this
-  // always reflects the seller's own pin.
+  // Pre-resolved release-precision identifier the seller echoes for
+  // unversioned requests per AdCP 3.1 spec PR `adcontextprotocol/adcp#3493`.
+  // Explicitly versioned dispatches replace it with their selected release;
+  // `undefined` means the default bundle predates the wire field.
   const protocolBundleKey = resolveBundleKey(adcpVersion);
   const frameworkToolMeta = { adcp_version: adcpVersion } as const;
   const servedAdcpVersion = (() => {
-    const bundleKey = protocolBundleKey;
+    const bundleKey = resolveBundleKey(defaultAdcpVersion);
     return bundleSupportsAdcpVersionField(bundleKey) ? bundleKey : undefined;
   })();
   const protocolTaskRelease = parseAdcpRelease(protocolBundleKey);
@@ -5346,13 +5440,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const registeredToolNames = new Set<string>();
   let warnedAboutOptionalReplayWithoutIdempotency = false;
 
-  const applyResponseEnhancer = (response: McpToolResponse): McpToolResponse => {
-    responseEnhancer?.(response);
+  const applyResponseEnhancer = (
+    response: McpToolResponse,
+    toolName: string,
+    servedVersion: string
+  ): McpToolResponse => {
+    responseEnhancer?.(response, Object.freeze({ toolName, servedAdcpVersion: servedVersion }));
     return response;
   };
 
   const requestServedRelease = (params: Record<string, unknown>): ServedAdcpRelease | undefined => {
-    const selected = selectServedAdcpRelease(params, capConfig, adcpVersion);
+    const selected = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
     return isMcpToolResponse(selected) ? undefined : selected;
   };
 
@@ -5372,7 +5470,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     opts: { echoContext?: boolean } = {}
   ): McpToolResponse => {
     const release = requestServedRelease(params) ?? {
-      validationVersion: adcpVersion,
+      validationVersion: selectedDefault.validationVersion,
       ...(servedAdcpVersion !== undefined && { wireVersion: servedAdcpVersion }),
     };
     sanitizeAdcpErrorEnvelope(response);
@@ -5385,14 +5483,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     }
     if (opts.echoContext !== false) injectContextIntoResponse(response, params.context);
     injectVersionIntoResponse(response, release.wireVersion);
-    return applyResponseEnhancer(response);
+    return applyResponseEnhancer(response, toolName, release.validationVersion);
   };
 
   const unsupportedVersionResponse = (
     toolName: 'get_task_status' | 'list_tasks',
     params: Record<string, unknown>
   ): McpToolResponse | undefined => {
-    const selected = selectServedAdcpRelease(params, capConfig, adcpVersion);
+    const selected = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
     if (isMcpToolResponse(selected)) return selected;
     const defined = releaseDefinesTool(toolName, selected);
     if (!defined || !toolAvailableForRelease(toolName, selected.validationVersion)) {
@@ -5567,14 +5665,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   const resolveTaskQueryAccountId = async (
     params: Record<string, unknown>,
     extra: any,
-    toolName: 'get_task_status' | 'list_tasks'
+    toolName: 'get_task_status' | 'list_tasks',
+    servedVersion: string
   ): Promise<{
     accountId?: string;
     ownerScope?: string;
     accountResolutionAttempted: boolean;
     error?: McpToolResponse;
   }> => {
-    const ctx: HandlerContext<TAccount> = { store: stateStore };
+    const ctx: HandlerContext<TAccount> = withImmutableServedAdcpVersion({ store: stateStore }, servedVersion);
     let accountResolutionAttempted = false;
     if (extra?.authInfo) {
       const authInfo = extra.authInfo as ResolvedAuthInfo;
@@ -5627,12 +5726,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         };
       }
       try {
-        const account = await resolveAccount(accountRef as AccountReference, {
-          toolName: toolName as AdcpServerToolName,
-          authInfo: ctx.authInfo,
-          ...(ctx.agent != null && { agent: ctx.agent }),
-          input: params,
-        });
+        const account = await resolveAccount(
+          accountRef as AccountReference,
+          withImmutableServedAdcpVersion(
+            {
+              toolName: toolName as AdcpServerToolName,
+              authInfo: ctx.authInfo,
+              ...(ctx.agent != null && { agent: ctx.agent }),
+              input: params,
+            },
+            servedVersion
+          )
+        );
         if (account != null) ctx.account = account;
         if (account == null) {
           return {
@@ -5660,12 +5765,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       }
     } else if (resolveAccountFromAuth) {
       try {
-        const account = await resolveAccountFromAuth({
-          toolName,
-          authInfo: ctx.authInfo,
-          ...(ctx.agent != null && { agent: ctx.agent }),
-          input: params,
-        });
+        const account = await resolveAccountFromAuth(
+          withImmutableServedAdcpVersion(
+            {
+              toolName,
+              authInfo: ctx.authInfo,
+              ...(ctx.agent != null && { agent: ctx.agent }),
+              input: params,
+            },
+            servedVersion
+          )
+        );
         accountResolutionAttempted = true;
         if (account != null) {
           ctx.account = account;
@@ -5690,12 +5800,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
 
     if (resolveSessionKey) {
       try {
-        const sessionKey = await resolveSessionKey({
-          toolName: toolName as AdcpServerToolName,
-          params,
-          account: ctx.account,
-          ...(ctx.agent != null && { agent: ctx.agent }),
-        });
+        const sessionKey = await resolveSessionKey(
+          withImmutableServedAdcpVersion(
+            {
+              toolName: toolName as AdcpServerToolName,
+              params,
+              account: ctx.account,
+              ...(ctx.agent != null && { agent: ctx.agent }),
+            },
+            servedVersion
+          )
+        );
         if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
@@ -5775,24 +5890,26 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       const wrap = meta?.wrap ?? ((data: any, summary?: string) => genericResponse(toolName, data, summary));
       const toolHandler = async (params: any, extra: any) => {
         const callRequestValidationMode = effectiveRequestValidationMode(extra);
-        const releaseSelection = selectServedAdcpRelease(params, capConfig, adcpVersion);
+        const releaseSelection = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
         let releaseError: McpToolResponse | undefined;
         let requestRelease: ServedAdcpRelease;
         if (isMcpToolResponse(releaseSelection)) {
           releaseError = releaseSelection;
           requestRelease = {
-            validationVersion: adcpVersion,
+            validationVersion: selectedDefault.validationVersion,
             ...(servedAdcpVersion !== undefined && { wireVersion: servedAdcpVersion }),
           };
         } else {
           requestRelease = releaseSelection;
         }
         const requestErrorArms = getToolsWithErrorArm(requestRelease.validationVersion);
-        const ctx: HandlerContext<TAccount> = {
-          store: stateStore,
-          servedAdcpVersion: requestRelease.validationVersion,
-          ...(extra?.signal !== undefined && { signal: extra.signal }),
-        };
+        const ctx: HandlerContext<TAccount> = withImmutableServedAdcpVersion(
+          {
+            store: stateStore,
+            ...(extra?.signal !== undefined && { signal: extra.signal }),
+          },
+          requestRelease.validationVersion
+        );
         if (extra?.authInfo) {
           ctx.authInfo = extra.authInfo;
           // Hoist the kind-discriminated credential from MCP's `extra`
@@ -5842,7 +5959,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           return response;
         };
         const finalize = (response: McpToolResponse): McpToolResponse =>
-          applyResponseEnhancer(finalizeProtocolEnvelope(response));
+          applyResponseEnhancer(finalizeProtocolEnvelope(response), toolName, requestRelease.validationVersion);
 
         if (releaseError) return finalize(releaseError);
         const definedForRelease = releaseDefinesTool(toolName, requestRelease);
@@ -6151,7 +6268,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     'Request args carry credential-shaped keys. Credentials must arrive on authInfo, not in the request body.',
                   recovery: 'correctable',
                   details: { scope: 'credentials', credential_paths: blockedPaths },
-                })
+                }),
+                toolName,
+                requestRelease.validationVersion
               );
             }
           }
@@ -6215,7 +6334,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                     'Request authentication context carries credential-shaped keys. Configure your authenticator to keep credentials off authInfo.extra.',
                   recovery: 'terminal',
                   details: { scope: 'credentials' },
-                })
+                }),
+                toolName,
+                requestRelease.validationVersion
               );
             }
           }
@@ -6313,12 +6434,18 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Account resolution ---
         if (hasAccount && params.account != null && resolveAccount) {
           try {
-            const account = await resolveAccount(params.account, {
-              toolName: toolName as AdcpServerToolName,
-              authInfo: ctx.authInfo,
-              ...(ctx.agent != null && { agent: ctx.agent }),
-              input: params,
-            });
+            const account = await resolveAccount(
+              params.account,
+              withImmutableServedAdcpVersion(
+                {
+                  toolName: toolName as AdcpServerToolName,
+                  authInfo: ctx.authInfo,
+                  ...(ctx.agent != null && { agent: ctx.agent }),
+                  input: params,
+                },
+                requestRelease.validationVersion
+              )
+            );
             if (account == null) {
               logger.warn('Account not found', { tool: toolName, account: params.account });
               return finalize(
@@ -6360,12 +6487,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // return is allowed — handler sees ctx.account undefined and
           // either tolerates it (publisher-wide reads) or throws AdcpError.
           try {
-            const account = await resolveAccountFromAuth({
-              toolName: toolName as AdcpServerToolName,
-              authInfo: ctx.authInfo,
-              ...(ctx.agent != null && { agent: ctx.agent }),
-              input: params,
-            });
+            const account = await resolveAccountFromAuth(
+              withImmutableServedAdcpVersion(
+                {
+                  toolName: toolName as AdcpServerToolName,
+                  authInfo: ctx.authInfo,
+                  ...(ctx.agent != null && { agent: ctx.agent }),
+                  input: params,
+                },
+                requestRelease.validationVersion
+              )
+            );
             if (account != null) ctx.account = account;
           } catch (err) {
             // Same typed-error pass-through as the explicit `resolveAccount`
@@ -6423,12 +6555,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // --- Session key resolution ---
         if (resolveSessionKey) {
           try {
-            const sessionKey = await resolveSessionKey({
-              toolName: toolName as AdcpServerToolName,
-              params,
-              account: ctx.account,
-              ...(ctx.agent != null && { agent: ctx.agent }),
-            });
+            const sessionKey = await resolveSessionKey(
+              withImmutableServedAdcpVersion(
+                {
+                  toolName: toolName as AdcpServerToolName,
+                  params,
+                  account: ctx.account,
+                  ...(ctx.agent != null && { agent: ctx.agent }),
+                },
+                requestRelease.validationVersion
+              )
+            );
             if (sessionKey !== undefined) ctx.sessionKey = sessionKey;
           } catch (err) {
             const reason = err instanceof Error ? err.message : String(err);
@@ -7775,11 +7912,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         if (boundsError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, boundsError);
         const versionError = unsupportedVersionResponse('get_task_status', params ?? {});
         if (versionError) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, versionError);
+        const requestRelease = requestServedRelease(params ?? {}) ?? selectedDefault;
         const taskId = typeof params?.task_id === 'string' ? params.task_id : '';
         const { accountId, ownerScope, error } = await resolveTaskQueryAccountId(
           params ?? {},
           extra,
-          'get_task_status'
+          'get_task_status',
+          requestRelease.validationVersion
         );
         if (error) return finalizeProtocolTaskToolResponse('get_task_status', params ?? {}, error);
         let task: TaskRecord | null = null;
@@ -7871,7 +8010,13 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         if (boundsError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, boundsError);
         const versionError = unsupportedVersionResponse('list_tasks', params ?? {});
         if (versionError) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, versionError);
-        const { accountId, ownerScope, error } = await resolveTaskQueryAccountId(params ?? {}, extra, 'list_tasks');
+        const requestRelease = requestServedRelease(params ?? {}) ?? selectedDefault;
+        const { accountId, ownerScope, error } = await resolveTaskQueryAccountId(
+          params ?? {},
+          extra,
+          'list_tasks',
+          requestRelease.validationVersion
+        );
         if (error) return finalizeProtocolTaskToolResponse('list_tasks', params ?? {}, error);
         let cursorStart = 0;
         try {
@@ -7993,11 +8138,19 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         if (customName === 'tasks_get') {
           injectVersionIntoResponse(response, taskRelease?.wireVersion ?? servedAdcpVersion);
         }
-        return applyResponseEnhancer(response);
+        return applyResponseEnhancer(
+          response,
+          customName,
+          taskRelease?.validationVersion ?? selectedDefault.validationVersion
+        );
       };
       const wrappedHandler = (async (...args: unknown[]) => {
+        // Preserve the MCP SDK's runtime callback shape exactly. In
+        // particular, legacy dispatch may still pass a request arguments
+        // object to schema-less custom tools; version selection must inspect
+        // it even though the public callback type exposes only `extra`.
         const params = isPlainObject(args[0]) ? args[0] : {};
-        const selectedRelease = selectServedAdcpRelease(params, capConfig, adcpVersion);
+        const selectedRelease = selectServedAdcpRelease(params, capConfig, adcpVersion, defaultAdcpVersion);
         if (isMcpToolResponse(selectedRelease)) return finalizeCustomResponse(selectedRelease);
         if (!toolAvailableForRelease(customName, selectedRelease.validationVersion)) {
           return finalizeCustomResponse(
@@ -8011,7 +8164,16 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           );
         }
         try {
-          return finalizeCustomResponse(await rawHandler(...args), selectedRelease);
+          const extraIndex = Math.max(0, args.length - 1);
+          const rawExtra = args[extraIndex] as Record<string, unknown> | undefined;
+          const versionedExtra = withImmutableServedAdcpVersion(
+            { ...(rawExtra ?? {}) },
+            selectedRelease.validationVersion
+          );
+          const versionedArgs = [...args];
+          versionedArgs[extraIndex] = versionedExtra;
+          const response = await rawHandler(...versionedArgs);
+          return finalizeCustomResponse(response, selectedRelease);
         } catch (err) {
           if (isThrownAdcpError(err)) return finalizeCustomResponse(err, selectedRelease);
           if (err instanceof AdcpError) return finalizeCustomResponse(projectThrownAdcpError(err), selectedRelease);
@@ -8264,10 +8426,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     (async (params: any, extra: { authInfo?: ResolvedAuthInfo } = {}) => {
       const callRequestValidationMode = effectiveRequestValidationMode(extra);
       const requestParams = isPlainObject(params) ? params : {};
-      const releaseSelection = selectServedAdcpRelease(requestParams, capConfig, adcpVersion);
+      const releaseSelection = selectServedAdcpRelease(requestParams, capConfig, adcpVersion, defaultAdcpVersion);
       const release = isMcpToolResponse(releaseSelection)
         ? {
-            validationVersion: adcpVersion,
+            validationVersion: selectedDefault.validationVersion,
             ...(servedAdcpVersion !== undefined && { wireVersion: servedAdcpVersion }),
           }
         : releaseSelection;
@@ -8275,7 +8437,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         sanitizeAdcpErrorEnvelope(response);
         injectContextIntoResponse(response, requestParams.context);
         injectVersionIntoResponse(response, release.wireVersion);
-        return applyResponseEnhancer(response);
+        return applyResponseEnhancer(response, 'get_adcp_capabilities', release.validationVersion);
       };
 
       if (isMcpToolResponse(releaseSelection)) {
@@ -8448,7 +8610,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
       }
-      return applyResponseEnhancer(response);
+      return applyResponseEnhancer(response, 'get_adcp_capabilities', release.validationVersion);
     }) as Parameters<typeof server.registerTool>[2]
   );
   registeredToolNames.add('get_adcp_capabilities');
@@ -8493,10 +8655,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         ? listParams.adcp_version
         : typeof listMeta.adcp_version === 'string'
           ? listMeta.adcp_version
-          : adcpVersion;
-    const selectedListRelease = selectServedAdcpRelease({ adcp_version: requestedListRelease }, capConfig, adcpVersion);
+          : undefined;
+    const selectedListRelease = selectServedAdcpRelease(
+      { adcp_version: requestedListRelease },
+      capConfig,
+      adcpVersion,
+      defaultAdcpVersion
+    );
     const listRelease: ServedAdcpRelease = isMcpToolResponse(selectedListRelease)
-      ? { validationVersion: adcpVersion }
+      ? { validationVersion: selectedDefault.validationVersion }
       : selectedListRelease;
     const parsedListRelease = parseAdcpRelease(listRelease.validationVersion);
     const listServes32OrNewer =
@@ -8633,12 +8800,28 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
   };
   const wrapped: AdcpServerInternal = wrapMcpServer(server, compliance, adcpVersion, {
     structuredContentTextFallback,
+    defaultAdcpVersion,
   });
-  setToolVersionAvailabilityResolver(wrapped, toolAvailableForRelease);
+  setToolVersionAvailabilityResolver(wrapped, (toolName, release) => {
+    if (!toolAvailableForRelease(toolName, release)) return false;
+    if (config.customTools?.[toolName] !== undefined) return true;
+    // Helpers such as createAdcpServerFromPlatform register gated or
+    // adopter-owned tools after createAdcpServer returns. They are not part of
+    // the canonical manifest snapshot above, so do not make modern discovery
+    // hide them merely because releaseDefinesTool cannot find a schema entry.
+    if (!registeredToolNames.has(toolName)) return true;
+    return releaseDefinesTool(toolName, { validationVersion: release });
+  });
   setDiscoveryVersionResolver(wrapped, requestedVersion => {
-    if (requestedVersion === undefined) return adcpVersion;
-    const selected = selectServedAdcpRelease({ adcp_version: requestedVersion }, capConfig, adcpVersion);
-    return isMcpToolResponse(selected) ? adcpVersion : (selected.advertisedVersion ?? selected.validationVersion);
+    const selected = selectServedAdcpRelease(
+      { adcp_version: requestedVersion },
+      capConfig,
+      adcpVersion,
+      defaultAdcpVersion
+    );
+    return isMcpToolResponse(selected)
+      ? defaultAdcpVersion
+      : (selected.advertisedVersion ?? selected.validationVersion);
   });
   setMcpToolProfile(wrapped, activeMcpToolProfile);
   setMcpAppResources(wrapped, mcpAppResources);

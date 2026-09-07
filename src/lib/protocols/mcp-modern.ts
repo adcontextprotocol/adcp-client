@@ -57,6 +57,8 @@ export interface ModernMCPConnectionOptions {
   requestTimeoutMs?: number;
   fetchFn?: typeof fetch;
   allowPrivateIp?: boolean;
+  /** SDK-selected AdCP release-precision version for tools/list discovery. */
+  adcpVersion?: string;
   /** Use the v2 SDK's negotiated legacy client instead of handing off to v1. */
   handleLegacy?: boolean;
 }
@@ -716,10 +718,13 @@ export async function tryListModernMCPTools(
   const listTools = async (connectedClient: Client): Promise<ModernMCPListAttempt> => {
     if (connectedClient.getProtocolEra() !== 'modern') return { handled: false };
     const resolvedRequestTimeoutMs = resolveClientRequestTimeoutMs(options.requestTimeoutMs);
-    const result = await connectedClient.listTools(undefined, {
-      ...(options.signal && { signal: options.signal }),
-      ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
-    });
+    const result = await connectedClient.listTools(
+      options.adcpVersion === undefined ? undefined : { _meta: { adcp_version: options.adcpVersion } },
+      {
+        ...(options.signal && { signal: options.signal }),
+        ...(resolvedRequestTimeoutMs !== undefined && { timeout: resolvedRequestTimeoutMs }),
+      }
+    );
     return { handled: true, tools: result.tools };
   };
   try {

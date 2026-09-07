@@ -8561,7 +8561,7 @@ describe('tasks_get wire tool (B9)', () => {
   // task_id (+ optional account for tenant scoping) and receive the
   // spec-flat lifecycle shape.
 
-  function buildHitlPlatform(taskFn) {
+  function buildHitlPlatform(taskFn, onRequestContext = () => {}, onResolveContext = () => {}) {
     return {
       capabilities: {
         specialisms: ['sales-non-guaranteed'],
@@ -8571,17 +8571,23 @@ describe('tasks_get wire tool (B9)', () => {
         config: {},
       },
       accounts: {
-        resolve: async ref => ({
-          id: ref?.account_id ?? 'acc_1',
-          name: 'Acme',
-          status: 'active',
-          metadata: {},
-          authInfo: { kind: 'api_key' },
-        }),
+        resolve: async (ref, context) => {
+          onResolveContext(context);
+          return {
+            id: ref?.account_id ?? 'acc_1',
+            name: 'Acme',
+            status: 'active',
+            metadata: {},
+            authInfo: { kind: 'api_key' },
+          };
+        },
       },
       sales: {
         getProducts: async () => ({ products: [], cache_scope: 'account' }),
-        createMediaBuy: (_req, ctx) => ctx.handoffToTask(async taskCtx => taskFn(taskCtx)),
+        createMediaBuy: (_req, ctx) => {
+          onRequestContext(ctx);
+          return ctx.handoffToTask(async taskCtx => taskFn(taskCtx));
+        },
         updateMediaBuy: async () => ({ media_buy_id: 'mb_42' }),
         syncCreatives: async () => [],
         getMediaBuyDelivery: async () => ({ media_buys: [] }),
@@ -8589,7 +8595,7 @@ describe('tasks_get wire tool (B9)', () => {
     };
   }
 
-  async function createTask(server, accountId) {
+  async function createTask(server, accountId, adcpVersion) {
     const result = await server.dispatchTestRequest({
       method: 'tools/call',
       params: {
@@ -8601,9 +8607,12 @@ describe('tasks_get wire tool (B9)', () => {
           start_time: '2026-05-01T00:00:00Z',
           end_time: '2026-06-01T00:00:00Z',
           account: { account_id: accountId },
+          ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
         },
       },
     });
+    assert.notStrictEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.ok(result.structuredContent.task_id, JSON.stringify(result.structuredContent));
     await server.awaitTaskUnsafe(result.structuredContent.task_id);
     return result.structuredContent.task_id;
   }
@@ -8621,6 +8630,75 @@ describe('tasks_get wire tool (B9)', () => {
     const toolNames = listed.tools.map(tool => tool.name);
     assert.ok(toolNames.includes('tasks_get'), 'tasks_get should be advertised');
     assert.ok(!toolNames.includes('tasks/get'), 'slash alias should not be registered as an MCP tool');
+  });
+
+  it('retains the immutable selected version in platform and deferred task contexts', async () => {
+    const requestContexts = [];
+    const taskContexts = [];
+    const accountResolverContexts = [];
+    const sessionResolverContexts = [];
+    const server = createAdcpServerFromPlatform(
+      buildHitlPlatform(
+        async taskCtx => {
+          taskContexts.push(taskCtx);
+          return { media_buy_id: `mb_${taskContexts.length}` };
+        },
+        ctx => requestContexts.push(ctx),
+        ctx => accountResolverContexts.push(ctx)
+      ),
+      {
+        name: 'versioned-handoff',
+        version: '0.0.1',
+        adcpVersion: '3.2.0-rc.1',
+        defaultAdcpVersion: '3.1.18',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.1'] },
+        resolveSessionKey: async context => {
+          sessionResolverContexts.push(context);
+          return 'session-version-probe';
+        },
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const defaultTaskId = await createTask(server, 'acc_default');
+    const modernTaskId = await createTask(server, 'acc_modern', '3.2.0-rc.1');
+    for (const [taskId, accountId, adcpVersion] of [
+      [defaultTaskId, 'acc_default', undefined],
+      [modernTaskId, 'acc_modern', '3.2.0-rc.1'],
+    ]) {
+      await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'tasks_get',
+          arguments: {
+            task_id: taskId,
+            account: { account_id: accountId },
+            ...(adcpVersion !== undefined && { adcp_version: adcpVersion }),
+          },
+        },
+      });
+    }
+
+    assert.deepStrictEqual(
+      requestContexts.map(ctx => ctx.servedAdcpVersion),
+      ['3.1', '3.2-rc.1']
+    );
+    assert.deepStrictEqual(
+      taskContexts.map(ctx => ctx.servedAdcpVersion),
+      ['3.1', '3.2-rc.1']
+    );
+    for (const context of [
+      ...requestContexts,
+      ...taskContexts,
+      ...accountResolverContexts,
+      ...sessionResolverContexts,
+    ]) {
+      assert.strictEqual(Object.getOwnPropertyDescriptor(context, 'servedAdcpVersion').writable, false);
+    }
+    assert.ok(accountResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.1'));
+    assert.ok(accountResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.2-rc.1'));
+    assert.ok(sessionResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.1'));
+    assert.ok(sessionResolverContexts.some(ctx => ctx.servedAdcpVersion === '3.2-rc.1'));
   });
 
   it('returns spec-flat lifecycle shape for a completed task', async () => {

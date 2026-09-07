@@ -1341,6 +1341,8 @@ export type {
   AdcpServerToolName,
   AdcpCapabilitiesConfig,
   LegacyAdcpCustomToolConfig,
+  LegacyAdcpCustomToolHandler,
+  LegacyAdcpCustomToolHandlerExtra,
   McpAppUiMeta,
   McpAppMeta,
   AdcpMcpResourceDefinition,

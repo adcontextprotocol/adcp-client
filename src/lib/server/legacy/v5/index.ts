@@ -94,6 +94,8 @@ export type {
   AdcpCapabilitiesConfig,
   AdcpCapabilitiesOverrides,
   AdcpCustomToolConfig,
+  AdcpCustomToolHandler,
+  AdcpCustomToolHandlerExtra,
   McpAppUiMeta,
   McpAppMeta,
   AdcpLogger,

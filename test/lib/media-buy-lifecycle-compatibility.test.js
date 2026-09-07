@@ -31,6 +31,7 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
     name: 'dual-surface-seller',
     version: '1.0.0',
     adcpVersion: serverAdcpVersion,
+    ...(options.defaultAdcpVersion && { defaultAdcpVersion: options.defaultAdcpVersion }),
     idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
     resolveSessionKey: () => 'dual-surface-seller',
     ...(options.mcpToolProfile && { mcpToolProfile: options.mcpToolProfile }),
@@ -131,6 +132,50 @@ async function withDualSurfaceSeller(serverAdcpVersion, buyerAdcpVersion, run, o
     await Promise.allSettled([mcpClient.close(), server.close()]);
   }
 }
+
+test('dual-surface seller defaults unversioned MCP callers to 3.1 while explicit 3.2 remains reachable', async () => {
+  await withDualSurfaceSeller(
+    '3.2.0-rc.1',
+    '3.2.0-rc.1',
+    async ({ mcpClient, calls }) => {
+      const sdkTools = await AgentClient.fromMCPClient(mcpClient, {
+        adcpVersion: '3.2.0-rc.1',
+        validation: { requests: 'strict', responses: 'off' },
+      }).getAgentInfo();
+      assert.ok(sdkTools.tools.some(tool => tool.name === 'list_products'));
+      assert.ok(!sdkTools.tools.some(tool => tool.name === 'get_products'));
+
+      const defaultTools = await mcpClient.listTools();
+      assert.strictEqual(defaultTools._meta.adcp_version, '3.1.18');
+      assert.ok(defaultTools.tools.some(tool => tool.name === 'get_products'));
+      assert.ok(!defaultTools.tools.some(tool => tool.name === 'list_products'));
+
+      const explicitTools = await mcpClient.listTools({ _meta: { adcp_version: '3.2.0-rc.1' } });
+      assert.strictEqual(explicitTools._meta.adcp_version, '3.2.0-rc.1');
+      assert.ok(explicitTools.tools.some(tool => tool.name === 'list_products'));
+      assert.ok(!explicitTools.tools.some(tool => tool.name === 'get_products'));
+
+      const established = await mcpClient.callTool({
+        name: 'get_products',
+        arguments: { buying_mode: 'wholesale' },
+      });
+      assert.notStrictEqual(established.isError, true, JSON.stringify(established.structuredContent));
+      assert.strictEqual(established.structuredContent.adcp_version, '3.1');
+
+      const compact = await mcpClient.callTool({
+        name: 'list_products',
+        arguments: { adcp_version: '3.2-rc.1', max_results: 10 },
+      });
+      assert.notStrictEqual(compact.isError, true, JSON.stringify(compact.structuredContent));
+      assert.strictEqual(compact.structuredContent.adcp_version, '3.2-rc.1');
+      assert.deepStrictEqual(
+        calls.map(([tool]) => tool),
+        ['get_products', 'list_products']
+      );
+    },
+    { defaultAdcpVersion: '3.1.18' }
+  );
+});
 
 test('forced established diagnostics use actual MCP tool discovery on an all-tools 3.2 seller', async () => {
   await withDualSurfaceSeller(

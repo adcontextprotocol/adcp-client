@@ -180,6 +180,18 @@ const DEFAULT_FRAMEWORK_LOGGER: AdcpLogger = {
   // eslint-disable-next-line no-console
   error: console.error.bind(console),
 };
+
+function withImmutableServedAdcpVersion<T extends object>(context: T, servedAdcpVersion?: string): T {
+  if (servedAdcpVersion !== undefined) {
+    Object.defineProperty(context, 'servedAdcpVersion', {
+      value: servedAdcpVersion,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return context;
+}
 import { createInMemoryStatusChangeBus, type StatusChangeBus, type PublishStatusChangeOpts } from '../status-changes';
 import {
   _handleComplyControllerWithResolvedAuthority,
@@ -3479,7 +3491,10 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           description: controller.toolDefinition.description,
           inputSchema: gatedInputSchema,
         },
-        (async (input: Record<string, unknown>, extra: { authInfo?: ResolvedAuthInfo } | undefined) => {
+        (async (
+          input: Record<string, unknown>,
+          extra: { authInfo?: ResolvedAuthInfo; readonly servedAdcpVersion?: string } | undefined
+        ) => {
           const principalAuthority = await resolveComplyPrincipalAuthority(extra, 'comply_test_controller', input);
           if (!isComplyControllerVisible(principalAuthority.principalAccount)) {
             throw new McpError(ErrorCode.MethodNotFound, 'Method not found');
@@ -3504,6 +3519,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
               toResolveCtx(
                 {
                   ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+                  ...(extra?.servedAdcpVersion !== undefined && {
+                    servedAdcpVersion: extra.servedAdcpVersion,
+                  }),
                   ...(agent !== undefined && { agent }),
                 },
                 'comply_test_controller',
@@ -3607,14 +3625,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           let sessionKey: string | undefined;
           if (opts.resolveSessionKey !== undefined && resolvedAccount !== null && taskLookupParams !== undefined) {
             try {
-              sessionKey = await opts.resolveSessionKey({
-                // Resolve exactly the scope the framework's tasks/get path
-                // would authorize for this task-oriented controller action.
-                toolName: 'tasks_get' as AdcpServerToolName,
-                params: taskLookupParams,
-                account: resolvedAccount,
-                ...(agent !== undefined && { agent }),
-              });
+              sessionKey = await opts.resolveSessionKey(
+                withImmutableServedAdcpVersion(
+                  {
+                    // Resolve exactly the scope the framework's tasks/get path
+                    // would authorize for this task-oriented controller action.
+                    toolName: 'tasks_get' as AdcpServerToolName,
+                    params: taskLookupParams,
+                    account: resolvedAccount,
+                    ...(agent !== undefined && { agent }),
+                  },
+                  extra?.servedAdcpVersion
+                )
+              );
             } catch (err) {
               fwLogger.warn?.('Session key resolution failed during comply controller dispatch', {
                 error: redactCredentialPatterns(err instanceof Error ? err.message : String(err)),
@@ -3628,13 +3651,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
 
           let taskScope: Readonly<TaskRegistryScope> | undefined;
           if (resolvedAccount !== null) {
-            const ownerCtx: HandlerContext<Account> = {
-              store: {} as HandlerContext<Account>['store'],
-              account: resolvedAccount,
-              ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-              ...(agent !== undefined && { agent }),
-              ...(sessionKey !== undefined && { sessionKey }),
-            };
+            const ownerCtx: HandlerContext<Account> = withImmutableServedAdcpVersion(
+              {
+                store: {} as HandlerContext<Account>['store'],
+                account: resolvedAccount,
+                ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+                ...(agent !== undefined && { agent }),
+                ...(sessionKey !== undefined && { sessionKey }),
+              },
+              extra?.servedAdcpVersion
+            );
             taskScope = Object.freeze({
               accountId: resolvedAccount.id,
               ownerScope: taskOwnerScopeFor(ownerCtx, resolvedAccount.id),
@@ -3741,7 +3767,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
     credentialPolicy === undefined || typeof credentialPolicy === 'string' ? undefined : credentialPolicy.patterns;
   const credentialPolicyError = (
     args: Record<string, unknown>,
-    extra: { authInfo?: ResolvedAuthInfo } | undefined
+    extra: { authInfo?: ResolvedAuthInfo; servedAdcpVersion?: string } | undefined
   ): AdcpErrorResponse | undefined => {
     if (credentialPolicy === undefined) return undefined;
     const effectivePolicy = resolveCredentialPolicyForTool(credentialPolicy, 'tasks_get');
@@ -3850,7 +3876,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
         adcp_version?: string;
         adcp_major_version?: number;
       },
-      extra: { authInfo?: ResolvedAuthInfo }
+      extra: { authInfo?: ResolvedAuthInfo; readonly servedAdcpVersion?: string }
     ) => {
       const policyError = credentialPolicyError(args as Record<string, unknown>, extra);
       if (policyError) return policyError;
@@ -3907,11 +3933,14 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           });
         }
       }
-      const resolveCtx = {
-        ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-        toolName: 'tasks_get',
-        ...(agent !== undefined && { agent }),
-      };
+      const resolveCtx = withImmutableServedAdcpVersion(
+        {
+          ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+          toolName: 'tasks_get',
+          ...(agent !== undefined && { agent }),
+        },
+        extra?.servedAdcpVersion
+      );
       let resolvedAccountId: string | undefined;
       let resolvedAccount: Account | undefined;
       if (ref) {
@@ -3955,12 +3984,17 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       let sessionKey: string | undefined;
       if (resolveSessionKey !== undefined) {
         try {
-          sessionKey = await resolveSessionKey({
-            toolName: 'tasks_get' as AdcpServerToolName,
-            params: args,
-            ...(resolvedAccount !== undefined && { account: resolvedAccount }),
-            ...(agent !== undefined && { agent }),
-          });
+          sessionKey = await resolveSessionKey(
+            withImmutableServedAdcpVersion(
+              {
+                toolName: 'tasks_get' as AdcpServerToolName,
+                params: args,
+                ...(resolvedAccount !== undefined && { account: resolvedAccount }),
+                ...(agent !== undefined && { agent }),
+              },
+              extra?.servedAdcpVersion
+            )
+          );
         } catch (err) {
           logger.error?.('Session key resolution failed during tasks_get poll', {
             error: err instanceof Error ? err.message : String(err),
@@ -3977,13 +4011,16 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           field: 'task_id',
         });
       }
-      const ownerCtx: HandlerContext<Account> = {
-        store: {} as HandlerContext<Account>['store'],
-        ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
-        ...(agent !== undefined && { agent }),
-        ...(sessionKey !== undefined && { sessionKey }),
-        account: resolvedAccount ?? ({ id: resolvedAccountId } as Account),
-      };
+      const ownerCtx: HandlerContext<Account> = withImmutableServedAdcpVersion(
+        {
+          store: {} as HandlerContext<Account>['store'],
+          ...(extra?.authInfo !== undefined && { authInfo: extra.authInfo }),
+          ...(agent !== undefined && { agent }),
+          ...(sessionKey !== undefined && { sessionKey }),
+          account: resolvedAccount ?? ({ id: resolvedAccountId } as Account),
+        },
+        extra?.servedAdcpVersion
+      );
       const expectedOwnerScope = taskOwnerScopeFor(ownerCtx, resolvedAccountId);
 
       let record;
@@ -4772,7 +4809,7 @@ async function routeIfHandoff<TInner, TWire>(
         taskRegistry,
         opts,
         async taskRef => {
-          await externalTaskFn(buildExternalHandoffContext(taskRegistry, taskRef));
+          await externalTaskFn(buildExternalHandoffContext(taskRegistry, taskRef, opts.servedAdcpVersion));
         },
         options.task_id,
         'external'
@@ -4787,7 +4824,7 @@ async function routeIfHandoff<TInner, TWire>(
           handoffTaskStarted = true;
           let inner: TInner;
           try {
-            inner = await taskFn(buildHandoffContext(taskRegistry, taskRef));
+            inner = await taskFn(buildHandoffContext(taskRegistry, taskRef, opts.servedAdcpVersion));
           } catch (error) {
             // A business rejection still abandons proposal-backed work. The
             // callback releases the reservation before the rejection signal
@@ -5279,16 +5316,19 @@ function makeCtxFor(ctxMetadataStore?: CtxMetadataStore): CtxForFn {
  * can use `'authInfo' in ctx` as a presence check.
  */
 function toResolveCtx(
-  ctx: { authInfo?: ResolvedAuthInfo; agent?: BuyerAgent },
+  ctx: { authInfo?: ResolvedAuthInfo; agent?: BuyerAgent; servedAdcpVersion?: string },
   toolName: string | undefined,
   input?: Readonly<Record<string, unknown>>
 ): ResolveContext {
-  return {
-    ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
-    ...(toolName !== undefined && { toolName }),
-    ...(ctx.agent != null && { agent: ctx.agent }),
-    ...(input != null && { input }),
-  };
+  return withImmutableServedAdcpVersion(
+    {
+      ...(ctx.authInfo !== undefined && { authInfo: ctx.authInfo }),
+      ...(toolName !== undefined && { toolName }),
+      ...(ctx.agent != null && { agent: ctx.agent }),
+      ...(input != null && { input }),
+    },
+    ctx.servedAdcpVersion
+  );
 }
 
 /**

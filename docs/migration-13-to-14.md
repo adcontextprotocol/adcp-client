@@ -21,6 +21,28 @@ convergence, webhook retry horizons, and crash-safe continuation generation
 replacement. Beta.6 adds coordinated placements, seller-rendered stateful
 display, creative component assets, and A2A 1.0 request-signing method names.
 
+### Separate the server default from its supported ceiling
+
+An SDK 14 server can advertise and serve 3.2 without silently moving
+unversioned callers off 3.1:
+
+```ts
+const server = createAdcpServer({
+  adcpVersion: '3.2.0-rc.1',
+  defaultAdcpVersion: '3.1.18',
+  capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.1'] },
+  // handlers...
+});
+```
+
+`adcpVersion` is the maximum supported release; `defaultAdcpVersion` is used
+only when the caller supplies no version claim. Explicit 3.2 callers select
+3.2. Standard and custom handlers can read the immutable
+`servedAdcpVersion`, as can DecisioningPlatform request and task-handoff
+contexts. `responseEnhancer` receives the same value in its new optional
+second argument. Discovery without a version claim uses the default release,
+including MCP `tools/list`, generated capabilities, and A2A agent cards.
+
 ### A2A 1.0 peer upgrade
 
 SDK 14's AdCP 3.2 transport requires `@a2a-js/sdk` 1.x. Upgrade the peer

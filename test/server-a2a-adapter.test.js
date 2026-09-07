@@ -381,6 +381,25 @@ describe('createA2AAdapter', () => {
       assert.ok(!skillIds.includes('get_signals'));
     });
 
+    it('derives unversioned A2A discovery from the default rather than the supported ceiling', async () => {
+      const adcp = createAdcpServer({
+        name: 'dual-version A2A seller',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.1',
+        defaultAdcpVersion: '3.1.18',
+        capabilities: { supported_versions: ['3.1.18', '3.2.0-rc.1'] },
+        mediaBuy: {
+          getProducts: async () => ({ products: [] }),
+          listProducts: async () => ({ outcome: 'listed', products: [], feed_version: 'feed-1' }),
+        },
+      });
+
+      const card = await createA2AAdapter({ server: adcp, agentCard: baseCard() }).getAgentCard();
+      const skillIds = card.skills.map(skill => skill.id);
+      assert.ok(skillIds.includes('get_products'));
+      assert.ok(!skillIds.includes('list_products'));
+    });
+
     it('cannot reintroduce an unavailable tasks/get through A2A skill overrides', async () => {
       const adcp = createAdcpServer({
         name: '3.2 A2A task seller',

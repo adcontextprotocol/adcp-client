@@ -84,6 +84,7 @@ import {
   getSdkServer,
   isToolAvailableForVersion,
   listRegisteredToolNames,
+  resolveDiscoveryVersion,
   type AdcpAuthInfo,
   type AdcpServer,
 } from './adcp-server';
@@ -810,9 +811,8 @@ function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): A
     throw new Error('createA2AAdapter: only the JSONRPC A2A transport is supported');
   }
   const registeredTools = listRegisteredTools(server);
-  const tools = registeredTools.filter(toolName =>
-    isToolAvailableForVersion(server, toolName, server.getAdcpVersion())
-  );
+  const discoveryVersion = resolveDiscoveryVersion(server);
+  const tools = registeredTools.filter(toolName => isToolAvailableForVersion(server, toolName, discoveryVersion));
   const availableTools = new Set(tools);
   const registeredToolSet = new Set(registeredTools);
   const skills = filterPublicAgentCardSkills(
