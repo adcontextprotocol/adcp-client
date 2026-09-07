@@ -66,6 +66,18 @@ export interface AdcpErrorOptions {
    * convention.
    */
   issues?: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
+  /**
+   * Buyer-actionable classification. Populate when the top-level `code`
+   * is coarse or producer-internal and a buyer-safe `{code, message}` pair
+   * (drawn from the standard error vocabulary) would give the buyer's
+   * agent something to act on. Per AdCP 3.2 `core/error.json`, `message`
+   * MUST be safe to show to the buyer — no vendor identifiers, ad-server
+   * type names, internal object names, internal IDs, or stack traces. The
+   * envelope allowlist for `IDEMPOTENCY_CONFLICT` / `IDEMPOTENCY_IN_FLIGHT`
+   * drops this key — those codes are wire-shape-restricted and never carry
+   * a buyer-actionable classification.
+   */
+  buyer_reason?: { code: string; message: string };
 }
 
 export interface AdcpErrorPayload {
@@ -90,6 +102,11 @@ export interface AdcpErrorPayload {
    * compatibility.
    */
   issues?: Array<Omit<ValidationIssue, 'schemaPath'> & { schemaPath?: string }>;
+  /**
+   * Buyer-actionable classification of the failure. See
+   * {@link AdcpErrorOptions.buyer_reason} for the buyer-safety contract.
+   */
+  buyer_reason?: { code: string; message: string };
 }
 
 export interface AdcpErrorResponse {
@@ -186,6 +203,7 @@ export function adcpError(code: StandardErrorCode | (string & {}), options: Adcp
     ...(options.retry_after != null && { retry_after: options.retry_after }),
     ...(options.issues != null && { issues: options.issues }),
     ...(options.details != null && { details: options.details }),
+    ...(options.buyer_reason != null && { buyer_reason: options.buyer_reason }),
   };
 
   const filtered = applyAdcpErrorAllowlist(code, adcp_error as unknown as Record<string, unknown>);

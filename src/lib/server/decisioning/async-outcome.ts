@@ -83,6 +83,17 @@ export interface AdcpStructuredError {
    */
   retry_after?: number;
   details?: Record<string, unknown>;
+  /**
+   * Buyer-actionable classification of the failure. Use when the enclosing
+   * `code`/`message` is too coarse or carries producer-internal context that
+   * must not cross the buyer trust boundary. `code` reuses the standard
+   * error vocabulary; `message` MUST be buyer-safe (no vendor identifiers,
+   * ad-server type names, internal object names, internal IDs, or stack
+   * traces). When present, `recovery` classifies the buyer-actionable
+   * reason. See `core/error.json`'s `buyer_reason` field for the normative
+   * contract.
+   */
+  buyer_reason?: { code: string; message: string };
 }
 
 /**
@@ -114,6 +125,7 @@ export class AdcpError extends Error {
   readonly suggestion?: string;
   readonly retry_after?: number;
   readonly details?: Record<string, unknown>;
+  readonly buyer_reason?: { code: string; message: string };
 
   constructor(
     code: ErrorCode | (string & {}),
@@ -130,6 +142,15 @@ export class AdcpError extends Error {
       suggestion?: string;
       retry_after?: number;
       details?: Record<string, unknown>;
+      /**
+       * Buyer-actionable classification. When the enclosing `code`/`message`
+       * is too coarse or carries producer-internal context, populate this
+       * with a buyer-safe (`code`, `message`) pair drawn from the standard
+       * error vocabulary. Per spec, `message` MUST NOT contain vendor
+       * identifiers, ad-server type names, internal object names, internal
+       * IDs, or stack traces.
+       */
+      buyer_reason?: { code: string; message: string };
     }
   ) {
     super(options.message);
@@ -144,6 +165,7 @@ export class AdcpError extends Error {
     if (options.suggestion !== undefined) this.suggestion = options.suggestion;
     if (options.retry_after !== undefined) this.retry_after = options.retry_after;
     if (options.details !== undefined) this.details = options.details;
+    if (options.buyer_reason !== undefined) this.buyer_reason = options.buyer_reason;
   }
 
   /** Coerce to the structured envelope shape the framework projects to the wire. */
@@ -156,6 +178,7 @@ export class AdcpError extends Error {
       ...(this.suggestion !== undefined && { suggestion: this.suggestion }),
       ...(this.retry_after !== undefined && { retry_after: this.retry_after }),
       ...(this.details !== undefined && { details: this.details }),
+      ...(this.buyer_reason !== undefined && { buyer_reason: this.buyer_reason }),
     };
   }
 

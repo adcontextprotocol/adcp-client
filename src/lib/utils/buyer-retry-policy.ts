@@ -109,6 +109,17 @@ export interface RetryContext {
  * Override hook for adopters with vertical-specific policy needs.
  * Receives the error + context; returns a `RetryDecision` or `null` to fall
  * through to the default policy.
+ *
+ * The `error` argument is the full `AdcpStructuredError`, so an override
+ * registered under a coarse outer `code` (e.g. `INVALID_REQUEST`) can still
+ * key on `error.buyer_reason?.code` for a more specific action — useful when
+ * the seller emits a producer-internal top-level code but populates
+ * `buyer_reason` with a standard buyer-actionable classification like
+ * `BUDGET_TOO_LOW` or `CREATIVE_REJECTED`. Note that the overrides map is
+ * keyed by outer `error.code` only — an override that inspects
+ * `error.buyer_reason.code` MUST be registered under every outer code that
+ * might carry that buyer-actionable reason (or under the wildcard patterns
+ * an adopter's platform emits).
  */
 export type RetryDecisionOverride = (error: AdcpStructuredError, ctx: RetryContext) => RetryDecision | null;
 
