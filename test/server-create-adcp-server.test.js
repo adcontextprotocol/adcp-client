@@ -2989,6 +2989,39 @@ describe('createAdcpServer', () => {
       assert.strictEqual(listed.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
     });
 
+    it('projects a decorating registry ext onto get_task_status and list_tasks items', async () => {
+      const inner = createInMemoryTaskRegistry();
+      const held = await inner.create({ tool: 'create_media_buy', accountId: 'acct_1', ownerScope: 'api_key:buyer-1' });
+      const ext = { acme: { media_buy_id: 'mb_42', campaign_link: 'https://acme.example/c/42' } };
+      // A vendor decorator attaches the extension at read time; the built-in registry never stores it.
+      const taskRegistry = {
+        ...inner,
+        getTask: async (taskId, scope) => {
+          const record = await inner.getTask(taskId, scope);
+          return record && record.taskId === held.taskId ? { ...record, ext } : record;
+        },
+        list: async opts => {
+          const listed = await inner.list(opts);
+          return { ...listed, tasks: listed.tasks.map(t => (t.taskId === held.taskId ? { ...t, ext } : t)) };
+        },
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        resolveAccountFromAuth: async () => ({ id: 'acct_1' }),
+      });
+      const buyerOne = { authInfo: { credential: { kind: 'api_key', key_id: 'buyer-1' } } };
+
+      const status = await callTool(server, 'get_task_status', { task_id: held.taskId }, buyerOne);
+      assert.strictEqual(status.status, 'submitted');
+      assert.deepStrictEqual(status.ext, ext);
+
+      const listed = await callTool(server, 'list_tasks', {}, buyerOne);
+      assert.strictEqual(listed.tasks.length, 1);
+      assert.deepStrictEqual(listed.tasks[0].ext, ext);
+    });
+
     it('answers get_task_status/list_tasks from the scoped AdCP task registry only', async () => {
       const taskRegistry = createInMemoryTaskRegistry();
       const owned = await taskRegistry.create({

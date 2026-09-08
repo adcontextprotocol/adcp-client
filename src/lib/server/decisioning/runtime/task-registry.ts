@@ -145,6 +145,13 @@ export interface TaskRecord<TResult = unknown, TError extends AdcpStructuredErro
    */
   progress?: TaskHandoffProgress;
   /**
+   * Vendor-namespaced extension object projected as `ext` on task reads
+   * (`get_task_status`, `tasks_get`, `list_tasks` items). The built-in
+   * registries never persist it; a decorating registry attaches it at read
+   * time (e.g. the vendor-side object a task holds).
+   */
+  ext?: Record<string, unknown>;
+  /**
    * Whether the buyer wired `push_notification_config.url` and the dispatch
    * had an emitter capable of delivering it. Surfaced to the buyer via
    * `tasks_get`'s spec-defined
