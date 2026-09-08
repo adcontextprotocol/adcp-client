@@ -17,6 +17,7 @@ describe('brand helpers public exports', () => {
     assert.strictEqual(typeof sdk.extractBrandWebsiteAliases, 'function');
     assert.strictEqual(typeof sdk.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof sdk.updateBrandJsonFromMappings, 'function');
+    assert.strictEqual(typeof sdk.validateBrandDomain, 'function');
 
     assert.strictEqual(typeof brand.applyBrandAssetMappings, 'function');
     assert.strictEqual(typeof brand.validateBrandAssetMappings, 'function');
@@ -25,11 +26,13 @@ describe('brand helpers public exports', () => {
     assert.strictEqual(typeof brand.extractBrandWebsiteAliases, 'function');
     assert.strictEqual(typeof brand.extractBrandWebsiteAliasDomains, 'function');
     assert.strictEqual(typeof brand.updateBrandJsonFromMappings, 'function');
+    assert.strictEqual(typeof brand.validateBrandDomain, 'function');
 
     assert.strictEqual(sdk.applyBrandAssetMappings, brand.applyBrandAssetMappings);
     assert.strictEqual(sdk.selectLogoForSlot, brand.selectLogoForSlot);
     assert.strictEqual(sdk.extractBrandWebsiteAliases, brand.extractBrandWebsiteAliases);
     assert.strictEqual(sdk.extractBrandWebsiteAliasDomains, brand.extractBrandWebsiteAliasDomains);
+    assert.strictEqual(sdk.validateBrandDomain, brand.validateBrandDomain);
     assert.deepStrictEqual([...sdk.COMMON_LOGO_SLOTS], [...brand.COMMON_LOGO_SLOTS]);
 
     const esmSdk = await import('@adcp/sdk');
@@ -62,6 +65,8 @@ describe('brand helpers public exports', () => {
       'BrandWebsiteAliasRelationship',
       'BrandWebsiteAliasSource',
       'ExtractBrandWebsiteAliasesOptions',
+      'validateBrandDomain',
+      'ValidateBrandDomainOptions',
     ]) {
       assert.ok(rootDeclarations.includes(name), `dist/lib/index.d.ts must declare ${name}`);
       assert.ok(brandDeclarations.includes(name), `dist/lib/brand/index.d.ts must declare ${name}`);

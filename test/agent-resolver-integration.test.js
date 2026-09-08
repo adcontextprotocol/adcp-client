@@ -152,6 +152,50 @@ describe('resolveAgent — rejection codes', () => {
     );
   });
 
+  it('rejects unknown and special-use brand origins before fetching brand.json', async () => {
+    for (const [agentUrl, brandJsonUrl] of [
+      ['https://agent.company.unknown/mcp', 'https://brand.company.unknown/.well-known/brand.json'],
+      ['https://agent.10.in-addr.arpa/mcp', 'https://brand.10.in-addr.arpa/.well-known/brand.json'],
+    ]) {
+      await assertCode(
+        () =>
+          resolveAgent(agentUrl, {
+            fetchCapabilities: fakeCapabilities({ identity: { brand_json_url: brandJsonUrl } }),
+          }),
+        'request_signature_brand_origin_mismatch'
+      );
+    }
+  });
+
+  it('does not let allowPrivateIp admit reverse-DNS or unknown-suffix hosts', async () => {
+    for (const host of ['agent.10.in-addr.arpa', 'agent.company.unknown']) {
+      await assertCode(
+        () =>
+          resolveAgent(`https://${host}/mcp`, {
+            allowPrivateIp: true,
+            fetchCapabilities: fakeCapabilities({
+              identity: { brand_json_url: `https://${host}/.well-known/brand.json` },
+            }),
+          }),
+        'request_signature_brand_origin_mismatch'
+      );
+    }
+  });
+
+  it('keeps the explicit allowPrivateIp localhost development path', async () => {
+    const localhostBaseUrl = baseUrl.replace('127.0.0.1', 'localhost');
+    await assertCode(
+      () =>
+        resolveAgent(`${localhostBaseUrl}/mcp`, {
+          allowPrivateIp: true,
+          fetchCapabilities: fakeCapabilities({
+            identity: { brand_json_url: `${localhostBaseUrl}/missing-brand.json` },
+          }),
+        }),
+      'request_signature_brand_json_unreachable'
+    );
+  });
+
   it('request_signature_brand_json_unreachable on 404', async () => {
     routes['/.well-known/brand.json'] = { status: 404, body: {} };
     await assertCode(

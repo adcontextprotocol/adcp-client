@@ -28,8 +28,10 @@
  *     `SsrfRefusedError` carries.
  */
 
-import { createA2AClient, createMCPClient } from '../../protocols';
+import { parse as parseTld } from 'tldts';
 
+import { createA2AClient, createMCPClient } from '../../protocols';
+import { isDevelopmentBrandDomain } from '../../brand/domain';
 import type { IdentityKeyOriginPurpose, IdentityPosture } from './capabilities-types';
 import { readBrandJsonUrl, readIdentityPosture } from './capabilities-types';
 import { canonicalizeOrigin } from './canonicalize';
@@ -255,9 +257,28 @@ export async function resolveAgent(agentUrl: string, options: ResolveAgentOption
     if (allowPrivateIp) {
       const agentHost = new URL(agentUrl).hostname;
       const brandHost = new URL(brandJsonUrl).hostname;
-      agentEtld1 = agentHost;
-      brandEtld1 = brandHost;
-      sameOrigin = agentHost === brandHost;
+      const agentIsExplicitDevelopmentHost =
+        agentHost === 'localhost' ||
+        isDevelopmentBrandDomain(agentHost) ||
+        parseTld(agentHost, { extractHostname: false }).isIp;
+      const brandIsExplicitDevelopmentHost =
+        brandHost === 'localhost' ||
+        isDevelopmentBrandDomain(brandHost) ||
+        parseTld(brandHost, { extractHostname: false }).isIp;
+      if (agentIsExplicitDevelopmentHost && brandIsExplicitDevelopmentHost) {
+        agentEtld1 = agentHost;
+        brandEtld1 = brandHost;
+        sameOrigin = agentHost === brandHost;
+      } else {
+        const detail: AgentResolverErrorDetail = { agent_url: agentUrl, brand_json_url: brandJsonUrl };
+        pushTrace(trace, { step: 3, name: 'etld1_binding', ok: false, detail });
+        throw new AgentResolverError(
+          'request_signature_brand_origin_mismatch',
+          `Cannot compute eTLD+1 for agent or brand.json host`,
+          detail,
+          ['agent_url', 'brand_json_url']
+        );
+      }
     } else {
       const detail: AgentResolverErrorDetail = { agent_url: agentUrl, brand_json_url: brandJsonUrl };
       pushTrace(trace, { step: 3, name: 'etld1_binding', ok: false, detail });
@@ -543,7 +564,10 @@ function findAuthorizedOperator(
   brandJson: unknown,
   agentEtld1: string,
   now: number,
-  options: Pick<ResolveAgentOptions, 'requiredOperatorBrand' | 'requiredOperatorScope' | 'requiredOperatorCountry'>
+  options: Pick<
+    ResolveAgentOptions,
+    'requiredOperatorBrand' | 'requiredOperatorScope' | 'requiredOperatorCountry' | 'allowPrivateIp'
+  >
 ): ActiveOperatorDelegation | undefined {
   if (!brandJson || typeof brandJson !== 'object') return undefined;
   const operators = (brandJson as { authorized_operators?: unknown }).authorized_operators;
@@ -561,7 +585,9 @@ function findAuthorizedOperator(
     try {
       if (eTldPlusOne(domain) !== agentEtld1) continue;
     } catch {
-      continue;
+      if (!(options.allowPrivateIp && isDevelopmentBrandDomain(domain) && domain === agentEtld1)) {
+        continue;
+      }
     }
 
     const scopes = candidate.scopes;

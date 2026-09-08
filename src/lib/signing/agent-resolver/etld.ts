@@ -15,6 +15,7 @@
  */
 import { parse as parseTld } from 'tldts';
 
+import { isSpecialUseBrandDomain } from '../../brand/domain';
 import { canonicalizeHost } from './canonicalize';
 
 export const PSL_SNAPSHOT_VERSION = 'tldts@7';
@@ -39,11 +40,20 @@ export class EtldComputationError extends Error {
  */
 export function eTldPlusOne(hostOrUrl: string): string {
   const host = canonicalizeHost(extractHost(hostOrUrl));
-  const result = parseTld(host, { allowPrivateDomains: true });
+  const result = parseTld(host, {
+    allowPrivateDomains: true,
+    detectSpecialUse: true,
+    extractHostname: false,
+  });
   if (result.isIp) {
     throw new EtldComputationError(`Cannot compute eTLD+1 for IP literal`, { hostOrUrl });
   }
-  if (!result.domain) {
+  if (
+    result.isSpecialUse ||
+    isSpecialUseBrandDomain(host) ||
+    !result.domain ||
+    (!result.isIcann && !result.isPrivate)
+  ) {
     throw new EtldComputationError(`No PSL match for hostname`, { hostOrUrl });
   }
   return canonicalizeHost(result.domain);

@@ -35,8 +35,8 @@ const { readBrandJsonUrl, readIdentityPosture } = require('../dist/lib/signing/a
 
 describe('eTLD+1 helper', () => {
   it('returns the registrable domain for ICANN suffixes', () => {
-    assert.equal(eTldPlusOne('https://buyer.example.com/mcp'), 'example.com');
-    assert.equal(eTldPlusOne('a.b.c.d.example.co.uk'), 'example.co.uk');
+    assert.equal(eTldPlusOne('https://buyer.adcontextprotocol.org/mcp'), 'adcontextprotocol.org');
+    assert.equal(eTldPlusOne('a.b.c.d.acme.co.uk'), 'acme.co.uk');
   });
   it('treats PSL PRIVATE-section suffixes as suffixes', () => {
     // The whole point of allowPrivateDomains: foo.vercel.app must NOT share
@@ -48,18 +48,18 @@ describe('eTLD+1 helper', () => {
     assert.notEqual(eTldPlusOne('foo.vercel.app'), eTldPlusOne('bar.vercel.app'));
   });
   it('lowercases hosts before comparison', () => {
-    assert.equal(eTldPlusOne('https://Example.COM/'), 'example.com');
+    assert.equal(eTldPlusOne('https://AdContextProtocol.ORG/'), 'adcontextprotocol.org');
   });
   it('handles IDN via Punycode', () => {
-    assert.equal(eTldPlusOne('https://Bücher.example/'), 'xn--bcher-kva.example');
+    assert.equal(eTldPlusOne('https://Bücher.de/'), 'xn--bcher-kva.de');
   });
   it('throws on IP literals', () => {
     assert.throws(() => eTldPlusOne('https://1.2.3.4/'), EtldComputationError);
     assert.throws(() => eTldPlusOne('https://[::1]/'), EtldComputationError);
   });
   it('sameEtldPlusOne returns false on either-side error rather than throwing', () => {
-    assert.equal(sameEtldPlusOne('https://example.com/', 'https://1.2.3.4/'), false);
-    assert.equal(sameEtldPlusOne('https://buyer.example.com/', 'https://api.example.com/'), true);
+    assert.equal(sameEtldPlusOne('https://adcontextprotocol.org/', 'https://1.2.3.4/'), false);
+    assert.equal(sameEtldPlusOne('https://buyer.adcontextprotocol.org/', 'https://api.adcontextprotocol.org/'), true);
   });
 });
 
