@@ -152,6 +152,21 @@ describe('resolveAgent — rejection codes', () => {
     );
   });
 
+  it('rejects unknown and special-use brand origins before fetching brand.json', async () => {
+    for (const [agentUrl, brandJsonUrl] of [
+      ['https://agent.company.unknown/mcp', 'https://brand.company.unknown/.well-known/brand.json'],
+      ['https://agent.10.in-addr.arpa/mcp', 'https://brand.10.in-addr.arpa/.well-known/brand.json'],
+    ]) {
+      await assertCode(
+        () =>
+          resolveAgent(agentUrl, {
+            fetchCapabilities: fakeCapabilities({ identity: { brand_json_url: brandJsonUrl } }),
+          }),
+        'request_signature_brand_origin_mismatch'
+      );
+    }
+  });
+
   it('request_signature_brand_json_unreachable on 404', async () => {
     routes['/.well-known/brand.json'] = { status: 404, body: {} };
     await assertCode(

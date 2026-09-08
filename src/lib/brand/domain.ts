@@ -5,6 +5,27 @@ import { canonicalizeHost } from '../signing/agent-resolver/canonicalize';
 const DOTTED_WIRE_DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const DEVELOPMENT_SUFFIXES = ['localhost', 'test', 'example', 'invalid'] as const;
 const DEVELOPMENT_EXACT_NAMES = new Set(['example.com', 'example.net', 'example.org']);
+const SPECIAL_USE_SUFFIXES = [
+  'alt',
+  '6tisch.arpa',
+  'eap.arpa',
+  'eap-noob.arpa',
+  'home.arpa',
+  'in-addr.arpa',
+  'ip6.arpa',
+  'ipv4only.arpa',
+  'resolver.arpa',
+  'service.arpa',
+  'example',
+  'example.com',
+  'example.net',
+  'example.org',
+  'invalid',
+  'local',
+  'localhost',
+  'onion',
+  'test',
+] as const;
 
 export type BrandDomainValidationCode = 'invalid_syntax' | 'not_registrable' | 'special_use_not_allowed';
 
@@ -68,7 +89,7 @@ export function validateBrandDomain(domain: string, options: ValidateBrandDomain
     detectSpecialUse: true,
     extractHostname: false,
   });
-  if (parsed.isSpecialUse || developmentName) {
+  if (parsed.isSpecialUse || developmentName || isSpecialUseBrandDomain(canonical)) {
     throw new BrandDomainValidationError('special_use_not_allowed', domain);
   }
   if (parsed.isIp || !parsed.domain || (!parsed.isIcann && !parsed.isPrivate)) {
@@ -80,4 +101,8 @@ export function validateBrandDomain(domain: string, options: ValidateBrandDomain
 export function isDevelopmentBrandDomain(domain: string): boolean {
   if (DEVELOPMENT_EXACT_NAMES.has(domain)) return true;
   return DEVELOPMENT_SUFFIXES.some(suffix => domain.endsWith(`.${suffix}`));
+}
+
+export function isSpecialUseBrandDomain(domain: string): boolean {
+  return SPECIAL_USE_SUFFIXES.some(suffix => domain === suffix || domain.endsWith(`.${suffix}`));
 }

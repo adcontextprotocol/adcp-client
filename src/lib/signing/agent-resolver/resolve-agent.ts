@@ -29,6 +29,7 @@
  */
 
 import { createA2AClient, createMCPClient } from '../../protocols';
+import { isDevelopmentBrandDomain } from '../../brand/domain';
 
 import type { IdentityKeyOriginPurpose, IdentityPosture } from './capabilities-types';
 import { readBrandJsonUrl, readIdentityPosture } from './capabilities-types';
@@ -543,7 +544,10 @@ function findAuthorizedOperator(
   brandJson: unknown,
   agentEtld1: string,
   now: number,
-  options: Pick<ResolveAgentOptions, 'requiredOperatorBrand' | 'requiredOperatorScope' | 'requiredOperatorCountry'>
+  options: Pick<
+    ResolveAgentOptions,
+    'requiredOperatorBrand' | 'requiredOperatorScope' | 'requiredOperatorCountry' | 'allowPrivateIp'
+  >
 ): ActiveOperatorDelegation | undefined {
   if (!brandJson || typeof brandJson !== 'object') return undefined;
   const operators = (brandJson as { authorized_operators?: unknown }).authorized_operators;
@@ -561,7 +565,9 @@ function findAuthorizedOperator(
     try {
       if (eTldPlusOne(domain) !== agentEtld1) continue;
     } catch {
-      continue;
+      if (!(options.allowPrivateIp && isDevelopmentBrandDomain(domain) && domain === agentEtld1)) {
+        continue;
+      }
     }
 
     const scopes = candidate.scopes;

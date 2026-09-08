@@ -43,4 +43,14 @@ describe('BrandRef domain validation', () => {
       BrandDomainValidationError
     );
   });
+
+  it('rejects reverse-DNS and other IANA special-use namespaces', () => {
+    for (const domain of ['brand.10.in-addr.arpa', 'brand.ip6.arpa', 'brand.home.arpa', 'brand.onion']) {
+      assert.throws(
+        () => validateBrandDomain(domain),
+        error => error instanceof BrandDomainValidationError && error.code === 'special_use_not_allowed',
+        domain
+      );
+    }
+  });
 });
