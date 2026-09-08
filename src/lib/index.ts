@@ -144,13 +144,16 @@ export type {
 // ====== BRAND JSON HELPERS ======
 export {
   COMMON_LOGO_SLOTS,
+  BrandDomainValidationError,
   applyBrandAssetMappings,
   checkLogoSlotCoverage,
   extractBrandWebsiteAliasDomains,
   extractBrandWebsiteAliases,
+  isDevelopmentBrandDomain,
   selectLogoForSlot,
   updateBrandJsonFromMappings,
   validateBrandAssetMappings,
+  validateBrandDomain,
 } from './brand';
 export type {
   AppliedBrandAssetMapping,
@@ -168,6 +171,7 @@ export type {
   BrandWebsiteAliasRelationship,
   BrandWebsiteAliasSource,
   BrandJsonRecord,
+  BrandDomainValidationCode,
   BrandLogoBackground,
   BrandLogoOrientation,
   BrandLogoProposal,
@@ -180,6 +184,7 @@ export type {
   SkippedBrandAssetMapping,
   UpdateBrandJsonFromMappingsOptions,
   UpdateBrandJsonFromMappingsResult,
+  ValidateBrandDomainOptions,
 } from './brand';
 
 // ====== PROPERTY DISCOVERY (AdCP v2.2.0) ======

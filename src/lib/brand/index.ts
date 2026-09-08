@@ -1,6 +1,9 @@
 import type { RegistryClient, SaveBrandResponse } from '../registry';
 import type { GetBrandIdentitySuccess } from '../types/core.generated';
 
+export { BrandDomainValidationError, isDevelopmentBrandDomain, validateBrandDomain } from './domain';
+export type { BrandDomainValidationCode, ValidateBrandDomainOptions } from './domain';
+
 export type BrandJsonRecord = Record<string, unknown>;
 type ProtocolBrandLogo = NonNullable<GetBrandIdentitySuccess['logos']>[number];
 
