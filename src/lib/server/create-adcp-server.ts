@@ -2547,6 +2547,18 @@ function shouldCacheIdempotencyResponse(response: McpToolResponse): boolean {
  * `isThrownAdcpError` unwrap, but for the in-process class throw rather
  * than the already-projected envelope throw.
  */
+/**
+ * @internal Exposed for regression tests only — not part of the public API.
+ *
+ * Serializes a caught `AdcpError` into an MCP envelope by delegating to
+ * `adcpError()`. The `buyer_reason` spread here is load-bearing: a refactor
+ * that drops it silently loses the field on every sync-throw code path
+ * (`test/error-extraction.test.js` pins this).
+ */
+export function __unstable__projectThrownAdcpError(err: AdcpError): McpToolResponse {
+  return projectThrownAdcpError(err);
+}
+
 function projectThrownAdcpError(err: AdcpError): McpToolResponse {
   return adcpError(err.code, {
     recovery: err.recovery,
@@ -2555,6 +2567,7 @@ function projectThrownAdcpError(err: AdcpError): McpToolResponse {
     ...(err.suggestion !== undefined && { suggestion: err.suggestion }),
     ...(err.retry_after !== undefined && { retry_after: err.retry_after }),
     ...(err.details !== undefined && { details: err.details }),
+    ...(err.buyer_reason !== undefined && { buyer_reason: err.buyer_reason }),
   });
 }
 
@@ -3646,7 +3659,7 @@ function sanitizePayloadError(value: unknown): unknown {
     message: typeof safe.message === 'string' ? safe.message : 'operation failed',
     recovery: STANDARD_ERROR_CODES[code].recovery,
   };
-  for (const key of ['field', 'suggestion', 'retry_after', 'issues']) {
+  for (const key of ['field', 'suggestion', 'retry_after', 'issues', 'buyer_reason']) {
     if (safe[key] !== undefined) projected[key] = safe[key];
   }
   if (safe.details !== undefined) {
@@ -3763,6 +3776,7 @@ const PAYLOAD_ERROR_FIELDS: ReadonlySet<string> = new Set([
   'retry_after',
   'issues',
   'details',
+  'buyer_reason',
 ]);
 
 function projectEnvelopeToPayloadError(envelope: Record<string, unknown>): Record<string, unknown> {

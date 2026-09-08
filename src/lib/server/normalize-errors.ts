@@ -38,6 +38,13 @@ export interface NormalizedError {
   retry_after?: number;
   details?: Record<string, unknown>;
   recovery?: 'transient' | 'correctable' | 'terminal';
+  /**
+   * Buyer-actionable classification of the failure. See
+   * `core/error.json`'s `buyer_reason` field. `message` MUST be
+   * buyer-safe — no vendor identifiers, ad-server type names, internal
+   * object names, internal IDs, or stack traces.
+   */
+  buyer_reason?: { code: string; message: string };
 }
 
 /**
@@ -47,10 +54,12 @@ export interface NormalizedError {
  *   - `string` → `{ code: 'GENERIC_ERROR', message: <input>, recovery: 'terminal' }`
  *   - `Error` instance → `{ code: 'GENERIC_ERROR', message: err.message, recovery: 'terminal' }`
  *   - `AdcpError` instance → projected to wire shape using its `code` /
- *     `recovery` / `field` / `suggestion` / `retry_after` / `details`
+ *     `recovery` / `field` / `suggestion` / `retry_after` / `details` /
+ *     `buyer_reason`
  *   - Plain object with `code` + `message` → fields whitelisted to the
- *     wire shape; vendor-specific fields dropped (use `details` for
- *     vendor extensions)
+ *     wire shape (including `buyer_reason` when both `code` and `message`
+ *     are non-empty strings); vendor-specific fields dropped (use `details`
+ *     for vendor extensions)
  *   - Any other object → `{ code: 'GENERIC_ERROR', message: <safeStringify>, recovery: 'terminal' }`
  *   - `null` / `undefined` → `{ code: 'GENERIC_ERROR', message: 'Unknown error', recovery: 'terminal' }`
  *
@@ -91,6 +100,21 @@ export function normalizeError(input: unknown): NormalizedError {
       // Shallow copy to break aliasing; adopter is responsible for sanitizing
       // via pickSafeDetails before reaching here.
       out.details = { ...(obj.details as Record<string, unknown>) };
+    }
+    // `buyer_reason` per AdCP 3.2 core/error.json. Mirror the strictness of
+    // the reader-side extractor (`mapBuyerReason` in `error-extraction.ts`):
+    // require non-empty `code` AND non-empty `message` strings; drop a
+    // half-formed payload rather than forward it to the wire.
+    if (typeof obj.buyer_reason === 'object' && obj.buyer_reason !== null) {
+      const br = obj.buyer_reason as Record<string, unknown>;
+      if (
+        typeof br.code === 'string' &&
+        br.code.length > 0 &&
+        typeof br.message === 'string' &&
+        br.message.length > 0
+      ) {
+        out.buyer_reason = { code: br.code, message: br.message };
+      }
     }
     return out;
   }

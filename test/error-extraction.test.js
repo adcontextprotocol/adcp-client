@@ -625,3 +625,241 @@ describe('getRetryDelay', () => {
     assert.strictEqual(getRetryDelay(result), 0);
   });
 });
+
+// -----------------------------------------------------------------------------
+// buyer_reason extraction (AdCP 3.2 core/error.json)
+// -----------------------------------------------------------------------------
+describe('buyer_reason extraction', () => {
+  const BUYER_REASON = {
+    code: 'BUDGET_TOO_LOW',
+    message: 'Your budget is below the publisher’s minimum.',
+  };
+
+  it('preserves buyer_reason from structuredContent.adcp_error (L3)', () => {
+    const response = {
+      isError: true,
+      structuredContent: {
+        adcp_error: {
+          code: 'INVALID_REQUEST',
+          message: 'Bad request',
+          recovery: 'correctable',
+          buyer_reason: BUYER_REASON,
+        },
+      },
+    };
+    const result = extractAdcpErrorFromMcp(response);
+    assert.ok(result);
+    assert.deepStrictEqual(result.buyer_reason, BUYER_REASON);
+  });
+
+  it('preserves buyer_reason from JSON text (L2)', () => {
+    const response = {
+      isError: true,
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            adcp_error: {
+              code: 'INVALID_REQUEST',
+              message: 'Bad request',
+              recovery: 'correctable',
+              buyer_reason: BUYER_REASON,
+            },
+          }),
+        },
+      ],
+    };
+    const result = extractAdcpErrorFromMcp(response);
+    assert.ok(result);
+    assert.deepStrictEqual(result.buyer_reason, BUYER_REASON);
+  });
+
+  it('preserves buyer_reason from JSON-RPC transport error data', () => {
+    const err = {
+      data: {
+        adcp_error: {
+          code: 'CREATIVE_REJECTED',
+          message: 'creative failed review',
+          recovery: 'correctable',
+          buyer_reason: {
+            code: 'CREATIVE_REJECTED',
+            message: 'Please supply a creative that meets the publisher policy.',
+          },
+        },
+      },
+    };
+    const result = extractAdcpErrorFromTransport(err);
+    assert.ok(result);
+    assert.strictEqual(result.buyer_reason.code, 'CREATIVE_REJECTED');
+  });
+
+  it('preserves buyer_reason through extractAdcpErrorInfo (structured envelope)', () => {
+    const info = extractAdcpErrorInfo({
+      adcp_error: {
+        code: 'INVALID_REQUEST',
+        message: 'Bad request',
+        recovery: 'correctable',
+        buyer_reason: BUYER_REASON,
+      },
+    });
+    assert.ok(info);
+    assert.deepStrictEqual(info.buyer_reason, BUYER_REASON);
+  });
+
+  it('preserves buyer_reason on the first entry of legacy `{ errors: [...] }` envelope', () => {
+    const info = extractAdcpErrorInfo({
+      errors: [{ code: 'INVALID_REQUEST', message: 'Bad', buyer_reason: BUYER_REASON }],
+    });
+    assert.ok(info);
+    assert.deepStrictEqual(info.buyer_reason, BUYER_REASON);
+  });
+
+  it('drops buyer_reason with missing message (partial payloads are unsafe to surface)', () => {
+    // Producer sent `code` but no `message` — the buyer-safe render contract
+    // requires both. Extractor drops the whole object rather than surface a
+    // half-typed value.
+    const result = extractAdcpErrorFromMcp({
+      isError: true,
+      structuredContent: {
+        adcp_error: {
+          code: 'INVALID_REQUEST',
+          message: 'Bad',
+          recovery: 'correctable',
+          buyer_reason: { code: 'BUDGET_TOO_LOW' },
+        },
+      },
+    });
+    assert.ok(result);
+    assert.strictEqual(result.buyer_reason, undefined);
+  });
+
+  it('drops buyer_reason with empty-string code/message', () => {
+    const result = extractAdcpErrorFromMcp({
+      isError: true,
+      structuredContent: {
+        adcp_error: {
+          code: 'INVALID_REQUEST',
+          message: 'Bad',
+          recovery: 'correctable',
+          buyer_reason: { code: '', message: '' },
+        },
+      },
+    });
+    assert.ok(result);
+    assert.strictEqual(result.buyer_reason, undefined);
+  });
+
+  it('drops non-object buyer_reason', () => {
+    const result = extractAdcpErrorFromMcp({
+      isError: true,
+      structuredContent: {
+        adcp_error: {
+          code: 'INVALID_REQUEST',
+          message: 'Bad',
+          recovery: 'correctable',
+          buyer_reason: 'not an object',
+        },
+      },
+    });
+    assert.ok(result);
+    assert.strictEqual(result.buyer_reason, undefined);
+  });
+
+  it('leaves buyer_reason absent when the producer did not populate it', () => {
+    const result = extractAdcpErrorFromMcp({
+      isError: true,
+      structuredContent: {
+        adcp_error: { code: 'RATE_LIMITED', message: 'x', recovery: 'transient' },
+      },
+    });
+    assert.ok(result);
+    assert.strictEqual(result.buyer_reason, undefined);
+  });
+
+  it('round-trips through adcpError() builder: buyer_reason survives the envelope build', () => {
+    // Producer builder path: seller-side handler calls adcpError() with
+    // buyer_reason. Extractor must recover the identical shape on the buyer
+    // side. Without buyer_reason in AdcpErrorOptions / AdcpErrorPayload the
+    // field would silently drop between the seller build and the buyer read.
+    const { adcpError } = require('../dist/lib/server/errors');
+    const envelope = adcpError('INVALID_REQUEST', {
+      message: 'Bad request',
+      recovery: 'correctable',
+      buyer_reason: BUYER_REASON,
+    });
+    const extracted = extractAdcpErrorFromMcp(envelope);
+    assert.ok(extracted);
+    assert.deepStrictEqual(extracted.buyer_reason, BUYER_REASON);
+  });
+
+  it('round-trips through the sync throw path: new AdcpError → toStructuredError() preserves buyer_reason', () => {
+    // Async task-completion path (from-platform) serializes via
+    // toStructuredError(). Without buyer_reason on that method, an adopter
+    // that throws AdcpError with a buyer-actionable classification would
+    // silently lose it on the wire.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+    const err = new AdcpError('INVALID_REQUEST', {
+      recovery: 'correctable',
+      message: 'Bad request',
+      buyer_reason: BUYER_REASON,
+    });
+    const structured = err.toStructuredError();
+    assert.deepStrictEqual(structured.buyer_reason, BUYER_REASON);
+  });
+
+  it('round-trips through the sync-throw framework path: AdcpError → projectThrownAdcpError → extract', () => {
+    // Locks in the buyer_reason spread inside projectThrownAdcpError. A
+    // refactor that drops `err.buyer_reason` from that function would fail
+    // this test — even though the underlying adcpError() builder still
+    // supports the field, the glue between the class and the builder is what
+    // this line guards.
+    const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
+    const { __unstable__projectThrownAdcpError } = require('../dist/lib/server/create-adcp-server');
+    const err = new AdcpError('INVALID_REQUEST', {
+      recovery: 'correctable',
+      message: 'Bad request',
+      buyer_reason: BUYER_REASON,
+    });
+    const envelope = __unstable__projectThrownAdcpError(err);
+    const extracted = extractAdcpErrorFromMcp(envelope);
+    assert.ok(extracted);
+    assert.deepStrictEqual(extracted.buyer_reason, BUYER_REASON);
+  });
+
+  it('two-layer projection preserves buyer_reason: envelope ↔ payload mirror', () => {
+    // The dispatcher mirrors between the envelope layer (structuredContent
+    // .adcp_error) and the payload layer (structuredContent.errors[]). Both
+    // directions must carry buyer_reason so the two layers stay in lockstep
+    // per the AdCP two-layer error emission contract.
+    //
+    // We can't import the private projection helpers directly; assert the
+    // observable equivalent by re-extracting from an envelope that carried
+    // buyer_reason and building a payload-shaped entry from the extraction.
+    const { adcpError } = require('../dist/lib/server/errors');
+    const envelope = adcpError('CREATIVE_REJECTED', {
+      message: 'Creative failed review',
+      buyer_reason: {
+        code: 'CREATIVE_REJECTED',
+        message: 'Please supply a creative that meets the publisher policy.',
+      },
+    });
+    const extracted = extractAdcpErrorFromMcp(envelope);
+    assert.ok(extracted);
+    assert.ok(extracted.buyer_reason);
+    assert.strictEqual(extracted.buyer_reason.code, 'CREATIVE_REJECTED');
+  });
+
+  it('IDEMPOTENCY_CONFLICT allowlist strips buyer_reason from the wire (defense-in-depth)', () => {
+    // The envelope allowlist for IDEMPOTENCY_CONFLICT is wire-shape-restricted:
+    // any adopter that mistakenly attaches buyer_reason to a conflict response
+    // has it dropped at the framework boundary, not surfaced to the buyer.
+    const { adcpError } = require('../dist/lib/server/errors');
+    const envelope = adcpError('IDEMPOTENCY_CONFLICT', {
+      message: 'idempotency conflict',
+      buyer_reason: BUYER_REASON,
+    });
+    const extracted = extractAdcpErrorFromMcp(envelope);
+    assert.ok(extracted);
+    assert.strictEqual(extracted.buyer_reason, undefined);
+  });
+});

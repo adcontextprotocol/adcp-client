@@ -22,6 +22,11 @@ export interface ExtractedAdcpError {
   retry_after?: number;
   details?: Record<string, unknown>;
   issues?: AdcpValidationIssue[];
+  /**
+   * Buyer-actionable classification. Mirrors `AdcpErrorInfo.buyer_reason`;
+   * `message` is buyer-safe by spec (no vendor identifiers, no internal IDs).
+   */
+  buyer_reason?: { code: string; message: string };
   /** Where the error was found in the response */
   source: 'structuredContent' | 'text_json' | 'text_pattern';
   /** The compliance level this delivery achieves */
@@ -177,6 +182,30 @@ function mapValidationIssues(raw: unknown): AdcpValidationIssue[] | undefined {
   return mapped.length > 0 ? mapped : undefined;
 }
 
+/**
+ * Extract a well-formed `buyer_reason` sub-object.
+ *
+ * Returns `undefined` when the input is absent or its shape does not meet the
+ * spec's minimum contract (non-empty `code` string AND non-empty `message`
+ * string at `core/error.json`'s `buyer_reason`). A partial payload — e.g. a
+ * producer that sent `code` but no `message` — is dropped rather than
+ * surfacing a half-typed value that callers might render to a buyer.
+ *
+ * The wire schema keeps `buyer_reason` open for forward compatibility; the
+ * extractor deliberately narrows to `{code, message}` and drops any extra
+ * keys, so a future SDK bump is required before consumers can rely on
+ * additional fields.
+ */
+function mapBuyerReason(raw: unknown): { code: string; message: string } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const code = obj.code;
+  const message = obj.message;
+  if (typeof code !== 'string' || code.length === 0) return undefined;
+  if (typeof message !== 'string' || message.length === 0) return undefined;
+  return { code, message };
+}
+
 function buildExtracted(
   obj: any,
   source: ExtractedAdcpError['source'],
@@ -196,6 +225,8 @@ function buildExtracted(
   if (obj.details != null) result.details = obj.details;
   const mappedIssues = mapValidationIssues(obj.issues);
   if (mappedIssues) result.issues = mappedIssues;
+  const buyerReason = mapBuyerReason(obj.buyer_reason);
+  if (buyerReason) result.buyer_reason = buyerReason;
   return result;
 }
 
@@ -261,19 +292,24 @@ export function extractAdcpErrorInfo(data: any): AdcpErrorInfo | undefined {
     if (ae.details != null) info.details = ae.details;
     const mappedIssues = mapValidationIssues(ae.issues);
     if (mappedIssues) info.issues = mappedIssues;
+    const buyerReason = mapBuyerReason(ae.buyer_reason);
+    if (buyerReason) info.buyer_reason = buyerReason;
     if (ae.synthetic) info.synthetic = true;
     return info;
   }
 
   // Legacy `{ errors: [...] }` envelope — L1 compat only. Extracts code/message/recovery
-  // from errors[0]; does not forward issues[], field, suggestion, or details since this
-  // path is only reached for non-standard envelopes that are unlikely to carry issues[].
+  // (and `buyer_reason` when the seller populated it on the first entry) from errors[0];
+  // does not forward issues[], field, suggestion, or details since this path is only
+  // reached for non-standard envelopes that are unlikely to carry them.
   if (Array.isArray(data.errors) && data.errors.length > 0) {
     const first = data.errors[0];
     if (typeof first.code === 'string') {
       const info: AdcpErrorInfo = { code: first.code, message: first.message || '' };
       const recovery = resolveRecovery(first);
       if (recovery) info.recovery = recovery;
+      const buyerReason = mapBuyerReason(first.buyer_reason);
+      if (buyerReason) info.buyer_reason = buyerReason;
       return info;
     }
   }

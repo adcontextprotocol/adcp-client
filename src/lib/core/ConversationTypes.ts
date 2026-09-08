@@ -406,6 +406,17 @@ export interface AdcpErrorInfo {
    * the field, `'enum'` → pick a valid value, `'type'` → fix the value type.
    */
   issues?: AdcpValidationIssue[];
+  /**
+   * Buyer-actionable classification of the failure. Present when the enclosing
+   * `code`/`message` is too coarse or carries producer-internal context that
+   * must not cross the buyer trust boundary. `code` reuses the standard error
+   * vocabulary; `message` is buyer-safe by spec — no vendor identifiers,
+   * ad-server type names, internal object names, internal IDs, or stack traces
+   * — so it may be rendered directly to a buyer UI. When present, the
+   * enclosing `recovery` classifies the buyer-actionable reason. See
+   * `core/error.json`'s `buyer_reason` field for the normative contract.
+   */
+  buyer_reason?: { code: string; message: string };
   /** True when the SDK inferred this error from unstructured text (L1 compliance) */
   synthetic?: boolean;
 }

@@ -311,3 +311,57 @@ describe('BuyerRetryPolicy — overrides', () => {
     assert.equal(d.action, 'mutate-and-retry');
   });
 });
+
+describe('buyer_reason visibility in overrides', () => {
+  it('override receives error.buyer_reason and can key on buyer_reason.code', () => {
+    // Seller emitted a coarse INVALID_REQUEST but populated a buyer-actionable
+    // BUDGET_TOO_LOW in buyer_reason. Override keys off buyer_reason.code and
+    // routes to the correct decision.
+    let seen;
+    const policy = new BuyerRetryPolicy({
+      overrides: {
+        INVALID_REQUEST: error => {
+          seen = error.buyer_reason?.code;
+          if (error.buyer_reason?.code === 'BUDGET_TOO_LOW') {
+            return {
+              action: 'mutate-and-retry',
+              delayMs: 0,
+              attemptCap: 2,
+              sameIdempotencyKey: false,
+              reason: 'budget',
+              suggestion: error.buyer_reason.message,
+            };
+          }
+          return null;
+        },
+      },
+    });
+
+    const d = policy.decide(
+      err('INVALID_REQUEST', {
+        buyer_reason: {
+          code: 'BUDGET_TOO_LOW',
+          message: 'Raise the budget above the publisher minimum.',
+        },
+      })
+    );
+
+    assert.equal(seen, 'BUDGET_TOO_LOW');
+    assert.equal(d.action, 'mutate-and-retry');
+    assert.equal(d.reason, 'budget');
+    assert.match(d.suggestion, /publisher minimum/);
+  });
+
+  it('default policy is unaffected by buyer_reason presence (backward compatible)', () => {
+    // Producing a buyer_reason must not silently change the default decision
+    // for a code — the routing is opt-in via override.
+    const withBR = decideRetry(
+      err('POLICY_VIOLATION', {
+        buyer_reason: { code: 'BUDGET_TOO_LOW', message: 'x' },
+      })
+    );
+    const withoutBR = decideRetry(err('POLICY_VIOLATION'));
+    assert.equal(withBR.action, withoutBR.action);
+    assert.equal(withBR.reason, withoutBR.reason);
+  });
+});
