@@ -75,6 +75,24 @@ describe('cross_response_field_equal', () => {
     assert.strictEqual(r.actual, 'mb_1');
   });
 
+  it('canonicalizes agent_url identity across dispatches', () => {
+    const crossResponses = {
+      dispatches: [
+        { correlation_id: 'a', duration_ms: 10, taskResult: { success: true, data: {} } },
+        { correlation_id: 'b', duration_ms: 12, taskResult: { success: true, data: {} } },
+      ],
+      resolved: [
+        { success: true, data: { agent_url: 'https://formats.example' } },
+        { success: true, data: { agent_url: 'https://formats.example/' } },
+      ],
+    };
+    const [r] = runValidations(
+      [{ check: 'cross_response_field_equal', path: 'agent_url', description: 'same agent identity' }],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, true, r.error);
+  });
+
   it('fails when resolved dispatches disagree', () => {
     const crossResponses = {
       dispatches: [
@@ -135,6 +153,119 @@ describe('cross_response_count_distinct', () => {
     const [r] = runValidations([check([1])], { ...baseCtx, crossResponses });
     assert.strictEqual(r.passed, true);
     assert.strictEqual(r.actual, 1);
+  });
+
+  it('counts canonical-equivalent agent_url values once', () => {
+    const crossResponses = {
+      dispatches: [
+        { correlation_id: 'a', duration_ms: 10, taskResult: { success: true, data: {} } },
+        { correlation_id: 'b', duration_ms: 12, taskResult: { success: true, data: {} } },
+      ],
+      resolved: [
+        { success: true, data: { agent_url: 'https://formats.example' } },
+        { success: true, data: { agent_url: 'https://formats.example/' } },
+      ],
+    };
+    const [r] = runValidations(
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'agent_url',
+          allowed_values: [1],
+          description: 'one canonical agent identity',
+        },
+      ],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, true, r.error);
+    assert.strictEqual(r.actual, 1);
+  });
+
+  it('canonicalizes nested agent_url values in object identities', () => {
+    const crossResponses = {
+      dispatches: [
+        { correlation_id: 'a', duration_ms: 10, taskResult: { success: true, data: {} } },
+        { correlation_id: 'b', duration_ms: 12, taskResult: { success: true, data: {} } },
+      ],
+      resolved: [
+        {
+          success: true,
+          data: { format_id: { agent_url: 'https://formats.example', id: 'display' } },
+        },
+        {
+          success: true,
+          data: { format_id: { agent_url: 'https://formats.example/', id: 'display' } },
+        },
+      ],
+    };
+    const [r] = runValidations(
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'format_id',
+          allowed_values: [1],
+          description: 'one canonical format identity',
+        },
+      ],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, true, r.error);
+    assert.strictEqual(r.actual, 1);
+  });
+
+  for (const [label, value] of [
+    ['null', null],
+    ['numeric', 42],
+    ['malformed', 'not-a-url'],
+  ]) {
+    for (const nested of [false, true]) {
+      it(`fails closed for ${nested ? 'nested' : 'direct'} ${label} agent_url values`, () => {
+        const data = nested ? { format_id: { agent_url: value, id: 'display' } } : { agent_url: value };
+        const crossResponses = {
+          dispatches: [{ correlation_id: 'a', duration_ms: 10, taskResult: { success: true, data } }],
+          resolved: [{ success: true, data }],
+        };
+        const [r] = runValidations(
+          [
+            {
+              check: 'cross_response_count_distinct',
+              path: nested ? 'format_id' : 'agent_url',
+              allowed_values: [0, 1],
+              description: 'invalid agent identity must fail before cardinality grading',
+            },
+          ],
+          { ...baseCtx, crossResponses }
+        );
+        assert.strictEqual(r.passed, false);
+        assert.match(String(r.expected), /valid URI strings/);
+      });
+    }
+  }
+
+  it('preserves serialized distinctness for non-agent object values', () => {
+    const crossResponses = {
+      dispatches: [
+        { correlation_id: 'a', duration_ms: 10, taskResult: { success: true, data: {} } },
+        { correlation_id: 'b', duration_ms: 12, taskResult: { success: true, data: {} } },
+      ],
+      resolved: [
+        { success: true, data: { value: { a: 1, b: 2 } } },
+        { success: true, data: { value: { b: 2, a: 1 } } },
+      ],
+    };
+    const [r] = runValidations(
+      [
+        {
+          check: 'cross_response_count_distinct',
+          path: 'value',
+          allowed_values: [2],
+          description: 'non-agent values retain historical serialization semantics',
+        },
+      ],
+      { ...baseCtx, crossResponses }
+    );
+    assert.strictEqual(r.passed, true, r.error);
+    assert.strictEqual(r.actual, 2);
   });
 
   it('fails when two resources were created (race not resolved)', () => {

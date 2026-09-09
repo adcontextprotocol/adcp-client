@@ -33,6 +33,7 @@ import type { RecordedCall, UpstreamTrafficSuccess } from '../test-controller';
 import { isJsonContentType } from '../test-controller';
 import { globToRegExp } from '../../utils/glob';
 import {
+  parsePath,
   resolvePath,
   resolvePathAll,
   resolvePortableIdentifierPathAll,
@@ -40,6 +41,7 @@ import {
   validatePortableIdentifierPath,
   type PortableIdentifierPathIssue,
 } from './path';
+import { canonicalTargetUri } from '../../signing/canonicalize';
 import { detectShapeDriftHints } from './shape-drift-hints';
 import { PROBE_TASK_ALLOWLIST } from './test-kit';
 import { validateCanonicalFormatSatisfaction } from './canonical-format-satisfaction';
@@ -974,24 +976,94 @@ function validateFieldAbsent(validation: StoryboardValidation, taskResult: TaskR
 // field_value: check a path equals expected value
 // ────────────────────────────────────────────────────────────
 
-function valuesMatch(actual: unknown, expected: unknown): boolean {
+function comparisonKeyFromPath(path: string): string | undefined {
+  const segments = parsePath(path);
+  for (let i = segments.length - 1; i >= 0; i -= 1) {
+    const segment = segments[i];
+    if (typeof segment === 'string') return segment;
+  }
+  return undefined;
+}
+
+function isAgentUrlComparisonKey(key: string | undefined): boolean {
+  const normalized = key?.toLowerCase();
+  return normalized === 'agent_url' || normalized?.endsWith('_agent_url') === true;
+}
+
+function agentUrlValuesMatch(actual: string, expected: string): boolean {
+  try {
+    // The 3.1.18 and 3.2 protocol bundles share this canonical target-URI
+    // profile, including empty-path normalization and byte-preserved query
+    // strings. Reuse its signed-vector-tested implementation here.
+    return canonicalTargetUri(actual, '3.2') === canonicalTargetUri(expected, '3.2');
+  } catch {
+    // agent_url fields are schema-declared URIs. Malformed values must
+    // not pass merely because the same malformed bytes appear on both sides.
+    return false;
+  }
+}
+
+function normalizeAgentUrlsForDistinctCount(
+  value: unknown,
+  comparisonKey?: string
+): { value: unknown; valid: boolean } {
+  if (isAgentUrlComparisonKey(comparisonKey)) {
+    if (typeof value !== 'string') return { value, valid: false };
+    try {
+      return { value: canonicalTargetUri(value, '3.2'), valid: true };
+    } catch {
+      return { value, valid: false };
+    }
+  }
+
+  if (Array.isArray(value)) {
+    const normalized: unknown[] = [];
+    for (const item of value) {
+      const result = normalizeAgentUrlsForDistinctCount(item, comparisonKey);
+      if (!result.valid) return { value, valid: false };
+      normalized.push(result.value);
+    }
+    return { value: normalized, valid: true };
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const normalized: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const result = normalizeAgentUrlsForDistinctCount(item, key);
+      if (!result.valid) return { value, valid: false };
+      normalized[key] = result.value;
+    }
+    return { value: normalized, valid: true };
+  }
+
+  return { value, valid: true };
+}
+
+function valuesMatch(actual: unknown, expected: unknown, comparisonKey?: string): boolean {
+  if (isAgentUrlComparisonKey(comparisonKey)) {
+    return typeof actual === 'string' && typeof expected === 'string' && agentUrlValuesMatch(actual, expected);
+  }
   if (typeof actual === 'object' && actual !== null) {
-    return deepEqualJsonValue(actual, expected);
+    return deepEqualJsonValue(actual, expected, comparisonKey);
   }
   return actual === expected;
 }
 
 /**
  * JSON deep equality for `field_value`-family checks: object member order is
- * NOT significant (RFC 8259 section 4), array element order IS, scalars are
- * strict. Mirrors the sibling implementations in `webhook-receiver.ts` and
- * `canonical-format-satisfaction.ts`. Previously this was a
+ * NOT significant (RFC 8259 section 4), array element order IS, and scalars
+ * are strict except for agent URL identity fields, which use AdCP URL
+ * canonicalization. Mirrors the sibling implementations in
+ * `webhook-receiver.ts` and `canonical-format-satisfaction.ts`. Previously this was a
  * `JSON.stringify(a) === JSON.stringify(b)` comparison, which false-negatived
  * content-equal objects whose members serialize in a different order (e.g. a
  * format_id `{id, agent_url}` echoed by the agent as `{agent_url, id}`) —
  * adcp-client#2327.
  */
-function deepEqualJsonValue(a: unknown, b: unknown): boolean {
+function deepEqualJsonValue(a: unknown, b: unknown, comparisonKey?: string): boolean {
+  if (isAgentUrlComparisonKey(comparisonKey)) {
+    return typeof a === 'string' && typeof b === 'string' && agentUrlValuesMatch(a, b);
+  }
   if (a === b) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return a === b;
@@ -1000,7 +1072,7 @@ function deepEqualJsonValue(a: unknown, b: unknown): boolean {
     if (!Array.isArray(a) || !Array.isArray(b)) return false;
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
-      if (!deepEqualJsonValue(a[i], b[i])) return false;
+      if (!deepEqualJsonValue(a[i], b[i], comparisonKey)) return false;
     }
     return true;
   }
@@ -1009,7 +1081,7 @@ function deepEqualJsonValue(a: unknown, b: unknown): boolean {
   if (keysA.length !== keysB.length) return false;
   for (const k of keysA) {
     if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
-    if (!deepEqualJsonValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+    if (!deepEqualJsonValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], k)) return false;
   }
   return true;
 }
@@ -1031,14 +1103,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * without requiring the seller to omit additional optional fields or keep a
  * fixed array order.
  */
-function containsValueMatches(actual: unknown, expected: unknown): boolean {
+function containsValueMatches(actual: unknown, expected: unknown, comparisonKey?: string): boolean {
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual)) return false;
     if (expected.length === 0) return actual.length === 0;
     const used = new Set<number>();
     return expected.every(expectedItem => {
       const matchIndex = actual.findIndex(
-        (actualItem, index) => !used.has(index) && containsValueMatches(actualItem, expectedItem)
+        (actualItem, index) => !used.has(index) && containsValueMatches(actualItem, expectedItem, comparisonKey)
       );
       if (matchIndex === -1) return false;
       used.add(matchIndex);
@@ -1050,11 +1122,11 @@ function containsValueMatches(actual: unknown, expected: unknown): boolean {
     if (!isRecord(actual)) return false;
     return Object.entries(expected).every(
       ([key, expectedValue]) =>
-        Object.prototype.hasOwnProperty.call(actual, key) && containsValueMatches(actual[key], expectedValue)
+        Object.prototype.hasOwnProperty.call(actual, key) && containsValueMatches(actual[key], expectedValue, key)
     );
   }
 
-  return valuesMatch(actual, expected);
+  return valuesMatch(actual, expected, comparisonKey);
 }
 
 function pathUsesWildcardSyntax(path: string): boolean {
@@ -1099,7 +1171,8 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
 
   // allowed_values: pass if actual matches any value in the list
   if (validation.allowed_values?.length) {
-    const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
+    const comparisonKey = comparisonKeyFromPath(validation.path);
+    const passed = validation.allowed_values.some(v => valuesMatch(actual, v, comparisonKey));
     if (passed) {
       return {
         check: checkName,
@@ -1122,7 +1195,7 @@ function validateFieldValue(validation: StoryboardValidation, taskResult: TaskRe
   }
 
   // Exact match against value
-  const passed = valuesMatch(actual, validation.value);
+  const passed = valuesMatch(actual, validation.value, comparisonKeyFromPath(validation.path));
 
   if (passed) {
     return {
@@ -1197,7 +1270,8 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
 
   // Present → fall through to the same value / allowed_values semantics as field_value.
   if (validation.allowed_values?.length) {
-    const passed = validation.allowed_values.some(v => valuesMatch(actual, v));
+    const comparisonKey = comparisonKeyFromPath(validation.path);
+    const passed = validation.allowed_values.some(v => valuesMatch(actual, v, comparisonKey));
     if (passed) {
       return {
         check: checkName,
@@ -1219,7 +1293,7 @@ function validateFieldValueOrAbsent(validation: StoryboardValidation, taskResult
     };
   }
 
-  const passed = valuesMatch(actual, validation.value);
+  const passed = valuesMatch(actual, validation.value, comparisonKeyFromPath(validation.path));
   if (passed) {
     return {
       check: checkName,
@@ -1394,7 +1468,8 @@ function validateFieldContains(validation: StoryboardValidation, taskResult: Tas
   const pointer = toJsonPointer(validation.path);
 
   const candidates = validation.allowed_values?.length ? validation.allowed_values : [validation.value];
-  const matched = resolved.some(actual => candidates.some(c => containsValueMatches(actual, c)));
+  const comparisonKey = comparisonKeyFromPath(validation.path);
+  const matched = resolved.some(actual => candidates.some(c => containsValueMatches(actual, c, comparisonKey)));
 
   if (matched) {
     return {
@@ -2998,7 +3073,7 @@ function validateFieldEqualsContext(validation: StoryboardValidation, ctx: Valid
   const expected = comparandResult.value;
   const pointer = toJsonPointer(validation.path);
 
-  const passed = valuesMatch(actual, expected);
+  const passed = valuesMatch(actual, expected, comparisonKeyFromPath(validation.path));
   if (passed) {
     return {
       check: 'field_equals_context',
@@ -3070,7 +3145,8 @@ function validateFieldInContextArray(validation: StoryboardValidation, ctx: Vali
     };
   }
 
-  if (allowed.some(candidate => valuesMatch(actual, candidate))) {
+  const comparisonKey = comparisonKeyFromPath(validation.path);
+  if (allowed.some(candidate => valuesMatch(actual, candidate, comparisonKey))) {
     return {
       check: 'field_in_context_array',
       passed: true,
@@ -3142,7 +3218,8 @@ function validateAllFieldsInContextArray(validation: StoryboardValidation, ctx: 
     };
   }
 
-  const passed = actual.every(value => allowed.some(candidate => deepEqualJsonValue(value, candidate)));
+  const comparisonKey = comparisonKeyFromPath(validation.path);
+  const passed = actual.every(value => allowed.some(candidate => deepEqualJsonValue(value, candidate, comparisonKey)));
   if (passed) {
     return {
       check,
@@ -3747,7 +3824,8 @@ function validateCrossResponseFieldEqual(validation: StoryboardValidation, ctx: 
   }
   const values = cr.resolved.map(tr => resolvePath(tr.data as Record<string, unknown> | undefined, path));
   const first = values[0];
-  const allEqual = values.every(v => deepEqual(v, first));
+  const comparisonKey = comparisonKeyFromPath(path);
+  const allEqual = values.every(v => valuesMatch(v, first, comparisonKey));
   if (allEqual) {
     return {
       check: validation.check,
@@ -3896,13 +3974,29 @@ function validateCrossResponseCountDistinct(
       schema_url: null,
     };
   }
-  const distinct = new Set<string>();
+  const comparisonKey = comparisonKeyFromPath(path);
+  const exactValues = new Set<string>();
   for (const tr of cr.resolved) {
     const v = resolvePath(tr.data as Record<string, unknown> | undefined, path);
-    if (v === undefined || v === null) continue;
-    distinct.add(JSON.stringify(v));
+    if (v === undefined || (v === null && !isAgentUrlComparisonKey(comparisonKey))) continue;
+    const normalized = normalizeAgentUrlsForDistinctCount(v, comparisonKey);
+    if (!normalized.valid) {
+      return {
+        check: validation.check,
+        passed: false,
+        description: validation.description,
+        json_pointer: toJsonPointer(path),
+        expected: 'valid URI strings in all agent URL identity fields',
+        actual: v,
+        schema_id: null,
+        schema_url: null,
+      };
+    }
+    // Preserve the check's historical serialization distinctness for all
+    // non-agent fields; object member order remains observable here.
+    exactValues.add(JSON.stringify(normalized.value));
   }
-  const distinctCount = distinct.size;
+  const distinctCount = exactValues.size;
   const allowed = validation.allowed_values as number[];
   if (allowed.includes(distinctCount)) {
     return {
