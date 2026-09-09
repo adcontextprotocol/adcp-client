@@ -283,6 +283,10 @@ import { isProjectionProductInput, type V1FormatId, type V1Product } from '../v2
 import { canonicalize as canonicalizeJson } from '../utils/jcs';
 
 type ReadRequestOptions = Pick<TaskOptions, 'signal' | 'transport'>;
+type CapabilityProbeRequestOptions = Pick<
+  TaskOptions,
+  'signal' | 'transport' | 'disableWebhook' | 'delegatedOperatorAuthorization'
+>;
 type ToolSchemaMap = Map<string, Record<string, unknown>>;
 type CapabilityDiscoveryContext = {
   toolSchemas?: ToolSchemaMap;
@@ -6142,10 +6146,7 @@ export class SingleAgentClient {
       this.validateBeforeCreativeCapabilityProbe('create_media_buy', params, taskOptions);
     }
     const wireMode = hasCreativeFormatData
-      ? this.resolveCreativeFormatWireMode(
-          'create_media_buy',
-          await this.getCapabilities({ signal: taskOptions.signal, transport: taskOptions.transport })
-        )
+      ? this.resolveCreativeFormatWireMode('create_media_buy', await this.getCapabilities(taskOptions))
       : 'canonical';
     // Merge library defaults with consumer-provided reporting_webhook config
     // Library provides url/auth/frequency defaults, consumer can override any field
@@ -6320,10 +6321,7 @@ export class SingleAgentClient {
       this.validateBeforeCreativeCapabilityProbe('update_media_buy', params, taskOptions);
     }
     const wireMode = hasCreativeFormatData
-      ? this.resolveCreativeFormatWireMode(
-          'update_media_buy',
-          await this.getCapabilities({ signal: taskOptions.signal, transport: taskOptions.transport })
-        )
+      ? this.resolveCreativeFormatWireMode('update_media_buy', await this.getCapabilities(taskOptions))
       : 'canonical';
     const result = await this.executeAndHandle<UpdateMediaBuyResponse>(
       'update_media_buy',
@@ -6422,10 +6420,7 @@ export class SingleAgentClient {
       projectionCatalogs ?? this.config.projectionCatalogs
     );
     this.validateBeforeCreativeCapabilityProbe('sync_creatives', params, taskOptions);
-    const wireMode = this.resolveCreativeFormatWireMode(
-      'sync_creatives',
-      await this.getCapabilities({ signal: taskOptions.signal, transport: taskOptions.transport })
-    );
+    const wireMode = this.resolveCreativeFormatWireMode('sync_creatives', await this.getCapabilities(taskOptions));
     const configuredSelectorContainers = [
       ...((creativeFormatProjection?.selectorContainers ?? []) as ReadonlyArray<CreativeFormatSelectorContainer>),
     ];
@@ -8284,7 +8279,28 @@ export class SingleAgentClient {
         // executor then hits ProtocolClient.callTool which reads _inProcessMcpClient directly,
         // so the sentinel adcp-in-process:// URI never reaches validateAgentUrl.
         const agent = await this.ensureEndpointDiscovered(options);
-        const result = await this.executor.executeTask<any>(agent, 'get_adcp_capabilities', {}, undefined, options);
+        // Capability discovery can run inside another task's deadline scope. Do
+        // not forward that scope's private operation ID: the probe is a
+        // separate physical task with its own webhook registration. Preserve
+        // the caller's cancellation, transport safeguards, callback policy,
+        // and callback authorization provenance. The active OpenTelemetry
+        // context remains in the async chain, correlating both physical tasks.
+        const callerOptions = options as CapabilityProbeRequestOptions | undefined;
+        const probeOptions: CapabilityProbeRequestOptions = {
+          ...(options?.signal !== undefined && { signal: options.signal }),
+          ...(options?.transport !== undefined && { transport: options.transport }),
+          ...(callerOptions?.disableWebhook !== undefined && { disableWebhook: callerOptions.disableWebhook }),
+          ...(callerOptions?.delegatedOperatorAuthorization !== undefined && {
+            delegatedOperatorAuthorization: { ...callerOptions.delegatedOperatorAuthorization },
+          }),
+        };
+        const result = await this.executor.executeTask<any>(
+          agent,
+          'get_adcp_capabilities',
+          {},
+          undefined,
+          probeOptions
+        );
         throwIfAborted(options?.signal);
         const requestTimeoutMs = resolveRequestTimeoutMs(
           options?.transport?.requestTimeoutMs ?? this.config.transport?.requestTimeoutMs

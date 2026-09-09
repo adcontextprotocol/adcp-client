@@ -227,6 +227,12 @@ nightly job to broaden coverage.
 
 - **Storyboards** — narrative flow, multi-step sequences, async task
   lifecycle. Use `@adcp/sdk/testing` storyboard runners.
+- **Buyer SDK configuration tests** — conformance grades the remote agent,
+  not interactions among client options. The storyboard runner also discovers
+  and caches the agent profile before functional steps, so it does not exercise
+  a cold client's lazy preflight path. Cover combinations such as capability
+  guards, webhook templates, durable registration stores, signing, and
+  caller-scoped cancellation in SDK integration tests.
 - **LLM red-team runner** — `adcp#2630`. Multi-step conversational
   fuzzing driven by an LLM.
 - **Semantic validation** — budget math, referential integrity across
