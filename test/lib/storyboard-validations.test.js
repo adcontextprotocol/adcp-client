@@ -56,6 +56,24 @@ describe('all_fields_in_context_array', () => {
     );
     assert.strictEqual(result.passed, true, result.error);
   });
+
+  it('canonicalizes a directly selected agent_url terminal', () => {
+    const [result] = runOne(
+      [
+        {
+          check: 'all_fields_in_context_array',
+          path: 'formats[*].agent_url',
+          context_key: 'format_agents',
+          description: 'all format agents are known',
+        },
+      ],
+      'list_creative_formats',
+      { success: true, data: { formats: [{ agent_url: 'https://formats.example/' }] } },
+      { format_agents: ['https://formats.example'] }
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+  });
 });
 
 describe('validateErrorCode', () => {
@@ -633,6 +651,230 @@ describe('field_absent / envelope_field_absent (adcp#3429)', () => {
 });
 
 describe('field_contains (adcp#3803 item 2)', () => {
+  it('canonicalizes format_id agent_url values before subset comparison (adcp#7367)', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        products: [
+          {
+            format_ids: [
+              {
+                agent_url: 'https://compliance.adcontextprotocol.org/',
+                id: 'get_products_pagination_integrity_display',
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'products[0].format_ids[*]',
+          value: {
+            agent_url: 'https://compliance.adcontextprotocol.org',
+            id: 'get_products_pagination_integrity_display',
+          },
+          description: 'format id URL uses canonical identity comparison',
+        },
+      ],
+      'get_products',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('preserves query ordering when canonicalizing format_id agent_url values', () => {
+    const taskResult = {
+      success: true,
+      data: {
+        products: [
+          {
+            format_ids: [{ agent_url: 'https://formats.example/path?a=1&b=2', id: 'display' }],
+          },
+        ],
+      },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'products[0].format_ids[*]',
+          value: { agent_url: 'https://formats.example/path?b=2&a=1', id: 'display' },
+          description: 'query order remains identity-significant',
+        },
+      ],
+      'get_products',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, false);
+  });
+
+  it('canonicalizes a directly selected agent_url field', () => {
+    const taskResult = {
+      success: true,
+      data: { format_id: { agent_url: 'HTTPS://FORMATS.EXAMPLE:443', id: 'display' } },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value',
+          path: 'format_id.agent_url',
+          value: 'https://formats.example/',
+          description: 'direct URL field uses canonical identity comparison',
+        },
+      ],
+      'list_creative_formats',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('canonicalizes seller_agent_url identity fields', () => {
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value',
+          path: 'seller_agent_url',
+          value: 'https://seller.example/',
+          description: 'seller identity uses canonical comparison',
+        },
+      ],
+      'identity_match',
+      { success: true, data: { seller_agent_url: 'https://seller.example' } }
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('fails closed when identical agent_url values are malformed', () => {
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value',
+          path: 'format_id.agent_url',
+          value: 'not-a-url',
+          description: 'malformed identity cannot compare equal',
+        },
+      ],
+      'list_creative_formats',
+      { success: true, data: { format_id: { agent_url: 'not-a-url', id: 'display' } } }
+    );
+
+    assert.strictEqual(result.passed, false);
+  });
+
+  for (const malformed of [null, 42]) {
+    it(`fails closed when identical agent_url values are ${malformed === null ? 'null' : 'numeric'}`, () => {
+      const [result] = runOne(
+        [
+          {
+            check: 'field_value',
+            path: 'format_id.agent_url',
+            value: malformed,
+            description: 'non-string identity cannot compare equal',
+          },
+        ],
+        'list_creative_formats',
+        { success: true, data: { format_id: { agent_url: malformed, id: 'display' } } }
+      );
+
+      assert.strictEqual(result.passed, false);
+    });
+  }
+
+  it('keeps non-identity resource URL fields byte-significant', () => {
+    const taskResult = {
+      success: true,
+      data: { preview_url: 'https://preview.example/render#variant-a' },
+    };
+
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value',
+          path: 'preview_url',
+          value: 'https://preview.example/render#variant-b',
+          description: 'preview resource fragments remain distinct',
+        },
+      ],
+      'preview_creative',
+      taskResult
+    );
+
+    assert.strictEqual(result.passed, false);
+  });
+
+  for (const [name, actual, expected] of [
+    ['query percent-encoding', 'https://formats.example/path?x=%7e', 'https://formats.example/path?x=~'],
+    ['empty query marker', 'https://formats.example/path?', 'https://formats.example/path'],
+    ['consecutive path slashes', 'https://formats.example/a//b', 'https://formats.example/a/b'],
+  ]) {
+    it(`preserves identity-significant ${name}`, () => {
+      const [result] = runOne(
+        [
+          {
+            check: 'field_value',
+            path: 'format_id.agent_url',
+            value: expected,
+            description: `${name} remains distinct`,
+          },
+        ],
+        'list_creative_formats',
+        { success: true, data: { format_id: { agent_url: actual, id: 'display' } } }
+      );
+
+      assert.strictEqual(result.passed, false);
+    });
+  }
+
+  it('canonicalizes allowed agent_url values on the tolerant field branch', () => {
+    const [result] = runOne(
+      [
+        {
+          check: 'field_value_or_absent',
+          path: 'format_id.agent_url',
+          allowed_values: ['https://formats.example'],
+          description: 'present canonical equivalent is allowed',
+        },
+      ],
+      'list_creative_formats',
+      { success: true, data: { format_id: { agent_url: 'https://formats.example/', id: 'display' } } }
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
+  it('canonicalizes nested agent_url values in field_contains allowed_values', () => {
+    const [result] = runOne(
+      [
+        {
+          check: 'field_contains',
+          path: 'format_ids[*]',
+          allowed_values: [
+            { agent_url: 'https://other.example/', id: 'display' },
+            { agent_url: 'https://formats.example', id: 'display' },
+          ],
+          description: 'one canonical format identity is allowed',
+        },
+      ],
+      'get_products',
+      {
+        success: true,
+        data: { format_ids: [{ agent_url: 'https://formats.example/', id: 'display' }] },
+      }
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+  });
+
   it('passes when value matches any element via [*] wildcard', () => {
     const taskResult = {
       success: true,
