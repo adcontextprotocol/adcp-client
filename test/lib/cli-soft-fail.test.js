@@ -65,6 +65,19 @@ test('--soft-fail does not affect a passing storyboard ID parse (positional inta
   assert.match(res.stdout, /Storyboards:\s+capability_discovery/);
 });
 
+test('--no-strict-response-schema-validation remains a boolean flag and preserves positionals', () => {
+  const res = runCli([
+    'storyboard',
+    'run',
+    UNREACHABLE,
+    STORYBOARD,
+    '--no-strict-response-schema-validation',
+    '--soft-fail',
+  ]);
+  assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}. stderr: ${res.stderr}`);
+  assert.match(res.stdout, /Storyboards:\s+capability_discovery/);
+});
+
 test('--summary-file PATH writes the Markdown summary to PATH', () => {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'adcp-soft-fail-'));
   try {

@@ -6,7 +6,7 @@
  * SingleAgentClient method and includes validations.
  */
 
-import type { TestOptions } from '../types';
+import type { AgentProfile, TestOptions } from '../types';
 import type { BuyerAgent, BuyerAgentBillingMode, BuyerAgentStatus } from '../../server/decisioning/buyer-agent';
 import type { WebhookConformanceSigningOptions } from '../../conformance/types';
 
@@ -37,6 +37,12 @@ export interface Storyboard {
    * authored in storyboard YAML.
    */
   adcp_version?: string;
+  /**
+   * Compliance cache root this storyboard was loaded from. Injected by the
+   * cache loader so synthesized vectors and runtime probes use the same
+   * bundle even when process-level cache environment variables differ.
+   */
+  compliance_dir?: string;
   title: string;
   category: string;
   summary: string;
@@ -59,7 +65,7 @@ export interface Storyboard {
    * the whole storyboard with `requirement_unmet` and a
    * `missing_required_tool_family:` detail prefix. The standard `comply()`
    * path populates `agentTools` before this gate runs; direct callers that
-   * reuse a client should provide `agentTools` or `_profile.tools` so the
+   * reuse a profile should provide `agentTools` or `profile.tools` so the
    * runner can enforce it without discovery ambiguity.
    */
   required_any_of_tools?: RequiredToolFamily[];
@@ -72,7 +78,7 @@ export interface Storyboard {
    *
    * Recognised names:
    *   - `controller` — the agent must advertise `comply_test_controller`.
-   *     Detected from `options.agentTools`, `_profile.tools`, or discovery
+   *     Detected from `options.agentTools`, `profile.tools`, or discovery
    *     on reused clients. Direct callers that deliberately provide none of
    *     those surfaces bypass this check; their storyboard runs into the
    *     per-step `missing_test_controller` cascade instead.
@@ -198,6 +204,23 @@ export interface Storyboard {
    * `experimental_features contains trusted_match.core`).
    */
   requires_capability?: RequiresCapabilityPredicate;
+  /**
+   * Two or more capability predicates evaluated as one AND-composed
+   * applicability gate. When this field and `requires_capability` are both
+   * present, every predicate across both declarations must pass. A failed
+   * predicate skips the entire storyboard before runtime or tool gates.
+   *
+   * The loader rejects empty and single-entry arrays; use
+   * `requires_capability` for a singular gate.
+   *
+   * Compound gates fail closed when the raw capabilities payload is
+   * unavailable: advertised or auto-registered tools are not capability
+   * declarations. This is intentionally stricter than the compatibility
+   * fallback retained for legacy singular gates.
+   *
+   * Supported by @adcp/sdk starting in 14.0.0-beta.4.
+   */
+  requires_all_capabilities?: RequiresCapabilityPredicate[];
   /** Scenario IDs that must pass alongside this storyboard (loaded from storyboards/scenarios/) */
   requires_scenarios?: string[];
   agent: {
@@ -1600,8 +1623,24 @@ export interface TrustedMatchPublisherAuthRunner {
 }
 
 export interface StoryboardRunOptions extends TestOptions {
-  /** Caller-selected compliance cache root for bundle-scoped test kits. */
+  /** Compliance cache root for bundle-scoped fixtures and test vectors. */
   complianceDir?: string;
+  /**
+   * Pre-discovered agent profile to reuse instead of repeating capability
+   * discovery. When `agentTools` is omitted, the runner derives it from
+   * `profile.tools` so storyboard-level `required_tools` and step-level
+   * `requires_tool` gates remain enforced.
+   *
+   * Reuse a profile only for the same agent URL, authentication, AdCP version,
+   * and route that produced it. Route-specific profiles are not interchangeable.
+   * In an `agents` run this value supplies only the run-level/default-agent
+   * gating context; each routed agent is still discovered independently.
+   * Profile reuse does not retain or reuse a client or transport connection.
+   *
+   * `AgentProfile` does not carry the server's exact wire version. Pass
+   * `adcpVersion` separately when version-skew validation depends on it.
+   */
+  profile?: AgentProfile;
   /** Initial context (e.g., from a previous step invocation) */
   context?: StoryboardContext;
   /**
@@ -1684,11 +1723,11 @@ export interface StoryboardRunOptions extends TestOptions {
     /**
      * How the grader dispatches each vector to the agent.
      *
-     *   - `raw` (default) — POSTs each vector body directly to a per-
+     *   - `raw` — POSTs each vector body directly to a per-
      *     operation AdCP endpoint (e.g. `<baseUrl>/create_media_buy`).
      *     Works for agents that expose AdCP tools as discrete HTTP
      *     operations.
-     *   - `mcp` — wraps each vector body in a JSON-RPC `tools/call`
+     *   - `mcp` (default) — wraps each vector body in a JSON-RPC `tools/call`
      *     envelope and POSTs to the agent's single `/mcp` mount. Required
      *     for MCP-only agents that don't expose per-operation endpoints.
      *     The operation name is derived from the last path segment of the
@@ -1711,6 +1750,11 @@ export interface StoryboardRunOptions extends TestOptions {
      * streamable-HTTP agents that do not issue session IDs.
      */
     mcpSessionId?: string;
+    /**
+     * Negotiated MCP protocol version for a pre-provisioned session. When the
+     * runner auto-initializes, it uses the version returned by the server.
+     */
+    mcpProtocolVersion?: string;
   };
   /**
    * Distribution strategy across agent URLs in multi-instance mode.
@@ -2077,7 +2121,7 @@ export type RunnerDetailedSkipReason =
   /** A valid fixture strategy ladder exhausted without finding a binding. */
   | 'fixture_unsatisfied'
   /**
-   * A `requires_capability` predicate on the storyboard evaluated to false —
+   * A root capability predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
    * storyboard is skipped before any phase runs. Maps to canonical
@@ -2370,36 +2414,38 @@ export interface ValidationResult {
   observations?: unknown[];
   /**
    * Non-fatal human-readable warning attached when a check `passed` but
-   * detected a softer issue the caller should still see — today used only
-   * by `response_schema` to surface the top strict-AJV issue when Zod
-   * accepts and AJV rejects (the "lenient-passes ∧ strict-fails" subset
-   * of issue #820). LLM-driven self-correction and CI graphs that scan
-   * `error`/`warning` fields can act on this without the runner flipping
-   * step pass/fail and breaking existing tests.
+   * detected a softer issue the caller should still see. `response_schema`
+   * uses this for variant-fallback diagnostics and, when strict grading is
+   * explicitly disabled, strict-only AJV findings. LLM-driven self-correction
+   * and CI graphs that scan `error`/`warning` fields can act on the warning.
    */
   warning?: string;
   /**
    * Issue #820 follow-up — strict JSON-schema (AJV) verdict for
-   * `response_schema` checks. `passed` remains the lenient Zod outcome
-   * (runner's historical pass/fail semantics); `strict` carries the
-   * AJV-with-formats-and-additionalProperties verdict separately so
-   * agent developers can see the strict/lenient delta without the
-   * runner failing a step that the Zod path accepts. Absent on non-
-   * response_schema checks or when no AJV schema is available.
+   * `response_schema` checks. Packaged-schema storyboard runs grade this
+   * verdict by default; `strictResponseSchemaValidation: false` restores the
+   * historical lenient grade while retaining the verdict as diagnostics.
+   * An external `schemaRoot` is always authoritative. Absent on
+   * non-response_schema checks or when no AJV schema is available.
    */
   strict?: StrictValidationVerdict;
 }
 
 /**
  * Strict (AJV JSON-schema) verdict attached to a response_schema
- * validation result. Informational — the step's pass/fail is driven by
- * the lenient Zod path. `valid: false` with `valid_lenient: true`
- * indicates the strict/lenient delta: the agent's response passes the
- * generated Zod shape but fails strict JSON-schema (typically a
- * `format` violation or an `additionalProperties: false` breach).
+ * validation result. Authoritative by default for packaged-cache storyboard
+ * runs and always authoritative for runs with an external `schemaRoot`.
+ * Packaged-cache callers may explicitly make it informational with
+ * `strictResponseSchemaValidation: false` during migrations.
  */
 export interface StrictValidationVerdict {
   valid: boolean;
+  /**
+   * Outcome from the SDK's packaged Zod snapshot, captured only as a
+   * comparison signal. `null` means that snapshot has no schema for the tool.
+   * External-schema runs never use this field to decide pass/fail.
+   */
+  lenient_valid?: boolean | null;
   /** Response variant AJV ultimately validated against. After fallback: `"sync"`. */
   variant: string;
   /** Concrete AJV issues (RFC 6901 pointers) when `valid: false`. Absent when valid. */
@@ -3103,18 +3149,26 @@ export interface StrictValidationSummary {
    * Count of validations where lenient Zod accepted AND strict AJV
    * rejected — the "silent failures" the agent ships today that a strict
    * dispatcher would block. Subset of `failed`. This is the actionable
-   * production-readiness signal for agent developers: a green lenient run
-   * with `strict_only_failures > 0` is a migration trap.
+   * production-readiness signal for agent developers. With the default
+   * strict grading these failures make the owning step fail; callers that
+   * explicitly disable strict grading can still use this count as migration
+   * telemetry.
    */
   strict_only_failures: number;
   /**
    * Count of validations where BOTH lenient Zod AND strict AJV rejected —
    * the step already failed under today's semantics, so strict rejection
-   * isn't new signal. Equals `failed - strict_only_failures`. Useful for
-   * dashboards that want to distinguish "already-failing" from
-   * "silently-failing" in the same run.
+   * isn't new signal. Useful for dashboards that want to distinguish
+   * "already-failing" from "silently-failing" in the same run. Strict
+   * failures without a packaged Zod comparator are reported separately as
+   * `lenient_unobserved`.
    */
   lenient_also_failed: number;
+  /**
+   * Strict AJV failures for tools with no packaged Zod schema to compare.
+   * Present only when non-zero so older serialized summaries remain stable.
+   */
+  lenient_unobserved?: number;
 }
 
 /**

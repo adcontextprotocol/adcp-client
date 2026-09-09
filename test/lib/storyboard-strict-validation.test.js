@@ -1,18 +1,45 @@
 /**
  * Strict/lenient response-schema validation + run-level aggregation (issue
  * #820, fourth proposal). `runValidations` must attach an AJV-based strict
- * verdict to every `response_schema` ValidationResult without flipping the
- * step's pass/fail (which stays Zod-driven for backwards compatibility).
+ * verdict to every `response_schema` ValidationResult. Storyboard runs grade
+ * the strict verdict by default; direct validation callers can keep it
+ * informational, while an explicit external schema root is always
+ * authoritative for current-source validation.
  *
- * Tests hit the storyboard validation layer directly — `runValidations`
- * with a synthetic `ValidationContext`. No runner boot or network needed.
+ * Most tests hit the storyboard validation layer directly with a synthetic
+ * `ValidationContext`; one runner-level regression locks the public default.
  */
 
 const { describe, test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
+const { ProtocolClient } = require('../../dist/lib/index.js');
+const { createTestClient } = require('../../dist/lib/testing/client.js');
 const { runValidations } = require('../../dist/lib/testing/storyboard/validations.js');
-const { summarizeStrictValidation, listStrictOnlyFailures } = require('../../dist/lib/testing/storyboard/runner.js');
+const {
+  runStoryboardStep,
+  summarizeStrictValidation,
+  listStrictOnlyFailures,
+} = require('../../dist/lib/testing/storyboard/runner.js');
+const { _resetValidationLoader, withExternalSchemaRoot } = require('../../dist/lib/validation/schema-loader.js');
+
+const EXTERNAL_VERSION = '9.9.0-beta.1';
+
+function writeExternalResponseSchema(root, toolName, schema) {
+  const bundled = path.join(root, 'bundled');
+  fs.mkdirSync(bundled, { recursive: true });
+  fs.writeFileSync(
+    path.join(bundled, `${toolName.replaceAll('_', '-')}-response.json`),
+    JSON.stringify({
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      $id: `/schemas/${EXTERNAL_VERSION}/test/${toolName.replaceAll('_', '-')}-response.json`,
+      ...schema,
+    })
+  );
+}
 
 function ctx(taskName, data, responseSchemaRef) {
   return {
@@ -28,7 +55,148 @@ function ctxWith(taskName, data, responseSchemaRef, extra) {
   return { ...ctx(taskName, data, responseSchemaRef), ...extra };
 }
 
+function strictDeltaCapabilitiesStoryboard() {
+  return {
+    id: 'strict_response_default',
+    version: '1.0.0',
+    title: 'Strict response default',
+    category: 'test',
+    summary: 'Verifies strict response-schema grading defaults.',
+    narrative: '',
+    agent: { interaction_model: 'sync', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases: [
+      {
+        id: 'capabilities',
+        title: 'Capabilities',
+        steps: [
+          {
+            id: 'discover',
+            title: 'Discover capabilities',
+            task: 'get_adcp_capabilities',
+            response_schema_ref: 'protocol/get-adcp-capabilities-response.json',
+            validations: [{ check: 'response_schema', description: 'response conforms' }],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function withoutAuthoredValidations(storyboard) {
+  const copy = structuredClone(storyboard);
+  delete copy.phases[0].steps[0].validations;
+  return copy;
+}
+
 describe('storyboard validations: strict/lenient response_schema delta', () => {
+  test('external schemaRoot accepts current-source responses rejected by packaged Zod', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      writeExternalResponseSchema(root, 'list_creative_formats', {
+        type: 'object',
+        required: ['current_source_marker'],
+        properties: { current_source_marker: { const: true } },
+        additionalProperties: false,
+      });
+
+      const [result] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'response conforms to current source' }],
+          ctxWith('list_creative_formats', { current_source_marker: true }, 'test/list-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+
+      assert.strictEqual(result.passed, true, result.error);
+      assert.strictEqual(result.strict.valid, true);
+      assert.strictEqual(result.strict.lenient_valid, false);
+      assert.match(result.schema_id, new RegExp(`/schemas/${EXTERNAL_VERSION.replaceAll('.', '\\.')}/`));
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('external schemaRoot rejects packaged-Zod responses that current source disallows', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      writeExternalResponseSchema(root, 'list_creative_formats', {
+        type: 'object',
+        required: ['current_source_marker'],
+        properties: { current_source_marker: { const: true } },
+        additionalProperties: false,
+      });
+
+      const [result] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'response conforms to current source' }],
+          ctxWith('list_creative_formats', { formats: [] }, 'test/list-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+
+      assert.strictEqual(result.passed, false);
+      assert.strictEqual(result.strict.valid, false);
+      assert.strictEqual(result.strict.lenient_valid, true);
+      assert.ok(result.actual.some(issue => issue.keyword === 'required'));
+
+      const summary = summarizeStrictValidation([
+        { phase_id: 'external', steps: [{ step_id: 'reject', task: 'list_creative_formats', validations: [result] }] },
+      ]);
+      assert.strictEqual(summary.strict_only_failures, 1);
+      assert.strictEqual(summary.lenient_also_failed, 0);
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('external schemaRoot validates tools absent from the packaged Zod map', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      writeExternalResponseSchema(root, 'future_protocol_tool', {
+        type: 'object',
+        required: ['future_value'],
+        properties: { future_value: { type: 'string' } },
+        additionalProperties: false,
+      });
+
+      const [result] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'future tool response conforms' }],
+          ctxWith('future_protocol_tool', { future_value: 'same-change' }, 'test/future-tool-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+
+      assert.strictEqual(result.passed, true, result.error);
+      assert.strictEqual(result.strict.valid, true);
+      assert.strictEqual(result.strict.lenient_valid, null);
+
+      const [rejected] = withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+        runValidations(
+          [{ check: 'response_schema', description: 'future tool response conforms' }],
+          ctxWith('future_protocol_tool', { future_value: 42 }, 'test/future-tool-response.json', {
+            adcpVersion: EXTERNAL_VERSION,
+          })
+        )
+      );
+      const summary = summarizeStrictValidation([
+        { phase_id: 'external', steps: [{ step_id: 'future', task: 'future_protocol_tool', validations: [rejected] }] },
+      ]);
+      assert.strictEqual(summary.strict_only_failures, 0);
+      assert.strictEqual(summary.lenient_also_failed, 0);
+      assert.strictEqual(summary.lenient_unobserved, 1);
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('clean response: strict.valid=true, passed=true, no issues emitted', () => {
     // Minimal valid list_creative_formats response — `formats` is the only
     // required field at the root; an empty array satisfies both Zod and AJV.
@@ -43,6 +211,146 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     assert.ok(v.strict, 'strict verdict attached');
     assert.strictEqual(v.strict.valid, true, 'AJV path accepts');
     assert.strictEqual(v.strict.issues, undefined, 'no issues on a valid response');
+  });
+
+  test('strict grading fails a packaged-schema violation that lenient Zod accepts', () => {
+    const response = {
+      adcp: { major_versions: [3], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+      // The JSON Schema requires at least one advertised scenario. The
+      // generated Zod projection intentionally remains more permissive.
+      compliance_testing: { scenarios: [] },
+    };
+    const [graded] = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctxWith('get_adcp_capabilities', response, 'protocol/get-adcp-capabilities-response.json', {
+        adcpVersion: '3.1.18',
+        strictResponseSchemaValidation: true,
+      })
+    );
+
+    assert.strictEqual(graded.strict.lenient_valid, true);
+    assert.strictEqual(graded.strict.valid, false);
+    assert.strictEqual(graded.passed, false);
+    assert.match(graded.error, /compliance_testing\/scenarios/);
+
+    const [diagnostic] = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctxWith('get_adcp_capabilities', response, 'protocol/get-adcp-capabilities-response.json', {
+        strictResponseSchemaValidation: false,
+      })
+    );
+    assert.strictEqual(diagnostic.passed, true, 'explicit opt-out preserves the diagnostic-only grade');
+    assert.match(diagnostic.warning, /strict JSON-schema rejected/);
+  });
+
+  test('storyboard runner grades strict response schemas by default and honors the opt-out', async () => {
+    const response = {
+      adcp: { major_versions: [3], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+      compliance_testing: { scenarios: [] },
+    };
+    const client = {
+      async getAdcpCapabilities() {
+        return { status: 'completed', data: response };
+      },
+    };
+    const profile = {
+      name: 'Strict response stub',
+      tools: ['get_adcp_capabilities'],
+      raw_capabilities: response,
+    };
+    const options = { protocol: 'mcp', _client: client, _profile: profile };
+
+    const graded = await runStoryboardStep(
+      'https://stub.example/mcp',
+      strictDeltaCapabilitiesStoryboard(),
+      'discover',
+      options
+    );
+    const gradedSchema = graded.validations.find(v => v.check === 'response_schema');
+    assert.strictEqual(gradedSchema.strict.lenient_valid, true);
+    assert.strictEqual(gradedSchema.strict.valid, false);
+    assert.strictEqual(gradedSchema.passed, false);
+    assert.strictEqual(graded.passed, false);
+
+    const diagnostic = await runStoryboardStep(
+      'https://stub.example/mcp',
+      strictDeltaCapabilitiesStoryboard(),
+      'discover',
+      { ...options, strictResponseSchemaValidation: false }
+    );
+    const diagnosticSchema = diagnostic.validations.find(v => v.check === 'response_schema');
+    assert.strictEqual(diagnosticSchema.passed, true);
+    assert.strictEqual(diagnostic.passed, true);
+  });
+
+  test('test client enforces strict responses when a step has no authored response_schema check', async () => {
+    const response = {
+      status: 'completed',
+      // Missing required idempotency proves transport-level strict validation
+      // protects steps that do not author a response_schema validation.
+      adcp: { major_versions: [3] },
+      supported_protocols: ['media_buy'],
+      compliance_testing: { scenarios: ['seller_custom_fixture_reset'] },
+    };
+    const profile = {
+      name: 'Strict response stub',
+      tools: ['get_adcp_capabilities'],
+      raw_capabilities: response,
+    };
+    const storyboard = withoutAuthoredValidations(strictDeltaCapabilitiesStoryboard());
+    const originalCallTool = ProtocolClient.callTool;
+    ProtocolClient.callTool = async () => response;
+
+    try {
+      const strictClient = createTestClient('https://stub.example/mcp');
+      strictClient.client.discoveredEndpoint = 'https://stub.example/mcp';
+      const graded = await runStoryboardStep('https://stub.example/mcp', storyboard, 'discover', {
+        protocol: 'mcp',
+        _client: strictClient,
+        _profile: profile,
+      });
+      assert.strictEqual(graded.passed, false);
+      assert.match(graded.error, /Schema validation failed.*idempotency/);
+
+      const diagnosticClient = createTestClient('https://stub.example/mcp', 'mcp', {
+        strictResponseSchemaValidation: false,
+      });
+      diagnosticClient.client.discoveredEndpoint = 'https://stub.example/mcp';
+      const diagnostic = await runStoryboardStep('https://stub.example/mcp', storyboard, 'discover', {
+        protocol: 'mcp',
+        strictResponseSchemaValidation: false,
+        _client: diagnosticClient,
+        _profile: profile,
+      });
+      assert.strictEqual(diagnostic.passed, true);
+      assert.strictEqual(
+        diagnostic.validations.some(v => v.check === 'response_schema'),
+        false
+      );
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
+
+  test('implementation-specific compliance scenario strings pass strict 3.1.20 cache validation', () => {
+    const response = {
+      adcp: { major_versions: [3], idempotency: { supported: false } },
+      supported_protocols: ['media_buy'],
+      compliance_testing: { scenarios: ['seller_custom_fixture_reset'] },
+    };
+    const [result] = runValidations(
+      [{ check: 'response_schema', description: 'response conforms' }],
+      ctxWith('get_adcp_capabilities', response, 'protocol/get-adcp-capabilities-response.json', {
+        adcpVersion: '3.1.20',
+        strictResponseSchemaValidation: true,
+      })
+    );
+
+    assert.strictEqual(result.passed, true, result.error);
+    assert.strictEqual(result.strict.valid, true);
+    assert.strictEqual(result.strict.lenient_valid, true);
   });
 
   test('response missing a required field: Zod and AJV both fail; strict.valid=false', () => {

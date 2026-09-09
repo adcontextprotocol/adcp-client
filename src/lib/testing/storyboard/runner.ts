@@ -4174,7 +4174,8 @@ export function listStrictOnlyFailures(
         if (v.check !== 'response_schema') continue;
         if (v.strict === undefined) continue;
         if (v.strict.valid) continue;
-        if (!v.passed) continue; // already counted by lenient path
+        const lenientAccepted = v.strict.lenient_valid === true || (v.strict.lenient_valid === undefined && v.passed);
+        if (!lenientAccepted) continue;
         rows.push({
           phase_id: phase.phase_id,
           step_id: step.step_id,
@@ -4192,6 +4193,8 @@ export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): Stri
   let checked = 0;
   let passed = 0;
   let strictOnlyFailures = 0;
+  let lenientAlsoFailed = 0;
+  let lenientUnobserved = 0;
   for (const phase of phases) {
     for (const step of phase.steps) {
       for (const v of step.validations) {
@@ -4199,10 +4202,17 @@ export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): Stri
         checked++;
         if (v.strict.valid) {
           passed++;
-        } else if (v.passed) {
-          // Lenient Zod accepted this response; strict AJV rejected it.
-          // That's the agent's strictness gap — the signal #820 wants.
-          strictOnlyFailures++;
+        } else {
+          const lenientValid = v.strict.lenient_valid;
+          if (lenientValid === true || (lenientValid === undefined && v.passed)) {
+            // Lenient Zod accepted this response; strict AJV rejected it.
+            // That's the agent's strictness gap — the signal #820 wants.
+            strictOnlyFailures++;
+          } else if (lenientValid === false || lenientValid === undefined) {
+            lenientAlsoFailed++;
+          } else {
+            lenientUnobserved++;
+          }
         }
       }
     }
@@ -4214,7 +4224,8 @@ export function summarizeStrictValidation(phases: StoryboardPhaseResult[]): Stri
     passed,
     failed,
     strict_only_failures: strictOnlyFailures,
-    lenient_also_failed: failed - strictOnlyFailures,
+    lenient_also_failed: lenientAlsoFailed,
+    ...(lenientUnobserved > 0 && { lenient_unobserved: lenientUnobserved }),
   };
 }
 
@@ -5364,6 +5375,7 @@ async function executeStep(
       taskName: effectiveStep.task,
       ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+      strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(validationTaskResult && { taskResult: validationTaskResult }),
       ...(httpResult && { httpResult }),
       agentUrl: runState.agentUrl,
@@ -5473,6 +5485,7 @@ async function executeStep(
       taskName: effectiveStep.task,
       ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
       ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+      strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
       ...(validationTaskResult && { taskResult: validationTaskResult }),
       agentUrl: runState.agentUrl,
       contributions: runState.contributions,
@@ -6185,6 +6198,7 @@ async function executeProbeStep(
     taskName: step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK ? 'context_match' : step.task,
     ...(options.adcpVersion && { adcpVersion: options.adcpVersion }),
     ...(options._serverAdcpVersion && { responseAdcpVersion: options._serverAdcpVersion }),
+    strictResponseSchemaValidation: options.strictResponseSchemaValidation !== false,
     httpResult: redactedHttpResult,
     ...(step.task === REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK &&
       redactedHttpResult && {
