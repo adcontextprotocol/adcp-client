@@ -334,7 +334,7 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     }
   });
 
-  test('implementation-specific compliance scenario strings pass strict validation', () => {
+  test('implementation-specific compliance scenario strings pass strict 3.1.20 cache validation', () => {
     const response = {
       adcp: { major_versions: [3], idempotency: { supported: false } },
       supported_protocols: ['media_buy'],
@@ -343,7 +343,7 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     const [result] = runValidations(
       [{ check: 'response_schema', description: 'response conforms' }],
       ctxWith('get_adcp_capabilities', response, 'protocol/get-adcp-capabilities-response.json', {
-        adcpVersion: '3.1.18',
+        adcpVersion: '3.1.20',
         strictResponseSchemaValidation: true,
       })
     );

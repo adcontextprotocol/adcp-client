@@ -4778,9 +4778,16 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
 async function handleStoryboardStepCmd(args) {
   const { getComplianceStoryboardById, runStoryboardStep } = await import('../dist/lib/testing/storyboard/index.js');
   let opts = parseAgentOptions(args);
-  let opts = parseAgentOptions(args);
-  let { authToken, authScheme, protocolFlag, jsonOutput, positionalArgs, complianceVersion, schemaRoot, strictResponseSchemaValidation } =
-    opts;
+  let {
+    authToken,
+    authScheme,
+    protocolFlag,
+    jsonOutput,
+    positionalArgs,
+    complianceVersion,
+    schemaRoot,
+    strictResponseSchemaValidation,
+  } = opts;
 
   enforceStrictFlags(args, warnRemovedFlags(args));
 
@@ -4792,8 +4799,16 @@ async function handleStoryboardStepCmd(args) {
     exitTestKitSelectionError(err, jsonOutput);
   }
 
-  ({ authToken, authScheme, protocolFlag, jsonOutput, positionalArgs, complianceVersion, schemaRoot, strictResponseSchemaValidation } =
-    opts);
+  ({
+    authToken,
+    authScheme,
+    protocolFlag,
+    jsonOutput,
+    positionalArgs,
+    complianceVersion,
+    schemaRoot,
+    strictResponseSchemaValidation,
+  } = opts);
   const { resolveOptions } = parseComplianceSelection(args);
 
   const agentArg = positionalArgs[0];

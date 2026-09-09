@@ -513,6 +513,23 @@ export function withExternalSchemaRoot<T>(version: string, root: string | undefi
   return scopedExternalSchemaRoots.run(next, fn);
 }
 
+/**
+ * Return whether validation for `version` currently resolves through a
+ * caller-supplied schema bundle rather than the SDK's packaged snapshot.
+ *
+ * Storyboard validation uses this to make an explicit external JSON Schema
+ * bundle authoritative.
+ *
+ * @internal — not part of the public API surface; may change without a major bump.
+ */
+export function isExternalSchemaRootActive(version: string): boolean {
+  const key = resolveBundleKey(version);
+  const scopedRoot = scopedExternalSchemaRoots.getStore()?.get(key);
+  if (scopedRoot && existsSync(scopedRoot)) return true;
+  const registeredRoot = externalSchemaRoots.get(key);
+  return registeredRoot !== undefined && existsSync(registeredRoot);
+}
+
 function walkJsonFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   const out: string[] = [];
