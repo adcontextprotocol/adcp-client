@@ -136,10 +136,10 @@ describe('Request Builder', () => {
       assert.strictEqual(result.packages[0].pricing_option_id, 'opt-1');
     });
 
-    test('includes default pricing_option_id when no products discovered', () => {
+    test('falls back to compliance fixture ids when no products are discovered', () => {
       const result = buildRequest(step('create_media_buy'), {}, DEFAULT_OPTIONS);
-      assert.strictEqual(result.packages[0].pricing_option_id, 'default');
-      assert.ok(result.packages[0].product_id, 'should have product_id');
+      assert.strictEqual(result.packages[0].pricing_option_id, 'test-pricing');
+      assert.strictEqual(result.packages[0].product_id, 'test-product');
       assert.ok(result.packages[0].budget > 0, 'should have positive budget');
     });
 
@@ -394,6 +394,18 @@ describe('Request Builder', () => {
         'sentinel pricing_option_id → discovery'
       );
       assert.strictEqual(result.packages[0].budget, 5000, 'non-sentinel fixture fields pass through');
+    });
+
+    test('preserves pricing sentinel for fixture binding when seeded products are not in runner context', () => {
+      const s = step('create_media_buy', {
+        sample_request: {
+          start_time: FUTURE_START,
+          packages: [{ product_id: 'test-product', budget: 5000, pricing_option_id: 'test-pricing' }],
+        },
+      });
+      const result = buildRequest(s, {}, DEFAULT_OPTIONS);
+      assert.strictEqual(result.packages[0].product_id, 'test-product');
+      assert.strictEqual(result.packages[0].pricing_option_id, 'test-pricing');
     });
 
     test('preserves top-level sample_request fields the enricher does not normalise (#1604)', () => {
