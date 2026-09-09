@@ -1,5 +1,11 @@
 # Changelog
 
+## 14.0.0-rc.35
+
+### Patch Changes
+
+- c771bc2: Give lazy capability probes their own operation IDs so webhook registration cannot conflict with the mutation that triggered discovery, while preserving caller cancellation, transport safeguards, webhook suppression, and delegated callback authorization.
+
 ## 14.0.0-rc.34
 
 ### Minor Changes
