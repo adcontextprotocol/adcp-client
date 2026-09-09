@@ -119,27 +119,30 @@ function makeSyncMockSeller({ floorCpm = 1.0 } = {}) {
   return platform;
 }
 
-function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30 } = {}) {
+function makeHitlMockSeller({ floorCpm = 1.0, approvalDurationMs = 30, ext } = {}) {
   const platform = basePlatformShape({
     createMediaBuy: (req, ctx) =>
-      ctx.handoffToTask(async () => {
-        const errors = preflight(req, { floorCpm });
-        if (errors.length > 0) {
-          throw new AdcpError('INVALID_REQUEST', {
-            recovery: 'correctable',
-            message: errors[0].message,
-            field: errors[0].field,
-            details: { errors },
-          });
-        }
-        // Trafficker review window
-        await new Promise(r => setTimeout(r, approvalDurationMs));
-        const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
-        const buy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
-        platform.mediaBuys.set(buyId, buy);
-        return buy;
-      }),
+      ctx.handoffToTask(
+        async () => {
+          const errors = preflight(req, { floorCpm });
+          if (errors.length > 0) {
+            throw new AdcpError('INVALID_REQUEST', {
+              recovery: 'correctable',
+              message: errors[0].message,
+              field: errors[0].field,
+              details: { errors },
+            });
+          }
+          // Trafficker review window
+          await new Promise(r => setTimeout(r, approvalDurationMs));
+          const buyId = `mb_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+          const totalBudget = typeof req.total_budget === 'number' ? req.total_budget : (req.total_budget?.amount ?? 0);
+          const buy = { media_buy_id: buyId, status: 'active', total_budget: totalBudget };
+          platform.mediaBuys.set(buyId, buy);
+          return buy;
+        },
+        ext !== undefined ? { ext } : undefined
+      ),
   });
   return platform;
 }
@@ -224,6 +227,30 @@ describe('MockSeller worked example — unified hybrid shape', () => {
       const final = await server.getTaskState(taskId, { accountId: 'acc_1', ownerScope: 'account:acc_1' });
       assert.strictEqual(final.status, 'completed');
       assert.strictEqual(final.result.status, 'active');
+    });
+
+    it('echoes the adopter ext on the submitted envelope, vendor-namespaced', async () => {
+      const ext = { acme: { media_buy_id: 'mb_pending_1', campaign_link: 'https://acme.example/c/1' } };
+      const platform = makeHitlMockSeller({ approvalDurationMs: 30, ext });
+      const server = buildServer(platform);
+      const result = await dispatchCreate(server, { total_budget: 100_000 });
+
+      assert.strictEqual(result.structuredContent.status, 'submitted');
+      assert.deepStrictEqual(result.structuredContent.ext, ext);
+      assert.strictEqual(result.structuredContent.media_buy_id, undefined);
+
+      await server.awaitTaskUnsafe(result.structuredContent.task_id);
+    });
+
+    it('omits ext from the submitted envelope when the adopter passed none', async () => {
+      const platform = makeHitlMockSeller({ approvalDurationMs: 30 });
+      const server = buildServer(platform);
+      const result = await dispatchCreate(server, { total_budget: 100_000 });
+
+      assert.strictEqual(result.structuredContent.status, 'submitted');
+      assert.ok(!('ext' in result.structuredContent));
+
+      await server.awaitTaskUnsafe(result.structuredContent.task_id);
     });
 
     it('background AdcpError records terminal failed with structured fields', async () => {

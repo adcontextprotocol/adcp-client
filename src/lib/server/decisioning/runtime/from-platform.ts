@@ -4089,6 +4089,7 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           logger.warn?.('Omitting unsafe stored task progress during tasks_get poll');
         }
       }
+      if (record.ext !== undefined) payload.ext = record.ext;
       if (
         args.include_result === true &&
         (record.status === 'completed' || record.status === 'failed' || record.status === 'rejected') &&
@@ -4441,6 +4442,8 @@ function buildDefaultTaskRegistry(): TaskRegistry {
 type SubmittedEnvelope = {
   status: 'submitted';
   task_id: string;
+  /** Adopter-supplied, vendor-namespaced extension (`TaskHandoffOptions.ext`). */
+  ext?: Record<string, unknown>;
 };
 
 /**
@@ -4812,7 +4815,8 @@ async function routeIfHandoff<TInner, TWire>(
           await externalTaskFn(buildExternalHandoffContext(taskRegistry, taskRef, opts.servedAdcpVersion));
         },
         options.task_id,
-        'external'
+        'external',
+        options.ext
       );
     }
     let handoffTaskStarted = false;
@@ -4840,7 +4844,9 @@ async function routeIfHandoff<TInner, TWire>(
           await lifecycle?.onHandoffSuccess?.(inner);
           return await project(inner);
         },
-        options?.task_id
+        options?.task_id,
+        'framework',
+        options?.ext
       );
     } catch (error) {
       // Allocation/registration failures happen before the background task
@@ -4860,7 +4866,8 @@ async function dispatchHitl<TResult>(
   opts: DispatchHitlOpts,
   taskFn: (taskRef: ScopedTaskRef) => Promise<TResult>,
   overrideTaskId?: string,
-  settlement: 'framework' | 'external' = 'framework'
+  settlement: 'framework' | 'external' = 'framework',
+  ext?: Record<string, unknown>
 ): Promise<SubmittedEnvelope> {
   // Fail before task creation, external producer callbacks, or any terminal
   // state can be persisted. A buyer gets Submitted only after a validated
@@ -5088,7 +5095,7 @@ async function dispatchHitl<TResult>(
   })();
   taskRegistry._registerBackground(taskId, taskRef, completion);
 
-  return { status: 'submitted', task_id: taskId };
+  return { status: 'submitted', task_id: taskId, ...(ext !== undefined && { ext }) };
 }
 
 /**
