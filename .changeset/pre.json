@@ -79,6 +79,7 @@
     "fresh-dependencies-update",
     "fresh-eggs-report",
     "fresh-principals-land",
+    "fresh-probes-register",
     "fresh-rivers-help",
     "fresh-runners-gate-phases",
     "fresh-seals-fix-beta-regressions",
