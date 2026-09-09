@@ -393,7 +393,7 @@ const REQUEST_ENRICHERS: Record<string, RequestEnricher> = {
         options.budget ??
         Math.max(1000, (pricingOption?.min_spend_per_package as number) ?? 1000),
       pricing_option_id:
-        fixturePricingOptionId ?? pricingOption?.pricing_option_id ?? context.pricing_option_id ?? 'default',
+        fixturePricingOptionId ?? pricingOption?.pricing_option_id ?? context.pricing_option_id ?? 'test-pricing',
     };
 
     // Synthesize a bid_price for auction/cpm pricing only when the fixture
