@@ -147,6 +147,10 @@ export interface DeferredTaskState {
   a2aTaskId: string;
   /** Seller wire generation used for the original task and every continuation. */
   serverVersion: 'v2' | 'v3';
+  /** Per-operation AdCP wire release retained across durable resume. */
+  wireAdcpVersion?: string;
+  /** Per-operation version-envelope mode retained across durable resume. */
+  versionEnvelope?: import('../protocols').VersionEnvelopeMode;
   /** True when the original seller-version decision used the SDK's synthetic fallback. */
   serverVersionSynthetic?: boolean;
   /** Trusted agent identifier resolved through current client configuration. */

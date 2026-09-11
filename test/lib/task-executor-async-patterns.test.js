@@ -405,6 +405,8 @@ describe(
         let callCount = 0;
         ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
           callCount += 1;
+          assert.strictEqual(options.wireAdcpVersion, '3.0');
+          assert.strictEqual(options.versionEnvelope, 'major-only');
           assert.strictEqual(taskName, 'needsInput');
           if (callCount === 1) {
             return a2aPausedTask({
@@ -422,7 +424,10 @@ describe(
         });
 
         const executor = new TaskExecutor({ strictSchemaValidation: false });
-        const paused = await executor.executeTask(a2aAgent, 'needsInput', {});
+        const paused = await executor.executeTask(a2aAgent, 'needsInput', {}, undefined, {
+          wireAdcpVersion: '3.0',
+          versionEnvelope: 'major-only',
+        });
         const resumed = await paused.deferred.resume('approved');
         assert.strictEqual(resumed.status, 'completed');
       });
@@ -433,6 +438,8 @@ describe(
         let callCount = 0;
         ProtocolClient.callTool = mock.fn(async (_agent, taskName, params, options) => {
           callCount += 1;
+          assert.strictEqual(options.wireAdcpVersion, '3.0');
+          assert.strictEqual(options.versionEnvelope, 'major-only');
           if (callCount === 1) {
             return a2aPausedTask({
               question: 'Approve after restart?',
@@ -450,8 +457,14 @@ describe(
         });
 
         const firstExecutor = new TaskExecutor({ deferredStorage: storage, strictSchemaValidation: false });
-        const paused = await firstExecutor.executeTask(a2aAgent, 'needsInput', {});
+        const paused = await firstExecutor.executeTask(a2aAgent, 'needsInput', {}, undefined, {
+          wireAdcpVersion: '3.0',
+          versionEnvelope: 'major-only',
+        });
         assert.strictEqual(await storage.has(paused.deferred.token), true);
+        const stored = await storage.get(paused.deferred.token);
+        assert.strictEqual(stored.wireAdcpVersion, '3.0');
+        assert.strictEqual(stored.versionEnvelope, 'major-only');
 
         const restartedExecutor = new TaskExecutor({
           deferredStorage: storage,
@@ -635,16 +648,29 @@ describe(
           },
         };
 
-        ProtocolClient.callTool = mock.fn(async (agent, taskName, params) => {
+        let polls = 0;
+        ProtocolClient.callTool = mock.fn(async (agent, taskName, params, options) => {
+          assert.strictEqual(options.wireAdcpVersion, '3.0');
+          assert.strictEqual(options.versionEnvelope, 'major-only');
           if (taskName === 'tasks/get' || taskName === 'tasks_get') {
-            return { task: { ...mockTaskStatus.task, taskId: params.task_id } };
+            polls += 1;
+            return {
+              task: {
+                ...mockTaskStatus.task,
+                taskId: params.task_id,
+                ...(polls > 1 && { status: 'completed', result: { done: true } }),
+              },
+            };
           } else {
             return mockSubmitResponse;
           }
         });
 
         const executor = new TaskExecutor();
-        const result = await executor.executeTask(mockAgent, 'submitTask', {});
+        const result = await executor.executeTask(mockAgent, 'submitTask', {}, undefined, {
+          wireAdcpVersion: '3.0',
+          versionEnvelope: 'major-only',
+        });
 
         assert.strictEqual(result.status, 'submitted');
 
@@ -652,6 +678,8 @@ describe(
         const status = await result.submitted.track();
         assert.strictEqual(status.status, 'working');
         assert.strictEqual(status.taskType, 'submitTask');
+        const completed = await result.submitted.waitForCompletion(0);
+        assert.strictEqual(completed.status, 'completed');
       });
 
       test('waitForCompletion preserves the client correlation ID and exposes the seller work ID separately', async () => {

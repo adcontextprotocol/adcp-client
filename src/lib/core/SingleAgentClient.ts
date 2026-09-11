@@ -2410,7 +2410,11 @@ export class SingleAgentClient {
   async getTaskStatus(
     taskId: string,
     transport?: import('../protocols').TransportOptions,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    wireOptions?: {
+      wireAdcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
+    }
   ): Promise<TaskInfo> {
     // Transport options define the outbound trust boundary. Own them before
     // endpoint discovery yields so caller mutation cannot change the fetch or
@@ -2421,7 +2425,7 @@ export class SingleAgentClient {
       this.normalizedAgent.protocol === 'a2a'
         ? await this.ensureCanonicalUrlResolved(options)
         : await this.ensureEndpointDiscovered(options);
-    return this.executor.getTaskStatus(agent, taskId, transportSnapshot, signal);
+    return this.executor.getTaskStatus(agent, taskId, transportSnapshot, signal, wireOptions);
   }
 
   /** Register durable restart/replica settlement recovery for an SDK coordinator. @internal */

@@ -430,9 +430,13 @@ export class AgentClient {
   getTaskStatus(
     taskId: string,
     transport?: import('../protocols').TransportOptions,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    wireOptions?: {
+      wireAdcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
+    }
   ): Promise<TaskInfo> {
-    return this.client.getTaskStatus(taskId, transport, signal);
+    return this.client.getTaskStatus(taskId, transport, signal, wireOptions);
   }
 
   /** Register restart/replica callback recovery for a compatibility coordinator. @internal */

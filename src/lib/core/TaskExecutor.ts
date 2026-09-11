@@ -1231,6 +1231,8 @@ export class TaskExecutor {
     const taskId = getTaskOperationId(options) ?? randomUUID();
     const startTime = Date.now();
     const workingTimeout = this.config.workingTimeout || 120000; // 120s max per PR #78
+    const wireAdcpVersion = options.wireAdcpVersion ?? this.config.wireAdcpVersion;
+    const versionEnvelope = options.versionEnvelope ?? this.config.versionEnvelope;
 
     // Auto-generate idempotency_key for mutating tasks when the caller didn't
     // supply one. The key lives on TaskState so internal retries reuse it —
@@ -1360,8 +1362,8 @@ export class TaskExecutor {
               operationId: taskId,
               serverVersion: effectiveServerVersion,
               adcpVersion: this.config.adcpVersion,
-              wireAdcpVersion: this.config.wireAdcpVersion,
-              versionEnvelope: this.config.versionEnvelope,
+              wireAdcpVersion,
+              versionEnvelope,
             }).args
           : params;
         if (await governanceMiddleware.shouldCheck(taskName, governableParams, targetCapabilities)) {
@@ -1435,8 +1437,8 @@ export class TaskExecutor {
         operationId: taskId,
         serverVersion: effectiveServerVersion,
         adcpVersion: this.config.adcpVersion,
-        wireAdcpVersion: this.config.wireAdcpVersion,
-        versionEnvelope: this.config.versionEnvelope,
+        wireAdcpVersion,
+        versionEnvelope,
       });
       let webhookRegistrationPersisted = false;
       if (webhookUrl && this.config.onWebhookRegistration) {
@@ -1541,8 +1543,8 @@ export class TaskExecutor {
         serverVersion: effectiveServerVersion,
         session: { contextId: options.contextId, taskId: options.taskId },
         adcpVersion: this.config.adcpVersion,
-        ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
-        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
+        ...(wireAdcpVersion !== undefined && { wireAdcpVersion }),
+        ...(versionEnvelope !== undefined && { versionEnvelope }),
         transport: options.transport ?? this.config.transport,
         // Once dispatch begins for a live committed claim, post-call handling
         // owns durable settlement even if the caller's deadline fires later.
@@ -2313,7 +2315,9 @@ export class TaskExecutor {
       pollingTransport,
       metadata,
       deferTerminalTaskStatus,
-      serverVersion
+      serverVersion,
+      options.wireAdcpVersion ?? this.config.wireAdcpVersion,
+      options.versionEnvelope ?? this.config.versionEnvelope
     );
 
     this.compactIntermediateTaskState(taskId, 'submitted');
@@ -2339,7 +2343,9 @@ export class TaskExecutor {
     pollingTransport: import('../protocols').TransportOptions | undefined,
     metadata: TaskResultMetadata,
     deferTerminalTaskStatus: boolean,
-    serverVersion: 'v2' | 'v3'
+    serverVersion: 'v2' | 'v3',
+    wireAdcpVersion?: string,
+    versionEnvelope?: import('../protocols').VersionEnvelopeMode
   ): SubmittedContinuation<T> {
     return {
       taskId: serverTaskId,
@@ -2353,7 +2359,9 @@ export class TaskExecutor {
             transportSnapshot,
             undefined,
             taskName,
-            serverVersion
+            serverVersion,
+            wireAdcpVersion,
+            versionEnvelope
           )
         ).task;
         if (!deferTerminalTaskStatus && ['completed', 'failed', 'rejected', 'canceled'].includes(task.status)) {
@@ -2372,7 +2380,9 @@ export class TaskExecutor {
           metadata.a2aTaskId,
           taskName,
           taskId,
-          serverVersion
+          serverVersion,
+          wireAdcpVersion,
+          versionEnvelope
         );
         // `pollTaskCompletion` also returns nonresumable paused
         // input-required/auth-required states. Preserve that status so callers
@@ -2794,6 +2804,8 @@ export class TaskExecutor {
           ...(serverContextId !== undefined && { contextId: serverContextId }),
           a2aTaskId,
           serverVersion,
+          ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
+          ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
           serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
           agentId: agent.id,
           taskName,
@@ -2936,6 +2948,8 @@ export class TaskExecutor {
           ...(serverContextId !== undefined && { contextId: serverContextId }),
           a2aTaskId,
           serverVersion,
+          ...(options.wireAdcpVersion !== undefined && { wireAdcpVersion: options.wireAdcpVersion }),
+          ...(options.versionEnvelope !== undefined && { versionEnvelope: options.versionEnvelope }),
           serverVersionSynthetic: this.activeTasks.get(taskId)?.serverVersionSynthetic,
           agentId: agent.id,
           taskName,
@@ -3115,7 +3129,9 @@ export class TaskExecutor {
     transport?: import('../protocols').TransportOptions,
     signal?: AbortSignal,
     expectedTaskType?: string,
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    wireAdcpVersion?: string,
+    versionEnvelope?: import('../protocols').VersionEnvelopeMode
   ): Promise<TaskStatusPollResult> {
     // AdCP `tasks/get` is the cross-protocol work-status interface
     // (`schemas/cache/<v>/bundled/core/tasks-get-{request,response}.json`).
@@ -3151,8 +3167,12 @@ export class TaskExecutor {
       {
         serverVersion: serverVersion ?? this.lastKnownServerVersion,
         adcpVersion: this.config.adcpVersion,
-        ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
-        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
+        ...((wireAdcpVersion ?? this.config.wireAdcpVersion) !== undefined && {
+          wireAdcpVersion: wireAdcpVersion ?? this.config.wireAdcpVersion,
+        }),
+        ...((versionEnvelope ?? this.config.versionEnvelope) !== undefined && {
+          versionEnvelope: versionEnvelope ?? this.config.versionEnvelope,
+        }),
         transport: transport ?? this.config.transport,
         signal,
         onTransportActivity: this.config.onTransportActivity,
@@ -3190,10 +3210,25 @@ export class TaskExecutor {
     agent: AgentConfig,
     taskId: string,
     transport?: import('../protocols').TransportOptions,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    wireOptions?: {
+      wireAdcpVersion?: string;
+      versionEnvelope?: import('../protocols').VersionEnvelopeMode;
+    }
   ): Promise<TaskInfo> {
     const transportSnapshot = snapshotTransportOptions(transport ?? this.config.transport);
-    return (await this.getTaskStatusWithRawResponse(agent, taskId, transportSnapshot, signal)).task;
+    return (
+      await this.getTaskStatusWithRawResponse(
+        agent,
+        taskId,
+        transportSnapshot,
+        signal,
+        undefined,
+        undefined,
+        wireOptions?.wireAdcpVersion,
+        wireOptions?.versionEnvelope
+      )
+    ).task;
   }
 
   async pollTaskCompletion<T>(
@@ -3205,7 +3240,9 @@ export class TaskExecutor {
     a2aCancellationTaskId?: string,
     expectedTaskType?: string,
     metadataTaskId = taskId,
-    serverVersion?: 'v2' | 'v3'
+    serverVersion?: 'v2' | 'v3',
+    wireAdcpVersion?: string,
+    versionEnvelope?: import('../protocols').VersionEnvelopeMode
   ): Promise<TaskResult<T>> {
     // Transport policy is a request trust boundary. Own one shallow snapshot
     // for the entire polling lifetime so caller mutation cannot substitute a
@@ -3292,7 +3329,9 @@ export class TaskExecutor {
           transportSnapshot,
           signal,
           expectedTaskType,
-          serverVersion
+          serverVersion,
+          wireAdcpVersion,
+          versionEnvelope
         );
         status = pollResult.task;
         rawResponse = pollResult.rawResponse;
@@ -3977,7 +4016,10 @@ export class TaskExecutor {
           task_id: state.settlementPendingTaskId,
         },
         state.messages,
-        {},
+        {
+          ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
+          ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
+        },
         [],
         Date.now(),
         true,
@@ -4223,7 +4265,10 @@ export class TaskExecutor {
         inputSnapshot,
         resumedMessages,
         undefined, // No handler for deferred tasks - input was provided by human
-        {},
+        {
+          ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
+          ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
+        },
         [],
         Date.now(),
         !publishTerminalTaskStatus || requiresSettlement,
@@ -4266,6 +4311,8 @@ export class TaskExecutor {
               : {}),
           a2aTaskId: nextA2ATaskId,
           serverVersion: state.serverVersion,
+          ...(state.wireAdcpVersion !== undefined && { wireAdcpVersion: state.wireAdcpVersion }),
+          ...(state.versionEnvelope !== undefined && { versionEnvelope: state.versionEnvelope }),
           ...(state.serverVersionSynthetic !== undefined && {
             serverVersionSynthetic: state.serverVersionSynthetic,
           }),
@@ -5382,8 +5429,12 @@ export class TaskExecutor {
         debugLogs,
         serverVersion,
         adcpVersion: this.config.adcpVersion,
-        ...(this.config.wireAdcpVersion !== undefined && { wireAdcpVersion: this.config.wireAdcpVersion }),
-        ...(this.config.versionEnvelope !== undefined && { versionEnvelope: this.config.versionEnvelope }),
+        ...((options.wireAdcpVersion ?? this.config.wireAdcpVersion) !== undefined && {
+          wireAdcpVersion: options.wireAdcpVersion ?? this.config.wireAdcpVersion,
+        }),
+        ...((options.versionEnvelope ?? this.config.versionEnvelope) !== undefined && {
+          versionEnvelope: options.versionEnvelope ?? this.config.versionEnvelope,
+        }),
         transport: options.transport ?? this.config.transport,
         session: { contextId, taskId: a2aTaskId },
         signal: options.signal,
