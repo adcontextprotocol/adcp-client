@@ -73,6 +73,7 @@ import {
 } from '../negotiation/verification';
 import { isAdcpOperationSuccess, isTerminalAdcpError } from '../utils/response-unwrapper';
 import { ConfigurationError } from '../errors';
+import { toReleasePrecisionVersion } from '../version';
 import { createAbortError, isAbortOrTimeoutError, MAX_TIMER_DELAY_MS, withAbortSignal } from '../protocols/abort';
 import { formatIssues, validateResponse } from '../validation/schema-validator';
 import { validateRequest } from '../validation/schema-validator';
@@ -585,6 +586,12 @@ export interface CompatibleProductsResponse {
   cache_scope?: 'public' | 'account';
   errors?: CompatibleErrors;
   context?: CompatibleContext;
+  /**
+   * SDK-local handoff for an eligible tokenless established catalog. Present
+   * only when the caller configured durable continuation bindings and the
+   * observed products contain selectable pricing options.
+   */
+  purchase_continuation?: RequestProposalsPurchaseContinuation;
   /** SDK-returned source object, retained for fields outside the stable compatibility view. */
   raw: ListProductsResponse | EstablishedProductsWireResponse;
 }
@@ -712,7 +719,7 @@ export interface MediaBuyLifecycleCoordinatorOptions {
    * 2.5, 3.0, or 3.1 sellers that provide no server context ID.
    */
   legacyPurchaseSellerSessionScope?: string;
-  /** Durable storage for products-only legacy purchase continuations. */
+  /** Durable storage for tokenless-catalog and products-only legacy purchase continuations. */
   legacyPurchaseContinuationStore?: LegacyPurchaseContinuationStore;
   /**
    * Durable storage for established 3.0/3.1 proposal evidence and mutation
@@ -1057,7 +1064,7 @@ function negotiatedVersion(capabilities: AdcpCapabilities, clientVersion: string
 }
 
 const MAX_PROPOSAL_TRAVERSAL_NODES = 4096;
-const LEGACY_PROPOSAL_RAW = Symbol('legacyProposalRaw');
+const LEGACY_DISCOVERY_RAW = Symbol('legacyDiscoveryRaw');
 const PROJECTED_RESPONSE_RAW = Symbol('projectedResponseRaw');
 const COMPACT_REQUEST_PROPOSALS_RESPONSE_FIELDS = new Set([
   'adcp_version',
@@ -1091,6 +1098,9 @@ const COMPACT_DECLINE_PROPOSALS_RESPONSE_FIELDS = new Set([
 
 function projectProducts(data: unknown, lifecycle: MediaBuyLifecycle): CompatibleProductsResponse {
   const source = compactWirePayload(data);
+  const hasSdkPurchaseContinuation =
+    (source as Record<PropertyKey, unknown>)[LEGACY_DISCOVERY_RAW] !== undefined &&
+    source.purchase_continuation !== undefined;
   const feedVersion = optionalString(lifecycle === 'compact' ? source.feed_version : source.wholesale_feed_version);
   const pricingVersion = optionalString(source.pricing_version);
   const nextCursor = optionalString(lifecycle === 'compact' ? source.next_cursor : record(source.pagination).cursor);
@@ -1107,7 +1117,12 @@ function projectProducts(data: unknown, lifecycle: MediaBuyLifecycle): Compatibl
     }),
     ...(Array.isArray(source.errors) && { errors: source.errors as CompatibleErrors }),
     ...(source.context !== undefined && { context: source.context as CompatibleContext }),
-    raw: source as ListProductsResponse | EstablishedProductsWireResponse,
+    ...(hasSdkPurchaseContinuation && {
+      purchase_continuation: source.purchase_continuation as RequestProposalsPurchaseContinuation,
+    }),
+    raw: ((source as Record<PropertyKey, unknown>)[LEGACY_DISCOVERY_RAW] ?? source) as
+      | ListProductsResponse
+      | EstablishedProductsWireResponse,
   };
 }
 
@@ -1234,7 +1249,7 @@ function projectRequestProposals(
     ...(source.purchase_continuation !== undefined && {
       purchase_continuation: source.purchase_continuation as RequestProposalsPurchaseContinuation,
     }),
-    raw: ((source as Record<PropertyKey, unknown>)[LEGACY_PROPOSAL_RAW] ?? source) as
+    raw: ((source as Record<PropertyKey, unknown>)[LEGACY_DISCOVERY_RAW] ?? source) as
       | RequestProposalsResponse
       | EstablishedProductsWireResponse,
   } as CompatibleRequestProposalsResponse;
@@ -1863,7 +1878,12 @@ export class MediaBuyLifecycleCoordinator {
       }
     }
     const expectedTaskType = recovered.request.claim.operation === 'accept' ? 'create_media_buy' : 'get_products';
-    const task = await this.agent.getTaskStatus(input.sellerTaskId, transport, signal);
+    const task = await this.agent.getTaskStatus(
+      input.sellerTaskId,
+      transport,
+      signal,
+      this.legacyWireTaskOptions(this.establishedProposalScope!.sourceAdcpVersion)
+    );
     if (task.taskId !== input.sellerTaskId || task.taskType !== expectedTaskType) {
       await this.requireEstablishedTransition(() =>
         this.establishedProposalStore!.markAmbiguous(recovered.request, 'commit-uncertain')
@@ -2721,6 +2741,28 @@ export class MediaBuyLifecycleCoordinator {
     );
   }
 
+  private projectLegacyOfferFilters(operation: string, value: unknown): Record<string, unknown> {
+    const offerFilters = record(value);
+    this.assertLegacyOfferFilterShapes(operation, offerFilters);
+    this.assertLegacyMetrics(operation, offerFilters.required_metrics, 'criteria.offer_filters.required_metrics');
+    const legacyOfferFilterFields =
+      compareRelease(this.negotiated_version, '3.1') >= 0
+        ? V31_OFFER_FILTER_FIELDS
+        : compareRelease(this.negotiated_version, '3.0') >= 0
+          ? V30_OFFER_FILTER_FIELDS
+          : V25_OFFER_FILTER_FIELDS;
+    const unsupportedFields = Object.keys(offerFilters).filter(field => !legacyOfferFilterFields.has(field));
+    if (unsupportedFields.length > 0) {
+      const paths = unsupportedFields.map(field => `criteria.offer_filters.${field}`);
+      throw this.unsupported(
+        operation,
+        paths.join(','),
+        `${operation} fields ${paths.join(', ')} have no declared compatibility projection.`
+      );
+    }
+    return Object.fromEntries(Object.entries(offerFilters).filter(([key]) => legacyOfferFilterFields.has(key)));
+  }
+
   private assertLegacyReportingWebhook(operation: string, value: unknown, path = 'reporting_webhook'): void {
     if (value === undefined || isCompactRelease(this.negotiated_version)) return;
     this.assertLegacyMetrics(operation, record(value).requested_metrics, `${path}.requested_metrics`);
@@ -2775,6 +2817,38 @@ export class MediaBuyLifecycleCoordinator {
     ];
   }
 
+  private legacyWireTaskOptions(
+    sourceVersion: string = this.negotiated_version
+  ): Pick<TaskOptions, 'wireAdcpVersion' | 'versionEnvelope'> {
+    return {
+      wireAdcpVersion: sourceVersion,
+      versionEnvelope: compareRelease(sourceVersion, '3.1') < 0 ? 'major-only' : 'auto',
+    };
+  }
+
+  private assertRequestedLegacyVersion(operation: string, input: Record<string, unknown>): void {
+    const negotiated = parseRelease(this.negotiated_version);
+    if (!negotiated) return;
+    if (input.adcp_major_version !== undefined && input.adcp_major_version !== negotiated.major) {
+      throw this.unsupported(
+        operation,
+        'adcp_major_version',
+        `${operation} requested adcp_major_version ${String(input.adcp_major_version)}, but the negotiated established lane is ${this.negotiated_version}. No request was sent.`
+      );
+    }
+    const expectedRelease = toReleasePrecisionVersion(this.negotiated_version);
+    if (
+      input.adcp_version !== undefined &&
+      (compareRelease(this.negotiated_version, '3.1') < 0 || input.adcp_version !== expectedRelease)
+    ) {
+      throw this.unsupported(
+        operation,
+        'adcp_version',
+        `${operation} requested adcp_version ${String(input.adcp_version)}, but the negotiated established lane is ${this.negotiated_version}. No request was sent.`
+      );
+    }
+  }
+
   private legacyPurchaseBinding(accountScope: string): LegacyPurchaseBinding {
     const agent = this.agent.getAgent();
     const contextId = this.agent.getContextId();
@@ -2782,7 +2856,7 @@ export class MediaBuyLifecycleCoordinator {
       let sessionScope = this.configuredLegacyPurchaseSellerSessionScope ?? contextId;
       if (sessionScope === undefined) {
         throw new ConfigurationError(
-          'Products-only legacy purchase continuations require legacyPurchaseSellerSessionScope in negotiateMediaBuyLifecycle() when the seller provides no context ID.'
+          'Legacy product-discovery purchase continuations require legacyPurchaseSellerSessionScope in negotiateMediaBuyLifecycle() when the seller provides no context ID.'
         );
       }
       this.resolvedLegacyPurchaseSellerSessionScope = sessionScope;
@@ -2800,7 +2874,9 @@ export class MediaBuyLifecycleCoordinator {
   private async projectLegacyProductsAvailable(
     data: unknown,
     accountScope: string | undefined,
-    discoveryRequestFingerprint: string
+    discoveryRequestFingerprint: string,
+    sourceOperation: 'proposal' | 'listing' = 'proposal',
+    issuanceDiscriminator?: string
   ): Promise<unknown> {
     const source = compactWirePayload(data);
     if ((proposalRows(source)?.length ?? 0) > 0 || !Array.isArray(source.products) || source.products.length === 0) {
@@ -2815,28 +2891,40 @@ export class MediaBuyLifecycleCoordinator {
       (negotiatedRelease.major > 3 || (negotiatedRelease.major === 3 && negotiatedRelease.minor >= 2))
     )
       return data;
+    // A real seller feed token keeps the catalog on the ordinary listProducts
+    // -> buyProducts path. The SDK-local continuation exists only to bridge
+    // unchanged established catalogs that cannot provide that compact fence.
+    if (sourceOperation === 'listing' && optionalString(source.wholesale_feed_version)) return data;
     if (!this.principalScope) {
       return data;
     }
     if (!accountScope) {
       return data;
     }
+    if (
+      sourceOperation === 'listing' &&
+      this.resolvedLegacyPurchaseSellerSessionScope === undefined &&
+      this.configuredLegacyPurchaseSellerSessionScope === undefined &&
+      this.agent.getContextId() === undefined
+    ) {
+      return data;
+    }
     if (containsCredentialShapedKey(source) || containsPresignedUrl(source)) {
       throw new LegacyPurchaseContinuationError(
         'request_invalid',
-        'The legacy products-only response contains credential-shaped material and cannot be persisted.'
+        'The legacy product-discovery response contains credential-shaped material and cannot be persisted.'
       );
     }
     const observedBytes = Buffer.byteLength(canonicalize(source), 'utf8');
     if (observedBytes > 256 * 1024) {
       throw new LegacyPurchaseContinuationError(
         'store_error',
-        'The legacy products-only response exceeds the 256 KiB continuation snapshot limit.'
+        'The legacy product-discovery response exceeds the 256 KiB continuation snapshot limit.'
       );
     }
     const productIds = source.products.map(product => optionalString(record(product).product_id));
     if (productIds.some(productId => productId === undefined) || new Set(productIds).size !== productIds.length) {
-      throw new TypeError('The legacy products-only response did not contain distinct non-empty product IDs.');
+      throw new TypeError('The legacy product-discovery response did not contain distinct non-empty product IDs.');
     }
     const hasBoundPricingOptions = source.products.every(product => {
       const pricingOptionIds = array(record(product).pricing_options).map(option =>
@@ -2857,6 +2945,7 @@ export class MediaBuyLifecycleCoordinator {
       ...binding,
       discoveryRequestFingerprint,
       observedResponse: source,
+      ...(issuanceDiscriminator !== undefined && { issuanceDiscriminator }),
     });
     let storedRecord: LegacyPurchaseContinuationRecord | undefined;
     for (let attempt = 0; attempt < 4 && !storedRecord; attempt += 1) {
@@ -2900,33 +2989,48 @@ export class MediaBuyLifecycleCoordinator {
         true
       );
     }
-    const projected: Record<PropertyKey, unknown> = {
-      outcome: 'products_available',
-      products: source.products,
-      ...(Array.isArray(source.incomplete) && { incomplete: source.incomplete }),
-      ...(Array.isArray(source.errors) && { errors: source.errors }),
-      ...(source.context !== undefined && { context: source.context }),
-      purchase_continuation: {
-        kind: 'legacy_create',
-        continuation_token: storedRecord.token,
-        continuation_expires_at: storedRecord.expiresAt,
-        source_adcp_version: storedRecord.sourceAdcpVersion,
-        product_ids: storedRecord.productIds,
-        losses: storedRecord.losses,
-        requires_explicit_acceptance: true,
-      },
+    const purchaseContinuation = {
+      kind: 'legacy_create' as const,
+      continuation_token: storedRecord.token,
+      continuation_expires_at: storedRecord.expiresAt,
+      source_adcp_version: storedRecord.sourceAdcpVersion,
+      product_ids: storedRecord.productIds,
+      losses: storedRecord.losses,
+      requires_explicit_acceptance: true as const,
     };
-    Object.defineProperty(projected, LEGACY_PROPOSAL_RAW, { value: source, enumerable: false });
+    const projected: Record<PropertyKey, unknown> =
+      sourceOperation === 'listing'
+        ? {
+            ...source,
+            purchase_continuation: purchaseContinuation,
+          }
+        : {
+            outcome: 'products_available',
+            products: source.products,
+            ...(Array.isArray(source.incomplete) && { incomplete: source.incomplete }),
+            ...(Array.isArray(source.errors) && { errors: source.errors }),
+            ...(source.context !== undefined && { context: source.context }),
+            purchase_continuation: purchaseContinuation,
+          };
+    Object.defineProperty(projected, LEGACY_DISCOVERY_RAW, { value: source, enumerable: false });
     return projected;
   }
 
-  private async prepareLegacyProposalResult<T>(
+  private async prepareLegacyPurchaseContinuationResult<T>(
     result: TaskResult<T>,
     accountScope: string | undefined,
-    discoveryRequestFingerprint: string
+    discoveryRequestFingerprint: string,
+    sourceOperation: 'proposal' | 'listing' = 'proposal',
+    issuanceDiscriminator?: string
   ): Promise<TaskResult<T>> {
     const prepare = (value: unknown): Promise<unknown> =>
-      this.projectLegacyProductsAvailable(value, accountScope, discoveryRequestFingerprint);
+      this.projectLegacyProductsAvailable(
+        value,
+        accountScope,
+        discoveryRequestFingerprint,
+        sourceOperation,
+        issuanceDiscriminator
+      );
     if (
       result.success &&
       result.status === 'completed' &&
@@ -2950,10 +3054,12 @@ export class MediaBuyLifecycleCoordinator {
           return task;
         },
         waitForCompletion: async (pollInterval?: number, signal?: AbortSignal) =>
-          this.prepareLegacyProposalResult(
+          this.prepareLegacyPurchaseContinuationResult(
             await submitted.waitForCompletion(pollInterval, signal),
             accountScope,
-            discoveryRequestFingerprint
+            discoveryRequestFingerprint,
+            sourceOperation,
+            issuanceDiscriminator
           ),
       };
     }
@@ -2962,7 +3068,13 @@ export class MediaBuyLifecycleCoordinator {
       (result as { deferred?: unknown }).deferred = {
         ...deferred,
         resume: async (input: unknown) =>
-          this.prepareLegacyProposalResult(await deferred.resume(input), accountScope, discoveryRequestFingerprint),
+          this.prepareLegacyPurchaseContinuationResult(
+            await deferred.resume(input),
+            accountScope,
+            discoveryRequestFingerprint,
+            sourceOperation,
+            issuanceDiscriminator
+          ),
       };
     }
     return result;
@@ -5180,11 +5292,27 @@ export class MediaBuyLifecycleCoordinator {
       );
     }
     this.assertLegacyProductFields('listProducts', input.fields);
-    if (input.criteria !== undefined || input.governance_context !== undefined || input.context_id !== undefined) {
+    const criteria = record(input.criteria);
+    this.assertRequestedLegacyVersion('listProducts', input);
+    const unsupportedCriteria = Object.keys(criteria).filter(field => field !== 'offer_filters');
+    if (unsupportedCriteria.length > 0) {
       throw this.unsupported(
         'listProducts',
-        'criteria/governance_context/context_id',
-        'Compact list_products criteria, governance context, and explicit context IDs have no general lossless established mapping.'
+        unsupportedCriteria.map(field => `criteria.${field}`).join(','),
+        `Compact list_products criteria fields ${unsupportedCriteria.join(
+          ', '
+        )} have no declared lossless established mapping.`
+      );
+    }
+    if (input.governance_context !== undefined || input.context_id !== undefined) {
+      const unsupportedContext = [
+        ...(input.governance_context !== undefined ? ['governance_context'] : []),
+        ...(input.context_id !== undefined ? ['context_id'] : []),
+      ];
+      throw this.unsupported(
+        'listProducts',
+        unsupportedContext.join(','),
+        `Compact list_products fields ${unsupportedContext.join(', ')} have no lossless established mapping.`
       );
     }
     if (input.push_notification_config !== undefined && compareRelease(this.negotiated_version, '3.1') < 0) {
@@ -5194,11 +5322,13 @@ export class MediaBuyLifecycleCoordinator {
         `The negotiated ${this.negotiated_version} get_products request cannot carry push_notification_config.`
       );
     }
+    const filters = this.projectLegacyOfferFilters('listProducts', criteria.offer_filters);
     const request: CanonicalGetProductsRequest = {
       buying_mode: 'wholesale',
       ...(input.idempotency_key !== undefined && { idempotency_key: input.idempotency_key as string }),
       ...(input.account !== undefined && { account: input.account as CanonicalGetProductsRequest['account'] }),
       ...(input.brand !== undefined && { brand: input.brand as CanonicalGetProductsRequest['brand'] }),
+      ...(Object.keys(filters).length > 0 && { filters: filters as CanonicalGetProductsRequest['filters'] }),
       ...(Array.isArray(input.fields) && { fields: input.fields as CanonicalGetProductsRequest['fields'] }),
       ...(compareRelease(this.negotiated_version, '3.0') >= 0 &&
         (input.cursor !== undefined || input.max_results !== undefined) && {
@@ -5216,7 +5346,19 @@ export class MediaBuyLifecycleCoordinator {
       }),
     };
     this.assertValidCompactRequest('list_products', params, lifecycle);
-    const result = await this.agent.getProducts(request, inputHandler, options);
+    const accountScope = this.accountScope(input.account);
+    // The discriminator belongs to one list invocation, not to the catalog
+    // contents. Async observations from this call reuse it, while a later
+    // identical listing receives a fresh purchasable continuation.
+    const issuanceDiscriminator = randomBytes(16).toString('base64url');
+    const legacyOptions = { ...options, ...this.legacyWireTaskOptions() };
+    const result = await this.prepareLegacyPurchaseContinuationResult(
+      await this.agent.getProducts(request, inputHandler, legacyOptions),
+      accountScope,
+      requestFingerprint(request),
+      'listing',
+      issuanceDiscriminator
+    );
     return this.adaptProjectedResult(result, this.makeReport(lifecycle, ['get_products'], []), data =>
       projectProducts(data, lifecycle)
     );
@@ -5251,6 +5393,7 @@ export class MediaBuyLifecycleCoordinator {
       );
     }
 
+    this.assertRequestedLegacyVersion('requestProposals', input);
     this.assertOnlyFields('requestProposals', input, REQUEST_PROPOSALS_FIELDS);
     const criteria = record(input.criteria);
     this.assertOnlyFields(
@@ -5293,13 +5436,7 @@ export class MediaBuyLifecycleCoordinator {
         `The negotiated ${this.negotiated_version} get_products request cannot carry push_notification_config.`
       );
     }
-    const offerFilters = record(criteria.offer_filters);
-    this.assertLegacyOfferFilterShapes('requestProposals', offerFilters);
-    this.assertLegacyMetrics(
-      'requestProposals',
-      offerFilters.required_metrics,
-      'criteria.offer_filters.required_metrics'
-    );
+    const filters = this.projectLegacyOfferFilters('requestProposals', criteria.offer_filters);
     if (criteria.product_ids !== undefined) {
       throw this.unsupported(
         'requestProposals',
@@ -5314,16 +5451,6 @@ export class MediaBuyLifecycleCoordinator {
         'Compact catalog selection omits the full legacy catalog metadata required by get_products. No request was sent.'
       );
     }
-    const legacyOfferFilterFields =
-      compareRelease(this.negotiated_version, '3.1') >= 0
-        ? V31_OFFER_FILTER_FIELDS
-        : compareRelease(this.negotiated_version, '3.0') >= 0
-          ? V30_OFFER_FILTER_FIELDS
-          : V25_OFFER_FILTER_FIELDS;
-    this.assertOnlyFields('requestProposals.criteria.offer_filters', offerFilters, legacyOfferFilterFields);
-    const filters = Object.fromEntries(
-      Object.entries(offerFilters).filter(([key]) => legacyOfferFilterFields.has(key))
-    );
     const request: CanonicalGetProductsRequest = {
       buying_mode: 'brief',
       brief: input.brief as string,
@@ -5355,9 +5482,13 @@ export class MediaBuyLifecycleCoordinator {
     this.assertValidCompactRequest('request_proposals', params, lifecycle, true);
     return this.captureProposalDispatch(
       accountScope,
-      () => this.agent.getProducts(request, inputHandler, options),
+      () => this.agent.getProducts(request, inputHandler, { ...options, ...this.legacyWireTaskOptions() }),
       async result => {
-        const prepared = await this.prepareLegacyProposalResult(result, accountScope, requestFingerprint(request));
+        const prepared = await this.prepareLegacyPurchaseContinuationResult(
+          result,
+          accountScope,
+          requestFingerprint(request)
+        );
         return this.adaptProjectedResult(
           prepared,
           this.makeReport(lifecycle, ['get_products'], []),
@@ -5371,8 +5502,9 @@ export class MediaBuyLifecycleCoordinator {
   }
 
   /**
-   * Redeem a beta.4 `legacy_create` continuation. This is an SDK-local
-   * coordinator operation; the input object itself is never sent on the wire.
+   * Redeem an SDK-local `legacy_create` continuation issued from an eligible
+   * tokenless catalog or products-only proposal result. The input object
+   * itself is never sent on the wire.
    */
   async continueLegacyPurchase(
     input: CompatibilityPurchaseCoordinatorInput,
@@ -5760,7 +5892,8 @@ export class MediaBuyLifecycleCoordinator {
                 context.publishSettledTaskStatus,
                 context.registerExternalTaskSettlement,
                 optionsSnapshot?.transport,
-                persistedOperation.deferredTaskToken
+                persistedOperation.deferredTaskToken,
+                this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
               ),
             };
           }
@@ -5785,7 +5918,8 @@ export class MediaBuyLifecycleCoordinator {
             task = await this.agent.getTaskStatus(
               pending.serverTaskId,
               optionsSnapshot?.transport,
-              optionsSnapshot?.signal
+              optionsSnapshot?.signal,
+              this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
             );
           } catch (error) {
             if (isAbortOrTimeoutError(error)) throw error;
@@ -5905,7 +6039,8 @@ export class MediaBuyLifecycleCoordinator {
             task = await this.agent.getTaskStatus(
               persistedOperation.sellerTaskId,
               optionsSnapshot?.transport,
-              optionsSnapshot?.signal
+              optionsSnapshot?.signal,
+              this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
             );
           } catch (error) {
             if (isAbortOrTimeoutError(error)) throw error;
@@ -5945,7 +6080,16 @@ export class MediaBuyLifecycleCoordinator {
             }
             return {
               action: 'return',
-              result: await this.trackLegacyPurchaseResult(token, persistedClaim, resumed),
+              result: await this.trackLegacyPurchaseResult(
+                token,
+                persistedClaim,
+                resumed,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
+              ),
             };
           }
         }
@@ -5990,7 +6134,16 @@ export class MediaBuyLifecycleCoordinator {
               // it through the normal terminal path so callback-capable
               // operations fence completion-handler publication before the
               // completed result can be replayed or raced by a webhook.
-              result: await this.trackLegacyPurchaseResult(token, persistedClaim, terminal),
+              result: await this.trackLegacyPurchaseResult(
+                token,
+                persistedClaim,
+                terminal,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
+              ),
             };
           }
         }
@@ -6013,7 +6166,9 @@ export class MediaBuyLifecycleCoordinator {
             result,
             context.publishSettledTaskStatus,
             context.registerExternalTaskSettlement,
-            optionsSnapshot?.transport
+            optionsSnapshot?.transport,
+            undefined,
+            this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
           );
           settledInsideExecutor = true;
           return settled;
@@ -6049,13 +6204,23 @@ export class MediaBuyLifecycleCoordinator {
             continuation.operation.state !== 'available',
           skipAccountValidation: true,
           skipIdempotencyAutoInject: true,
+          ...this.legacyWireTaskOptions(continuation.sourceAdcpVersion),
         }
       );
       if (!claimedForDispatch) return result;
       if (settledInsideExecutor) return result;
       // Test doubles and older internal façades may invoke the pre-dispatch
       // hook without honoring its executor-owned settlement callbacks.
-      return this.trackLegacyPurchaseResult(token, claim, result, undefined, undefined, optionsSnapshot?.transport);
+      return this.trackLegacyPurchaseResult(
+        token,
+        claim,
+        result,
+        undefined,
+        undefined,
+        optionsSnapshot?.transport,
+        undefined,
+        this.legacyWireTaskOptions(continuation.sourceAdcpVersion)
+      );
     } catch (error) {
       if (!claimedForDispatch) throw error;
       if (settledInsideExecutor) throw error;
@@ -7387,7 +7552,8 @@ export class MediaBuyLifecycleCoordinator {
     publishSettledTaskStatus?: BeforeProtocolDispatchContext['publishSettledTaskStatus'],
     registerExternalTaskSettlement?: BeforeProtocolDispatchContext['registerExternalTaskSettlement'],
     settlementTransport?: TaskOptions['transport'],
-    expectedDeferredTaskToken?: string
+    expectedDeferredTaskToken?: string,
+    wireOptions?: Pick<TaskOptions, 'wireAdcpVersion' | 'versionEnvelope'>
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     try {
       const tracked = await this.trackLegacyPurchaseResultInternal(
@@ -7397,7 +7563,8 @@ export class MediaBuyLifecycleCoordinator {
         publishSettledTaskStatus,
         registerExternalTaskSettlement,
         settlementTransport,
-        expectedDeferredTaskToken
+        expectedDeferredTaskToken,
+        wireOptions
       );
       return transferDeferredSettlementAcknowledgement(result, tracked);
     } catch (error) {
@@ -7413,7 +7580,8 @@ export class MediaBuyLifecycleCoordinator {
     publishSettledTaskStatus?: BeforeProtocolDispatchContext['publishSettledTaskStatus'],
     registerExternalTaskSettlement?: BeforeProtocolDispatchContext['registerExternalTaskSettlement'],
     settlementTransport?: TaskOptions['transport'],
-    expectedDeferredTaskToken?: string
+    expectedDeferredTaskToken?: string,
+    wireOptions?: Pick<TaskOptions, 'wireAdcpVersion' | 'versionEnvelope'>
   ): Promise<TaskResult<CreateMediaBuyResponse>> {
     const durablePendingSettlement = hasDeferredPendingSettlement(result);
     let durableDeferredTaskToken = false;
@@ -7840,7 +8008,9 @@ export class MediaBuyLifecycleCoordinator {
             observed,
             publishSettledTaskStatus,
             registerExternalTaskSettlement,
-            settlementTransport
+            settlementTransport,
+            undefined,
+            wireOptions
           );
         } catch (error) {
           if (error instanceof LegacyPurchaseContinuationError && error.code === 'ambiguous') {
@@ -7903,7 +8073,7 @@ export class MediaBuyLifecycleCoordinator {
         void new Promise<void>(resolve => setTimeout(resolve, 0))
           .then(async () => {
             while (!watchSignal.aborted) {
-              const task = await this.agent.getTaskStatus(sellerTaskId, settlementTransport, watchSignal);
+              const task = await this.agent.getTaskStatus(sellerTaskId, settlementTransport, watchSignal, wireOptions);
               if (task.taskId !== sellerTaskId || task.taskType !== 'create_media_buy') {
                 throw this.legacyPurchaseAmbiguousError(
                   'The polled working seller task does not match the durably recorded create_media_buy task.'
@@ -7917,7 +8087,9 @@ export class MediaBuyLifecycleCoordinator {
                   observed,
                   publishSettledTaskStatus,
                   registerExternalTaskSettlement,
-                  settlementTransport
+                  settlementTransport,
+                  undefined,
+                  wireOptions
                 );
               }
               await waitForWorkingPoll();
@@ -7966,7 +8138,16 @@ export class MediaBuyLifecycleCoordinator {
           }
           const observed = this.legacyPurchaseResultFromTask(task, settlementMetadata);
           if (observed && ['completed', 'failed', 'governance-denied'].includes(observed.status)) {
-            const canonical = await this.trackLegacyPurchaseResult(token, claim, observed);
+            const canonical = await this.trackLegacyPurchaseResult(
+              token,
+              claim,
+              observed,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              wireOptions
+            );
             return {
               ...task,
               status: canonical.status,
@@ -8034,7 +8215,9 @@ export class MediaBuyLifecycleCoordinator {
               observed,
               publishSettledTaskStatus,
               registerExternalTaskSettlement,
-              settlementTransport
+              settlementTransport,
+              undefined,
+              wireOptions
             );
           }
           await waitForNextPoll(state, signal);
@@ -8136,7 +8319,9 @@ export class MediaBuyLifecycleCoordinator {
                 completion,
                 publishSettledTaskStatus,
                 registerExternalTaskSettlement,
-                settlementTransport
+                settlementTransport,
+                undefined,
+                wireOptions
               );
             }
             return await waitForSharedCompletion(pollInterval, signal);
@@ -8220,7 +8405,8 @@ export class MediaBuyLifecycleCoordinator {
               publishSettledTaskStatus,
               registerExternalTaskSettlement,
               settlementTransport,
-              deferred.token
+              deferred.token,
+              wireOptions
             );
           } catch (error) {
             if (error instanceof DeferredSettlementOwnershipError) throw error;
@@ -8317,6 +8503,7 @@ export class MediaBuyLifecycleCoordinator {
       }
     }
 
+    this.assertRequestedLegacyVersion('refineProposals', record(params));
     this.assertProposalLifecycleAvailable('refineProposals');
 
     this.assertOnlyFields('refineProposals', record(params), REFINE_PROPOSALS_FIELDS);
@@ -8452,9 +8639,10 @@ export class MediaBuyLifecycleCoordinator {
       throw error;
     }
     const attemptEpoch = pendingRefinement.attemptEpoch;
-    const dispatchOptions = retry
-      ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
-      : options;
+    const dispatchOptions = {
+      ...(retry ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject } : options),
+      ...this.legacyWireTaskOptions(),
+    };
     const projectOnly = (data: CompatibleRefineProposalsWireResponse) =>
       projectRefineProposals(data, lifecycle, params.refinements);
     const projectAndSettle = (data: CompatibleRefineProposalsWireResponse) => {
@@ -8631,6 +8819,7 @@ export class MediaBuyLifecycleCoordinator {
       }
     }
 
+    this.assertRequestedLegacyVersion('declineProposals', input);
     this.assertProposalLifecycleAvailable('declineProposals');
 
     this.assertOnlyFields('declineProposals', input, DECLINE_PROPOSALS_FIELDS);
@@ -8701,9 +8890,10 @@ export class MediaBuyLifecycleCoordinator {
       throw error;
     }
     const attemptEpoch = pendingDecline.attemptEpoch;
-    const dispatchOptions = retry
-      ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject }
-      : options;
+    const dispatchOptions = {
+      ...(retry ? { ...options, skipIdempotencyAutoInject: retry.skipIdempotencyAutoInject } : options),
+      ...this.legacyWireTaskOptions(),
+    };
     const projectAndSettle = (data: CompatibleDeclineProposalsWireResponse) => {
       try {
         const projected = projectOnly(data, proposalIds);
@@ -8820,6 +9010,7 @@ export class MediaBuyLifecycleCoordinator {
       return this.adaptProjectedResult(result, this.makeReport(lifecycle, ['buy_products'], []), data => data);
     }
 
+    this.assertRequestedLegacyVersion('buyProducts', input);
     this.assertOnlyFields('buyProducts', input, BUY_PRODUCTS_FIELDS);
     this.assertLegacyReportingWebhook('buyProducts', input.reporting_webhook);
     this.assertCompactWireFieldsAbsent('buyProducts', input, [
@@ -8946,7 +9137,10 @@ export class MediaBuyLifecycleCoordinator {
       ...(input.context !== undefined && { context: input.context as CanonicalCreateMediaBuyRequest['context'] }),
     };
     this.assertValidCompactRequest('buy_products', params, lifecycle, true);
-    const result = await this.agent.createMediaBuy(request, inputHandler, options);
+    const result = await this.agent.createMediaBuy(request, inputHandler, {
+      ...options,
+      ...this.legacyWireTaskOptions(),
+    });
     return this.adaptProjectedResult(
       result,
       this.makeReport(lifecycle, ['create_media_buy'], losses, [
@@ -9122,6 +9316,7 @@ export class MediaBuyLifecycleCoordinator {
       return this.adaptProjectedResult(transitioned, this.makeReport(lifecycle, ['accept_proposal'], []), data => data);
     }
 
+    this.assertRequestedLegacyVersion('acceptProposal', input);
     this.assertProposalLifecycleAvailable('acceptProposal');
     this.assertOnlyFields('acceptProposal', input, ACCEPT_PROPOSAL_FIELDS);
     this.assertLegacyReportingWebhook('acceptProposal', input.reporting_webhook);
@@ -9408,9 +9603,12 @@ export class MediaBuyLifecycleCoordinator {
     });
     this.ownedAcceptanceReservations.set(reservation, { snapshotKey: snapshotKey!, snapshot });
     acceptanceReservationOwners.set(reservation, this);
-    const dispatchOptions = retryableAcceptance
-      ? { ...options, skipIdempotencyAutoInject: retryableAcceptance.skipIdempotencyAutoInject }
-      : options;
+    const dispatchOptions = {
+      ...(retryableAcceptance
+        ? { ...options, skipIdempotencyAutoInject: retryableAcceptance.skipIdempotencyAutoInject }
+        : options),
+      ...this.legacyWireTaskOptions(),
+    };
     let result: TaskResult<CreateMediaBuyResponse>;
     try {
       result =
@@ -9522,6 +9720,7 @@ export class MediaBuyLifecycleCoordinator {
       return this.adaptProjectedResult(result, this.makeReport(lifecycle, ['control_media_buy'], []), data => data);
     }
 
+    this.assertRequestedLegacyVersion('controlMediaBuy', input);
     this.assertOnlyFields('controlMediaBuy', input, CONTROL_MEDIA_BUY_FIELDS);
     this.assertLegacyReportingWebhook('controlMediaBuy', input.reporting_webhook);
     this.assertLegacyPushNotification('controlMediaBuy', input.push_notification_config);
@@ -9778,7 +9977,10 @@ export class MediaBuyLifecycleCoordinator {
       ...(input.context !== undefined && { context: input.context as CanonicalUpdateMediaBuyRequest['context'] }),
     };
     this.assertValidCompactRequest('control_media_buy', params, lifecycle, true);
-    const result = await this.agent.updateMediaBuy(request, inputHandler, options);
+    const result = await this.agent.updateMediaBuy(request, inputHandler, {
+      ...options,
+      ...this.legacyWireTaskOptions(),
+    });
     return this.adaptProjectedResult(
       result,
       this.makeReport(
@@ -9808,13 +10010,17 @@ export class MediaBuyLifecycleCoordinator {
     this.assertSharedToolAdvertised('get_media_buys');
     const input = record(params);
     this.assertLegacyReferenceShapes('getMediaBuys', input);
+    if (!isCompactRelease(this.negotiated_version)) this.assertRequestedLegacyVersion('getMediaBuys', input);
     if (compareRelease(this.negotiated_version, '3.1') < 0) {
       this.assertCompactWireFieldsAbsent('getMediaBuys', input, ['include_webhook_activity', 'webhook_activity_limit']);
     }
     if (!isCompactRelease(this.negotiated_version)) {
       this.assertCompactWireFieldsAbsent('getMediaBuys', input, ['indicator_types']);
     }
-    const result = await this.agent.getMediaBuys(params, inputHandler, options);
+    const result = await this.agent.getMediaBuys(params, inputHandler, {
+      ...options,
+      ...this.legacyWireTaskOptions(),
+    });
     return this.adaptProjectedResult(result, this.makeReport(this.lifecycle, ['get_media_buys'], []), data => data);
   }
 
@@ -9835,6 +10041,7 @@ export class MediaBuyLifecycleCoordinator {
     this.assertSharedToolAdvertised('get_media_buy_delivery');
     const input = record(params);
     this.assertBeta6ReportingRequest('getMediaBuyDelivery', 'get_media_buy_delivery', input);
+    if (!isCompactRelease(this.negotiated_version)) this.assertRequestedLegacyVersion('getMediaBuyDelivery', input);
     if (compareRelease(this.negotiated_version, '3.1') < 0) {
       this.assertCompactWireFieldsAbsent('getMediaBuyDelivery', input, [
         'include_window_breakdown',
@@ -9853,7 +10060,10 @@ export class MediaBuyLifecycleCoordinator {
     }
     this.assertLegacyReportingDimensions('getMediaBuyDelivery', input.reporting_dimensions);
     this.assertLegacyReferenceShapes('getMediaBuyDelivery', input);
-    const result = await this.agent.getMediaBuyDelivery(params, inputHandler, options);
+    const result = await this.agent.getMediaBuyDelivery(params, inputHandler, {
+      ...options,
+      ...this.legacyWireTaskOptions(),
+    });
     return this.adaptProjectedResult(
       result,
       this.makeReport(this.lifecycle, ['get_media_buy_delivery'], []),

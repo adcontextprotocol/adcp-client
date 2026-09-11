@@ -443,6 +443,75 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
     assert.deepEqual(requests[1].pagination, { max_results: 25 });
   });
 
+  for (const version of ['3.0', '3.1']) {
+    test(`${version} list projection preserves exact offer filters and pagination`, async () => {
+      const agent = clientWithCaps(capabilities({ version }), version);
+      const requests = [];
+      const sellerResponse = {
+        products: [],
+        pagination: { cursor: `seller-next-${version}`, has_more: true },
+        cache_scope: 'account',
+      };
+      agent.getProducts = async request => {
+        requests.push(structuredClone(request));
+        return completed('get_products', sellerResponse);
+      };
+      const coordinator = await agent.negotiateMediaBuyLifecycle();
+
+      const result = await coordinator.listProducts({
+        account: { account_id: `account-${version}` },
+        criteria: { offer_filters: { countries: ['US'], channels: ['display'] } },
+        cursor: `buyer-cursor-${version}`,
+        max_results: 17,
+      });
+
+      assert.deepEqual(requests, [
+        {
+          buying_mode: 'wholesale',
+          account: { account_id: `account-${version}` },
+          filters: { countries: ['US'], channels: ['display'] },
+          pagination: { cursor: `buyer-cursor-${version}`, max_results: 17 },
+        },
+      ]);
+      assert.equal(requests[0].targeting_overlay, undefined, 'country criteria must remain product filters');
+      assert.equal(result.data.next_cursor, `seller-next-${version}`);
+      assert.deepEqual(result.data.pagination, sellerResponse.pagination);
+      assert.strictEqual(result.data.raw, sellerResponse);
+    });
+  }
+
+  test('established list criteria report the exact unsupported field before dispatch', async () => {
+    const agent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    let dispatches = 0;
+    agent.getProducts = async () => {
+      dispatches += 1;
+      return completed('get_products', { products: [] });
+    };
+    const coordinator = await agent.negotiateMediaBuyLifecycle();
+
+    for (const [params, feature] of [
+      [{ criteria: { product_ids: ['product-1'] } }, 'criteria.product_ids'],
+      [
+        { criteria: { offer_filters: { required_metrics: ['viewable_rate'] } } },
+        'criteria.offer_filters.required_metrics',
+      ],
+      [
+        { criteria: { offer_filters: { required_metrics: ['impressions'] } } },
+        'criteria.offer_filters.required_metrics',
+      ],
+      [{ governance_context: 'governance-1' }, 'governance_context'],
+      [{ context_id: 'context-1' }, 'context_id'],
+      [{ adcp_version: '3.1' }, 'adcp_version'],
+      [{ adcp_major_version: 4 }, 'adcp_major_version'],
+    ]) {
+      await assert.rejects(
+        coordinator.listProducts(params),
+        error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === feature
+      );
+    }
+    assert.equal(dispatches, 0);
+  });
+
   test('malformed native proposal completions fail instead of fabricating a legacy outcome', async () => {
     const agent = clientWithCaps(capabilities({ tools: COMPACT_TOOLS }));
     agent.requestProposals = async () => completed('request_proposals', { proposals: [], products: [] });
@@ -5045,6 +5114,164 @@ describe('legacy products-only purchase continuations', () => {
       ...(sourceVersion.startsWith('3.1') && { confirmed_at: '2099-01-01T00:00:00Z', revision: 1 }),
     };
   }
+
+  test('purchases a tokenless 3.0 catalog through restart recovery and deterministic replay', async () => {
+    const store = createInMemoryLegacyPurchaseContinuationStore();
+    const firstAgent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    const product = legacyListedProduct('p-tokenless-catalog', 'Tokenless catalog');
+    firstAgent.getProducts = async () =>
+      completed('get_products', {
+        products: [product],
+        pagination: { cursor: 'catalog-next', has_more: true },
+        cache_scope: 'account',
+      });
+    const coordinatorOptions = {
+      principalScope: 'buyer-tokenless-catalog',
+      legacyPurchaseSellerSessionScope: 'seller-session-tokenless-catalog',
+      legacyPurchaseContinuationStore: store,
+      allowedLosses: ['feed_version_not_atomic', 'pricing_version_not_atomic'],
+    };
+    const first = await firstAgent.negotiateMediaBuyLifecycle(coordinatorOptions);
+    const listed = await first.listProducts({
+      account: { account_id: 'account-tokenless-catalog' },
+      criteria: { offer_filters: { countries: ['US'] } },
+      max_results: 1,
+    });
+
+    assert.equal(listed.data.feed_version, undefined);
+    assert.equal(listed.data.next_cursor, 'catalog-next');
+    assert.equal(listed.data.purchase_continuation.kind, 'legacy_create');
+    assert.deepEqual(listed.data.purchase_continuation.product_ids, ['p-tokenless-catalog']);
+    assert.deepEqual(listed.data.purchase_continuation.losses, [
+      'feed_version_not_atomic',
+      'pricing_version_not_atomic',
+    ]);
+    assert.equal(listed.data.raw.purchase_continuation, undefined, 'raw must remain the seller response');
+
+    let creates = 0;
+    firstAgent.createMediaBuy = async () => {
+      creates += 1;
+      return completed('create_media_buy', {});
+    };
+    await assert.rejects(
+      first.buyProducts({
+        idempotency_key: 'strict-tokenless-buy-0001',
+        account: { account_id: 'account-tokenless-catalog' },
+        brand: { domain: 'example.com' },
+        purchases: [{ product_id: 'p-tokenless-catalog', pricing_option_id: 'fixed-cpm', budget: 10 }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      }),
+      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'feed_version'
+    );
+    assert.equal(creates, 0, 'strict compact selection must fail before mutation');
+
+    const recoveredAgent = clientWithCaps(capabilities({ version: '3.0' }), '3.0');
+    const recoveredCreates = [];
+    recoveredAgent.createMediaBuyLegacy = async request => {
+      recoveredCreates.push(structuredClone(request));
+      return completed('create_media_buy', {
+        media_buy_id: 'buy-tokenless-catalog',
+        packages: [],
+      });
+    };
+    const recovered = await recoveredAgent.negotiateMediaBuyLifecycle(coordinatorOptions);
+    const continuationInput = {
+      idempotency_key: 'a2f9f142-e760-4b53-8f64-a4e24070dc4e',
+      continuation_token: listed.data.purchase_continuation.continuation_token,
+      account: { account_id: 'account-tokenless-catalog' },
+      selected_product_ids: ['p-tokenless-catalog'],
+      accepted_losses: listed.data.purchase_continuation.losses,
+      legacy_create_request: {
+        idempotency_key: 'legacy-tokenless-create-0001',
+        account: { account_id: 'account-tokenless-catalog' },
+        brand: { domain: 'example.com' },
+        packages: [{ product_id: 'p-tokenless-catalog', pricing_option_id: 'fixed-cpm', budget: 10 }],
+        start_time: '2099-01-01T00:00:00Z',
+        end_time: '2099-02-01T00:00:00Z',
+      },
+    };
+    await assert.rejects(
+      recovered.continueLegacyPurchase({
+        ...continuationInput,
+        accepted_losses: ['feed_version_not_atomic'],
+      }),
+      error => error.code === 'loss_mismatch'
+    );
+    assert.equal(recoveredCreates.length, 0, 'loss consent must be complete before mutation');
+
+    const purchased = await recovered.continueLegacyPurchase(continuationInput);
+    const replayed = await recovered.continueLegacyPurchase(continuationInput);
+
+    assert.equal(purchased.data.media_buy_id, 'buy-tokenless-catalog');
+    assert.equal(replayed.data.media_buy_id, purchased.data.media_buy_id);
+    assert.equal(recoveredCreates.length, 1);
+    assert.deepEqual(recoveredCreates[0], continuationInput.legacy_create_request);
+
+    recoveredAgent.getProducts = async () =>
+      completed('get_products', {
+        products: [product],
+        pagination: { cursor: 'catalog-next', has_more: true },
+        cache_scope: 'account',
+      });
+    const relisted = await recovered.listProducts({
+      account: { account_id: 'account-tokenless-catalog' },
+      criteria: { offer_filters: { countries: ['US'] } },
+      max_results: 1,
+    });
+    assert.notEqual(
+      relisted.data.purchase_continuation.continuation_token,
+      listed.data.purchase_continuation.continuation_token,
+      'a fresh listing must not reuse a consumed purchase continuation'
+    );
+    await recovered.continueLegacyPurchase({
+      ...continuationInput,
+      idempotency_key: '047165ce-43a5-45d9-8c81-8fe671d52879',
+      continuation_token: relisted.data.purchase_continuation.continuation_token,
+      legacy_create_request: {
+        ...continuationInput.legacy_create_request,
+        idempotency_key: 'legacy-tokenless-create-0002',
+      },
+    });
+    assert.equal(recoveredCreates.length, 2);
+  });
+
+  test('listing continuations are limited to purchasable catalogs without a real feed token', async () => {
+    const responses = [
+      {
+        products: [legacyListedProduct('p-feed-backed', 'Feed backed')],
+        wholesale_feed_version: 'feed-real',
+        cache_scope: 'account',
+        purchase_continuation: {
+          kind: 'legacy_create',
+          continuation_token: 'seller-controlled',
+        },
+      },
+      { products: [{ product_id: 'p-no-pricing', name: 'No pricing' }], cache_scope: 'account' },
+      {
+        products: [legacyListedProduct('p-no-session-binding', 'No session binding')],
+        cache_scope: 'account',
+      },
+    ];
+    const agent = clientWithCaps(capabilities({ version: '3.1' }), '3.1');
+    agent.getProducts = async () => completed('get_products', responses.shift());
+    const coordinator = await agent.negotiateMediaBuyLifecycle({
+      principalScope: 'buyer-list-eligibility',
+      legacyPurchaseSellerSessionScope: undefined,
+      legacyPurchaseContinuationStore: createInMemoryLegacyPurchaseContinuationStore(),
+    });
+
+    const feedBacked = await coordinator.listProducts({ account: { account_id: 'account-list-eligibility' } });
+    const unpurchasable = await coordinator.listProducts({ account: { account_id: 'account-list-eligibility' } });
+    const unbound = await coordinator.listProducts({ account: { account_id: 'account-list-eligibility' } });
+
+    assert.equal(feedBacked.data.feed_version, 'feed-real');
+    assert.equal(feedBacked.data.purchase_continuation, undefined);
+    assert.equal(feedBacked.data.raw.purchase_continuation.continuation_token, 'seller-controlled');
+    assert.equal(unpurchasable.data.purchase_continuation, undefined);
+    assert.equal(unbound.data.products[0].product_id, 'p-no-session-binding');
+    assert.equal(unbound.data.purchase_continuation, undefined);
+  });
 
   test('keeps unsafe products-only discovery readable without issuing a purchase continuation', async () => {
     const agent = clientWithCaps(capabilities({ version: '3.1' }), '3.1');
@@ -11266,7 +11493,9 @@ describe('MediaBuyLifecycleCoordinator mutation boundaries', () => {
         brief: 'test',
         criteria: { offer_filters: { required_features: { property_filtering: true } } },
       }),
-      error => error instanceof MediaBuyLifecycleCompatibilityError && error.feature === 'required_features'
+      error =>
+        error instanceof MediaBuyLifecycleCompatibilityError &&
+        error.feature === 'criteria.offer_filters.required_features'
     );
     assert.equal(calls, 0);
   });

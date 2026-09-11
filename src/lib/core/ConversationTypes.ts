@@ -166,6 +166,19 @@ export interface TaskOptions {
    * the underlying official protocol client supports it.
    */
   signal?: AbortSignal;
+  /**
+   * INTERNAL — compatibility-coordinator wire release for this operation.
+   * Request/response validation remains pinned to the owning client.
+   *
+   * @internal
+   */
+  wireAdcpVersion?: string;
+  /**
+   * INTERNAL — compatibility-coordinator version-envelope mode for this operation.
+   *
+   * @internal
+   */
+  versionEnvelope?: import('../protocols').VersionEnvelopeMode;
   /** Maximum clarification rounds before failing */
   maxClarifications?: number;
   /**
