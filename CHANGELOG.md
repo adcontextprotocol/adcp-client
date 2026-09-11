@@ -1,5 +1,15 @@
 # Changelog
 
+## 14.0.0-rc.36
+
+### Minor Changes
+
+- ceb2edf: Project representable compact catalog filters onto established sellers and expose durable purchase continuations for eligible tokenless legacy listings.
+
+### Patch Changes
+
+- 8524e4d: Canonicalize agent URL identity fields before storyboard runner comparisons so schema-conformant URL forms grade equivalently without changing resource URL assertions.
+
 ## 14.0.0-rc.35
 
 ### Patch Changes
