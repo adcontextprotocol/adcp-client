@@ -4,7 +4,7 @@
 /**
  * AdCP SDK library version
  */
-export const LIBRARY_VERSION = '14.0.0-rc.35';
+export const LIBRARY_VERSION = '14.0.0-rc.36';
 
 /**
  * AdCP specification version this library is built for
@@ -99,10 +99,10 @@ export type AdcpVersion = (typeof COMPATIBLE_ADCP_VERSIONS)[number];
  * Full version information
  */
 export const VERSION_INFO = {
-  library: '14.0.0-rc.35',
+  library: '14.0.0-rc.36',
   adcp: '3.2.0-rc.1',
   compatibleVersions: COMPATIBLE_ADCP_VERSIONS,
-  generatedAt: '2026-09-09T11:42:43.056Z',
+  generatedAt: '2026-09-11T18:38:00.547Z',
 } as const;
 
 /**
