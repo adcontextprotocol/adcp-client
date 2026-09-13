@@ -44,7 +44,45 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.deepEqual(calls[0].input.media_buy_ids, ['fixture-media-buy']);
     assert.equal(calls[0].input.start_date, '2026-09-01');
     assert.equal(calls[0].input.end_date, '2026-09-02');
+    assert.equal(calls[0].input.source_read_cutoff_at, slice.period.sourceReadCutoffAt);
     assert.deepEqual(calls[0].scope, slice.sourceScope);
+  });
+
+  test('requires explicit temporal evidence for a partial-period source cutoff', async () => {
+    const cutoff = '2026-09-01T12:00:00.000Z';
+    const unsupported = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        media_buy_deliveries: [{ media_buy_id: 'fixture-media-buy', totals: { impressions: 10, spend: '1.25' } }],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const unsupportedSlice = request('fixture-inline-partial-cutoff-unsupported');
+    unsupportedSlice.period.sourceReadCutoffAt = cutoff;
+    assert.equal(
+      validateReportingSourceFailureV1(await unsupported.execute(unsupportedSlice, context()), 'PARTIAL_RESULT').code,
+      'PARTIAL_RESULT'
+    );
+
+    let receivedCutoff;
+    const evidenced = createInlineReportingSourceExecutor(input => {
+      receivedCutoff = input.source_read_cutoff_at;
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        media_buy_deliveries: [{ media_buy_id: 'fixture-media-buy', totals: { impressions: 10, spend: '1.25' } }],
+        data_through: input.source_read_cutoff_at,
+        observed_at: input.source_read_cutoff_at,
+      };
+    }, redactedReportingSourceOfferingV1);
+    const evidencedSlice = request('fixture-inline-partial-cutoff-evidenced');
+    evidencedSlice.period.sourceReadCutoffAt = cutoff;
+    const result = await evidenced.execute(evidencedSlice, context());
+    assert.equal(result.ok, true);
+    assert.equal(receivedCutoff, cutoff);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.period.dataThrough, cutoff);
   });
 
   test('accepts row-level currency and projects nested dimension evidence', async () => {
@@ -96,6 +134,22 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(manifest.rowCount, 0);
     assert.equal(manifest.explicitZero, true);
     assert.equal(manifest.coverage.status, 'full');
+  });
+
+  test('does not seal nonterminal handler statuses as zero-row evidence', async () => {
+    for (const status of ['working', 'submitted', 'input_required', 'deferred']) {
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          status,
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [],
+        }),
+        redactedReportingSourceOfferingV1
+      );
+      const result = await source.execute(request(`fixture-inline-${status}`), context());
+      assert.equal(validateReportingSourceFailureV1(result, 'NOT_READY').code, 'NOT_READY');
+    }
   });
 
   test('maps null, thrown failures, typed failures, and partial responses', async () => {
@@ -172,6 +226,24 @@ describe('createInlineReportingSourceExecutor', () => {
       },
       {
         fetch: () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: {}, status: 'failed' }],
+        code: 'PARTIAL_RESULT',
+      },
+      {
+        fetch: input => ({
+          status: 'failed',
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [],
+        }),
+        code: 'SOURCE_TRANSIENT',
+      },
+      {
+        fetch: input => ({
+          status: 'unavailable',
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [],
+        }),
         code: 'PARTIAL_RESULT',
       },
       {
@@ -259,6 +331,23 @@ describe('createInlineReportingSourceExecutor', () => {
     conflict.requestedMetrics = ['impressions'];
     const rejected = await source.execute(conflict, context());
     assert.equal(validateReportingSourceFailureV1(rejected, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(calls, 1);
+  });
+
+  test('normalizes explicitly undefined optional fields before replay hashing', async () => {
+    let calls = 0;
+    const source = createInlineReportingSourceExecutor(() => {
+      calls += 1;
+      return [];
+    }, redactedReportingSourceOfferingV1);
+    const explicit = request('fixture-inline-explicit-undefined');
+    explicit.finality.supersedesPublicationId = undefined;
+    const first = await source.execute(explicit, context());
+    const omitted = request('fixture-inline-explicit-undefined');
+    const replay = await source.execute(omitted, context());
+    assert.equal(first.ok, true);
+    assert.equal(replay.ok, true);
+    assert.deepEqual(replay.manifestBytes, first.manifestBytes);
     assert.equal(calls, 1);
   });
 
@@ -431,6 +520,27 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(settled, true);
   });
 
+  test('rejects synchronous work that blocks past its absolute deadline', async () => {
+    let calls = 0;
+    const source = createInlineReportingSourceExecutor(() => {
+      calls += 1;
+      const until = Date.now() + 30;
+      while (Date.now() < until) {
+        // Deliberately block so the deadline timer cannot run.
+      }
+      return [];
+    }, redactedReportingSourceOfferingV1);
+    const slice = request('fixture-inline-sync-deadline-overrun');
+    slice.deadline.deadlineAt = new Date(Date.now() + 10).toISOString();
+    const result = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(result, 'DEADLINE_EXCEEDED').code, 'DEADLINE_EXCEEDED');
+    assert.equal(calls, 1);
+    const retry = structuredClone(slice);
+    retry.deadline.deadlineAt = new Date(Date.now() + 100).toISOString();
+    assert.equal((await source.execute(retry, context())).ok, true, 'failed work is not sealed for replay');
+    assert.equal(calls, 2);
+  });
+
   test('cancels owned work when the caller aborts synchronously inside the fetch', async () => {
     const controller = new AbortController();
     let ownedSignal;
@@ -478,5 +588,19 @@ describe('createInlineReportingSourceExecutor', () => {
     );
     const result = await source.execute(request('fixture-inline-scalar-cap'), context());
     assert.equal(validateReportingSourceFailureV1(result, 'STAGING_FAILED').code, 'STAGING_FAILED');
+  });
+
+  test('bounds both delivery row collections before combining evidence', async () => {
+    const row = { media_buy_id: 'fixture-media-buy', totals: { impressions: 1, spend: '0.10' } };
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        reporting_rows: [row],
+        media_buy_deliveries: Array(100_000).fill(row),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-dual-row-bound'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
   });
 });

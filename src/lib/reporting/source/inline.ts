@@ -22,6 +22,8 @@ export interface InlineReportingDeliveryRequestV1 {
   media_buy_ids: string[];
   start_date: string;
   end_date: string;
+  /** Exact source observation ceiling for snapshot reads within the requested period. */
+  source_read_cutoff_at: string;
   requested_metrics: string[];
   reporting_dimensions: Record<string, Record<string, never>>;
 }
@@ -153,7 +155,9 @@ export function createInlineReportingSourceExecutor(
     async execute(requestInput, context) {
       let request: ReportingSourceSliceRequestV1;
       try {
-        request = ReportingSourceSliceRequestV1Schema.parse(structuredClone(requestInput));
+        request = withoutUndefined(
+          ReportingSourceSliceRequestV1Schema.parse(structuredClone(requestInput))
+        ) as ReportingSourceSliceRequestV1;
       } catch {
         return failure('INVALID_REQUEST', 'terminal', 'Inline reporting request is invalid');
       }
@@ -232,6 +236,7 @@ export function createInlineReportingSourceExecutor(
             format,
             request,
             deliveryDates,
+            request.deadline.deadlineAt,
             controller.signal,
             storage,
             key,
@@ -293,6 +298,7 @@ async function executeAndSeal(
   format: { mediaType: 'application/json' | 'application/x-ndjson'; compression: 'none' },
   request: ReportingSourceSliceRequestV1,
   deliveryDates: { start: string; end: string },
+  deadlineAt: string,
   signal: AbortSignal,
   storage: {
     objects: Map<string, StoredObject>;
@@ -312,6 +318,7 @@ async function executeAndSeal(
         media_buy_ids: [...request.coverage.mediaBuyIds],
         start_date: deliveryDates.start,
         end_date: deliveryDates.end,
+        source_read_cutoff_at: request.period.sourceReadCutoffAt,
         requested_metrics: [...request.requestedMetrics],
         reporting_dimensions: Object.fromEntries(request.requestedDimensions.map(dimension => [dimension, {}])),
       },
@@ -342,9 +349,18 @@ async function executeAndSeal(
   if (fetched === null) {
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
   }
+  const responseStatus = !isRows(fetched) ? fetched.status?.toLowerCase() : undefined;
+  if (['failed', 'error'].includes(responseStatus ?? '')) {
+    return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
+  }
+  if (responseStatus === 'unavailable') {
+    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch reported unavailable data');
+  }
   if (
     !isRows(fetched) &&
-    (['reporting_delayed', 'not_ready', 'pending'].includes(fetched.status ?? '') ||
+    (['working', 'submitted', 'input_required', 'deferred', 'reporting_delayed', 'not_ready', 'pending'].includes(
+      responseStatus ?? ''
+    ) ||
       (request.publicationClass === 'AUTHORITATIVE' && fetched.is_final === false))
   ) {
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
@@ -385,6 +401,14 @@ async function executeAndSeal(
       'terminal',
       'Inline delivery currency does not match the frozen source settings'
     );
+  }
+  if (
+    !isRows(fetched) &&
+    ((fetched.reporting_rows?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
+      (fetched.media_buy_deliveries?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
+      (fetched.reporting_rows?.length ?? 0) + (fetched.media_buy_deliveries?.length ?? 0) > INLINE_MAX_ROWS_V1)
+  ) {
+    return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline delivery fetch exceeded the row limit');
   }
   if (
     !isRows(fetched) &&
@@ -461,6 +485,17 @@ async function executeAndSeal(
       return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
     }
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+  }
+  const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
+  if (
+    readsPartialPeriod &&
+    (isRows(fetched) || fetched.data_through === undefined || fetched.observed_at === undefined)
+  ) {
+    return failure(
+      'PARTIAL_RESULT',
+      'retryable',
+      'Inline delivery fetch did not provide temporal evidence for the source read cutoff'
+    );
   }
   const observedAt = isRows(fetched)
     ? request.period.sourceReadCutoffAt
@@ -561,12 +596,18 @@ async function executeAndSeal(
           ? ('provisional_observation' as const)
           : ('source_declared' as const),
       observedAt,
+      ...(request.publicationClass === 'AUTHORITATIVE' ? { evidenceRef: 'get_media_buy_delivery.is_final' } : {}),
     },
     explicitZero,
     acquiredAt,
     ...(explicitZero ? {} : { eventTimeRange: { start: request.period.start, end: dataThrough } }),
     warnings: [],
   });
+  // A synchronous adopter callback can block the event loop past the timer.
+  // Check the absolute deadline before publishing any replayable evidence.
+  if (Date.parse(deadlineAt) <= Date.now()) {
+    return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
+  }
   storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
   storage.totalBytes += bytes.byteLength;
   storage.scopeBytes.set(scopeKey, (storage.scopeBytes.get(scopeKey) ?? 0) + bytes.byteLength);
@@ -650,7 +691,19 @@ function sameJson(left: unknown, right: unknown): boolean {
 
 function inlineSemanticRequestFingerprint(request: ReportingSourceSliceRequestV1): string {
   const { trigger: _trigger, deadline: _deadline, priorCheckpoint: _priorCheckpoint, ...semanticSlice } = request;
-  return digest(canonicalJsonV1(semanticSlice));
+  return digest(canonicalJsonV1(withoutUndefined(semanticSlice)));
+}
+
+function withoutUndefined(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutUndefined);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, withoutUndefined(item)])
+    );
+  }
+  return value;
 }
 
 async function awaitInlineExecution(
