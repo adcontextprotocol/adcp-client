@@ -54,11 +54,11 @@ AdCP 3.2.0-rc.2 will add `sync_reporting_status`. Until that tag is published, t
 ```ts
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   // Derive this only from authenticated transport; it is never a payload field.
-  resolveConsumerId: context => context.agent.id,
+  resolveConsumerId: context => context.agent.agent_url,
 });
 
 const getReportingStatus = createReportingStatusHandler(store, {
-  resolveConsumerId: context => context.agent.id,
+  resolveConsumerId: context => context.agent.agent_url,
 });
 ```
 

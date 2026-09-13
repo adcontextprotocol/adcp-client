@@ -257,6 +257,61 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     );
     assert.equal(unrelatedProvenance.results[0].result, 'failed');
 
+    const filteredConfigurationId = 'fixture-status-filtered-configuration';
+    await reference.store.putConfiguration({
+      ...configuration,
+      configurationId: filteredConfigurationId,
+      delivery_config_id: 'fixture-status-filtered-delivery',
+      delivery_config_version: 1,
+      feedPurpose: 'billing',
+      mediaBuyIds: ['fixture-status-filtered-media-buy'],
+      installedAt: new Date().toISOString(),
+      semanticFingerprint: 'fixture-status-filtered-semantic-fingerprint',
+    });
+    try {
+      for (const [filterName, filter] of [
+        ['feed-purpose', { feed_purposes: ['billing'] }],
+        ['media-buy', { media_buy_ids: ['fixture-status-filtered-media-buy'] }],
+      ]) {
+        const consumerId = `fixture-consumer-filtered-${filterName}`;
+        const filteredConsumer = {
+          account: { account_id: request.account.account_id },
+          consumer: consumerId,
+        };
+        const filteredSnapshot = await reference.store.createSnapshot({
+          account_id: request.account.account_id,
+          consumer_id: consumerId,
+          view: 'periods',
+          period: { start: obligation.period.start, end: obligation.period.end },
+          ...filter,
+        });
+        const filteredProvenance = await sync(
+          {
+            ...firstRequest,
+            idempotency_key: `fixture-status-filtered-${filterName}`,
+            statuses: [
+              {
+                ...baseWithoutSnapshot,
+                reporting_status_id: `fixture-status-filtered-${filterName}`,
+                seller_ledger_snapshot_id: filteredSnapshot.snapshotId,
+                seller_ledger_as_of: filteredSnapshot.ledgerAsOf,
+              },
+            ],
+          },
+          filteredConsumer
+        );
+        assert.equal(
+          filteredProvenance.results[0].result,
+          'failed',
+          `${filterName} snapshot provenance cannot authorize an excluded configuration`
+        );
+      }
+    } finally {
+      await pool.query('DELETE FROM adcp_reporting_configurations WHERE configuration_id = $1', [
+        filteredConfigurationId,
+      ]);
+    }
+
     const foreignId = await sync(
       {
         ...firstRequest,
@@ -737,7 +792,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       {
         account: {
           brand: { domain: 'advertiser.example' },
-          operator: { domain: 'operator.example' },
+          operator: 'operator.example',
         },
         idempotency_key: 'fixture-status-natural-account-key',
         statuses: [

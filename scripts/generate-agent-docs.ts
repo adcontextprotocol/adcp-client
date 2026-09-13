@@ -2015,16 +2015,15 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`await producer.planObligations();`);
   ln(`await producer.runWorker();`);
   ln(`const getReportingStatus = createReportingStatusHandler(store);`);
-  ln(`const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads`);
   ln();
   ln(`// AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.`);
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
-  ln(`  resolveConsumerId: context => context.agent.id,`);
+  ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);
   ln('```');
   ln();
   ln(
-    `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
+    `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
   );
   ln();
 

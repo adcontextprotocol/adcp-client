@@ -2743,6 +2743,7 @@ const producer = createReportingProducer({ store, source, offerings, contact });
 await producer.planObligations();
 await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
+
 // AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,

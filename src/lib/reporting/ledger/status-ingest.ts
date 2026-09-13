@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
-import { reportingLedgerEffectivePeriod, reportingLedgerSuccessor } from './coverage';
+import {
+  reportingLedgerConfigurationMatchesScope,
+  reportingLedgerEffectivePeriod,
+  reportingLedgerSuccessor,
+} from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
 import {
   ReportingConsumerStatusConflictError,
@@ -117,7 +121,7 @@ export const ReportingConsumerStatusPreviewV1Schema = z
 
 export const SyncReportingStatusPreviewRequestV1Schema = z
   .object({
-    account: accountReference,
+    account: AccountReferenceSchema,
     idempotency_key: z
       .string()
       .min(16)
@@ -336,7 +340,9 @@ async function validateStatus(
     }
     const scope = reportingLedgerEffectivePeriod(page.snapshot.query, page.snapshot.ledgerAsOf);
     const configurationInScope = page.snapshot.configurations.some(
-      value => value.configurationId === configuration.configurationId
+      value =>
+        value.configurationId === configuration.configurationId &&
+        reportingLedgerConfigurationMatchesScope(page.snapshot.query, value)
     );
     const obligationInScope =
       !status.reporting_obligation_id ||
