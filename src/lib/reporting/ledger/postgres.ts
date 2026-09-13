@@ -1,0 +1,1491 @@
+import { createHash, randomUUID } from 'node:crypto';
+
+import { canonicalize } from '../../utils/jcs';
+import { canonicalJsonV1 } from '../source';
+import { evaluateReportingLedgerCoverageV1, reportingLedgerScopeClosed } from './coverage';
+import { projectReportingObligationHealthV1 } from './health';
+import { ReportingLedgerSnapshotUnavailableError } from './types';
+import type {
+  ReportingLedgerConfigurationV1,
+  ReportingLedgerAdjustmentV1,
+  ReportingLedgerConsumerStatusV1,
+  ReportingLedgerIssueV1,
+  ReportingLedgerLeaseV1,
+  ReportingLedgerObligationV1,
+  ReportingLedgerPageV1,
+  ReportingLedgerRevisionV1,
+  ReportingLedgerRevisionSnapshotV1,
+  ReportingLedgerAdjustmentSnapshotV1,
+  ReportingLedgerSnapshotQueryV1,
+  ReportingLedgerSnapshotV1,
+  ReportingLedgerStatusTransitionV1,
+  ReportingLedgerStore,
+} from './types';
+
+type QueryResultRow = Record<string, unknown>;
+interface ReportingPgResult<Row extends QueryResultRow> {
+  rows: Row[];
+  rowCount: number | null;
+}
+interface ReportingPgClient {
+  query<Row extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<ReportingPgResult<Row>>;
+  release(error?: Error): void;
+}
+export interface ReportingPgPool {
+  query<Row extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<ReportingPgResult<Row>>;
+  connect(): Promise<ReportingPgClient>;
+}
+
+export const REPORTING_LEDGER_MIGRATION = `
+CREATE TABLE IF NOT EXISTS adcp_reporting_configurations (
+  configuration_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  delivery_config_id TEXT NOT NULL,
+  delivery_config_version INTEGER NOT NULL,
+  semantic_fingerprint TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  UNIQUE (account_id, delivery_config_id, delivery_config_version)
+);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_obligations (
+  obligation_id TEXT PRIMARY KEY,
+  configuration_id TEXT NOT NULL REFERENCES adcp_reporting_configurations(configuration_id),
+  account_id TEXT NOT NULL,
+  period_start TIMESTAMPTZ NOT NULL,
+  period_end TIMESTAMPTZ NOT NULL,
+  next_attempt_at TIMESTAMPTZ NOT NULL,
+  state TEXT NOT NULL,
+  semantic_fingerprint TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  lease_owner TEXT,
+  lease_generation BIGINT NOT NULL DEFAULT 0,
+  lease_expires_at TIMESTAMPTZ,
+  UNIQUE (configuration_id, period_start, period_end),
+  CHECK (period_start < period_end),
+  CHECK (state IN ('pending', 'terminal'))
+);
+
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_due
+  ON adcp_reporting_obligations (next_attempt_at, obligation_id)
+  WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_account_due
+  ON adcp_reporting_obligations (account_id, next_attempt_at, obligation_id)
+  WHERE state = 'pending';
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_account_period
+  ON adcp_reporting_obligations (account_id, period_start, obligation_id);
+CREATE INDEX IF NOT EXISTS adcp_reporting_obligations_changed
+  ON adcp_reporting_obligations (account_id, changed_at);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_revisions (
+  revision_id TEXT PRIMARY KEY,
+  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  revision_number INTEGER NOT NULL,
+  finality TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  supersedes_revision_id TEXT REFERENCES adcp_reporting_revisions(revision_id),
+  content_sha256 TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (obligation_id, revision_number),
+  CHECK (finality IN ('snapshot', 'official')),
+  CHECK (kind IN ('snapshot', 'official'))
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_revisions_obligation
+  ON adcp_reporting_revisions (obligation_id, revision_number);
+CREATE INDEX IF NOT EXISTS adcp_reporting_revisions_created
+  ON adcp_reporting_revisions (obligation_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_adjustments (
+  adjustment_id TEXT PRIMARY KEY,
+  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  adjusts_revision_id TEXT NOT NULL REFERENCES adcp_reporting_revisions(revision_id),
+  adjustment_number INTEGER NOT NULL,
+  content_sha256 TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  UNIQUE (obligation_id, adjustment_number)
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_adjustments_obligation
+  ON adcp_reporting_adjustments (obligation_id, adjustment_number);
+CREATE INDEX IF NOT EXISTS adcp_reporting_adjustments_created
+  ON adcp_reporting_adjustments (obligation_id, recorded_at);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_consumer_statuses (
+  consumer_status_id TEXT PRIMARY KEY,
+  revision_id TEXT NOT NULL REFERENCES adcp_reporting_revisions(revision_id),
+  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  supersedes_consumer_status_id TEXT REFERENCES adcp_reporting_consumer_statuses(consumer_status_id),
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_revision
+  ON adcp_reporting_consumer_statuses (revision_id, created_at, consumer_status_id);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_issues (
+  issue_id TEXT PRIMARY KEY,
+  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  data JSONB NOT NULL,
+  observed_at TIMESTAMPTZ NOT NULL,
+  resolved_at TIMESTAMPTZ,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_issues_obligation
+  ON adcp_reporting_issues (obligation_id, observed_at, issue_id);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_transitions (
+  transition_id TEXT PRIMARY KEY,
+  transition_sequence BIGSERIAL NOT NULL UNIQUE,
+  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  data JSONB NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_transitions_obligation
+  ON adcp_reporting_transitions (obligation_id, occurred_at, transition_id);
+CREATE INDEX IF NOT EXISTS adcp_reporting_transitions_pending
+  ON adcp_reporting_transitions (recorded_at, transition_id)
+  WHERE NOT (data ? 'notifiedAt');
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_snapshots (
+  snapshot_id UUID PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  query_fingerprint TEXT NOT NULL,
+  data JSONB NOT NULL,
+  byte_count BIGINT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_snapshots_created
+  ON adcp_reporting_snapshots (created_at);
+CREATE INDEX IF NOT EXISTS adcp_reporting_snapshots_expiry
+  ON adcp_reporting_snapshots (expires_at);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_checkpoints (
+  checkpoint_id UUID PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  scope_fingerprint TEXT NOT NULL,
+  ledger_as_of TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_checkpoints_expiry
+  ON adcp_reporting_checkpoints (expires_at);
+`.trim();
+
+const MAX_SNAPSHOT_ITEMS = 10_000;
+const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
+const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
+const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
+const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type JsonRow<T> = QueryResultRow & { data: T };
+
+export interface PostgresReportingLedgerStoreOptions {
+  /** Assert that the supplied PostgreSQL database/schema is isolated to this deployment. */
+  acknowledgeIsolatedDatabase?: boolean;
+}
+
+export class ReportingLedgerLeaseLostError extends Error {
+  constructor(message = 'Reporting ledger lease was lost before commit') {
+    super(message);
+    this.name = 'ReportingLedgerLeaseLostError';
+  }
+}
+
+export class ReportingLedgerContinuityError extends Error {
+  constructor(message = 'Reporting ledger revision continuity invariant failed') {
+    super(message);
+    this.name = 'ReportingLedgerContinuityError';
+  }
+}
+
+/** Bounded global cleanup for expired cursor snapshots and changes checkpoints. */
+export async function sweepExpiredReportingLedgerState(
+  pool: Pick<ReportingPgPool, 'query'>,
+  limit = 1_000
+): Promise<{ snapshotsDeleted: number; checkpointsDeleted: number }> {
+  positiveInteger(limit, 'limit');
+  if (limit > 10_000) throw new RangeError('limit must not exceed 10000');
+  try {
+    const snapshots = await pool.query(
+      `WITH expired AS (
+         SELECT snapshot_id FROM adcp_reporting_snapshots
+          WHERE expires_at <= clock_timestamp()
+          ORDER BY expires_at, snapshot_id
+          FOR UPDATE SKIP LOCKED LIMIT $1
+       )
+       DELETE FROM adcp_reporting_snapshots target
+        USING expired WHERE target.snapshot_id = expired.snapshot_id`,
+      [limit]
+    );
+    const checkpoints = await pool.query(
+      `WITH expired AS (
+         SELECT checkpoint_id FROM adcp_reporting_checkpoints
+          WHERE expires_at <= clock_timestamp()
+          ORDER BY expires_at, checkpoint_id
+          FOR UPDATE SKIP LOCKED LIMIT $1
+       )
+       DELETE FROM adcp_reporting_checkpoints target
+        USING expired WHERE target.checkpoint_id = expired.checkpoint_id`,
+      [limit]
+    );
+    return { snapshotsDeleted: snapshots.rowCount ?? 0, checkpointsDeleted: checkpoints.rowCount ?? 0 };
+  } catch (cause) {
+    throw new Error('Reporting ledger expiry cleanup failed', { cause });
+  }
+}
+
+export class PostgresReportingLedgerStore implements ReportingLedgerStore {
+  constructor(
+    private readonly pool: ReportingPgPool,
+    options: PostgresReportingLedgerStoreOptions = {}
+  ) {
+    const development = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
+    if (!development && !options.acknowledgeIsolatedDatabase) {
+      throw new Error(
+        'PostgresReportingLedgerStore requires an isolated database/schema or acknowledgeIsolatedDatabase: true'
+      );
+    }
+  }
+
+  async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
+    return this.transaction(
+      async client => {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `adcp-reporting-config:${configuration.account.account_id}:${configuration.delivery_config_id}`,
+        ]);
+        const newer = await client.query<QueryResultRow & { highest: number | null }>(
+          `SELECT MAX(delivery_config_version)::integer AS highest
+           FROM adcp_reporting_configurations WHERE account_id = $1 AND delivery_config_id = $2`,
+          [configuration.account.account_id, configuration.delivery_config_id]
+        );
+        if ((newer.rows[0]?.highest ?? -1) > configuration.delivery_config_version) {
+          throw new Error('Reporting configuration version cannot regress');
+        }
+        const inserted = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
+          `INSERT INTO adcp_reporting_configurations
+           (configuration_id, account_id, delivery_config_id, delivery_config_version,
+            semantic_fingerprint, data, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb, clock_timestamp())
+         ON CONFLICT DO NOTHING RETURNING data`,
+          [
+            configuration.configurationId,
+            configuration.account.account_id,
+            configuration.delivery_config_id,
+            configuration.delivery_config_version,
+            configuration.semanticFingerprint,
+            JSON.stringify(configuration),
+          ]
+        );
+        const value =
+          inserted.rows[0]?.data ??
+          (
+            await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
+              `SELECT data FROM adcp_reporting_configurations
+              WHERE account_id = $1 AND delivery_config_id = $2 AND delivery_config_version = $3`,
+              [
+                configuration.account.account_id,
+                configuration.delivery_config_id,
+                configuration.delivery_config_version,
+              ]
+            )
+          ).rows[0]?.data;
+        if (!value || value.semanticFingerprint !== configuration.semanticFingerprint) {
+          throw new Error('Immutable reporting configuration identity names different content');
+        }
+        return { inserted: inserted.rowCount === 1, value: clone(value) };
+      },
+      { preBeginAdvisoryLock: accountLock(configuration.account.account_id) }
+    );
+  }
+
+  async listConfigurations(account_id?: string): Promise<ReportingLedgerConfigurationV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerConfigurationV1>>(
+      `SELECT data FROM adcp_reporting_configurations
+        WHERE ($1::text IS NULL OR account_id = $1)
+        ORDER BY created_at, configuration_id`,
+      [account_id ?? null]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async putObligation(obligation: ReportingLedgerObligationV1) {
+    return this.putImmutable(
+      `INSERT INTO adcp_reporting_obligations
+         (obligation_id, configuration_id, account_id, period_start, period_end,
+          next_attempt_at, state, semantic_fingerprint, data, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, clock_timestamp())
+       ON CONFLICT DO NOTHING RETURNING data`,
+      [
+        obligation.reporting_obligation_id,
+        obligation.configurationId,
+        obligation.account.account_id,
+        obligation.period.start,
+        obligation.period.end,
+        obligation.nextAttemptAt,
+        obligation.state,
+        obligation.semanticFingerprint,
+        JSON.stringify(obligation),
+      ],
+      `SELECT data FROM adcp_reporting_obligations
+        WHERE configuration_id = $1 AND period_start = $2 AND period_end = $3`,
+      [obligation.configurationId, obligation.period.start, obligation.period.end],
+      obligation,
+      value => value.semanticFingerprint,
+      accountLock(obligation.account.account_id)
+    );
+  }
+
+  async getObligation(id: string): Promise<ReportingLedgerObligationV1 | null> {
+    return this.one<ReportingLedgerObligationV1>(
+      'SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1',
+      [id]
+    );
+  }
+
+  async listObligations(account_id?: string): Promise<ReportingLedgerObligationV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerObligationV1>>(
+      `SELECT data FROM adcp_reporting_obligations
+        WHERE ($1::text IS NULL OR account_id = $1) ORDER BY period_start, obligation_id`,
+      [account_id ?? null]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async listLifecycleDueObligations(input: {
+    ledgerAsOf: string;
+    account_id?: string;
+    limit: number;
+  }): Promise<ReportingLedgerObligationV1[]> {
+    positiveInteger(input.limit, 'limit');
+    if (input.limit > 1_000) throw new RangeError('limit must not exceed 1000');
+    if (!Number.isFinite(Date.parse(input.ledgerAsOf))) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+    const result = await this.query<JsonRow<ReportingLedgerObligationV1>>(
+      `SELECT obligation.data FROM adcp_reporting_obligations obligation
+       LEFT JOIN LATERAL (
+         SELECT transition.data->>'health' AS health
+           FROM adcp_reporting_transitions transition
+          WHERE transition.obligation_id = obligation.obligation_id
+          ORDER BY transition.transition_sequence DESC LIMIT 1
+       ) latest ON TRUE
+       WHERE ($1::text IS NULL OR obligation.account_id = $1)
+         AND ((COALESCE(latest.health, 'waiting') = 'waiting'
+               AND (obligation.data->>'expectedAt')::timestamptz <= $2)
+           OR (latest.health = 'delayed'
+               AND (obligation.data->>'recoveryDeadlineAt')::timestamptz <= $2)
+           OR (obligation.state = 'terminal'
+               AND COALESCE(latest.health, 'waiting') <> 'complete'
+               AND EXISTS (
+                 SELECT 1 FROM adcp_reporting_revisions revision
+                  WHERE revision.obligation_id = obligation.obligation_id
+               )))
+       ORDER BY LEAST(
+         (obligation.data->>'expectedAt')::timestamptz,
+         (obligation.data->>'recoveryDeadlineAt')::timestamptz
+       ), obligation.obligation_id
+       LIMIT $3`,
+      [input.account_id ?? null, input.ledgerAsOf, input.limit]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async updateObligation(obligation: ReportingLedgerObligationV1, lease: ReportingLedgerLeaseV1): Promise<void> {
+    assertLeaseTarget(obligation.reporting_obligation_id, lease);
+    await this.transaction(
+      async client => {
+        const result = await client.query(
+          `UPDATE adcp_reporting_obligations
+          SET next_attempt_at = $2, state = $3, data = $4::jsonb, changed_at = clock_timestamp()
+        WHERE obligation_id = $1 AND semantic_fingerprint = $5
+          AND lease_owner = $6 AND lease_generation = $7 AND lease_expires_at > clock_timestamp()`,
+          [
+            obligation.reporting_obligation_id,
+            obligation.nextAttemptAt,
+            obligation.state,
+            JSON.stringify(obligation),
+            obligation.semanticFingerprint,
+            lease.owner,
+            lease.generation,
+          ]
+        );
+        if (result.rowCount !== 1) throw new ReportingLedgerLeaseLostError();
+      },
+      { preBeginAdvisoryLock: accountLock(obligation.account.account_id) }
+    );
+  }
+
+  async claimObligation(input: {
+    owner: string;
+    now: string;
+    leaseMilliseconds: number;
+    account_id?: string;
+  }): Promise<ReportingLedgerLeaseV1 | null> {
+    positiveInteger(input.leaseMilliseconds, 'leaseMilliseconds');
+    if (!Number.isFinite(Date.parse(input.now))) throw new TypeError('now must be an RFC 3339 instant');
+    const result = await this.query<
+      QueryResultRow & { data: ReportingLedgerObligationV1; lease_generation: string; lease_expires_at: Date }
+    >(
+      `WITH candidate AS (
+         SELECT obligation_id FROM adcp_reporting_obligations
+          WHERE state = 'pending' AND next_attempt_at <= $2
+            AND ($4::text IS NULL OR account_id = $4)
+            AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+          ORDER BY next_attempt_at, obligation_id
+          FOR UPDATE SKIP LOCKED LIMIT 1
+       )
+       UPDATE adcp_reporting_obligations obligation
+          SET lease_owner = $1, lease_generation = lease_generation + 1,
+              lease_expires_at = clock_timestamp() + ($3::bigint * INTERVAL '1 millisecond')
+         FROM candidate WHERE obligation.obligation_id = candidate.obligation_id
+       RETURNING obligation.data, obligation.lease_generation::text, obligation.lease_expires_at`,
+      [input.owner, input.now, input.leaseMilliseconds, input.account_id ?? null]
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          obligation: clone(row.data),
+          owner: input.owner,
+          generation: Number(row.lease_generation),
+          expiresAt: row.lease_expires_at.toISOString(),
+        }
+      : null;
+  }
+
+  async releaseObligationLease(lease: ReportingLedgerLeaseV1): Promise<void> {
+    await this.query(
+      `UPDATE adcp_reporting_obligations SET lease_owner = NULL, lease_expires_at = NULL
+        WHERE obligation_id = $1 AND lease_owner = $2 AND lease_generation = $3`,
+      [lease.obligation.reporting_obligation_id, lease.owner, lease.generation]
+    );
+  }
+
+  async commitRevision(revision: ReportingLedgerRevisionV1, lease: ReportingLedgerLeaseV1) {
+    assertLeaseTarget(revision.reporting_obligation_id, lease);
+    validateRevisionBinding(revision);
+    return this.putImmutable(
+      `WITH leased_obligation AS (
+         SELECT * FROM adcp_reporting_obligations obligation
+          WHERE obligation.obligation_id = $2
+            AND obligation.lease_owner = $9 AND obligation.lease_generation = $10
+            AND obligation.lease_expires_at > clock_timestamp()
+          FOR UPDATE
+       )
+       INSERT INTO adcp_reporting_revisions
+         (revision_id, obligation_id, revision_number, finality, kind,
+          supersedes_revision_id, content_sha256, data, created_at)
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8::jsonb, clock_timestamp()
+         FROM leased_obligation obligation
+        WHERE NOT EXISTS (
+            SELECT 1 FROM adcp_reporting_revisions terminal_revision
+             WHERE terminal_revision.obligation_id = obligation.obligation_id
+               AND terminal_revision.finality = 'official'
+          )
+          AND $3 = COALESCE((
+            SELECT MAX(sequence_revision.revision_number) + 1
+              FROM adcp_reporting_revisions sequence_revision
+             WHERE sequence_revision.obligation_id = obligation.obligation_id
+          ), 1)
+          AND (($3 = 1 AND $6::text IS NULL) OR $6 = (
+            SELECT predecessor.revision_id FROM adcp_reporting_revisions predecessor
+             WHERE predecessor.obligation_id = obligation.obligation_id
+               AND predecessor.revision_number = $3 - 1
+          ))
+       ON CONFLICT DO NOTHING RETURNING data`,
+      [
+        revision.reporting_revision_id,
+        revision.reporting_obligation_id,
+        revision.revisionNumber,
+        revision.finality,
+        revision.kind,
+        revision.supersedes_reporting_revision_id ?? null,
+        revision.binding.sha256,
+        JSON.stringify(revision),
+        lease.owner,
+        lease.generation,
+      ],
+      'SELECT data FROM adcp_reporting_revisions WHERE obligation_id = $1 AND revision_number = $2',
+      [revision.reporting_obligation_id, revision.revisionNumber],
+      revision,
+      revisionIdentityFingerprint,
+      accountLock(lease.obligation.account.account_id),
+      {
+        obligationId: revision.reporting_obligation_id,
+        owner: lease.owner,
+        generation: lease.generation,
+      }
+    );
+  }
+
+  async getRevision(id: string, accountId: string): Promise<ReportingLedgerRevisionV1 | null> {
+    return this.one<ReportingLedgerRevisionV1>(
+      `SELECT revision.data FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
+      [id, accountId]
+    );
+  }
+
+  async listRevisions(obligationId: string): Promise<ReportingLedgerRevisionV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerRevisionV1>>(
+      `SELECT data FROM adcp_reporting_revisions WHERE obligation_id = $1
+        ORDER BY revision_number, revision_id`,
+      [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async commitAdjustment(adjustment: ReportingLedgerAdjustmentV1, lease: ReportingLedgerLeaseV1) {
+    assertLeaseTarget(adjustment.reporting_obligation_id, lease);
+    validateBoundRows(adjustment);
+    return this.putImmutable(
+      `WITH leased_obligation AS (
+         SELECT * FROM adcp_reporting_obligations obligation
+          WHERE obligation.obligation_id = $2
+            AND obligation.lease_owner = $7 AND obligation.lease_generation = $8
+            AND obligation.lease_expires_at > clock_timestamp()
+          FOR UPDATE
+       )
+       INSERT INTO adcp_reporting_adjustments
+         (adjustment_id, obligation_id, adjusts_revision_id, adjustment_number,
+          content_sha256, data, created_at)
+       SELECT $1, $2, $3, $4, $5, $6::jsonb, clock_timestamp()
+         FROM leased_obligation obligation
+        WHERE EXISTS (
+            SELECT 1 FROM adcp_reporting_revisions official_revision
+             WHERE official_revision.obligation_id = obligation.obligation_id
+               AND official_revision.revision_id = $3
+               AND official_revision.finality = 'official'
+          )
+          AND $4 = COALESCE((
+            SELECT MAX(sequence_adjustment.adjustment_number) + 1
+              FROM adcp_reporting_adjustments sequence_adjustment
+             WHERE sequence_adjustment.obligation_id = obligation.obligation_id
+          ), 1)
+       ON CONFLICT DO NOTHING RETURNING data`,
+      [
+        adjustment.reporting_adjustment_id,
+        adjustment.reporting_obligation_id,
+        adjustment.adjusts_reporting_revision_id,
+        adjustment.adjustmentNumber,
+        adjustment.binding.sha256,
+        JSON.stringify(adjustment),
+        lease.owner,
+        lease.generation,
+      ],
+      'SELECT data FROM adcp_reporting_adjustments WHERE obligation_id = $1 AND adjustment_number = $2',
+      [adjustment.reporting_obligation_id, adjustment.adjustmentNumber],
+      adjustment,
+      adjustmentIdentityFingerprint,
+      accountLock(lease.obligation.account.account_id),
+      {
+        obligationId: adjustment.reporting_obligation_id,
+        owner: lease.owner,
+        generation: lease.generation,
+      }
+    );
+  }
+
+  async listAdjustments(obligationId: string): Promise<ReportingLedgerAdjustmentV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerAdjustmentV1>>(
+      `SELECT data FROM adcp_reporting_adjustments WHERE obligation_id = $1
+        ORDER BY adjustment_number, adjustment_id`,
+      [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async putConsumerStatus(status: ReportingLedgerConsumerStatusV1) {
+    const lock = await this.accountLockForObligation(status.reporting_obligation_id);
+    return this.putImmutable(
+      `INSERT INTO adcp_reporting_consumer_statuses
+         (consumer_status_id, revision_id, obligation_id, supersedes_consumer_status_id, data, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+       ON CONFLICT DO NOTHING RETURNING data`,
+      [
+        status.consumerStatusId,
+        status.reporting_revision_id,
+        status.reporting_obligation_id,
+        status.supersedesConsumerStatusId ?? null,
+        JSON.stringify(status),
+        status.createdAt,
+      ],
+      'SELECT data FROM adcp_reporting_consumer_statuses WHERE consumer_status_id = $1',
+      [status.consumerStatusId],
+      status,
+      value => digest(value),
+      lock
+    );
+  }
+
+  async listConsumerStatuses(revisionId: string): Promise<ReportingLedgerConsumerStatusV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+      `SELECT data FROM adcp_reporting_consumer_statuses WHERE revision_id = $1
+        ORDER BY created_at, consumer_status_id`,
+      [revisionId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async putIssue(issue: ReportingLedgerIssueV1): Promise<void> {
+    const lock = await this.accountLockForObligation(issue.reporting_obligation_id);
+    await this.transaction(
+      async client => {
+        const result = await client.query(
+          `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
+       VALUES ($1, $2, $3::jsonb, $4, $5)
+       ON CONFLICT (issue_id) DO UPDATE SET
+         data = EXCLUDED.data, observed_at = EXCLUDED.observed_at,
+         resolved_at = EXCLUDED.resolved_at,
+         changed_at = clock_timestamp()
+       WHERE adcp_reporting_issues.obligation_id = EXCLUDED.obligation_id`,
+          [
+            issue.issueId,
+            issue.reporting_obligation_id,
+            JSON.stringify(issue),
+            issue.observedAt,
+            issue.resolvedAt ?? null,
+          ]
+        );
+        if (result.rowCount !== 1) throw new Error('Reporting issue identity belongs to another obligation');
+      },
+      { preBeginAdvisoryLock: lock }
+    );
+  }
+
+  async resolveIssue(issueId: string, resolvedAt: string): Promise<void> {
+    const lock = await this.accountLockForIssue(issueId);
+    if (!lock) return;
+    await this.transaction(
+      async client => {
+        await client.query(
+          `UPDATE adcp_reporting_issues
+          SET resolved_at = $2::text::timestamptz,
+              data = data || jsonb_build_object('resolvedAt', $2::text),
+              changed_at = clock_timestamp()
+        WHERE issue_id = $1 AND resolved_at IS NULL`,
+          [issueId, resolvedAt]
+        );
+      },
+      { preBeginAdvisoryLock: lock }
+    );
+  }
+
+  async listIssues(obligationId: string): Promise<ReportingLedgerIssueV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerIssueV1>>(
+      `SELECT data FROM adcp_reporting_issues WHERE obligation_id = $1
+        ORDER BY observed_at, issue_id`,
+      [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async appendTransition(transition: ReportingLedgerStatusTransitionV1): Promise<{ inserted: boolean }> {
+    const lock = await this.accountLockForObligation(transition.reporting_obligation_id);
+    return this.transaction(
+      async client => {
+        const result = await client.query(
+          `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
+       SELECT $1, $2, $3::jsonb, $4
+        WHERE COALESCE((
+          SELECT previous.data->>'health' FROM adcp_reporting_transitions previous
+           WHERE previous.obligation_id = $2
+           ORDER BY previous.transition_sequence DESC LIMIT 1
+        ), 'waiting') = $5
+       ON CONFLICT DO NOTHING RETURNING transition_id`,
+          [
+            transition.transitionId,
+            transition.reporting_obligation_id,
+            JSON.stringify(transition),
+            transition.occurredAt,
+            transition.previousHealth,
+          ]
+        );
+        return { inserted: result.rowCount === 1 };
+      },
+      { preBeginAdvisoryLock: lock }
+    );
+  }
+
+  async applyLifecycleProjection(input: {
+    reporting_obligation_id: string;
+    expectedRevisionIds: string[];
+    expectedPreviousHealth: import('./types').ReportingHealthV1;
+    expectedObligationState: ReportingLedgerObligationV1['state'];
+    expectedAttemptCount: number;
+    projectedIssues: ReportingLedgerIssueV1[];
+    ledgerAsOf: string;
+    transition?: ReportingLedgerStatusTransitionV1;
+  }): Promise<{ applied: boolean; transitionInserted: boolean }> {
+    const lock = await this.accountLockForObligation(input.reporting_obligation_id);
+    return this.transaction(
+      async client => {
+        const obligations = await client.query<JsonRow<ReportingLedgerObligationV1>>(
+          `SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1 FOR UPDATE`,
+          [input.reporting_obligation_id]
+        );
+        const revisions = await client.query<QueryResultRow & { revision_id: string }>(
+          `SELECT revision_id FROM adcp_reporting_revisions
+            WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
+          [input.reporting_obligation_id]
+        );
+        const latest = await client.query<QueryResultRow & { health: string }>(
+          `SELECT data->>'health' AS health FROM adcp_reporting_transitions
+            WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1`,
+          [input.reporting_obligation_id]
+        );
+        const revisionIds = revisions.rows.map(value => value.revision_id);
+        const previousHealth = latest.rows[0]?.health ?? 'waiting';
+        const obligation = obligations.rows[0]?.data;
+        if (
+          !obligation ||
+          obligation.state !== input.expectedObligationState ||
+          obligation.attemptCount !== input.expectedAttemptCount ||
+          canonicalJsonV1(revisionIds) !== canonicalJsonV1(input.expectedRevisionIds) ||
+          previousHealth !== input.expectedPreviousHealth
+        ) {
+          return { applied: false, transitionInserted: false };
+        }
+        let transitionInserted = false;
+        if (input.transition) {
+          const inserted = await client.query(
+            `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
+             VALUES ($1, $2, $3::jsonb, $4)
+             ON CONFLICT DO NOTHING RETURNING transition_id`,
+            [
+              input.transition.transitionId,
+              input.reporting_obligation_id,
+              JSON.stringify(input.transition),
+              input.transition.occurredAt,
+            ]
+          );
+          if (inserted.rowCount !== 1) return { applied: false, transitionInserted: false };
+          transitionInserted = true;
+        }
+        const projectedIds = input.projectedIssues.map(issue => issue.issueId);
+        for (const issue of input.projectedIssues) {
+          await client.query(
+            `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
+             VALUES ($1, $2, $3::jsonb, $4, NULL)
+             ON CONFLICT (issue_id) DO UPDATE SET
+               data = EXCLUDED.data, observed_at = EXCLUDED.observed_at,
+               resolved_at = NULL, changed_at = clock_timestamp()
+             WHERE adcp_reporting_issues.obligation_id = EXCLUDED.obligation_id`,
+            [issue.issueId, input.reporting_obligation_id, JSON.stringify(issue), issue.observedAt]
+          );
+        }
+        await client.query(
+          `UPDATE adcp_reporting_issues
+              SET resolved_at = $2::timestamptz,
+                  data = data || jsonb_build_object('resolvedAt', $2::text),
+                  changed_at = clock_timestamp()
+            WHERE obligation_id = $1 AND resolved_at IS NULL
+              AND data->>'code' IN ('REPORT_OVERDUE', 'REPORTING_COVERAGE_INCOMPLETE')
+              AND NOT (issue_id = ANY($3::text[]))`,
+          [input.reporting_obligation_id, input.ledgerAsOf, projectedIds]
+        );
+        return { applied: true, transitionInserted };
+      },
+      { preBeginAdvisoryLock: lock }
+    );
+  }
+
+  async markTransitionNotified(transitionId: string, notifiedAt: string): Promise<void> {
+    const lock = await this.accountLockForTransition(transitionId);
+    if (!lock) return;
+    await this.transaction(
+      async client => {
+        await client.query(
+          `UPDATE adcp_reporting_transitions
+          SET data = data || jsonb_build_object('notifiedAt', $2::text)
+        WHERE transition_id = $1 AND NOT (data ? 'notifiedAt')`,
+          [transitionId, notifiedAt]
+        );
+      },
+      { preBeginAdvisoryLock: lock }
+    );
+  }
+
+  async listTransitions(obligationId: string): Promise<ReportingLedgerStatusTransitionV1[]> {
+    const result = await this.query<JsonRow<ReportingLedgerStatusTransitionV1>>(
+      `SELECT data FROM adcp_reporting_transitions WHERE obligation_id = $1
+        ORDER BY transition_sequence`,
+      [obligationId]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async listPendingTransitions(
+    input: { account_id?: string; limit?: number } = {}
+  ): Promise<ReportingLedgerStatusTransitionV1[]> {
+    const limit = input.limit ?? 100;
+    positiveInteger(limit, 'limit');
+    if (limit > 1_000) throw new RangeError('limit must not exceed 1000');
+    const result = await this.query<JsonRow<ReportingLedgerStatusTransitionV1>>(
+      `SELECT transition.data FROM adcp_reporting_transitions transition
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = transition.obligation_id
+        WHERE NOT (transition.data ? 'notifiedAt')
+          AND ($1::text IS NULL OR obligation.account_id = $1)
+        ORDER BY transition.recorded_at, transition.transition_id
+        LIMIT $2`,
+      [input.account_id ?? null, limit]
+    );
+    return result.rows.map(row => clone(row.data));
+  }
+
+  async createSnapshot(query: ReportingLedgerSnapshotQueryV1): Promise<ReportingLedgerSnapshotV1> {
+    return this.transaction(
+      async client => {
+        const clock = await client.query<QueryResultRow & { ledger_as_of: Date }>(
+          'SELECT statement_timestamp() AS ledger_as_of'
+        );
+        const ledgerAsOf = clock.rows[0]!.ledger_as_of.toISOString();
+        await client.query(
+          'DELETE FROM adcp_reporting_snapshots WHERE account_id = $1 AND expires_at <= clock_timestamp()',
+          [query.account_id]
+        );
+        if (query.view === 'periods') {
+          await client.query(
+            'DELETE FROM adcp_reporting_checkpoints WHERE account_id = $1 AND expires_at <= clock_timestamp()',
+            [query.account_id]
+          );
+        }
+        const active = await client.query<QueryResultRow & { count: string; bytes: string }>(
+          `SELECT COUNT(*)::text AS count, COALESCE(SUM(byte_count), 0)::text AS bytes
+             FROM adcp_reporting_snapshots WHERE account_id = $1`,
+          [query.account_id]
+        );
+        if (Number(active.rows[0]?.count ?? 0) >= MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT) {
+          throw new Error('Reporting ledger snapshot capacity is exhausted');
+        }
+        const activeSnapshotBytes = Number(active.rows[0]?.bytes ?? 0);
+        const changesAfter = query.changes_after
+          ? await this.resolveChangesCheckpoint(client, query, query.changes_after)
+          : undefined;
+        const configurations = await this.listSnapshotConfigurations(client, query, ledgerAsOf);
+        if (configurations.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting ledger snapshot exceeds the configuration limit');
+        }
+        let obligations = await this.listSnapshotObligations(client, query, ledgerAsOf, changesAfter);
+        if (obligations.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting ledger snapshot exceeds the item limit');
+        }
+        const coverageObligations = changesAfter
+          ? await this.listSnapshotObligations(
+              client,
+              { ...query, changes_after: undefined, health: undefined, finality: undefined },
+              ledgerAsOf
+            )
+          : obligations;
+        if (coverageObligations.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting ledger snapshot exceeds the coverage item limit');
+        }
+        const ledgerCoverage = evaluateReportingLedgerCoverageV1(
+          query,
+          configurations,
+          coverageObligations.map(value => ({
+            configurationId: value.configurationId,
+            periodOrdinal: value.periodOrdinal,
+          })),
+          ledgerAsOf
+        );
+        if (query.view !== 'revision' && !ledgerCoverage.complete) {
+          throw new ReportingLedgerContinuityError('Reporting ledger is missing an elapsed obligation');
+        }
+        const obligationIds = obligations.map(value => value.reporting_obligation_id);
+        const remaining = MAX_SNAPSHOT_ITEMS - obligations.length;
+        let revisions = await this.listSnapshotRevisions(client, obligationIds, query, ledgerAsOf, remaining + 1);
+        if (revisions.length > remaining) throw new Error('Reporting ledger snapshot exceeds the item limit');
+        const adjustmentCapacity = remaining - revisions.length;
+        let adjustments = await this.listSnapshotAdjustments(client, obligationIds, ledgerAsOf, adjustmentCapacity + 1);
+        if (adjustments.length > adjustmentCapacity) {
+          throw new Error('Reporting ledger snapshot exceeds the item limit');
+        }
+        let issues = await this.listSnapshotIssues(client, obligationIds, MAX_SNAPSHOT_ITEMS + 1);
+        if (issues.length > MAX_SNAPSHOT_ITEMS) throw new Error('Reporting ledger snapshot exceeds the issue limit');
+        if (query.view === 'periods' && query.health) {
+          const accepted = new Set(
+            obligations
+              .filter(value =>
+                query.health!.includes(
+                  projectReportingObligationHealthV1(
+                    value,
+                    revisions.filter(item => item.reporting_obligation_id === value.reporting_obligation_id),
+                    ledgerAsOf,
+                    reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
+                  ).health
+                )
+              )
+              .map(value => value.reporting_obligation_id)
+          );
+          obligations = obligations.filter(value => accepted.has(value.reporting_obligation_id));
+          revisions = revisions.filter(value => accepted.has(value.reporting_obligation_id));
+          adjustments = adjustments.filter(value => accepted.has(value.reporting_obligation_id));
+          issues = issues.filter(value => accepted.has(value.reporting_obligation_id));
+        }
+        const changesCheckpoint = randomUUID();
+        const snapshot: ReportingLedgerSnapshotV1 = {
+          snapshotId: randomUUID(),
+          ledgerAsOf,
+          changesCheckpoint,
+          queryFingerprint: digest(query),
+          query: clone(query),
+          configurations,
+          coverageOrdinals: coverageObligations.map(value => ({
+            configurationId: value.configurationId,
+            periodOrdinal: value.periodOrdinal,
+          })),
+          obligations,
+          revisions,
+          adjustments,
+          issues,
+        };
+        const snapshotJson = JSON.stringify(snapshot);
+        const snapshotBytes = Buffer.byteLength(snapshotJson, 'utf8');
+        if (snapshotBytes > MAX_SNAPSHOT_BYTES) {
+          throw new Error('Reporting ledger snapshot exceeds the byte limit');
+        }
+        if (activeSnapshotBytes + snapshotBytes > MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT) {
+          throw new Error('Reporting ledger snapshot byte capacity is exhausted');
+        }
+        await client.query(
+          `INSERT INTO adcp_reporting_snapshots
+           (snapshot_id, account_id, query_fingerprint, data, byte_count, created_at, expires_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6,
+                 $6::timestamptz + ($7::bigint * INTERVAL '1 millisecond'))`,
+          [
+            snapshot.snapshotId,
+            query.account_id,
+            snapshot.queryFingerprint,
+            snapshotJson,
+            snapshotBytes,
+            ledgerAsOf,
+            SNAPSHOT_RETENTION_MS,
+          ]
+        );
+        if (query.view === 'periods') {
+          await client.query(
+            `INSERT INTO adcp_reporting_checkpoints
+           (checkpoint_id, account_id, scope_fingerprint, ledger_as_of, expires_at)
+         VALUES ($1, $2, $3, $4,
+                 $4::timestamptz + ($5::bigint * INTERVAL '1 millisecond'))`,
+            [
+              changesCheckpoint,
+              query.account_id,
+              checkpointScopeFingerprint(query),
+              ledgerAsOf,
+              CHECKPOINT_RETENTION_MS,
+            ]
+          );
+        }
+        return clone(snapshot);
+      },
+      {
+        isolation: 'REPEATABLE READ',
+        preBeginAdvisoryLock: `adcp-reporting-account:${query.account_id}`,
+      }
+    );
+  }
+
+  async readSnapshotPage(
+    snapshotId: string,
+    account_id: string,
+    cursor: string | undefined,
+    limit: number
+  ): Promise<ReportingLedgerPageV1> {
+    positiveInteger(limit, 'limit');
+    if (limit > 500) throw new RangeError('limit must not exceed 500');
+    if (!UUID_PATTERN.test(snapshotId)) throw new ReportingLedgerSnapshotUnavailableError();
+    const snapshot = await this.one<ReportingLedgerSnapshotV1>(
+      `SELECT data FROM adcp_reporting_snapshots
+        WHERE snapshot_id = $1 AND account_id = $2 AND expires_at > clock_timestamp()`,
+      [snapshotId, account_id]
+    );
+    if (!snapshot) throw new ReportingLedgerSnapshotUnavailableError();
+    const offset = cursor ? decodeCursor(cursor, snapshot) : 0;
+    const items = snapshotItems(snapshot);
+    const selected = items.slice(offset, offset + limit);
+    const obligations = selected
+      .filter((value): value is Extract<(typeof items)[number], { kind: 'obligation' }> => value.kind === 'obligation')
+      .map(value => value.value);
+    const revisions = selected
+      .filter((value): value is Extract<(typeof items)[number], { kind: 'revision' }> => value.kind === 'revision')
+      .map(value => value.value);
+    const adjustments = selected
+      .filter((value): value is Extract<(typeof items)[number], { kind: 'adjustment' }> => value.kind === 'adjustment')
+      .map(value => value.value);
+    const nextOffset = offset + selected.length;
+    const hasMore = nextOffset < items.length;
+    return {
+      snapshot,
+      obligations,
+      revisions,
+      adjustments,
+      totalCount: items.length,
+      offset,
+      limit,
+      hasMore,
+      ...(hasMore ? { nextCursor: encodeCursor(snapshot, nextOffset) } : {}),
+    };
+  }
+
+  private async listSnapshotObligations(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    ledgerAsOf: string,
+    changesAfter?: string
+  ): Promise<ReportingLedgerObligationV1[]> {
+    const defaultPeriod =
+      query.view === 'revision'
+        ? { start: null, end: null }
+        : {
+            start: new Date(Date.parse(ledgerAsOf) - 24 * 60 * 60 * 1_000).toISOString(),
+            end: ledgerAsOf,
+          };
+    const result = await client.query<JsonRow<ReportingLedgerObligationV1>>(
+      `SELECT data FROM adcp_reporting_obligations
+        WHERE account_id = $1 AND created_at <= $2
+          AND ($3::timestamptz IS NULL OR changed_at > $3 OR EXISTS (
+            SELECT 1 FROM adcp_reporting_revisions revision
+             WHERE revision.obligation_id = adcp_reporting_obligations.obligation_id
+               AND revision.recorded_at > $3 AND revision.recorded_at <= $2
+          ) OR EXISTS (
+            SELECT 1 FROM adcp_reporting_adjustments adjustment
+             WHERE adjustment.obligation_id = adcp_reporting_obligations.obligation_id
+               AND adjustment.recorded_at > $3 AND adjustment.recorded_at <= $2
+          ) OR EXISTS (
+            SELECT 1 FROM adcp_reporting_consumer_statuses status
+             WHERE status.obligation_id = adcp_reporting_obligations.obligation_id
+               AND status.recorded_at > $3 AND status.recorded_at <= $2
+          ) OR EXISTS (
+            SELECT 1 FROM adcp_reporting_issues issue
+             WHERE issue.obligation_id = adcp_reporting_obligations.obligation_id
+               AND issue.changed_at > $3 AND issue.changed_at <= $2
+          ) OR EXISTS (
+            SELECT 1 FROM adcp_reporting_transitions transition
+             WHERE transition.obligation_id = adcp_reporting_obligations.obligation_id
+               AND transition.recorded_at > $3 AND transition.recorded_at <= $2
+          ) OR ((data->>'expectedAt')::timestamptz > $3 AND (data->>'expectedAt')::timestamptz <= $2)
+            OR ((data->>'recoveryDeadlineAt')::timestamptz > $3
+              AND (data->>'recoveryDeadlineAt')::timestamptz <= $2)
+          )
+          AND ($4::text[] IS NULL OR data->>'delivery_config_id' = ANY($4))
+          AND ($5::text[] IS NULL OR data->>'feedPurpose' = ANY($5))
+          AND ($6::text[] IS NULL OR EXISTS (
+            SELECT 1 FROM jsonb_array_elements_text(data->'mediaBuyIds') value WHERE value = ANY($6)
+          ))
+          AND ($7::timestamptz IS NULL OR period_end > $7)
+          AND ($8::timestamptz IS NULL OR period_start < $8)
+          AND ($9::text IS NOT NULL OR period_end <= $2)
+          AND ($9::text IS NULL OR EXISTS (
+            SELECT 1 FROM adcp_reporting_revisions exact_revision
+             WHERE exact_revision.obligation_id = adcp_reporting_obligations.obligation_id
+               AND exact_revision.revision_id = $9 AND exact_revision.recorded_at <= $2
+          ))
+        ORDER BY period_start, obligation_id
+        LIMIT $10`,
+      [
+        query.account_id,
+        ledgerAsOf,
+        changesAfter ?? null,
+        query.delivery_config_ids ?? null,
+        query.feed_purposes ?? null,
+        query.media_buy_ids ?? null,
+        query.period?.start ?? defaultPeriod.start,
+        query.period?.end ?? defaultPeriod.end,
+        query.reporting_revision_id ?? null,
+        MAX_SNAPSHOT_ITEMS + 1,
+      ]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async listSnapshotConfigurations(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    ledgerAsOf: string
+  ): Promise<ReportingLedgerConfigurationV1[]> {
+    const result = await client.query<JsonRow<ReportingLedgerConfigurationV1>>(
+      `SELECT data FROM adcp_reporting_configurations
+        WHERE account_id = $1 AND created_at <= $2
+          AND ($3::text[] IS NULL OR delivery_config_id = ANY($3))
+        ORDER BY delivery_config_id, delivery_config_version
+        LIMIT $4`,
+      [query.account_id, ledgerAsOf, query.delivery_config_ids ?? null, MAX_SNAPSHOT_ITEMS + 1]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async resolveChangesCheckpoint(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    checkpointId: string
+  ): Promise<string> {
+    if (!UUID_PATTERN.test(checkpointId)) throw new ReportingLedgerSnapshotUnavailableError();
+    const result = await client.query<QueryResultRow & { ledger_as_of: Date }>(
+      `SELECT ledger_as_of FROM adcp_reporting_checkpoints
+        WHERE checkpoint_id = $1 AND account_id = $2 AND scope_fingerprint = $3
+          AND expires_at > clock_timestamp()`,
+      [checkpointId, query.account_id, checkpointScopeFingerprint(query)]
+    );
+    const value = result.rows[0]?.ledger_as_of;
+    if (!value) throw new ReportingLedgerSnapshotUnavailableError();
+    return value.toISOString();
+  }
+
+  private async listSnapshotRevisions(
+    client: ReportingPgClient,
+    obligationIds: string[],
+    query: ReportingLedgerSnapshotQueryV1,
+    ledgerAsOf: string,
+    limit: number
+  ): Promise<ReportingLedgerRevisionSnapshotV1[]> {
+    if (!obligationIds.length) return [];
+    const result = await client.query<JsonRow<ReportingLedgerRevisionSnapshotV1>>(
+      `SELECT data - 'rows' AS data FROM adcp_reporting_revisions
+        WHERE obligation_id = ANY($1::text[]) AND recorded_at <= $2
+          AND ($3::text IS NULL OR revision_id = $3)
+        ORDER BY obligation_id, revision_number
+        LIMIT $4`,
+      [obligationIds, ledgerAsOf, query.reporting_revision_id ?? null, limit]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async listSnapshotIssues(
+    client: ReportingPgClient,
+    obligationIds: string[],
+    limit: number
+  ): Promise<ReportingLedgerIssueV1[]> {
+    if (!obligationIds.length) return [];
+    const result = await client.query<JsonRow<ReportingLedgerIssueV1>>(
+      `SELECT data FROM adcp_reporting_issues
+        WHERE obligation_id = ANY($1::text[])
+        ORDER BY obligation_id, observed_at, issue_id
+        LIMIT $2`,
+      [obligationIds, limit]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async listSnapshotAdjustments(
+    client: ReportingPgClient,
+    obligationIds: string[],
+    ledgerAsOf: string,
+    limit: number
+  ): Promise<ReportingLedgerAdjustmentSnapshotV1[]> {
+    if (!obligationIds.length) return [];
+    const result = await client.query<JsonRow<ReportingLedgerAdjustmentSnapshotV1>>(
+      `SELECT data - 'rows' AS data FROM adcp_reporting_adjustments
+        WHERE obligation_id = ANY($1::text[]) AND recorded_at <= $2
+        ORDER BY obligation_id, adjustment_number
+        LIMIT $3`,
+      [obligationIds, ledgerAsOf, limit]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async one<T>(sql: string, params: unknown[]): Promise<T | null> {
+    const result = await this.query<JsonRow<T>>(sql, params);
+    return result.rows[0] ? clone(result.rows[0].data) : null;
+  }
+
+  private async putImmutable<T>(
+    insertSql: string,
+    insertParams: unknown[],
+    readSql: string,
+    readParams: unknown[],
+    proposed: T,
+    fingerprint: (value: T) => string,
+    advisoryLock?: string,
+    leaseFence?: { obligationId: string; owner: string; generation: number }
+  ): Promise<{ inserted: boolean; value: T }> {
+    return this.transaction(
+      async client => {
+        const inserted = await client.query<JsonRow<T>>(insertSql, insertParams);
+        const value = inserted.rows[0]?.data ?? (await client.query<JsonRow<T>>(readSql, readParams)).rows[0]?.data;
+        if (!value) {
+          if (leaseFence) {
+            const lease = await client.query(
+              `SELECT 1 FROM adcp_reporting_obligations
+                WHERE obligation_id = $1 AND lease_owner = $2 AND lease_generation = $3
+                  AND lease_expires_at > clock_timestamp()`,
+              [leaseFence.obligationId, leaseFence.owner, leaseFence.generation]
+            );
+            if (lease.rowCount === 1) throw new ReportingLedgerContinuityError();
+            throw new ReportingLedgerLeaseLostError();
+          }
+          throw new Error('Immutable reporting ledger replay could not be resolved');
+        }
+        if (fingerprint(value) !== fingerprint(proposed)) {
+          throw new Error('Immutable reporting ledger identity names different content');
+        }
+        return { inserted: inserted.rowCount === 1, value: clone(value) };
+      },
+      { preBeginAdvisoryLock: advisoryLock }
+    );
+  }
+
+  private async accountLockForObligation(obligationId: string): Promise<string> {
+    const result = await this.query<QueryResultRow & { account_id: string }>(
+      'SELECT account_id FROM adcp_reporting_obligations WHERE obligation_id = $1',
+      [obligationId]
+    );
+    const accountId = result.rows[0]?.account_id;
+    if (!accountId) throw new Error('Reporting obligation is unavailable');
+    return accountLock(accountId);
+  }
+
+  private async accountLockForIssue(issueId: string): Promise<string | null> {
+    const result = await this.query<QueryResultRow & { obligation_id: string }>(
+      'SELECT obligation_id FROM adcp_reporting_issues WHERE issue_id = $1',
+      [issueId]
+    );
+    return result.rows[0]?.obligation_id ? this.accountLockForObligation(result.rows[0].obligation_id) : null;
+  }
+
+  private async accountLockForTransition(transitionId: string): Promise<string | null> {
+    const result = await this.query<QueryResultRow & { obligation_id: string }>(
+      'SELECT obligation_id FROM adcp_reporting_transitions WHERE transition_id = $1',
+      [transitionId]
+    );
+    return result.rows[0]?.obligation_id ? this.accountLockForObligation(result.rows[0].obligation_id) : null;
+  }
+
+  private async transaction<T>(
+    work: (client: ReportingPgClient) => Promise<T>,
+    options: { isolation?: 'READ COMMITTED' | 'REPEATABLE READ'; preBeginAdvisoryLock?: string } = {}
+  ): Promise<T> {
+    let client: ReportingPgClient;
+    try {
+      client = await this.pool.connect();
+    } catch (cause) {
+      throw new Error('PostgresReportingLedgerStore database connection failed', { cause });
+    }
+    let releaseError: Error | undefined;
+    let transactionStarted = false;
+    let advisoryLockAcquired = false;
+    let lockTimeoutSet = false;
+    try {
+      if (options.preBeginAdvisoryLock) {
+        await client.query("SET lock_timeout = '5s'");
+        lockTimeoutSet = true;
+        await client.query('SELECT pg_advisory_lock(hashtextextended($1, 0))', [options.preBeginAdvisoryLock]);
+        advisoryLockAcquired = true;
+        await client.query('RESET lock_timeout');
+        lockTimeoutSet = false;
+      }
+      await client.query(`BEGIN ISOLATION LEVEL ${options.isolation ?? 'READ COMMITTED'}`);
+      transactionStarted = true;
+      const result = await work(client);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return result;
+    } catch (error) {
+      if (transactionStarted) {
+        try {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+        } catch (rollbackCause) {
+          // Preserve the operation error; a failed connection cannot reliably roll back.
+          releaseError = rollbackCause instanceof Error ? rollbackCause : new Error('Reporting ledger rollback failed');
+        }
+      }
+      if (
+        error instanceof ReportingLedgerLeaseLostError ||
+        error instanceof ReportingLedgerContinuityError ||
+        error instanceof ReportingLedgerSnapshotUnavailableError
+      ) {
+        throw error;
+      }
+      throw new Error('PostgresReportingLedgerStore transaction failed', { cause: error });
+    } finally {
+      if (lockTimeoutSet) {
+        try {
+          await client.query('RESET lock_timeout');
+        } catch (resetCause) {
+          releaseError =
+            resetCause instanceof Error ? resetCause : new Error('Reporting ledger lock timeout reset failed');
+        }
+      }
+      if (options.preBeginAdvisoryLock && advisoryLockAcquired) {
+        try {
+          await client.query('SELECT pg_advisory_unlock(hashtextextended($1, 0))', [options.preBeginAdvisoryLock]);
+        } catch (unlockCause) {
+          releaseError = unlockCause instanceof Error ? unlockCause : new Error('Reporting ledger unlock failed');
+        }
+      }
+      client.release(releaseError);
+    }
+  }
+
+  private async query<T extends QueryResultRow = QueryResultRow>(sql: string, params?: unknown[]) {
+    try {
+      return await this.pool.query<T>(sql, params);
+    } catch (cause) {
+      throw new Error('PostgresReportingLedgerStore database operation failed', { cause });
+    }
+  }
+}
+
+function snapshotItems(snapshot: ReportingLedgerSnapshotV1) {
+  const visibleRevisions = snapshot.query.finality
+    ? snapshot.revisions.filter(value => snapshot.query.finality!.includes(value.finality))
+    : snapshot.revisions;
+  const visibleRevisionIds = new Set(visibleRevisions.map(value => value.reporting_revision_id));
+  const revisions = new Map<string, ReportingLedgerRevisionSnapshotV1[]>();
+  for (const revision of visibleRevisions) {
+    const values = revisions.get(revision.reporting_obligation_id) ?? [];
+    values.push(revision);
+    revisions.set(revision.reporting_obligation_id, values);
+  }
+  const adjustments = new Map<string, ReportingLedgerAdjustmentSnapshotV1[]>();
+  for (const adjustment of snapshot.adjustments) {
+    if (snapshot.query.finality && !visibleRevisionIds.has(adjustment.adjusts_reporting_revision_id)) continue;
+    const values = adjustments.get(adjustment.reporting_obligation_id) ?? [];
+    values.push(adjustment);
+    adjustments.set(adjustment.reporting_obligation_id, values);
+  }
+  return snapshot.obligations.flatMap(obligation => [
+    ...(snapshot.query.view === 'revision' ? [] : [{ kind: 'obligation' as const, value: obligation }]),
+    ...(revisions.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+      kind: 'revision' as const,
+      value,
+    })),
+    ...(adjustments.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+      kind: 'adjustment' as const,
+      value,
+    })),
+  ]);
+}
+
+function validateRevisionBinding(revision: ReportingLedgerRevisionV1): void {
+  const bytes = Buffer.from(
+    canonicalize({
+      reporting_revision_id: revision.reporting_revision_id,
+      row_count: revision.rows.length,
+      control_totals: revision.wireRevision.control_totals,
+      reporting_rows: revision.rows,
+    }),
+    'utf8'
+  );
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (
+    revision.binding.algorithm !== 'rfc8785_jcs_v1' ||
+    revision.binding.sha256 !== sha256 ||
+    revision.binding.byteCount !== bytes.byteLength ||
+    revision.binding.rowCount !== revision.rows.length ||
+    revision.wireRevision.revision_content_sha256 !== sha256
+  ) {
+    throw new Error('Reporting revision rows do not match their canonical binding');
+  }
+}
+
+function validateBoundRows(value: Pick<ReportingLedgerRevisionV1, 'rows' | 'binding'>): void {
+  const bytes = Buffer.from(canonicalize(value.rows), 'utf8');
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  if (
+    value.binding.algorithm !== 'rfc8785_jcs_v1' ||
+    value.binding.sha256 !== sha256 ||
+    value.binding.byteCount !== bytes.byteLength ||
+    value.binding.rowCount !== value.rows.length
+  ) {
+    throw new Error('Reporting revision rows do not match their canonical binding');
+  }
+}
+
+function assertLeaseTarget(reportingObligationId: string, lease: ReportingLedgerLeaseV1): void {
+  if (lease.obligation.reporting_obligation_id !== reportingObligationId) {
+    throw new ReportingLedgerLeaseLostError();
+  }
+}
+
+function encodeCursor(snapshot: ReportingLedgerSnapshotV1, offset: number): string {
+  const payload = { snapshotId: snapshot.snapshotId, offset, queryFingerprint: snapshot.queryFingerprint };
+  return Buffer.from(canonicalJsonV1({ ...payload, digest: digest(payload) }), 'utf8').toString('base64url');
+}
+
+function decodeCursor(cursor: string, snapshot: ReportingLedgerSnapshotV1): number {
+  let parsed: { snapshotId?: unknown; offset?: unknown; queryFingerprint?: unknown; digest?: unknown };
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (!isRecord(decoded)) throw new ReportingLedgerSnapshotUnavailableError();
+    parsed = decoded;
+  } catch {
+    throw new ReportingLedgerSnapshotUnavailableError();
+  }
+  const payload = {
+    snapshotId: parsed.snapshotId,
+    offset: parsed.offset,
+    queryFingerprint: parsed.queryFingerprint,
+  };
+  if (
+    parsed.snapshotId !== snapshot.snapshotId ||
+    parsed.queryFingerprint !== snapshot.queryFingerprint ||
+    !Number.isSafeInteger(parsed.offset) ||
+    (parsed.offset as number) < 0 ||
+    parsed.digest !== digest(payload)
+  ) {
+    throw new ReportingLedgerSnapshotUnavailableError();
+  }
+  return parsed.offset as number;
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(canonicalJsonV1(value)).digest('hex');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function revisionIdentityFingerprint(value: ReportingLedgerRevisionV1): string {
+  const { rows: _rows, createdAt: _createdAt, wireRevision, ...identity } = value;
+  const { created_at: _wireCreatedAt, ...stableWireRevision } =
+    wireRevision as ReportingLedgerRevisionV1['wireRevision'] & {
+      created_at: string;
+    };
+  return digest(JSON.parse(JSON.stringify({ ...identity, wireRevision: stableWireRevision })));
+}
+
+function adjustmentIdentityFingerprint(value: ReportingLedgerAdjustmentV1): string {
+  const { rows: _rows, createdAt: _createdAt, wireAdjustment, ...identity } = value;
+  const { created_at: _wireCreatedAt, ...stableWireAdjustment } =
+    wireAdjustment as ReportingLedgerAdjustmentV1['wireAdjustment'] & {
+      created_at: string;
+    };
+  return digest(JSON.parse(JSON.stringify({ ...identity, wireAdjustment: stableWireAdjustment })));
+}
+
+function accountLock(accountId: string): string {
+  return `adcp-reporting-account:${accountId}`;
+}
+
+function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): string {
+  const sorted = (value: string[]) => [...value].sort();
+  return digest({
+    account_id: query.account_id,
+    ...(query.media_buy_ids ? { media_buy_ids: sorted(query.media_buy_ids) } : {}),
+    ...(query.delivery_config_ids ? { delivery_config_ids: sorted(query.delivery_config_ids) } : {}),
+    ...(query.feed_purposes ? { feed_purposes: sorted(query.feed_purposes) } : {}),
+    ...(query.health ? { health: sorted(query.health) } : {}),
+    ...(query.finality ? { finality: sorted(query.finality) } : {}),
+    ...(query.reporting_revision_id ? { reporting_revision_id: query.reporting_revision_id } : {}),
+    ...(query.period ? { period: query.period } : {}),
+  });
+}
+
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function positiveInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
+}

@@ -1,0 +1,648 @@
+import { createHash } from 'node:crypto';
+
+import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { AdcpError } from '../../server/decisioning/async-outcome';
+import type { GetReportingStatusResponse } from '../../types';
+import { canonicalJsonV1 } from '../source';
+import {
+  evaluateReportingLedgerCoverageV1,
+  relevantReportingLedgerConfigurations,
+  reportingLedgerConfigurationMatchesScope,
+  reportingLedgerEffectivePeriod,
+  reportingLedgerScopeClosed,
+} from './coverage';
+import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from './health';
+import { ReportingLedgerSnapshotUnavailableError } from './types';
+import type {
+  ReportingHealthV1,
+  ReportingLedgerConfigurationV1,
+  ReportingLedgerCoverageV1,
+  ReportingLedgerIssueV1,
+  ReportingLedgerObligationV1,
+  ReportingLedgerSnapshotQueryV1,
+  ReportingLedgerStore,
+  ReportingDeliveryHandlerV1,
+  ReportingStatusHandlerV1,
+} from './types';
+
+export function createReportingStatusHandler(store: ReportingLedgerStore): ReportingStatusHandlerV1 {
+  const activeReadsByAccount = new Map<string, number>();
+  return async (request, context) => {
+    const raw = request as unknown as Record<string, unknown>;
+    const resolvedAccount = isRecord(context.account) ? context.account : {};
+    const resolvedAccountId =
+      typeof resolvedAccount.id === 'string'
+        ? resolvedAccount.id
+        : typeof resolvedAccount.account_id === 'string'
+          ? resolvedAccount.account_id
+          : undefined;
+    if (!resolvedAccountId) throw new Error('get_reporting_status requires a resolved account');
+    const accountId = resolvedAccountId;
+    const view = raw.view;
+    if (view !== 'summary' && view !== 'periods' && view !== 'revision') {
+      throw new Error('Unsupported reporting status view');
+    }
+    let releaseReadSlot: () => void;
+    try {
+      releaseReadSlot = acquireAccountReadSlot(activeReadsByAccount, accountId, 16, 256);
+    } catch (error) {
+      if (error instanceof ReportingReadCapacityError) return operationalUnavailable(view);
+      throw error;
+    }
+    try {
+      const query: ReportingLedgerSnapshotQueryV1 = {
+        account_id: accountId,
+        view,
+        ...copyArray(raw, 'media_buy_ids'),
+        ...copyArray(raw, 'delivery_config_ids'),
+        ...copyArray(raw, 'feed_purposes'),
+        ...copyArray(raw, 'health'),
+        ...copyArray(raw, 'finality'),
+        ...(typeof raw.reporting_revision_id === 'string' ? { reporting_revision_id: raw.reporting_revision_id } : {}),
+        ...(typeof raw.changes_after === 'string' ? { changes_after: raw.changes_after } : {}),
+        ...(isRecord(raw.period) ? { period: raw.period as { start?: string; end?: string } } : {}),
+      } as ReportingLedgerSnapshotQueryV1;
+      const pagination = isRecord(raw.pagination) ? raw.pagination : {};
+      const limitValue = pagination.max_results ?? pagination.limit ?? 100;
+      const limit =
+        typeof limitValue === 'number' && Number.isFinite(limitValue)
+          ? Math.max(1, Math.min(500, Math.trunc(limitValue)))
+          : 100;
+      const cursor = typeof pagination.cursor === 'string' ? pagination.cursor : undefined;
+      let snapshotId: string | undefined;
+      if (cursor) {
+        try {
+          const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { snapshotId?: unknown };
+          if (typeof decoded.snapshotId === 'string') snapshotId = decoded.snapshotId;
+        } catch {
+          return lookupUnavailable(view);
+        }
+      }
+      let snapshot = null;
+      if (!snapshotId) {
+        try {
+          snapshot = await store.createSnapshot(query);
+        } catch (error) {
+          if (error instanceof ReportingLedgerSnapshotUnavailableError || error instanceof ReportingReadCapacityError) {
+            return lookupUnavailable(view);
+          }
+          if (isContinuityError(error)) return operationalUnavailable(view);
+          throw error;
+        }
+      }
+      let page;
+      if (view === 'periods' || view === 'revision') {
+        try {
+          page = await store.readSnapshotPage(snapshotId ?? snapshot!.snapshotId, accountId, cursor, limit);
+        } catch (error) {
+          if (error instanceof ReportingLedgerSnapshotUnavailableError || error instanceof ReportingReadCapacityError) {
+            return lookupUnavailable(view);
+          }
+          if (isContinuityError(error)) return operationalUnavailable(view);
+          throw error;
+        }
+      } else {
+        if (!snapshot) return lookupUnavailable(view);
+        page = {
+          snapshot,
+          obligations: snapshot.obligations,
+          revisions: snapshot.revisions,
+          adjustments: snapshot.adjustments,
+          totalCount: snapshot.obligations.length + snapshot.revisions.length + snapshot.adjustments.length,
+          offset: 0,
+          limit: snapshot.obligations.length || 1,
+          hasMore: false,
+        };
+      }
+      if (canonicalJsonV1(page.snapshot.query) !== canonicalJsonV1(query)) return lookupUnavailable(view);
+      if (
+        query.delivery_config_ids &&
+        query.delivery_config_ids.some(
+          deliveryConfigId =>
+            !page.snapshot.configurations.some(configuration => configuration.delivery_config_id === deliveryConfigId)
+        )
+      ) {
+        return lookupUnavailable(view);
+      }
+      if (
+        query.media_buy_ids &&
+        query.media_buy_ids.some(
+          mediaBuyId =>
+            !page.snapshot.configurations.some(configuration => configuration.mediaBuyIds.includes(mediaBuyId))
+        )
+      ) {
+        return lookupUnavailable(view);
+      }
+      const ledgerCoverage = evaluateReportingLedgerCoverageV1(
+        query,
+        page.snapshot.configurations,
+        page.snapshot.coverageOrdinals,
+        page.snapshot.ledgerAsOf
+      );
+      const projected = page.snapshot.obligations.map(obligation => {
+        const revisions = page.snapshot.revisions.filter(
+          revision => revision.reporting_obligation_id === obligation.reporting_obligation_id
+        );
+        const projection = projectReportingObligationHealthV1(
+          obligation,
+          revisions,
+          page.snapshot.ledgerAsOf,
+          reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete)
+        );
+        const persistedIssues =
+          projection.health === 'delayed' || projection.health === 'action_required'
+            ? page.snapshot.issues.filter(
+                issue => issue.reporting_obligation_id === obligation.reporting_obligation_id && !issue.resolvedAt
+              )
+            : [];
+        return {
+          obligation,
+          revisions,
+          projection: {
+            ...projection,
+            issues: uniqueIssues([...persistedIssues, ...projection.issues]),
+          },
+        };
+      });
+      const healthFilter = view === 'periods' && query.health ? new Set(query.health) : undefined;
+      const selected = healthFilter ? projected.filter(value => healthFilter.has(value.projection.health)) : projected;
+      const base = {
+        status: 'completed',
+        adcp_version: wireAdcpVersion(),
+        adcp_major_version: ADCP_MAJOR_VERSION,
+        view,
+        ledger_snapshot_id: page.snapshot.snapshotId,
+        ledger_as_of: page.snapshot.ledgerAsOf,
+        account_id: accountId,
+      };
+
+      if (view === 'revision') {
+        const id = query.reporting_revision_id;
+        const inSnapshot = id ? page.snapshot.revisions.some(value => value.reporting_revision_id === id) : false;
+        let revision = null;
+        if (id && inSnapshot) {
+          try {
+            revision = await store.getRevision(id, accountId);
+          } catch (error) {
+            if (error instanceof ReportingReadCapacityError) return lookupUnavailable(view);
+            throw error;
+          }
+        }
+        if (!revision) {
+          return lookupUnavailable(view);
+        }
+        return {
+          ...base,
+          view: 'revision',
+          revision: revision.wireRevision,
+          reporting_revision_binding: {
+            reporting_revision_id: revision.reporting_revision_id,
+            revision_content_sha256: revision.wireRevision.revision_content_sha256,
+            row_count: revision.binding.rowCount,
+          },
+          reporting_rows: revision.rows,
+          adjustments: page.adjustments
+            .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
+            .map(value => value.wireAdjustment),
+          adjustment_receipts: [],
+          materializations: [],
+          receipts: [],
+          errors: [],
+          pagination: {
+            has_more: page.hasMore,
+            total_count: page.totalCount,
+            ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
+          },
+        } as never;
+      }
+
+      if (view === 'periods') {
+        const pageIds = new Set(page.obligations.map(value => value.reporting_obligation_id));
+        const pageProjected = selected.filter(value => pageIds.has(value.obligation.reporting_obligation_id));
+        return {
+          ...base,
+          view: 'periods',
+          changes_checkpoint: page.snapshot.changesCheckpoint,
+          scope: publicScope(query, page.snapshot.configurations, page.snapshot.ledgerAsOf, ledgerCoverage),
+          ...(!ledgerCoverage.complete
+            ? { issues: [wireIssue(historyUnavailableIssue(query, page.snapshot.ledgerAsOf))] }
+            : {}),
+          periods: pageProjected.map(value =>
+            wireObligation(
+              value.obligation,
+              value.revisions.length,
+              page.snapshot.adjustments.filter(
+                adjustment => adjustment.reporting_obligation_id === value.obligation.reporting_obligation_id
+              ).length,
+              value.projection
+            )
+          ),
+          revisions: page.revisions
+            .filter(value => !query.finality || query.finality.includes(value.finality))
+            .map(value => value.wireRevision),
+          adjustments: page.adjustments.map(value => value.wireAdjustment),
+          adjustment_receipts: [],
+          materializations: [],
+          receipts: [],
+          pagination: {
+            has_more: page.hasMore,
+            total_count: page.totalCount,
+            ...(page.nextCursor ? { cursor: page.nextCursor } : {}),
+          },
+        } as never;
+      }
+
+      const healthValues = selected.map(value => value.projection.health);
+      const issues = selected.flatMap(value => value.projection.issues);
+      if (!ledgerCoverage.complete) issues.push(historyUnavailableIssue(query, page.snapshot.ledgerAsOf));
+      return {
+        ...base,
+        view: 'summary',
+        scope: publicScope(query, page.snapshot.configurations, page.snapshot.ledgerAsOf, ledgerCoverage),
+        health: aggregateReportingHealthV1(healthValues, {
+          closed: reportingLedgerScopeClosed(query, page.snapshot.ledgerAsOf, ledgerCoverage.complete),
+          coverageComplete: ledgerCoverage.complete,
+        }),
+        coverage: aggregateReportingCoverageV1(
+          selected.map(value => value.obligation.coverage),
+          page.snapshot.ledgerAsOf
+        ),
+        data_through: aggregateDataThrough(selected),
+        ...nextExpectedAt(selected),
+        obligation_counts: counts(healthValues),
+        issues: issues.map(wireIssue),
+      } as never;
+    } finally {
+      releaseReadSlot();
+    }
+  };
+}
+
+/** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
+export function createReportingDeliveryHandler(store: ReportingLedgerStore): ReportingDeliveryHandlerV1 {
+  const activeReadsByAccount = new Map<string, number>();
+  return async (request, context) => {
+    const accountId = resolvedAccountId(context.account);
+    let releaseReadSlot: () => void;
+    try {
+      releaseReadSlot = acquireAccountReadSlot(activeReadsByAccount, accountId, 16, 256);
+    } catch (error) {
+      if (error instanceof ReportingReadCapacityError) {
+        throw new AdcpError('SERVICE_UNAVAILABLE', {
+          message: 'Reporting delivery read capacity is temporarily exhausted',
+        });
+      }
+      throw error;
+    }
+    try {
+      const raw = request as unknown as Record<string, unknown>;
+      if (typeof raw.reporting_revision_id !== 'string' || !raw.reporting_revision_id) {
+        throw new Error('Ledger delivery reads require reporting_revision_id');
+      }
+      const revision = await store.getRevision(raw.reporting_revision_id, accountId);
+      if (!revision) throw new Error('Reporting revision is unavailable');
+      const obligation = await store.getObligation(revision.reporting_obligation_id);
+      if (!obligation || obligation.account.account_id !== accountId) {
+        throw new Error('Reporting revision is unavailable');
+      }
+      const pagination = isRecord(raw.pagination) ? raw.pagination : {};
+      const maxResults =
+        typeof pagination.max_results === 'number' && Number.isFinite(pagination.max_results)
+          ? Math.max(1, Math.min(500, Math.trunc(pagination.max_results)))
+          : 100;
+      let offset = 0;
+      if (typeof pagination.cursor === 'string') {
+        try {
+          const cursor = JSON.parse(Buffer.from(pagination.cursor, 'base64url').toString('utf8')) as {
+            revisionId?: unknown;
+            offset?: unknown;
+          };
+          if (
+            cursor.revisionId !== revision.reporting_revision_id ||
+            typeof cursor.offset !== 'number' ||
+            !Number.isSafeInteger(cursor.offset) ||
+            cursor.offset < 0 ||
+            cursor.offset >= revision.rows.length
+          ) {
+            throw new Error('invalid');
+          }
+          offset = cursor.offset;
+        } catch {
+          throw new Error('Reporting delivery cursor is invalid');
+        }
+      }
+      const reportingRows = revision.rows.slice(offset, offset + maxResults);
+      const nextOffset = offset + reportingRows.length;
+      const hasMore = nextOffset < revision.rows.length;
+      return {
+        reporting_period: { start: obligation.period.start, end: obligation.period.end },
+        media_buy_deliveries: [],
+        reporting_rows: reportingRows,
+        notification_type:
+          revision.finality === 'official' ? 'final' : revision.revisionNumber > 1 ? 'adjusted' : 'scheduled',
+        partial_data: false,
+        unavailable_count: 0,
+        sequence_number: revision.revisionNumber,
+        reporting_revision_binding: {
+          reporting_revision_id: revision.reporting_revision_id,
+          content_sha256: revision.wireRevision.revision_content_sha256,
+          row_count: revision.binding.rowCount,
+          control_totals: revision.wireRevision.control_totals,
+        },
+        reporting_revision: revision.wireRevision,
+        currency: obligation.sourceSettings.currency,
+        errors: [],
+        pagination: {
+          has_more: hasMore,
+          total_count: revision.rows.length,
+          ...(hasMore
+            ? {
+                cursor: Buffer.from(
+                  JSON.stringify({ revisionId: revision.reporting_revision_id, offset: nextOffset }),
+                  'utf8'
+                ).toString('base64url'),
+              }
+            : {}),
+        },
+      } as never;
+    } finally {
+      releaseReadSlot();
+    }
+  };
+}
+
+function resolvedAccountId(account: unknown): string {
+  const resolved = isRecord(account) ? account : {};
+  const accountId =
+    typeof resolved.id === 'string'
+      ? resolved.id
+      : typeof resolved.account_id === 'string'
+        ? resolved.account_id
+        : undefined;
+  if (!accountId) throw new Error('Reporting reads require a resolved account');
+  return accountId;
+}
+
+function wireObligation(
+  obligation: ReportingLedgerObligationV1,
+  revisionCount: number,
+  adjustmentCount: number,
+  projection: ReturnType<typeof projectReportingObligationHealthV1>
+) {
+  return {
+    reporting_obligation_id: obligation.reporting_obligation_id,
+    delivery_config_id: obligation.delivery_config_id,
+    delivery_config_version: obligation.delivery_config_version,
+    report_definition_id: obligation.report_definition_id,
+    feed_purpose: obligation.feedPurpose,
+    reporting_profile: obligation.contract.reportingProfile,
+    account_id: obligation.account.account_id,
+    media_buy_ids: obligation.mediaBuyIds,
+    scope_resolved_at: obligation.scopeResolvedAt,
+    coverage: wireCoverage(obligation.coverage),
+    period: {
+      start: obligation.period.start,
+      end: obligation.period.end,
+      source_timezone: obligation.period.sourceTimezone,
+    },
+    expected_at: obligation.expectedAt,
+    schedule: {
+      period_duration: `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
+      alignment: 'billing_cycle',
+      period_anchor: obligation.schedule.anchor,
+      period_timezone: obligation.period.sourceTimezone,
+      delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
+    },
+    required_finality: obligation.requiredFinality,
+    reconciliation_mode: 'delivery_only',
+    reconciliation_status: 'not_required',
+    health: projection.health,
+    production_status: projection.productionStatus,
+    revision_count: revisionCount,
+    adjustment_count: adjustmentCount,
+    issues: projection.issues.map(wireIssue),
+  };
+}
+
+class ReportingReadCapacityError extends Error {}
+
+function acquireAccountReadSlot(
+  active: Map<string, number>,
+  accountId: string,
+  perAccountLimit = 16,
+  globalLimit = 256
+): () => void {
+  const current = active.get(accountId) ?? 0;
+  const global = [...active.values()].reduce((sum, value) => sum + value, 0);
+  if (current >= perAccountLimit || global >= globalLimit) throw new ReportingReadCapacityError();
+  active.set(accountId, current + 1);
+  return () => {
+    const remaining = (active.get(accountId) ?? 1) - 1;
+    if (remaining > 0) active.set(accountId, remaining);
+    else active.delete(accountId);
+  };
+}
+
+function wireCoverage(coverage: ReportingLedgerCoverageV1) {
+  return {
+    status: coverage.status,
+    evaluated_at: coverage.evaluatedAt,
+    media_buy_ids: coverage.mediaBuyIds,
+    fully_covered_media_buy_ids: coverage.fullyCoveredMediaBuyIds,
+    partially_covered_media_buy_ids: coverage.partiallyCoveredMediaBuyIds,
+    unsupported_media_buy_ids: coverage.unsupportedMediaBuyIds,
+    unknown_media_buy_ids: coverage.unknownMediaBuyIds,
+    package_ids: [],
+    covered_package_ids: [],
+    unsupported_package_ids: [],
+    unknown_package_ids: [],
+    limitations: [],
+  };
+}
+
+function wireIssue(issue: ReportingLedgerIssueV1) {
+  return {
+    issue_id: issue.issueId,
+    code: issue.code,
+    severity: issue.severity,
+    responsible_party: issue.responsibleParty,
+    recommended_action: issue.recommendedAction,
+    ...(issue.reporting_obligation_id === 'scope' ? {} : { reporting_obligation_id: issue.reporting_obligation_id }),
+  };
+}
+
+export function aggregateReportingCoverageV1(values: ReportingLedgerCoverageV1[], asOf: string) {
+  if (values.length === 0) {
+    return wireCoverage({
+      status: 'full',
+      evaluatedAt: asOf,
+      mediaBuyIds: [],
+      fullyCoveredMediaBuyIds: [],
+      partiallyCoveredMediaBuyIds: [],
+      unsupportedMediaBuyIds: [],
+      unknownMediaBuyIds: [],
+    });
+  }
+  const ids = [...new Set(values.flatMap(value => value.mediaBuyIds))].sort();
+  const fullCandidates = new Set(values.flatMap(value => value.fullyCoveredMediaBuyIds));
+  const partialCandidates = new Set(values.flatMap(value => value.partiallyCoveredMediaBuyIds));
+  const unsupportedCandidates = new Set(values.flatMap(value => value.unsupportedMediaBuyIds));
+  const unknownCandidates = new Set(values.flatMap(value => value.unknownMediaBuyIds));
+  const isCovered = (id: string) => fullCandidates.has(id) || partialCandidates.has(id);
+  const isUncovered = (id: string) =>
+    partialCandidates.has(id) || unsupportedCandidates.has(id) || unknownCandidates.has(id);
+  const partial = ids.filter(id => isCovered(id) && isUncovered(id));
+  const full = ids.filter(id => isCovered(id) && !isUncovered(id));
+  const unknown = ids.filter(id => !isCovered(id) && unknownCandidates.has(id));
+  const unsupported = ids.filter(id => !isCovered(id) && !unknownCandidates.has(id) && unsupportedCandidates.has(id));
+  const status = values.every(value => value.status === 'full')
+    ? 'full'
+    : full.length || partial.length
+      ? 'partial'
+      : unknown.length
+        ? 'unknown'
+        : 'none';
+  return wireCoverage({
+    status,
+    evaluatedAt: asOf,
+    mediaBuyIds: ids,
+    fullyCoveredMediaBuyIds: full,
+    partiallyCoveredMediaBuyIds: partial,
+    unsupportedMediaBuyIds: unsupported,
+    unknownMediaBuyIds: unknown,
+  });
+}
+
+function aggregateDataThrough(
+  selected: Array<{
+    revisions: Array<{ dataThrough: string | null }>;
+    projection: { satisfied: boolean };
+  }>
+): string | null {
+  const satisfied = selected.filter(value => value.projection.satisfied);
+  if (!satisfied.length) return null;
+  const watermarks = satisfied.map(value =>
+    value.revisions
+      .map(revision => revision.dataThrough)
+      .filter((item): item is string => item !== null)
+      .sort((left, right) => Date.parse(left) - Date.parse(right))
+      .at(-1)
+  );
+  return watermarks.some(value => !value)
+    ? null
+    : watermarks.sort((left, right) => Date.parse(left!) - Date.parse(right!))[0]!;
+}
+
+function nextExpectedAt(
+  selected: Array<{ obligation: ReportingLedgerObligationV1; projection: { satisfied: boolean } }>
+) {
+  const values = selected
+    .filter(value => !value.projection.satisfied)
+    .map(value => value.obligation.expectedAt)
+    .sort();
+  return values[0] ? { next_expected_at: values[0] } : {};
+}
+
+function counts(values: ReportingHealthV1[]) {
+  return {
+    total: values.length,
+    waiting: values.filter(value => value === 'waiting').length,
+    healthy: values.filter(value => value === 'healthy').length,
+    delayed: values.filter(value => value === 'delayed').length,
+    action_required: values.filter(value => value === 'action_required').length,
+    complete: values.filter(value => value === 'complete').length,
+  };
+}
+
+function publicScope(
+  query: ReportingLedgerSnapshotQueryV1,
+  configurations: ReportingLedgerConfigurationV1[],
+  ledgerAsOf: string,
+  coverage: { complete: boolean; retainedFrom: string }
+) {
+  const { start: periodStart, end: periodEnd } = reportingLedgerEffectivePeriod(query, ledgerAsOf);
+  configurations = relevantReportingLedgerConfigurations(configurations, periodStart, periodEnd).filter(configuration =>
+    reportingLedgerConfigurationMatchesScope(query, configuration)
+  );
+  const generations = [
+    ...new Map(
+      configurations.map(value => [
+        `${value.delivery_config_id}\0${value.delivery_config_version}`,
+        {
+          delivery_config_id: value.delivery_config_id,
+          delivery_config_version: value.delivery_config_version,
+          feed_purpose: value.feedPurpose,
+        },
+      ])
+    ).values(),
+  ];
+  return {
+    period_start: periodStart,
+    period_end: periodEnd,
+    scope_closed: Date.parse(periodEnd) <= Date.parse(ledgerAsOf) && coverage.complete,
+    ...(query.media_buy_ids ? { media_buy_ids: [...query.media_buy_ids].sort() } : {}),
+    all_accessible_media_buys: query.media_buy_ids === undefined,
+    delivery_config_generations: generations,
+    feed_purposes: query.feed_purposes ?? [...new Set(configurations.map(value => value.feedPurpose))].sort(),
+    finality: query.finality ?? [...new Set(configurations.map(value => value.requiredFinality))].sort(),
+    ledger_retained_from: coverage.retainedFrom,
+    coverage_complete: coverage.complete,
+  };
+}
+
+function wireAdcpVersion(): string {
+  return ADCP_VERSION.replace(/^(\d+\.\d+)\.0-/, '$1-');
+}
+
+function uniqueIssues(issues: ReportingLedgerIssueV1[]): ReportingLedgerIssueV1[] {
+  return [...new Map(issues.map(value => [value.issueId, value])).values()];
+}
+
+function lookupUnavailable(view: ReportingLedgerSnapshotQueryV1['view']): GetReportingStatusResponse {
+  return {
+    status: 'failed',
+    view,
+    failure_kind: 'lookup_unavailable',
+    errors: [{ code: 'NOT_FOUND', message: 'Reporting status resource is unavailable.' }],
+  } as GetReportingStatusResponse;
+}
+
+function operationalUnavailable(view: ReportingLedgerSnapshotQueryV1['view']): GetReportingStatusResponse {
+  return {
+    status: 'failed',
+    view,
+    failure_kind: 'operational',
+    errors: [{ code: 'HISTORY_UNAVAILABLE', message: 'Reporting history is temporarily unavailable.' }],
+  } as GetReportingStatusResponse;
+}
+
+function isContinuityError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'ReportingLedgerContinuityError';
+}
+
+function historyUnavailableIssue(query: ReportingLedgerSnapshotQueryV1, observedAt: string): ReportingLedgerIssueV1 {
+  const period = reportingLedgerEffectivePeriod(query, observedAt);
+  const issueId = createHash('sha256')
+    .update(canonicalJsonV1(['history-unavailable-v1', query.account_id, period]))
+    .digest('base64url')
+    .slice(0, 32);
+  return {
+    issueId: `rpti_${issueId}`,
+    reporting_obligation_id: 'scope',
+    code: 'HISTORY_UNAVAILABLE',
+    severity: 'action_required',
+    responsibleParty: 'seller',
+    recommendedAction: 'contact_seller',
+    openedAt: observedAt,
+    observedAt,
+  };
+}
+
+function copyArray(raw: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = raw[key];
+  return Array.isArray(value) ? { [key]: [...value].sort() } : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

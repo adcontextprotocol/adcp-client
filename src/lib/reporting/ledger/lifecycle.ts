@@ -1,0 +1,156 @@
+import { createHash } from 'node:crypto';
+
+import { canonicalJsonV1 } from '../source';
+import { projectReportingObligationHealthV1 } from './health';
+import type { ReportingLedgerStatusTransitionV1, ReportingLedgerStore, ReportingLedgerSubscriberV1 } from './types';
+
+export async function reconcileReportingStatusLifecycleV1(input: {
+  store: ReportingLedgerStore;
+  reporting_obligation_id: string;
+  ledgerAsOf: string;
+  subscribers?: readonly ReportingLedgerSubscriberV1[];
+}): Promise<ReportingLedgerStatusTransitionV1 | null> {
+  const obligation = await input.store.getObligation(input.reporting_obligation_id);
+  if (!obligation) throw new Error('Reporting obligation is unavailable');
+  const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
+  const projection = projectReportingObligationHealthV1(
+    obligation,
+    revisions,
+    input.ledgerAsOf,
+    Date.parse(obligation.period.end) <= Date.parse(input.ledgerAsOf)
+  );
+  const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
+  for (const pending of transitions.filter(value => !value.notifiedAt)) {
+    if (await notifyTransition(pending, obligation.account.account_id, input.subscribers)) {
+      await input.store.markTransitionNotified(pending.transitionId, input.ledgerAsOf);
+    }
+  }
+  const latest = transitions.at(-1);
+  if (latest && Date.parse(input.ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
+  const previousHealth = latest?.health ?? 'waiting';
+  const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
+  const transition: ReportingLedgerStatusTransitionV1 | undefined =
+    previousHealth === projection.health
+      ? undefined
+      : {
+          transitionId: `rst_${createHash('sha256')
+            .update(
+              canonicalJsonV1([
+                obligation.reporting_obligation_id,
+                previousHealth,
+                projection.health,
+                [...nextIssueIds].sort(),
+                input.ledgerAsOf,
+              ])
+            )
+            .digest('base64url')
+            .slice(0, 32)}`,
+          reporting_obligation_id: obligation.reporting_obligation_id,
+          previousHealth,
+          health: projection.health,
+          issueIds: [...nextIssueIds].sort(),
+          occurredAt: input.ledgerAsOf,
+        };
+  const applied = await input.store.applyLifecycleProjection({
+    reporting_obligation_id: obligation.reporting_obligation_id,
+    expectedRevisionIds: revisions.map(value => value.reporting_revision_id),
+    expectedPreviousHealth: previousHealth,
+    expectedObligationState: obligation.state,
+    expectedAttemptCount: obligation.attemptCount,
+    projectedIssues: projection.issues,
+    ledgerAsOf: input.ledgerAsOf,
+    ...(transition ? { transition } : {}),
+  });
+  if (!applied.applied || !transition || !applied.transitionInserted) return null;
+  const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
+  if (notified) await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
+  return notified ? { ...transition, notifiedAt: input.ledgerAsOf } : transition;
+}
+
+export async function retryReportingStatusNotificationsV1(input: {
+  store: ReportingLedgerStore;
+  ledgerAsOf: string;
+  account_id?: string;
+  subscribers?: readonly ReportingLedgerSubscriberV1[];
+  limit?: number;
+}): Promise<number> {
+  const pending = await input.store.listPendingTransitions({
+    ...(input.account_id ? { account_id: input.account_id } : {}),
+    limit: input.limit ?? 100,
+  });
+  const obligationIds = [...new Set(pending.map(value => value.reporting_obligation_id))];
+  for (const reporting_obligation_id of obligationIds) {
+    await reconcileReportingStatusLifecycleV1({
+      store: input.store,
+      reporting_obligation_id,
+      ledgerAsOf: input.ledgerAsOf,
+      subscribers: input.subscribers,
+    });
+  }
+  return obligationIds.length;
+}
+
+/** Reconcile bounded clock-driven waiting→delayed→action_required transitions. */
+export async function reconcileReportingStatusDeadlinesV1(input: {
+  store: ReportingLedgerStore;
+  ledgerAsOf: string;
+  account_id?: string;
+  subscribers?: readonly ReportingLedgerSubscriberV1[];
+  limit?: number;
+}): Promise<number> {
+  const limit = input.limit ?? 1_000;
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) throw new RangeError('limit must be 1..1000');
+  const asOf = Date.parse(input.ledgerAsOf);
+  if (!Number.isFinite(asOf)) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+  const due = (
+    await input.store.listLifecycleDueObligations({
+      ledgerAsOf: input.ledgerAsOf,
+      ...(input.account_id ? { account_id: input.account_id } : {}),
+      limit,
+    })
+  ).map(value => value.reporting_obligation_id);
+  for (const reporting_obligation_id of due) {
+    await reconcileReportingStatusLifecycleV1({
+      store: input.store,
+      reporting_obligation_id,
+      ledgerAsOf: input.ledgerAsOf,
+      subscribers: input.subscribers,
+    });
+  }
+  return due.length;
+}
+
+async function notifyTransition(
+  transition: ReportingLedgerStatusTransitionV1,
+  accountId: string,
+  configured: readonly ReportingLedgerSubscriberV1[] | undefined
+): Promise<boolean> {
+  const subscribers = (configured ?? []).filter(value => value.account_id === accountId);
+  if (subscribers.length > 64) throw new Error('Reporting status subscriber fanout exceeds 64');
+  const results = await Promise.allSettled(
+    subscribers.map(subscriber =>
+      withTimeout(
+        Promise.resolve().then(() => subscriber.notify(structuredClone(transition))),
+        10_000
+      )
+    )
+  );
+  return results.every(value => value.status === 'fulfilled');
+}
+
+async function withTimeout(value: void | Promise<void>, timeoutMilliseconds: number): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve(value),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error('Reporting status subscriber notification timed out')),
+          timeoutMilliseconds
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
