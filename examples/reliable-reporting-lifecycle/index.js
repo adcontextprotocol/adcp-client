@@ -82,8 +82,15 @@ function createReportingLifecycleReference({ pool, source = createSimulatedRepor
     offerings: [source.offering],
     contact: { name: 'Reporting operations' },
   });
-  const getReportingStatus = createReportingStatusHandler(store);
+  const resolveConsumerId = context => {
+    const credential = context.authInfo?.credential;
+    if (credential?.kind === 'api_key' && credential.key_id) return `api_key:${credential.key_id}`;
+    if (context.sessionKey) return `session:${context.sessionKey}`;
+    throw new TypeError('reporting status requires an authenticated consumer principal');
+  };
+  const getReportingStatus = createReportingStatusHandler(store, { resolveConsumerId });
   const getMediaBuyDelivery = createReportingDeliveryHandler(store);
+  const syncReportingStatus = createSyncReportingStatusHandler(store, { resolveConsumerId });
   const server = createAdcpServer({
     name: 'Reliable Reporting lifecycle reference seller',
     version: '1.0.0',

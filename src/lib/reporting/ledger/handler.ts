@@ -266,7 +266,7 @@ export function createReportingStatusHandler<TContext = unknown>(
               ).length,
               value.projection,
               value.currentConsumerStatus,
-              value.consumerStatusProjection.length
+              consumerId ? value.consumerStatusProjection.length : undefined
             )
           ),
           revisions: page.revisions
@@ -455,14 +455,12 @@ function wireObligation(
     production_status: projection.productionStatus,
     revision_count: revisionCount,
     adjustment_count: adjustmentCount,
-    ...(consumerStatusCount !== undefined && consumerStatusCount > 0
+    ...(consumerStatusCount !== undefined
       ? {
           consumer_status_count: consumerStatusCount,
           ...(currentConsumerStatus ? { current_consumer_status_id: currentConsumerStatus.reporting_status_id } : {}),
         }
-      : currentConsumerStatus
-        ? { current_consumer_status_id: currentConsumerStatus.reporting_status_id }
-        : {}),
+      : {}),
     issues: projection.issues.map(wireIssue),
   };
 }

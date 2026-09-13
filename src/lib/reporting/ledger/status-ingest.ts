@@ -224,12 +224,12 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       const configurations = await store.listConfigurations(accountId);
       try {
         const entries: ReportingConsumerStatusBatchEntryV1[] = [];
-        for (const parsedStatus of parsedStatuses) {
+        for (const [index, parsedStatus] of parsedStatuses.entries()) {
           if (!parsedStatus.success) {
-            const index = entries.length;
             entries.push({
               reporting_status_id: reportingStatusId(request.statuses[index]),
               validationError: 'Reporting consumer status request is invalid',
+              ...rawStatusChainIdentity(request.statuses[index]),
             });
             continue;
           }
@@ -344,12 +344,20 @@ async function validateStatus(
     const revisionInScope =
       !status.reporting_revision_id ||
       page.snapshot.revisions.some(value => value.reporting_revision_id === status.reporting_revision_id);
+    const periodInScope =
+      page.snapshot.query.view === 'revision'
+        ? Boolean(
+            status.reporting_revision_id &&
+            page.snapshot.query.reporting_revision_id === status.reporting_revision_id &&
+            revisionInScope
+          )
+        : Date.parse(status.period.start) < Date.parse(scope.end) &&
+          Date.parse(status.period.end) > Date.parse(scope.start);
     if (
       page.snapshot.query.consumer_id !== consumerId ||
       page.snapshot.ledgerAsOf !== status.seller_ledger_as_of ||
       !configurationInScope ||
-      Date.parse(scope.start) > Date.parse(status.period.start) ||
-      Date.parse(scope.end) < Date.parse(status.period.end) ||
+      !periodInScope ||
       !obligationInScope ||
       !revisionInScope
     ) {
@@ -391,6 +399,39 @@ function resolvedAccountId(context: unknown): string {
     typeof value.id === 'string' ? value.id : typeof value.account_id === 'string' ? value.account_id : '';
   if (!accountId) throw new TypeError('sync_reporting_status requires a resolved account');
   return accountId;
+}
+
+function rawStatusChainIdentity(
+  value: unknown
+): Pick<Extract<ReportingConsumerStatusBatchEntryV1, { reporting_status_id: string }>, 'chainIdentity'> {
+  if (!isRecord(value) || !isRecord(value.period)) return {};
+  const fields = {
+    delivery_config_id: value.delivery_config_id,
+    delivery_config_version: value.delivery_config_version,
+    report_definition_id: value.report_definition_id,
+    periodStart: value.period.start,
+    periodEnd: value.period.end,
+    sourceTimezone: value.period.source_timezone,
+  };
+  if (
+    typeof fields.delivery_config_id !== 'string' ||
+    fields.delivery_config_id.length === 0 ||
+    fields.delivery_config_id.length > 255 ||
+    !Number.isInteger(fields.delivery_config_version) ||
+    typeof fields.report_definition_id !== 'string' ||
+    fields.report_definition_id.length === 0 ||
+    fields.report_definition_id.length > 255 ||
+    typeof fields.periodStart !== 'string' ||
+    !Number.isFinite(Date.parse(fields.periodStart)) ||
+    typeof fields.periodEnd !== 'string' ||
+    !Number.isFinite(Date.parse(fields.periodEnd)) ||
+    typeof fields.sourceTimezone !== 'string' ||
+    fields.sourceTimezone.length === 0 ||
+    fields.sourceTimezone.length > 255
+  ) {
+    return {};
+  }
+  return { chainIdentity: fields as NonNullable<ReturnType<typeof rawStatusChainIdentity>['chainIdentity']> };
 }
 
 function wireConsumerStatus(

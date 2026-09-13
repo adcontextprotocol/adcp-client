@@ -95,6 +95,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       },
       consumerA
     );
+    assert.equal(initialSnapshot.periods[0].consumer_status_count, 0);
     const base = {
       delivery_config_id: obligation.delivery_config_id,
       delivery_config_version: obligation.delivery_config_version,
@@ -117,6 +118,70 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       idempotency_key: 'fixture-status-batch-0001',
       statuses: [{ ...base, reporting_status_id: 'fixture-status-a-0001' }],
     };
+    const exactConsumer = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-exact-revision',
+    };
+    const exactSnapshot = await status(
+      {
+        account: request.account,
+        view: 'revision',
+        reporting_revision_id: revision.reporting_revision_id,
+        pagination: { max_results: 100 },
+      },
+      exactConsumer
+    );
+    assert.ok(Date.now() - Date.parse(obligation.period.start) > 86_400_000);
+    const exactProvenance = await sync(
+      {
+        ...firstRequest,
+        idempotency_key: 'fixture-status-exact-snapshot',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-exact-0001',
+            seller_ledger_snapshot_id: exactSnapshot.ledger_snapshot_id,
+            seller_ledger_as_of: exactSnapshot.ledger_as_of,
+          },
+        ],
+      },
+      exactConsumer
+    );
+    assert.equal(exactProvenance.results[0].result, 'recorded');
+    const overlapConsumer = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-overlap-snapshot',
+    };
+    const overlapSnapshot = await status(
+      {
+        account: request.account,
+        view: 'periods',
+        period: {
+          start: new Date(
+            Date.parse(obligation.period.start) + configuration.schedule.periodMilliseconds / 2
+          ).toISOString(),
+          end: obligation.period.end,
+        },
+        pagination: { max_results: 100 },
+      },
+      overlapConsumer
+    );
+    const overlapProvenance = await sync(
+      {
+        ...firstRequest,
+        idempotency_key: 'fixture-status-overlap-snapshot',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-overlap-0001',
+            seller_ledger_snapshot_id: overlapSnapshot.ledger_snapshot_id,
+            seller_ledger_as_of: overlapSnapshot.ledger_as_of,
+          },
+        ],
+      },
+      overlapConsumer
+    );
+    assert.equal(overlapProvenance.results[0].result, 'recorded');
     const first = await sync(firstRequest, consumerA);
     assert.equal(first.results[0].result, 'recorded');
     const revisionReadback = await status(
@@ -372,6 +437,48 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     assert.equal(readback.scope.coverage_complete, false);
     assert.equal(readback.consumer_statuses[0].reporting_status_id, 'fixture-status-missing-0001');
     assert.ok(readback.issues.some(issue => issue.code === 'HISTORY_UNAVAILABLE'));
+
+    const planned = await reference.producer.planObligations(new Date(Date.parse(end) + 1).toISOString());
+    const repairedObligation = planned.find(value => value.period.start === start);
+    assert.ok(repairedObligation);
+    await reference.producer.runWorker({ now: () => new Date(Date.parse(end) + 1), maxIterations: 4 });
+    const [repairedRevision] = await reference.store.listRevisions(repairedObligation.reporting_obligation_id);
+    assert.ok(repairedRevision);
+    const repaired = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-missing-repaired',
+        statuses: [
+          {
+            reporting_status_id: 'fixture-status-missing-0002',
+            supersedes_reporting_status_id: 'fixture-status-missing-0001',
+            delivery_config_id: configuration.delivery_config_id,
+            delivery_config_version: configuration.delivery_config_version,
+            report_definition_id: configuration.report_definition_id,
+            period: { start, end, source_timezone: configuration.sourceTimezone },
+            reporting_obligation_id: repairedObligation.reporting_obligation_id,
+            reporting_revision_id: repairedRevision.reporting_revision_id,
+            observed_revision_content_sha256: repairedRevision.wireRevision.revision_content_sha256,
+            consumer_status: 'received',
+            status_as_of: new Date(Date.parse(end) + 1).toISOString(),
+          },
+        ],
+      },
+      context
+    );
+    assert.equal(repaired.results[0].result, 'recorded');
+    const filtered = await status(
+      {
+        account: request.account,
+        view: 'periods',
+        health: ['action_required'],
+        period: { start, end },
+        pagination: { max_results: 100 },
+      },
+      context
+    );
+    assert.equal(filtered.periods.length, 0);
+    assert.equal(filtered.consumer_statuses.length, 0, 'superseded missing status follows the repaired obligation');
   });
 
   test('includes a logical missing-obligation status transition in delta periods', async () => {
@@ -572,7 +679,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
         source_timezone: configuration.sourceTimezone,
       },
       consumer_status: 'obligation_missing',
-      status_as_of: new Date().toISOString(),
+      status_as_of: new Date().toISOString().replace('Z', '456Z'),
     };
     const invalid = {
       ...valid,
@@ -599,6 +706,23 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     );
     assert.equal(result.results[0].consumer_status.reporting_status_id, valid.reporting_status_id);
     assert.equal(result.results[1].reporting_status_id, invalid.reporting_status_id);
+
+    const duplicateWithMalformed = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-duplicate-malformed',
+        statuses: [
+          { ...valid, reporting_status_id: 'fixture-status-duplicate-valid' },
+          { ...valid, reporting_status_id: 'fixture-status-duplicate-invalid', unexpected: true },
+        ],
+      },
+      context
+    );
+    assert.deepEqual(
+      duplicateWithMalformed.results.map(value => value.result),
+      ['failed', 'failed'],
+      'a malformed entry with a valid chain identity rejects every duplicate-chain entry'
+    );
   });
 
   test('accepts a resolved buyer-declared natural account key', async () => {
@@ -780,6 +904,121 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       [request.account.account_id, consumer, replayRequest.statuses[0].reporting_status_id]
     );
     assert.equal(storedReplay.rows[0].count, 1);
+  });
+
+  test('preserves replay and current leaves at durable status capacity', async () => {
+    const consumer = 'fixture-consumer-capacity';
+    const context = { account: { account_id: request.account.account_id }, consumer };
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: value => value.consumer,
+    });
+    const root = {
+      reporting_status_id: 'fixture-status-capacity-root',
+      delivery_config_id: obligation.delivery_config_id,
+      delivery_config_version: obligation.delivery_config_version,
+      report_definition_id: obligation.report_definition_id,
+      period: {
+        start: obligation.period.start,
+        end: obligation.period.end,
+        source_timezone: obligation.period.sourceTimezone,
+      },
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      reporting_revision_id: revision.reporting_revision_id,
+      observed_revision_content_sha256: revision.wireRevision.revision_content_sha256,
+      consumer_status: 'received',
+      status_as_of: new Date().toISOString(),
+    };
+    const rootRequest = {
+      account: request.account,
+      idempotency_key: 'fixture-capacity-root-batch',
+      statuses: [root],
+    };
+    assert.equal((await sync(rootRequest, context)).results[0].result, 'recorded');
+    try {
+      await pool.query(
+        `INSERT INTO adcp_reporting_consumer_status_batches
+           (account_id, consumer_id, idempotency_key, request_fingerprint, status_ids, results)
+         SELECT $1, $2, 'fixture-capacity-batch-' || value, 'fixture-fingerprint-' || value, '[]'::jsonb, '[]'::jsonb
+           FROM generate_series(1, 9999) AS value`,
+        [request.account.account_id, consumer]
+      );
+      await pool.query(
+        `INSERT INTO adcp_reporting_consumer_statuses
+           (account_id, consumer_id, consumer_status_id, chain_key, revision_id, obligation_id,
+            supersedes_consumer_status_id, is_current, semantic_fingerprint, data, created_at, recorded_at)
+         SELECT $1, $2, 'fixture-capacity-status-' || value, 'fixture-capacity-chain-' || value,
+                NULL, NULL, NULL, false, 'fixture-fingerprint-' || value,
+                jsonb_build_object('reporting_status_id', 'fixture-capacity-status-' || value),
+                clock_timestamp(), clock_timestamp()
+           FROM generate_series(1, 99999) AS value`,
+        [request.account.account_id, consumer]
+      );
+
+      assert.equal(
+        (await sync(rootRequest, context)).results[0].result,
+        'recorded',
+        'exact batch replay wins at capacity'
+      );
+      const secondStart = new Date(
+        Date.parse(configuration.schedule.anchor) + configuration.schedule.periodMilliseconds
+      ).toISOString();
+      const mixed = await sync(
+        {
+          account: request.account,
+          idempotency_key: 'fixture-capacity-mixed-batch',
+          statuses: [
+            root,
+            {
+              reporting_status_id: 'fixture-status-capacity-new',
+              delivery_config_id: configuration.delivery_config_id,
+              delivery_config_version: configuration.delivery_config_version,
+              report_definition_id: configuration.report_definition_id,
+              period: {
+                start: secondStart,
+                end: new Date(Date.parse(secondStart) + configuration.schedule.periodMilliseconds).toISOString(),
+                source_timezone: configuration.sourceTimezone,
+              },
+              consumer_status: 'obligation_missing',
+              status_as_of: new Date().toISOString(),
+            },
+          ],
+        },
+        context
+      );
+      assert.deepEqual(
+        mixed.results.map(value => value.result),
+        ['unchanged', 'failed']
+      );
+      assert.equal(mixed.results[1].errors[0].code, 'RESOURCE_EXHAUSTED');
+      const leaves = await pool.query(
+        `SELECT consumer_status_id FROM adcp_reporting_consumer_statuses
+          WHERE account_id = $1 AND consumer_id = $2 AND is_current`,
+        [request.account.account_id, consumer]
+      );
+      assert.deepEqual(
+        leaves.rows.map(value => value.consumer_status_id),
+        [root.reporting_status_id]
+      );
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT count(*)::integer AS count FROM adcp_reporting_consumer_statuses
+              WHERE account_id = $1 AND consumer_id = $2 AND consumer_status_id = 'fixture-status-capacity-new'`,
+            [request.account.account_id, consumer]
+          )
+        ).rows[0].count,
+        0
+      );
+    } finally {
+      await pool.query(
+        'DELETE FROM adcp_reporting_consumer_status_batches WHERE account_id = $1 AND consumer_id = $2',
+        [request.account.account_id, consumer]
+      );
+      await pool.query('DELETE FROM adcp_reporting_consumer_statuses WHERE account_id = $1 AND consumer_id = $2', [
+        request.account.account_id,
+        consumer,
+      ]);
+    }
   });
 
   test('quarantines populated predecessor rows during migration', async () => {

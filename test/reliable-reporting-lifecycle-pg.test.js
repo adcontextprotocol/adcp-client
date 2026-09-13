@@ -136,7 +136,7 @@ describe('reliable reporting lifecycle reference', { skip: !DATABASE_URL && 'Pos
     assert.equal(restated.length, 2);
     assert.equal(restated[1].supersedes_reporting_revision_id, restated[0].reporting_revision_id);
 
-    const context = { account: { account_id: request.account.account_id } };
+    const context = { account: { account_id: request.account.account_id }, sessionKey: 'lifecycle-reference-buyer' };
     const exact = await reference.getMediaBuyDelivery(
       { account: request.account, reporting_revision_id: restated[1].reporting_revision_id },
       context

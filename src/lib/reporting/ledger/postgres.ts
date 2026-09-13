@@ -824,7 +824,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           return replay;
         }
 
-        const chainKeys = input.entries.map(entry => ('status' in entry ? consumerStatusChainKey(entry.status) : null));
+        const chainKeys = input.entries.map(entry =>
+          'status' in entry
+            ? consumerStatusChainKey(entry.status)
+            : entry.chainIdentity
+              ? consumerStatusChainKeyFromIdentity(entry.chainIdentity)
+              : null
+        );
         const duplicateChains = new Set(
           chainKeys.filter(
             (value, index): value is string =>
@@ -1304,8 +1310,9 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         let issues = await this.listSnapshotIssues(client, obligationIds, MAX_SNAPSHOT_ITEMS + 1);
         if (issues.length > MAX_SNAPSHOT_ITEMS) throw new Error('Reporting ledger snapshot exceeds the issue limit');
         if (query.view === 'periods' && query.health) {
+          const scopedObligations = obligations;
           const accepted = new Set(
-            obligations
+            scopedObligations
               .filter(value => {
                 const obligationRevisions = revisions.filter(
                   item => item.reporting_obligation_id === value.reporting_obligation_id
@@ -1325,12 +1332,26 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
               })
               .map(value => value.reporting_obligation_id)
           );
+          const obligationsByConsumerStatusChain = new Map(
+            scopedObligations.map(value => [consumerStatusChainKeyForObligation(value), value])
+          );
+          const projectedStatusesByChain = new Map<string, ReportingLedgerConsumerStatusV1[]>();
+          for (const status of consumerStatusProjection) {
+            const key = consumerStatusChainKey(status);
+            const statuses = projectedStatusesByChain.get(key) ?? [];
+            statuses.push(status);
+            projectedStatusesByChain.set(key, statuses);
+          }
           obligations = obligations.filter(value => accepted.has(value.reporting_obligation_id));
           revisions = revisions.filter(value => accepted.has(value.reporting_obligation_id));
           adjustments = adjustments.filter(value => accepted.has(value.reporting_obligation_id));
-          consumerStatuses = consumerStatuses.filter(
-            value => !value.reporting_obligation_id || accepted.has(value.reporting_obligation_id)
-          );
+          consumerStatuses = consumerStatuses.filter(value => {
+            const key = consumerStatusChainKey(value);
+            const matchingObligation = obligationsByConsumerStatusChain.get(key);
+            if (matchingObligation) return accepted.has(matchingObligation.reporting_obligation_id);
+            const leaf = currentConsumerStatus(projectedStatusesByChain.get(key) ?? []);
+            return query.health!.includes('action_required') && leaf?.consumer_status === 'obligation_missing';
+          });
           issues = issues.filter(value => accepted.has(value.reporting_obligation_id));
         }
         const changesCheckpoint = randomUUID();
@@ -1981,14 +2002,43 @@ function accountLock(accountId: string): string {
 }
 
 function consumerStatusChainKey(status: ReportingLedgerConsumerStatusInputV1): string {
-  return digest({
+  return consumerStatusChainKeyFromIdentity({
     delivery_config_id: status.delivery_config_id,
     delivery_config_version: status.delivery_config_version,
     report_definition_id: status.report_definition_id,
+    periodStart: status.period.start,
+    periodEnd: status.period.end,
+    sourceTimezone: status.period.source_timezone,
+  });
+}
+
+function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {
+  return consumerStatusChainKeyFromIdentity({
+    delivery_config_id: obligation.delivery_config_id,
+    delivery_config_version: obligation.delivery_config_version,
+    report_definition_id: obligation.report_definition_id,
+    periodStart: obligation.period.start,
+    periodEnd: obligation.period.end,
+    sourceTimezone: obligation.period.sourceTimezone,
+  });
+}
+
+function consumerStatusChainKeyFromIdentity(value: {
+  delivery_config_id: string;
+  delivery_config_version: number;
+  report_definition_id: string;
+  periodStart: string;
+  periodEnd: string;
+  sourceTimezone: string;
+}): string {
+  return digest({
+    delivery_config_id: value.delivery_config_id,
+    delivery_config_version: value.delivery_config_version,
+    report_definition_id: value.report_definition_id,
     period: {
-      start: new Date(status.period.start).toISOString(),
-      end: new Date(status.period.end).toISOString(),
-      source_timezone: status.period.source_timezone,
+      start: new Date(value.periodStart).toISOString(),
+      end: new Date(value.periodEnd).toISOString(),
+      source_timezone: value.sourceTimezone,
     },
   });
 }

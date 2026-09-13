@@ -177,7 +177,18 @@ export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerS
 
 export type ReportingConsumerStatusBatchEntryV1 =
   | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string }
-  | { reporting_status_id: string; validationError: string };
+  | {
+      reporting_status_id: string;
+      validationError: string;
+      chainIdentity?: {
+        delivery_config_id: string;
+        delivery_config_version: number;
+        report_definition_id: string;
+        periodStart: string;
+        periodEnd: string;
+        sourceTimezone: string;
+      };
+    };
 
 export interface ReportingConsumerStatusBatchInputV1 {
   account_id: string;
