@@ -577,6 +577,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     const invalid = {
       ...valid,
       reporting_status_id: 'fixture-status-partial-invalid',
+      delivery_config_version: 1.5,
       consumer_status: 'received',
     };
     const result = await sync(

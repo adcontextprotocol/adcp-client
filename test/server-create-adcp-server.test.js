@@ -736,6 +736,43 @@ describe('createAdcpServer', () => {
       assert.ok(tools.includes('get_adcp_capabilities'));
     });
 
+    it('dispatches mixed-validity reporting status batches for per-item handling in strict mode', async () => {
+      let received;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async params => {
+            received = params;
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'failed',
+                reporting_status_id: status.reporting_status_id,
+                errors: [{ code: 'VALIDATION_ERROR', message: 'Item validation failed' }],
+              })),
+            };
+          },
+        },
+      });
+      const response = await callTool(server, 'sync_reporting_status', {
+        account: { account_id: 'account-reporting-status' },
+        idempotency_key: 'reporting-status-mixed-batch-0001',
+        statuses: [
+          { reporting_status_id: 'reporting-status-valid-0001' },
+          { reporting_status_id: 'reporting-status-invalid-0001', delivery_config_version: 1.5 },
+        ],
+      });
+
+      assert.equal(received.statuses.length, 2);
+      assert.deepStrictEqual(
+        response.results.map(result => result.reporting_status_id),
+        ['reporting-status-valid-0001', 'reporting-status-invalid-0001']
+      );
+    });
+
     it('registers signals tools', () => {
       const server = createAdcpServer({
         name: 'Test',

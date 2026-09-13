@@ -1,9 +1,7 @@
-import { createHash } from 'node:crypto';
-
 import { z } from 'zod';
 
+import { canonicalJsonSha256 } from '../../utils/jcs';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
-import { canonicalJsonV1 } from '../source';
 import { reportingLedgerEffectivePeriod, reportingLedgerSuccessor } from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
 import {
@@ -437,10 +435,6 @@ function completed(
   };
 }
 
-function sha256(value: string): string {
-  return createHash('sha256').update(value).digest('hex');
-}
-
 function statusBatchFingerprint(request: {
   account: Record<string, unknown>;
   idempotency_key: string;
@@ -458,7 +452,7 @@ function statusBatchFingerprint(request: {
     ...semanticRequest
   } = request;
   const wireValue = JSON.parse(JSON.stringify(semanticRequest)) as Record<string, unknown>;
-  return sha256(canonicalJsonV1(wireValue));
+  return canonicalJsonSha256(wireValue);
 }
 
 function reportingStatusId(value: unknown): string {
