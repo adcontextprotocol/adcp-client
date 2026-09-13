@@ -484,12 +484,14 @@ jobs:
           NODE_ENV: test
           DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
           REPORTING_LEDGER_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          REPORTING_LIFECYCLE_PG_URL: postgresql://postgres@127.0.0.1:5432/postgres
         run: >-
           node --test --test-timeout=120000
           test/server-decisioning-postgres-task-registry.test.js
           test/server-decisioning-postgres-task-settlement-intents.test.js
           test/lib/postgres-proposal-store.test.js
           test/lib/reporting-ledger-pg.test.js
+          test/reliable-reporting-lifecycle-pg.test.js
 
   eslint-plugin-tests:
     name: ESLint Plugin Tests
