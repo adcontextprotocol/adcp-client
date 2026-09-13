@@ -5,6 +5,7 @@ import { ReportingAdjustmentSchema, ReportingRevisionSchema } from '../../schema
 import { canonicalize } from '../../utils/jcs';
 import {
   canonicalJsonV1,
+  reportingIsoDurationMillisecondsV1,
   reportingCoverageDenominatorFingerprintV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
   validateReportingSourceExecutionV1,
@@ -275,7 +276,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               result.response.manifest,
               manifest,
               rows,
-              adjustments
+              adjustments,
+              nowValue
             );
             const committed = await options.store.commitAdjustment(adjustment, lease);
             if (committed.inserted) counts.revisionsCommitted += 1;
@@ -753,7 +755,8 @@ function buildAdjustment(
   manifestReference: ReportingLedgerAdjustmentV1['manifest'],
   manifest: ReportingSourceManifestV1,
   rows: Record<string, unknown>[],
-  previous: readonly ReportingLedgerAdjustmentV1[]
+  previous: readonly ReportingLedgerAdjustmentV1[],
+  createdAtValue: Date
 ): ReportingLedgerAdjustmentV1 {
   if (obligation.feedPurpose === 'billing') {
     canonicalRowsSha256(rows, obligation.canonicalization!.primaryKeys);
@@ -766,7 +769,15 @@ function buildAdjustment(
   ]).slice(0, 32)}`;
   const bytes = Buffer.from(canonicalize(rows), 'utf8');
   const sha256 = createHash('sha256').update(bytes).digest('hex');
-  const createdAt = new Date().toISOString();
+  const officialFinalizedAt = instant(official.wireRevision.finalized_at!, 'official.finalized_at');
+  const correctionObservedAt = instant(manifest.period.observedAt, 'manifest.period.observedAt');
+  if (correctionObservedAt < officialFinalizedAt) {
+    throw new Error('Reporting correction observation predates the official finalization');
+  }
+  if (createdAtValue.getTime() < correctionObservedAt) {
+    throw new Error('Reporting correction creation predates its source observation');
+  }
+  const createdAt = createdAtValue.toISOString();
   const correctedTotals = reportingControlTotals(rows, obligation.requestedMetrics);
   const effectiveTotals = effectiveControlTotals(official, previous);
   const controlTotalDeltas = correctedTotals.flatMap(total => {
@@ -989,6 +1000,14 @@ function validateConfigurationAgainstOffering(
   if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
     throw new Error('Reporting period must be representable as whole ISO 8601 seconds');
   }
+  const minimumWindow = reportingIsoDurationMillisecondsV1(offering.windowing.minimumWindow);
+  const maximumWindow = reportingIsoDurationMillisecondsV1(offering.windowing.maximumWindow);
+  if (
+    configuration.schedule.periodMilliseconds < minimumWindow ||
+    configuration.schedule.periodMilliseconds > maximumWindow
+  ) {
+    throw new Error('Reporting period is outside its offering window bounds');
+  }
   nonnegativeInteger(configuration.schedule.deliverySlaMilliseconds, 'deliverySlaMilliseconds');
   if (configuration.schedule.deliverySlaMilliseconds % 1_000 !== 0) {
     throw new Error('Reporting delivery SLA must be representable as whole ISO 8601 seconds');
@@ -1015,8 +1034,8 @@ function validateConfigurationAgainstOffering(
   if (offering.sourceTimezone.ianaTimezone && offering.sourceTimezone.ianaTimezone !== configuration.sourceTimezone) {
     throw new Error('Reporting configuration source timezone does not match its offering');
   }
-  if (configuration.report_definition_id !== offering.contract.report_definition_id) {
-    throw new Error('Reporting configuration report definition does not match its offering');
+  if (canonicalize(configuration.contract) !== canonicalize(offering.contract)) {
+    throw new Error('Reporting configuration contract does not match its offering');
   }
   if (configuration.requiredFinality === 'official' && offering.publicationClass !== 'AUTHORITATIVE') {
     throw new Error('Official reporting requires an authoritative offering');
@@ -1068,6 +1087,20 @@ function validateConfigurationAgainstOffering(
     throw new Error('Unsupported reporting metric');
   if (configuration.requestedDimensions.some(value => !dimensionNames.has(value)))
     throw new Error('Unsupported reporting dimension');
+  const applicableProducts = new Set(offering.applicability.productIds);
+  const applicableKinds = new Set(offering.applicability.constituentKinds);
+  if (configuration.constituents.some(value => !applicableProducts.has(value.productId))) {
+    throw new Error('Reporting constituent product is outside its offering applicability');
+  }
+  if (configuration.constituents.some(value => !applicableKinds.has(value.constituentKind))) {
+    throw new Error('Reporting constituent kind is outside its offering applicability');
+  }
+  if (!offering.sourceSettings.attributionModels.includes(configuration.sourceSettings.attributionModel)) {
+    throw new Error('Reporting attribution model is outside its offering source settings');
+  }
+  if (!offering.sourceSettings.attributionWindows.includes(configuration.sourceSettings.attributionWindow)) {
+    throw new Error('Reporting attribution window is outside its offering source settings');
+  }
   if (
     !sameMembers(configuration.mediaBuyIds, [
       ...new Set(configuration.constituents.map(value => value.mediaBuyId).filter(Boolean) as string[]),

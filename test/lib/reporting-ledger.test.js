@@ -703,6 +703,42 @@ describe('seller reporting ledger', () => {
       })
     );
     await assert.rejects(() => producer.installConfiguration({ ...valid, delivery_config_version: 0 }));
+    await assert.rejects(
+      () =>
+        producer.installConfiguration({
+          ...valid,
+          schedule: { ...valid.schedule, periodMilliseconds: 1_000 },
+        }),
+      /outside its offering window bounds/
+    );
+    await assert.rejects(
+      () => producer.installConfiguration({ ...valid, contract: { ...valid.contract, schemaVersion: 'other' } }),
+      /contract does not match/
+    );
+    await assert.rejects(
+      () =>
+        producer.installConfiguration({
+          ...valid,
+          constituents: valid.constituents.map(value => ({ ...value, productId: 'unoffered-product' })),
+        }),
+      /product is outside/
+    );
+    await assert.rejects(
+      () =>
+        producer.installConfiguration({
+          ...valid,
+          constituents: valid.constituents.map(value => ({ ...value, constituentKind: 'package_item' })),
+        }),
+      /kind is outside/
+    );
+    await assert.rejects(
+      () =>
+        producer.installConfiguration({
+          ...valid,
+          sourceSettings: { ...valid.sourceSettings, attributionModel: 'unoffered-model' },
+        }),
+      /attribution model is outside/
+    );
 
     const partialOffering = structuredClone(redactedReportingSourceOfferingV1);
     partialOffering.metrics[0].support = 'partial';
