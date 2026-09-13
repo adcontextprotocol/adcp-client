@@ -762,6 +762,48 @@ describe('seller reporting ledger', () => {
     assert.equal(store.configurations.size, 0);
   });
 
+  test('replays a configuration fingerprinted before instant normalization', async () => {
+    const store = new MemoryLedgerStore();
+    const request = redactedReportingSourceRequestV1();
+    const producer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+      offerings: [redactedReportingSourceOfferingV1],
+      contact: { name: 'Reporting operations' },
+    });
+    const input = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: 1,
+      offeringId: request.offeringId,
+      report_definition_id: request.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: request.period.start.replace('.000Z', 'Z'),
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    const legacy = {
+      ...structuredClone(input),
+      configurationId: 'fixture-pre-normalization-configuration',
+      installedAt: request.period.start,
+      semanticFingerprint: `sha256:${createHash('sha256').update(canonicalJsonV1(input)).digest('hex')}`,
+    };
+    store.configurations.set(legacy.configurationId, legacy);
+    assert.deepEqual(await producer.installConfiguration(input), legacy);
+  });
+
   test('does not expose obligations before their half-open period closes', async () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();

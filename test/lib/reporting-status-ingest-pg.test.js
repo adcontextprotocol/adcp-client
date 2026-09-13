@@ -932,10 +932,14 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       consumer_status: 'received',
     };
     assert.equal(
-      ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() }).success,
+      ledger.ReportingConsumerStatusPreviewV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() })
+        .success,
       false
     );
-    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, unexpected: true }).success, false);
+    assert.equal(
+      ledger.ReportingConsumerStatusPreviewV1Schema.safeParse({ ...valid, unexpected: true }).success,
+      false
+    );
     const result = await sync(
       {
         account: request.account,
@@ -950,6 +954,27 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     );
     assert.equal(result.results[0].consumer_status.reporting_status_id, valid.reporting_status_id);
     assert.equal(result.results[1].reporting_status_id, invalid.reporting_status_id);
+
+    const dateOnlyBatch = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-partial-date-only',
+        statuses: [
+          { ...valid, reporting_status_id: 'fixture-status-date-only-sibling' },
+          {
+            ...valid,
+            reporting_status_id: 'fixture-status-date-only-invalid',
+            period: { ...valid.period, start: '2026-09-01', end: '2026-09-02' },
+          },
+        ],
+      },
+      { ...context, consumer: 'fixture-consumer-partial-date-only' }
+    );
+    assert.deepEqual(
+      dateOnlyBatch.results.map(value => value.result),
+      ['recorded', 'failed'],
+      'a malformed date-only identity does not abort a valid sibling'
+    );
 
     const duplicateWithMalformed = await sync(
       {
@@ -986,7 +1011,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       },
       status_as_of: '2016-12-31T23:59:60Z',
     };
-    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse(leapSecond).success, true);
+    assert.equal(ledger.ReportingConsumerStatusPreviewV1Schema.safeParse(leapSecond).success, false);
     const leapBatch = await leapSync(
       {
         account: request.account,

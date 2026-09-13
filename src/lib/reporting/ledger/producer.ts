@@ -69,9 +69,10 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       }
       const semantic = { ...normalizedInput };
       const semanticFingerprint = prefixedDigest(semantic);
+      const predecessorFingerprint = prefixedDigest({ ...input });
       const replay = existing.find(value => value.delivery_config_version === normalizedInput.delivery_config_version);
       if (replay) {
-        if (replay.semanticFingerprint !== semanticFingerprint) {
+        if (![semanticFingerprint, predecessorFingerprint].includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
         }
         return replay;

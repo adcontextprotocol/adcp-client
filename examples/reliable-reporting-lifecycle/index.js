@@ -90,7 +90,6 @@ function createReportingLifecycleReference({ pool, source = createSimulatedRepor
   };
   const getReportingStatus = createReportingStatusHandler(store, { resolveConsumerId });
   const getMediaBuyDelivery = createReportingDeliveryHandler(store);
-  const syncReportingStatus = createSyncReportingStatusHandler(store, { resolveConsumerId });
   const server = createAdcpServer({
     name: 'Reliable Reporting lifecycle reference seller',
     version: '1.0.0',

@@ -318,10 +318,7 @@ import type {
   AcquireRightsRequestSchema,
   UpdateRightsRequestSchema,
 } from '../types/schemas.generated';
-import {
-  AccountReferenceSchema,
-  SyncReportingStatusRequestSchema as SyncReportingStatusRequestRuntimeSchema,
-} from '../types/schemas.generated';
+import { AccountReferenceSchema } from '../types/schemas.generated';
 
 import type {
   AcquireRightsAcquired,
@@ -2980,13 +2977,6 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
   adcp_version: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_major_version: SHALLOW_HINT_FIELD_SCHEMA,
 } as unknown as ZodRawShapeCompat;
-// `sync_reporting_status` is intentionally a partial-success batch. Validate
-// the official envelope at the framework boundary, while leaving each status
-// item to the registered handler so one malformed sibling cannot reject all.
-const SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA = SyncReportingStatusRequestRuntimeSchema.extend({
-  statuses: z.array(z.unknown()).min(1).max(100),
-});
-
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
   return cachedToolInputShapes;
@@ -3012,28 +3002,6 @@ function validateFrameworkPayload(
   version: Parameters<typeof validateRequest>[2],
   proposalCapabilities?: ProposalRefinementCapabilities
 ) {
-  if (toolName === 'sync_reporting_status' && direction === 'request') {
-    const parsed = SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA.safeParse(payload);
-    return parsed.success
-      ? {
-          valid: true as const,
-          issues: [] as ValidationIssue[],
-          schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-          variant: undefined,
-        }
-      : {
-          valid: false as const,
-          issues: parsed.error.issues.map(issue => ({
-            pointer: `/${issue.path.map(value => String(value).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`,
-            message: issue.message,
-            keyword: issue.code,
-            schemaPath: '#/local/envelope-validation',
-            schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-          })),
-          schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-          variant: undefined,
-        };
-  }
   if (toolName !== 'refine_proposals') {
     return direction === 'request'
       ? validateRequest(toolName, payload, version)

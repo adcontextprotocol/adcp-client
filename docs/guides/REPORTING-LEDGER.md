@@ -49,7 +49,7 @@ When `get_reporting_status` omits a period, the operational default horizon is t
 
 ## Consumer status preview
 
-AdCP 3.2.0-rc.2 will add `sync_reporting_status`. Until that tag is published, this draft stack exposes the handler and runtime validation from the ledger subpath while preserving the ratified preview schemas under `schemas-preview/` from protocol commit `388e78e63`.
+AdCP 3.2.0-rc.2 adds `sync_reporting_status`. This draft stack exposes the handler and runtime validation from the ledger subpath while preserving the ratified schemas under `schemas-preview/` from protocol commit `388e78e63`; a dedicated protocol-adoption change will move the SDK default pin from rc.1 and regenerate the complete type surface.
 
 ```ts
 const syncReportingStatus = createSyncReportingStatusHandler(store, {

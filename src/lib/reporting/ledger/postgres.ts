@@ -8,7 +8,7 @@ import {
   reportingLedgerScopeClosed,
 } from './coverage';
 import { projectReportingObligationHealthV1 } from './health';
-import { compareReportingInstants } from './instant';
+import { canonicalReportingInstant, compareReportingInstants } from './instant';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
   ReportingLedgerConfigurationV1,
@@ -2058,8 +2058,8 @@ function consumerStatusChainKeyFromIdentity(value: {
     delivery_config_version: value.delivery_config_version,
     report_definition_id: value.report_definition_id,
     period: {
-      start: new Date(value.periodStart).toISOString(),
-      end: new Date(value.periodEnd).toISOString(),
+      start: canonicalReportingInstant(value.periodStart),
+      end: canonicalReportingInstant(value.periodEnd),
       source_timezone: value.sourceTimezone,
     },
   });

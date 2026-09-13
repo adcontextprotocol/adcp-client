@@ -9,6 +9,7 @@ import {
 } from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
 import {
+  canonicalReportingInstant,
   compareReportingInstantToOffset,
   compareReportingInstants,
   reportingDurationCeilOrdinal,
@@ -229,8 +230,12 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         throw new RangeError('now must return a valid Date');
       }
       const clockSkewMilliseconds = options.clockSkewMilliseconds ?? 5 * 60_000;
-      if (!Number.isFinite(clockSkewMilliseconds) || clockSkewMilliseconds < 0 || clockSkewMilliseconds > 3_600_000) {
-        throw new RangeError('clockSkewMilliseconds must be finite and between 0 and 3600000');
+      if (
+        !Number.isSafeInteger(clockSkewMilliseconds) ||
+        clockSkewMilliseconds < 0 ||
+        clockSkewMilliseconds > 3_600_000
+      ) {
+        throw new RangeError('clockSkewMilliseconds must be a safe integer between 0 and 3600000');
       }
       const configurations = await store.listConfigurations(accountId);
       try {
@@ -439,13 +444,17 @@ function rawStatusChainIdentity(
     fields.report_definition_id.length === 0 ||
     fields.report_definition_id.length > 255 ||
     typeof fields.periodStart !== 'string' ||
-    !Number.isFinite(Date.parse(fields.periodStart)) ||
     typeof fields.periodEnd !== 'string' ||
-    !Number.isFinite(Date.parse(fields.periodEnd)) ||
     typeof fields.sourceTimezone !== 'string' ||
     fields.sourceTimezone.length === 0 ||
     fields.sourceTimezone.length > 255
   ) {
+    return {};
+  }
+  try {
+    canonicalReportingInstant(fields.periodStart);
+    canonicalReportingInstant(fields.periodEnd);
+  } catch {
     return {};
   }
   return { chainIdentity: fields as NonNullable<ReturnType<typeof rawStatusChainIdentity>['chainIdentity']> };

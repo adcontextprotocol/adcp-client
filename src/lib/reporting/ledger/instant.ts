@@ -40,6 +40,13 @@ export function compareReportingInstants(left: string, right: string): number {
   return value < 0n ? -1 : value > 0n ? 1 : 0;
 }
 
+export function canonicalReportingInstant(value: string): string {
+  const parsed = parseReportingInstant(value);
+  const fraction = parsed.fraction.replace(/0+$/, '');
+  const wholeSecond = new Date(Number(parsed.epochSecond) * 1_000).toISOString().replace('.000Z', 'Z');
+  return fraction ? wholeSecond.replace('Z', `.${fraction}Z`) : wholeSecond;
+}
+
 export function compareReportingInstantToOffset(value: string, base: string, offsetMilliseconds: number): number {
   const delta = difference(value, base);
   const offset = durationUnits(offsetMilliseconds, delta.scale);
