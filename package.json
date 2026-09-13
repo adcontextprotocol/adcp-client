@@ -344,6 +344,17 @@
         "default": "./dist/lib/upstream-recorder/index.js"
       }
     },
+    "./reporting/source": {
+      "import": {
+        "types": "./dist/lib/reporting/source/index.d.mts",
+        "default": "./dist/lib/reporting/source/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/source/index.d.ts",
+        "default": "./dist/lib/reporting/source/index.js"
+      }
+    },
+    "./reporting/source/schemas/*": "./dist/lib/reporting/source/schemas/*",
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -432,6 +443,9 @@
       "upstream-recorder": [
         "dist/lib/upstream-recorder/index.d.ts"
       ],
+      "reporting/source": [
+        "dist/lib/reporting/source/index.d.ts"
+      ],
       "enums": [
         "dist/lib/enums.d.ts"
       ],
@@ -508,7 +522,7 @@
     "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run build:lib",
     "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present && npm test --workspace=@adcp/reference-renderers",

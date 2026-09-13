@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-09
+> Generated at: 2026-09-13
 > @adcp/sdk v14.0.0-rc.35
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -2707,6 +2707,29 @@ const brand = BrandJsonSchema.parse(await res.json());
 ```
 
 Source of truth: `schemas/cache/{version}/brand.json` and `adagents.json` — regenerate with `npm run generate-wellknown-schemas` when the spec bumps.
+
+## Seller Reporting Source Contract
+
+Import from `@adcp/sdk/reporting/source`. This is a provider-neutral adapter boundary; the existing buyer-side `reconcileReporting` API is separate.
+
+```typescript
+type ReportingSourceManifestLevelV1 = 'basic' | 'evidenced';
+interface ReportingSourceExecutorV1 {
+  readonly capabilities: ReportingSourceCapabilitiesV1;
+  execute(request: ReportingSourceSliceRequestV1, context: { signal: AbortSignal; heartbeat?: () => void }): Promise<ReportingSourceExecutorResultV1>;
+}
+interface ReportingSourceStagedObjectReaderV1 {
+  read(input: { objectRef: string; objectGeneration: string; sourceScope: Record<string, unknown>; account: { account_id: string }; delivery_config_id: string; delivery_config_version: number; report_definition_id: string; reporting_obligation_id: string; maxBytes: number; signal: AbortSignal }): Promise<Uint8Array>;
+}
+type ReportingSourceExecutorResultV1 =
+  | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }
+  | { ok: false; error: ReportingSourceErrorV1 };
+// validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })
+// runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })
+// validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })
+```
+
+`basic` is the Reliable Reporting Core floor: immutable objects, hashes, coverage, finality, and completeness. `evidenced` additionally proves every page, async-job poll, retry, and usage count within the 1 MiB manifest bound. Identity is the caller-owned opaque `sourceScope` plus AdCP account/config/report/period/obligation identities.
 
 ## Key Enums
 
