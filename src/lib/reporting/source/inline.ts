@@ -160,6 +160,9 @@ export function createInlineReportingSourceExecutor(
       if (context.signal.aborted) {
         return failure('CANCELLED', 'cancelled', 'Inline reporting execution was cancelled');
       }
+      if (Date.parse(request.deadline.deadlineAt) <= Date.now()) {
+        return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
+      }
       try {
         validateReportingSourceRequestAgainstCapabilitiesV1(capabilities, request, 'basic');
       } catch {
@@ -167,6 +170,16 @@ export function createInlineReportingSourceExecutor(
       }
       if (request.sourceRequest.groupIds.length > 0) {
         return failure('UNSUPPORTED_OFFERING', 'terminal', 'Inline reporting does not support source group reads');
+      }
+      let deliveryDates: { start: string; end: string };
+      try {
+        deliveryDates = inlineDeliveryDates(request);
+      } catch {
+        return failure(
+          'UNSUPPORTED_OFFERING',
+          'terminal',
+          'Inline reporting requires source-local midnight delivery windows'
+        );
       }
       if (
         request.publicationClass === 'AUTHORITATIVE' &&
@@ -192,7 +205,7 @@ export function createInlineReportingSourceExecutor(
         if (existing.requestFingerprint !== requestFingerprint) {
           return failure('INTEGRITY_FAILED', 'terminal', 'sourceExecutionKey was reused with a different request');
         }
-        return awaitInlineExecution(existing, context.signal);
+        return awaitInlineExecution(existing, context.signal, request.deadline.deadlineAt);
       }
 
       if (executions.size >= INLINE_MAX_EXECUTIONS_V1) {
@@ -212,7 +225,19 @@ export function createInlineReportingSourceExecutor(
       const controller = new AbortController();
       // Publish the replay entry before synchronous adopter code can re-enter.
       const pending = Promise.resolve()
-        .then(() => executeAndSeal(deliveryFetch, offering, format, request, controller.signal, storage, key, scopeKey))
+        .then(() =>
+          executeAndSeal(
+            deliveryFetch,
+            offering,
+            format,
+            request,
+            deliveryDates,
+            controller.signal,
+            storage,
+            key,
+            scopeKey
+          )
+        )
         .then(result => ({ requestFingerprint, result }))
         .catch(() => ({
           requestFingerprint,
@@ -234,7 +259,7 @@ export function createInlineReportingSourceExecutor(
       void pending.then(sealed => {
         if (!sealed.result.ok && executions.get(key) === entry) executions.delete(key);
       });
-      return awaitInlineExecution(entry, context.signal);
+      return awaitInlineExecution(entry, context.signal, request.deadline.deadlineAt);
     },
 
     async read(input) {
@@ -267,6 +292,7 @@ async function executeAndSeal(
   offering: ReportingSourceOfferingV1,
   format: { mediaType: 'application/json' | 'application/x-ndjson'; compression: 'none' },
   request: ReportingSourceSliceRequestV1,
+  deliveryDates: { start: string; end: string },
   signal: AbortSignal,
   storage: {
     objects: Map<string, StoredObject>;
@@ -284,8 +310,8 @@ async function executeAndSeal(
       {
         account: structuredClone(request.account),
         media_buy_ids: [...request.coverage.mediaBuyIds],
-        start_date: request.period.start,
-        end_date: request.period.end,
+        start_date: deliveryDates.start,
+        end_date: deliveryDates.end,
         requested_metrics: [...request.requestedMetrics],
         reporting_dimensions: Object.fromEntries(request.requestedDimensions.map(dimension => [dimension, {}])),
       },
@@ -348,12 +374,12 @@ async function executeAndSeal(
   if (
     !isRows(fetched) &&
     (!fetched.reporting_period ||
-      Date.parse(fetched.reporting_period.start) !== Date.parse(request.period.start) ||
-      Date.parse(fetched.reporting_period.end) !== Date.parse(request.period.end))
+      !deliveryPeriodBoundaryMatches(fetched.reporting_period.start, deliveryDates.start, request.period.start) ||
+      !deliveryPeriodBoundaryMatches(fetched.reporting_period.end, deliveryDates.end, request.period.end))
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch did not prove the requested half-open period');
   }
-  if (!isRows(fetched) && fetched.currency !== request.sourceSettings.currency) {
+  if (!isRows(fetched) && fetched.currency !== undefined && fetched.currency !== request.sourceSettings.currency) {
     return failure(
       'INTEGRITY_FAILED',
       'terminal',
@@ -438,14 +464,16 @@ async function executeAndSeal(
   }
   const observedAt = isRows(fetched)
     ? request.period.sourceReadCutoffAt
-    : (fetched.observed_at ?? request.period.sourceReadCutoffAt);
+    : normalizeDeliveryInstant(fetched.observed_at ?? request.period.sourceReadCutoffAt, deliveryDates, request.period);
   const defaultDataThrough =
     request.publicationClass === 'AUTHORITATIVE'
       ? request.period.end
       : Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end)
         ? request.period.sourceReadCutoffAt
         : request.period.end;
-  const dataThrough = isRows(fetched) ? defaultDataThrough : (fetched.data_through ?? defaultDataThrough);
+  const dataThrough = isRows(fetched)
+    ? defaultDataThrough
+    : normalizeDeliveryInstant(fetched.data_through ?? defaultDataThrough, deliveryDates, request.period);
   const acquiredAt = new Date().toISOString();
   const startMs = Date.parse(request.period.start);
   const endMs = Date.parse(request.period.end);
@@ -627,35 +655,49 @@ function inlineSemanticRequestFingerprint(request: ReportingSourceSliceRequestV1
 
 async function awaitInlineExecution(
   entry: ExecutionEntry,
-  signal: AbortSignal
+  signal: AbortSignal,
+  deadlineAt: string
 ): Promise<ReportingSourceExecutorResultV1> {
+  let deadlineElapsed = Date.parse(deadlineAt) <= Date.now();
+  const deadlineController = new AbortController();
+  const cancelDeadline = scheduleDeadline(deadlineAt, () => {
+    deadlineElapsed = true;
+    deadlineController.abort(new Error('Inline reporting execution deadline elapsed'));
+  });
+  const waitSignal = AbortSignal.any([signal, deadlineController.signal]);
   entry.waiters += 1;
-  if (signal.aborted) {
+  if (waitSignal.aborted || deadlineElapsed) {
     entry.waiters -= 1;
     if (entry.pending && entry.waiters === 0) {
-      entry.controller.abort(signal.reason);
+      entry.controller.abort(waitSignal.reason);
       await entry.promise;
     }
-    return failure('CANCELLED', 'cancelled', 'Inline reporting execution was cancelled');
+    cancelDeadline();
+    return deadlineElapsed
+      ? failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed')
+      : failure('CANCELLED', 'cancelled', 'Inline reporting execution was cancelled');
   }
   let releaseWaiter = true;
   let announceAbort!: () => void;
   const aborted = new Promise<{ kind: 'aborted' }>(resolve => {
     announceAbort = () => resolve({ kind: 'aborted' });
   });
-  signal.addEventListener('abort', announceAbort, { once: true });
+  waitSignal.addEventListener('abort', announceAbort, { once: true });
   try {
     const outcome = await Promise.race([entry.promise.then(sealed => ({ kind: 'sealed' as const, sealed })), aborted]);
     if (outcome.kind === 'sealed') return structuredClone(outcome.sealed.result);
     entry.waiters -= 1;
     releaseWaiter = false;
     if (entry.pending && entry.waiters === 0) {
-      entry.controller.abort(signal.reason);
+      entry.controller.abort(waitSignal.reason);
       await entry.promise;
     }
-    return failure('CANCELLED', 'cancelled', 'Inline reporting execution was cancelled');
+    return deadlineElapsed
+      ? failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed')
+      : failure('CANCELLED', 'cancelled', 'Inline reporting execution was cancelled');
   } finally {
-    signal.removeEventListener('abort', announceAbort);
+    cancelDeadline();
+    waitSignal.removeEventListener('abort', announceAbort);
     if (releaseWaiter) entry.waiters -= 1;
   }
 }
@@ -667,16 +709,18 @@ function rowMediaBuyId(row: unknown): string | undefined {
 }
 
 function rowHasField(row: unknown, field: string): boolean {
-  if (typeof row !== 'object' || row === null) return false;
+  return rowFieldValue(row, field) !== undefined;
+}
+
+function rowFieldValue(row: unknown, field: string): string | number | undefined {
+  if (typeof row !== 'object' || row === null) return undefined;
   const record = row as Record<string, unknown>;
   const direct = ownDataValue(record, field);
-  if (direct !== undefined && isEvidenceValue(direct)) return true;
+  if (isEvidenceValue(direct)) return direct;
   const totals = ownDataValue(record, 'totals');
-  return (
-    typeof totals === 'object' &&
-    totals !== null &&
-    isEvidenceValue(ownDataValue(totals as Record<string, unknown>, field))
-  );
+  if (typeof totals !== 'object' || totals === null) return undefined;
+  const nested = ownDataValue(totals as Record<string, unknown>, field);
+  return isEvidenceValue(nested) ? nested : undefined;
 }
 
 function isEvidenceValue(value: unknown): value is string | number {
@@ -726,7 +770,7 @@ function projectEvidenceRow(
   const projected: Record<string, unknown> = { media_buy_id: rowMediaBuyId(row) };
   for (const dimension of request.requestedDimensions) {
     if (dimension === 'media_buy_id') continue;
-    const value = ownDataValue(record, dimension);
+    const value = rowFieldValue(record, dimension);
     if (!isEvidenceValue(value)) throw new TypeError('Invalid dimension evidence');
     consumeBudget(jsonEvidenceUpperBound(value));
     projected[dimension] = value;
@@ -750,6 +794,69 @@ function projectEvidenceRow(
   }
   if (Object.keys(projectedTotals).length > 0) projected.totals = projectedTotals;
   return projected;
+}
+
+function inlineDeliveryDates(request: ReportingSourceSliceRequestV1): { start: string; end: string } {
+  const start = sourceLocalMidnightDate(request.period.start, request.period.sourceTimezone);
+  const end = sourceLocalMidnightDate(request.period.end, request.period.sourceTimezone);
+  if (start !== request.period.sourceLocalDate) throw new RangeError('sourceLocalDate does not match period start');
+  return { start, end };
+}
+
+function sourceLocalMidnightDate(instant: string, timeZone: string): string {
+  const date = new Date(instant);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    })
+      .formatToParts(date)
+      .filter(part => part.type !== 'literal')
+      .map(part => [part.type, part.value])
+  );
+  if (parts.hour !== '00' || parts.minute !== '00' || parts.second !== '00' || date.getUTCMilliseconds() !== 0) {
+    throw new RangeError('Reporting boundary is not source-local midnight');
+  }
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function deliveryPeriodBoundaryMatches(actual: string, wireDate: string, instant: string): boolean {
+  return actual === wireDate || Date.parse(actual) === Date.parse(instant);
+}
+
+function normalizeDeliveryInstant(
+  value: string,
+  deliveryDates: { start: string; end: string },
+  period: ReportingSourceSliceRequestV1['period']
+): string {
+  if (value === deliveryDates.start) return period.start;
+  if (value === deliveryDates.end) return period.end;
+  return value;
+}
+
+function scheduleDeadline(deadlineAt: string, expire: () => void): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  const schedule = () => {
+    if (cancelled) return;
+    const remaining = Date.parse(deadlineAt) - Date.now();
+    if (remaining <= 0) {
+      expire();
+      return;
+    }
+    timer = setTimeout(schedule, Math.min(remaining, 2_147_483_647));
+  };
+  schedule();
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+  };
 }
 
 function jsonEvidenceUpperBound(value: string | number): number {

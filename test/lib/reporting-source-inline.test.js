@@ -42,7 +42,46 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(calls.length, 1, 'the inline executor durably replays one sealed fetch');
     assert.deepEqual(source.capabilities.offerings[0].sourceExecution.manifestLevels, ['basic']);
     assert.deepEqual(calls[0].input.media_buy_ids, ['fixture-media-buy']);
+    assert.equal(calls[0].input.start_date, '2026-09-01');
+    assert.equal(calls[0].input.end_date, '2026-09-02');
     assert.deepEqual(calls[0].scope, slice.sourceScope);
+  });
+
+  test('accepts row-level currency and projects nested dimension evidence', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.dimensions.push({ name: 'region', support: 'exact' });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        media_buy_deliveries: [
+          {
+            media_buy_id: 'fixture-media-buy',
+            currency: 'USD',
+            totals: { region: 'fixture-region', impressions: 10, spend: '1.25' },
+          },
+        ],
+      }),
+      offering
+    );
+    const slice = request('fixture-inline-nested-dimension');
+    slice.requestedDimensions.push('region');
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    const object = manifest.objects[0];
+    const bytes = await source.read({
+      sourceScope: slice.sourceScope,
+      account: slice.account,
+      delivery_config_id: slice.delivery_config_id,
+      delivery_config_version: slice.delivery_config_version,
+      report_definition_id: slice.report_definition_id,
+      reporting_obligation_id: slice.reporting_obligation_id,
+      objectRef: object.objectRef,
+      objectGeneration: object.objectGeneration,
+      maxBytes: object.byteCount,
+      signal: context().signal,
+    });
+    assert.equal(JSON.parse(Buffer.from(bytes).toString('utf8').trim()).region, 'fixture-region');
   });
 
   test('treats [] as an observed zero-row period', async () => {
@@ -353,6 +392,42 @@ describe('createInlineReportingSourceExecutor', () => {
     controller.abort();
     const result = await pending;
     assert.equal(validateReportingSourceFailureV1(result, 'CANCELLED').code, 'CANCELLED');
+    assert.equal(settled, true);
+  });
+
+  test('rejects expired deadlines and aborts an owned fetch when its deadline elapses', async () => {
+    let calls = 0;
+    const expiredSource = createInlineReportingSourceExecutor(() => {
+      calls += 1;
+      return [];
+    }, redactedReportingSourceOfferingV1);
+    const expired = request('fixture-inline-expired-deadline');
+    expired.deadline.deadlineAt = '2000-01-01T00:00:00.000Z';
+    assert.equal(
+      validateReportingSourceFailureV1(await expiredSource.execute(expired, context()), 'DEADLINE_EXCEEDED').code,
+      'DEADLINE_EXCEEDED'
+    );
+    assert.equal(calls, 0);
+
+    let settled = false;
+    const source = createInlineReportingSourceExecutor(
+      (_input, { signal }) =>
+        new Promise(resolve =>
+          signal.addEventListener(
+            'abort',
+            () => {
+              settled = true;
+              resolve([]);
+            },
+            { once: true }
+          )
+        ),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-mid-fetch-deadline');
+    slice.deadline.deadlineAt = new Date(Date.now() + 25).toISOString();
+    const result = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(result, 'DEADLINE_EXCEEDED').code, 'DEADLINE_EXCEEDED');
     assert.equal(settled, true);
   });
 
