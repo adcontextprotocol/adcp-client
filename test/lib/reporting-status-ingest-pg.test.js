@@ -580,6 +580,11 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       delivery_config_version: 1.5,
       consumer_status: 'received',
     };
+    assert.equal(
+      ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() }).success,
+      false
+    );
+    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, unexpected: true }).success, false);
     const result = await sync(
       {
         account: request.account,
