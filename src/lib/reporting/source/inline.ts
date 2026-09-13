@@ -129,9 +129,18 @@ export function createInlineReportingSourceExecutor(
   ) {
     throw new TypeError('Inline reporting requires whole source-day fixed windows');
   }
+  const format = parsedOffering.formats.find(
+    candidate =>
+      candidate.compression === 'none' &&
+      (candidate.mediaType === 'application/json' || candidate.mediaType === 'application/x-ndjson')
+  ) as { mediaType: 'application/json' | 'application/x-ndjson'; compression: 'none' } | undefined;
+  if (!format) {
+    throw new TypeError('Inline reporting requires uncompressed JSON or NDJSON');
+  }
   const offering = ReportingSourceOfferingV1Schema.parse({
     ...parsedOffering,
     applicability: { ...parsedOffering.applicability, constituentKinds: ['media_buy'] },
+    formats: [format],
     sourceExecution: {
       ...parsedOffering.sourceExecution,
       pagination: 'none',
@@ -140,14 +149,6 @@ export function createInlineReportingSourceExecutor(
       manifestLevels: ['basic'],
     },
   });
-  const format = offering.formats.find(
-    candidate =>
-      candidate.compression === 'none' &&
-      (candidate.mediaType === 'application/json' || candidate.mediaType === 'application/x-ndjson')
-  ) as { mediaType: 'application/json' | 'application/x-ndjson'; compression: 'none' } | undefined;
-  if (!format) {
-    throw new TypeError('Inline reporting requires uncompressed JSON or NDJSON');
-  }
 
   const capabilities = reportingSourceCapabilitiesV1([offering], `inline-${offering.adapterBuild.adapterVersion}`);
   const executions = new Map<string, ExecutionEntry>();

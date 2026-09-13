@@ -160,6 +160,17 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.throws(() => createInlineReportingSourceExecutor(() => [], hourly), /whole source-day fixed windows/);
   });
 
+  test('advertises only the one wire format the inline executor emits', () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.formats.unshift({ mediaType: 'text/csv', compression: 'gzip' });
+    offering.formats.push({ mediaType: 'application/json', compression: 'none' });
+    const source = createInlineReportingSourceExecutor(() => [], offering);
+
+    assert.deepEqual(source.capabilities.offerings[0].formats, [
+      { mediaType: 'application/x-ndjson', compression: 'none' },
+    ]);
+  });
+
   test('maps null, thrown failures, typed failures, and partial responses', async () => {
     const cases = [
       { fetch: () => null, code: 'NOT_READY' },
