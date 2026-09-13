@@ -703,6 +703,25 @@ describe('seller reporting ledger', () => {
       })
     );
     await assert.rejects(() => producer.installConfiguration({ ...valid, delivery_config_version: 0 }));
+
+    const partialOffering = structuredClone(redactedReportingSourceOfferingV1);
+    partialOffering.metrics[0].support = 'partial';
+    partialOffering.dimensions[0].support = 'partial';
+    const partialProducer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+      offerings: [partialOffering],
+      contact: { name: 'Reporting operations' },
+    });
+    await assert.rejects(() => partialProducer.installConfiguration(valid), /Unsupported reporting metric/);
+    await assert.rejects(
+      () =>
+        partialProducer.installConfiguration({
+          ...valid,
+          requestedMetrics: [],
+        }),
+      /Unsupported reporting dimension/
+    );
     assert.equal(store.configurations.size, 0);
   });
 

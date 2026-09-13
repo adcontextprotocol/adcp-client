@@ -1060,11 +1060,9 @@ function validateConfigurationAgainstOffering(
       throw new Error('Billing reporting requires a pinned canonicalization contract');
     }
   }
-  const metricNames = new Set(
-    offering.metrics.filter(value => value.support !== 'unavailable').map(value => value.name)
-  );
+  const metricNames = new Set(offering.metrics.filter(value => value.support === 'exact').map(value => value.name));
   const dimensionNames = new Set(
-    offering.dimensions.filter(value => value.support !== 'unavailable').map(value => value.name)
+    offering.dimensions.filter(value => value.support === 'exact').map(value => value.name)
   );
   if (configuration.requestedMetrics.some(value => !metricNames.has(value)))
     throw new Error('Unsupported reporting metric');
