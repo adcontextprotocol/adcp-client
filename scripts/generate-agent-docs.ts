@@ -1287,6 +1287,7 @@ function generateLlmsTxt(
     ['ctx_metadata credential safety', 'guides/CTX-METADATA-SAFETY.md'],
     ['Request signing (RFC 9421) + JWKS', 'guides/SIGNING-GUIDE.md'],
     ['Conformance (property-based fuzzing)', 'guides/CONFORMANCE.md'],
+    ['Reporting source executor (seller adapters)', 'guides/REPORTING-SOURCE-EXECUTOR.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
@@ -1964,6 +1965,39 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `Source of truth: \`schemas/cache/{version}/brand.json\` and \`adagents.json\` — regenerate with \`npm run generate-wellknown-schemas\` when the spec bumps.`
+  );
+  ln();
+
+  // --- Seller reporting source contract ---
+  ln(`## Seller Reporting Source Contract`);
+  ln();
+  ln(
+    `Import from \`@adcp/sdk/reporting/source\`. This is a provider-neutral adapter boundary; the existing buyer-side \`reconcileReporting\` API is separate.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`type ReportingSourceManifestLevelV1 = 'basic' | 'evidenced';`);
+  ln(`interface ReportingSourceExecutorV1 {`);
+  ln(`  readonly capabilities: ReportingSourceCapabilitiesV1;`);
+  ln(
+    `  execute(request: ReportingSourceSliceRequestV1, context: { signal: AbortSignal; heartbeat?: () => void }): Promise<ReportingSourceExecutorResultV1>;`
+  );
+  ln(`}`);
+  ln(`interface ReportingSourceStagedObjectReaderV1 {`);
+  ln(
+    `  read(input: { objectRef: string; objectGeneration: string; sourceScope: Record<string, unknown>; account: { account_id: string }; delivery_config_id: string; delivery_config_version: number; report_definition_id: string; reporting_obligation_id: string; maxBytes: number; signal: AbortSignal }): Promise<Uint8Array>;`
+  );
+  ln(`}`);
+  ln(`type ReportingSourceExecutorResultV1 =`);
+  ln(`  | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }`);
+  ln(`  | { ok: false; error: ReportingSourceErrorV1 };`);
+  ln(`// validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })`);
+  ln(`// runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })`);
+  ln(`// validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })`);
+  ln('```');
+  ln();
+  ln(
+    `\`basic\` is the Reliable Reporting Core floor: immutable objects, hashes, coverage, finality, and completeness. \`evidenced\` additionally proves every page, async-job poll, retry, and usage count within the 1 MiB manifest bound. Identity is the caller-owned opaque \`sourceScope\` plus AdCP account/config/report/period/obligation identities.`
   );
   ln();
 

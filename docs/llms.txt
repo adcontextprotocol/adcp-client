@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-09
+> Generated at: 2026-09-13
 > Library: @adcp/sdk v14.0.0-rc.35
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -2045,6 +2045,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | ctx_metadata credential safety | docs/guides/CTX-METADATA-SAFETY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CTX-METADATA-SAFETY.md) |
 | Request signing (RFC 9421) + JWKS | docs/guides/SIGNING-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/SIGNING-GUIDE.md) |
 | Conformance (property-based fuzzing) | docs/guides/CONFORMANCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CONFORMANCE.md) |
+| Reporting source executor (seller adapters) | docs/guides/REPORTING-SOURCE-EXECUTOR.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-SOURCE-EXECUTOR.md) |
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |
