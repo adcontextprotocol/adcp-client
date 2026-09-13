@@ -34,17 +34,20 @@ const statusId = id.min(16);
 const instant = z
   .string()
   .max(64)
-  .datetime({ offset: true })
   .refine(value => {
-    const precision = /\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/.exec(value)?.[1];
-    return precision === undefined || precision.length <= 3;
-  }, 'Reporting instants support at most millisecond precision');
+    try {
+      canonicalReportingInstant(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, 'value must be an RFC 3339 instant');
 const accountReference = z
   .record(z.string(), z.unknown())
   .refine(
     value =>
       (typeof value.account_id === 'string' && value.account_id.length > 0) ||
-      (isRecord(value.brand) && isRecord(value.operator)),
+      (isRecord(value.brand) && typeof value.operator === 'string' && value.operator.length > 0),
     'account must be an ID reference or buyer-declared natural key'
   );
 const periodSchema = z

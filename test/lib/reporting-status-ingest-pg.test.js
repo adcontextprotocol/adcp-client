@@ -1011,7 +1011,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       },
       status_as_of: '2016-12-31T23:59:60Z',
     };
-    assert.equal(ledger.ReportingConsumerStatusPreviewV1Schema.safeParse(leapSecond).success, false);
+    assert.equal(ledger.ReportingConsumerStatusPreviewV1Schema.safeParse(leapSecond).success, true);
     const leapBatch = await leapSync(
       {
         account: request.account,
