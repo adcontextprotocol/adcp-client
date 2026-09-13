@@ -18,10 +18,9 @@ import { fileURLToPath } from 'node:url';
 // npm reports published package size in MB and issue #2579 set a 20 MB target.
 const MAX_PACKED_TARBALL_BYTES = 20_000_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
-// AdCP 3.2.0-beta.10 adds the account-change schema family. Superseded beta.8
-// compliance fixtures are excluded from publication, keeping byte budgets
-// unchanged while allowing the small increase in current schema documents.
-const MAX_PACKED_FILE_COUNT = 5_950;
+// AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
+// ledger adds ten public module artifacts while keeping the byte budgets fixed.
+const MAX_PACKED_FILE_COUNT = 5_960;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

@@ -2732,6 +2732,21 @@ type ReportingSourceExecutorResultV1 =
 
 `basic` is the Reliable Reporting Core floor: immutable objects, hashes, coverage, finality, and completeness. `evidenced` additionally proves every page, async-job poll, retry, and usage count within the 1 MiB manifest bound. Identity is the caller-owned opaque `sourceScope` plus AdCP account/config/report/period/obligation identities.
 
+## Seller Reporting Ledger
+
+Import from `@adcp/sdk/reporting/ledger`.
+
+```typescript
+const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+await pool.query(REPORTING_LEDGER_MIGRATION);
+const producer = createReportingProducer({ store, source, offerings, contact });
+await producer.planObligations();
+await producer.runWorker();
+const getReportingStatus = createReportingStatusHandler(store);
+```
+
+The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+
 ## Key Enums
 
 | Enum | Values |

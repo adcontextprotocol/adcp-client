@@ -355,6 +355,16 @@
       }
     },
     "./reporting/source/schemas/*": "./dist/lib/reporting/source/schemas/*",
+    "./reporting/ledger": {
+      "import": {
+        "types": "./dist/lib/reporting/ledger/index.d.mts",
+        "default": "./dist/lib/reporting/ledger/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/ledger/index.d.ts",
+        "default": "./dist/lib/reporting/ledger/index.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -445,6 +455,9 @@
       ],
       "reporting/source": [
         "dist/lib/reporting/source/index.d.ts"
+      ],
+      "reporting/ledger": [
+        "dist/lib/reporting/ledger/index.d.ts"
       ],
       "enums": [
         "dist/lib/enums.d.ts"

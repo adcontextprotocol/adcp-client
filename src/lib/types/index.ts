@@ -106,6 +106,7 @@ export type {
   SyncReportingReceiptsRequest,
   SyncReportingReceiptsResponse,
   ReportingCanonicalContentDigest,
+  ReportingAdjustment,
   ReportingControlTotal,
   ReportingMaterialization,
   ReportingObligation,

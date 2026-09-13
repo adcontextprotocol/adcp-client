@@ -2046,6 +2046,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 | Request signing (RFC 9421) + JWKS | docs/guides/SIGNING-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/SIGNING-GUIDE.md) |
 | Conformance (property-based fuzzing) | docs/guides/CONFORMANCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/CONFORMANCE.md) |
 | Reporting source executor (seller adapters) | docs/guides/REPORTING-SOURCE-EXECUTOR.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-SOURCE-EXECUTOR.md) |
+| Seller reporting ledger | docs/guides/REPORTING-LEDGER.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/REPORTING-LEDGER.md) |
 | Validate your agent (5-command checklist) | docs/guides/VALIDATE-YOUR-AGENT.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/VALIDATE-YOUR-AGENT.md) |
 | Async patterns (polling, webhooks, deferred) | docs/guides/ASYNC-DEVELOPER-GUIDE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-DEVELOPER-GUIDE.md) |
 | Async API reference | docs/guides/ASYNC-API-REFERENCE.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/ASYNC-API-REFERENCE.md) |

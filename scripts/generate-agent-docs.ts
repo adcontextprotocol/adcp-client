@@ -1288,6 +1288,7 @@ function generateLlmsTxt(
     ['Request signing (RFC 9421) + JWKS', 'guides/SIGNING-GUIDE.md'],
     ['Conformance (property-based fuzzing)', 'guides/CONFORMANCE.md'],
     ['Reporting source executor (seller adapters)', 'guides/REPORTING-SOURCE-EXECUTOR.md'],
+    ['Seller reporting ledger', 'guides/REPORTING-LEDGER.md'],
     ['Validate your agent (5-command checklist)', 'guides/VALIDATE-YOUR-AGENT.md'],
     ['Async patterns (polling, webhooks, deferred)', 'guides/ASYNC-DEVELOPER-GUIDE.md'],
     ['Async API reference', 'guides/ASYNC-API-REFERENCE.md'],
@@ -1999,6 +2000,25 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `\`basic\` is the Reliable Reporting Core floor: immutable objects, hashes, coverage, finality, and completeness. \`evidenced\` additionally proves every page, async-job poll, retry, and usage count within the 1 MiB manifest bound. Identity is the caller-owned opaque \`sourceScope\` plus AdCP account/config/report/period/obligation identities.`
+  );
+  ln();
+
+  // --- Seller reporting ledger ---
+  ln(`## Seller Reporting Ledger`);
+  ln();
+  ln(`Import from \`@adcp/sdk/reporting/ledger\`.`);
+  ln();
+  ln('```typescript');
+  ln(`const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });`);
+  ln(`await pool.query(REPORTING_LEDGER_MIGRATION);`);
+  ln(`const producer = createReportingProducer({ store, source, offerings, contact });`);
+  ln(`await producer.planObligations();`);
+  ln(`await producer.runWorker();`);
+  ln(`const getReportingStatus = createReportingStatusHandler(store);`);
+  ln('```');
+  ln();
+  ln(
+    `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
   );
   ln();
 
