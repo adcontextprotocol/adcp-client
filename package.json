@@ -365,6 +365,7 @@
         "default": "./dist/lib/reporting/ledger/index.js"
       }
     },
+    "./schemas-preview/*": "./schemas-preview/*",
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -504,6 +505,8 @@
     "MIGRATION-v8.md",
     "docs/guides/**/*.md",
     "docs/recipes/**/*.md",
+    "schemas-preview/**/*.json",
+    "schemas-preview/README.md",
     "docs/examples/**/*",
     "examples/README.md",
     "examples/CONTRIBUTING.md",

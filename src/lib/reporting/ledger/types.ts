@@ -143,16 +143,61 @@ export interface ReportingLedgerAdjustmentV1 {
 }
 
 export type ReportingLedgerRevisionSnapshotV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
+export type ReportingLedgerRevisionMetadataV1 = Omit<ReportingLedgerRevisionV1, 'rows'>;
 export type ReportingLedgerAdjustmentSnapshotV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
 
 export interface ReportingLedgerConsumerStatusV1 {
-  consumerStatusId: string;
-  reporting_revision_id: string;
-  reporting_obligation_id: string;
-  supersedesConsumerStatusId?: string;
-  status: Record<string, unknown>;
-  createdAt: string;
+  /** Authenticated transport principal; never serialized on the wire. */
+  consumerId: string;
+  account_id: string;
+  reporting_status_id: string;
+  supersedes_reporting_status_id?: string;
+  delivery_config_id: string;
+  delivery_config_version: number;
+  report_definition_id: string;
+  period: { start: string; end: string; source_timezone: string };
+  reporting_obligation_id?: string;
+  reporting_revision_id?: string;
+  observed_revision_content_sha256?: string;
+  consumer_status: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable';
+  status_as_of: string;
+  failure_code?:
+    | 'access_denied'
+    | 'resource_not_found'
+    | 'integrity_mismatch'
+    | 'reader_incompatible'
+    | 'transport_failed';
+  consumer_commit_ref?: string;
+  seller_ledger_snapshot_id?: string;
+  seller_ledger_as_of?: string;
+  recorded_at: string;
 }
+
+export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerStatusV1, 'recorded_at'>;
+
+export type ReportingConsumerStatusBatchEntryV1 =
+  | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string }
+  | { reporting_status_id: string; validationError: string };
+
+export interface ReportingConsumerStatusBatchInputV1 {
+  account_id: string;
+  consumerId: string;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  /** Ordered entries retain independent failures in the idempotent batch result. */
+  entries: ReportingConsumerStatusBatchEntryV1[];
+  /** Protocol batch retries return the original result; low-level single puts opt out. */
+  replayOriginalResults?: boolean;
+}
+
+export type ReportingConsumerStatusReplayInputV1 = Pick<
+  ReportingConsumerStatusBatchInputV1,
+  'account_id' | 'consumerId' | 'idempotencyKey' | 'requestFingerprint'
+>;
+
+export type ReportingConsumerStatusBatchResultV1 =
+  | { inserted: boolean; value: ReportingLedgerConsumerStatusV1 }
+  | { inserted: false; reporting_status_id: string; errorCode: string; safeMessage: string };
 
 export interface ReportingLedgerIssueV1 {
   issueId: string;
@@ -170,7 +215,8 @@ export interface ReportingLedgerIssueV1 {
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
-    | 'ADJUSTMENT_RECEIPT_REJECTED';
+    | 'ADJUSTMENT_RECEIPT_REJECTED'
+    | 'CONSUMER_STATUS_MISMATCH';
   severity: 'delayed' | 'action_required';
   responsibleParty: 'seller' | 'buyer' | 'provider';
   recommendedAction:
@@ -183,6 +229,7 @@ export interface ReportingLedgerIssueV1 {
     | 'change_reporting_scope'
     | 'use_supported_reader';
   detail?: Record<string, unknown>;
+  reporting_status_id?: string;
   openedAt: string;
   observedAt: string;
   resolvedAt?: string;
@@ -206,6 +253,8 @@ export interface ReportingLedgerSubscriberV1 {
 
 export interface ReportingLedgerSnapshotQueryV1 {
   account_id: string;
+  /** Authenticated consumer scope used only for caller-attributed status readback. */
+  consumer_id?: string;
   view: 'summary' | 'periods' | 'revision';
   media_buy_ids?: string[];
   delivery_config_ids?: string[];
@@ -213,6 +262,7 @@ export interface ReportingLedgerSnapshotQueryV1 {
   health?: ReportingHealthV1[];
   finality?: ReportingFinalityV1[];
   reporting_revision_id?: string;
+  reporting_status_id?: string;
   period?: { start?: string; end?: string };
   changes_after?: string;
 }
@@ -230,6 +280,9 @@ export interface ReportingLedgerSnapshotV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  consumerStatuses?: ReportingLedgerConsumerStatusV1[];
+  /** Full scoped histories retained across changes_after for complete counts and current-leaf projection. */
+  consumerStatusProjection?: ReportingLedgerConsumerStatusV1[];
   issues: ReportingLedgerIssueV1[];
 }
 
@@ -238,6 +291,7 @@ export interface ReportingLedgerPageV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  consumerStatuses?: ReportingLedgerConsumerStatusV1[];
   totalCount: number;
   offset: number;
   limit: number;
@@ -256,6 +310,13 @@ export class ReportingLedgerSnapshotUnavailableError extends Error {
   constructor() {
     super('Reporting ledger snapshot is unavailable');
     this.name = 'ReportingLedgerSnapshotUnavailableError';
+  }
+}
+
+export class ReportingConsumerStatusConflictError extends Error {
+  constructor(message = 'Reporting consumer status conflicts with the current immutable chain') {
+    super(message);
+    this.name = 'ReportingConsumerStatusConflictError';
   }
 }
 
@@ -333,6 +394,18 @@ export interface ReportingLedgerStore {
     cursor: string | undefined,
     limit: number
   ): Promise<ReportingLedgerPageV1>;
+}
+
+export interface ReportingConsumerStatusLedgerStore extends ReportingLedgerStore {
+  /** Loads revision identity and binding for ingest validation without materializing rows. */
+  getRevisionMetadata(
+    reporting_revision_id: string,
+    account_id: string
+  ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
+  getConsumerStatusBatchReplay(
+    input: ReportingConsumerStatusReplayInputV1
+  ): Promise<ReportingConsumerStatusBatchResultV1[] | null>;
+  syncConsumerStatusBatch(input: ReportingConsumerStatusBatchInputV1): Promise<ReportingConsumerStatusBatchResultV1[]>;
 }
 
 export interface ReportingProducerContactV1 {

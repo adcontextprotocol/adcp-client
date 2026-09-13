@@ -46,3 +46,20 @@ Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and
 When `get_reporting_status` omits a period, the operational default horizon is the 24 hours ending at `ledger_as_of`. The `health` and `finality` arrays filter periods-view output only; they do not rewrite summary health or the underlying obligation projection.
 
 `projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and `reporting.status_changed` transitions, then calls only subscribers already authorized and supplied by the host.
+
+## Consumer status preview
+
+AdCP 3.2.0-rc.2 will add `sync_reporting_status`. Until that tag is published, this draft stack exposes the handler and runtime validation from the ledger subpath while preserving the ratified preview schemas under `schemas-preview/` from protocol commit `388e78e63`.
+
+```ts
+const syncReportingStatus = createSyncReportingStatusHandler(store, {
+  // Derive this only from authenticated transport; it is never a payload field.
+  resolveConsumerId: context => context.agent.id,
+});
+
+const getReportingStatus = createReportingStatusHandler(store, {
+  resolveConsumerId: context => context.agent.id,
+});
+```
+
+The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.

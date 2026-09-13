@@ -5,3 +5,4 @@ export * from './lifecycle';
 export * from './postgres';
 export * from './producer';
 export * from './handler';
+export * from './status-ingest';

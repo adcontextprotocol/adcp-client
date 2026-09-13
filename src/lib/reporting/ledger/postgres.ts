@@ -2,7 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
 import { canonicalJsonV1 } from '../source';
-import { evaluateReportingLedgerCoverageV1, reportingLedgerScopeClosed } from './coverage';
+import {
+  evaluateReportingLedgerCoverageV1,
+  reportingLedgerEffectivePeriod,
+  reportingLedgerScopeClosed,
+} from './coverage';
 import { projectReportingObligationHealthV1 } from './health';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
@@ -20,7 +24,13 @@ import type {
   ReportingLedgerSnapshotV1,
   ReportingLedgerStatusTransitionV1,
   ReportingLedgerStore,
+  ReportingConsumerStatusBatchInputV1,
+  ReportingConsumerStatusBatchResultV1,
+  ReportingConsumerStatusReplayInputV1,
+  ReportingLedgerConsumerStatusInputV1,
+  ReportingLedgerRevisionMetadataV1,
 } from './types';
+import { ReportingConsumerStatusConflictError } from './types';
 
 type QueryResultRow = Record<string, unknown>;
 interface ReportingPgResult<Row extends QueryResultRow> {
@@ -116,16 +126,84 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_adjustments_created
   ON adcp_reporting_adjustments (obligation_id, recorded_at);
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_consumer_statuses (
-  consumer_status_id TEXT PRIMARY KEY,
-  revision_id TEXT NOT NULL REFERENCES adcp_reporting_revisions(revision_id),
-  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
-  supersedes_consumer_status_id TEXT REFERENCES adcp_reporting_consumer_statuses(consumer_status_id),
+  account_id TEXT NOT NULL,
+  consumer_id TEXT NOT NULL,
+  consumer_status_id TEXT NOT NULL,
+  chain_key TEXT NOT NULL,
+  revision_id TEXT REFERENCES adcp_reporting_revisions(revision_id),
+  obligation_id TEXT REFERENCES adcp_reporting_obligations(obligation_id),
+  supersedes_consumer_status_id TEXT,
+  is_current BOOLEAN NOT NULL DEFAULT true,
+  semantic_fingerprint TEXT NOT NULL,
   data JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (account_id, consumer_id, consumer_status_id)
 );
+ALTER TABLE adcp_reporting_consumer_statuses ALTER COLUMN revision_id DROP NOT NULL;
+ALTER TABLE adcp_reporting_consumer_statuses ALTER COLUMN obligation_id DROP NOT NULL;
+ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS account_id TEXT;
+ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS consumer_id TEXT;
+ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS chain_key TEXT;
+ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS semantic_fingerprint TEXT;
+-- PR 3 exposed no consumer-status writer. Quarantine any manually inserted
+-- predecessor rows under an unreachable principal while preserving them for audit.
+UPDATE adcp_reporting_consumer_statuses AS status
+SET account_id = COALESCE(
+      status.account_id,
+      obligation.data->'account'->>'account_id',
+      '__legacy_unscoped_account__'
+    ),
+    consumer_id = COALESCE(status.consumer_id, '__legacy_unscoped_consumer__'),
+    chain_key = COALESCE(status.chain_key, 'legacy:' || status.consumer_status_id),
+    semantic_fingerprint = COALESCE(status.semantic_fingerprint, 'legacy:' || status.consumer_status_id)
+FROM adcp_reporting_obligations AS obligation
+WHERE status.obligation_id = obligation.obligation_id
+  AND (status.account_id IS NULL OR status.consumer_id IS NULL OR status.chain_key IS NULL
+       OR status.semantic_fingerprint IS NULL);
+ALTER TABLE adcp_reporting_consumer_statuses ALTER COLUMN account_id SET NOT NULL;
+ALTER TABLE adcp_reporting_consumer_statuses ALTER COLUMN consumer_id SET NOT NULL;
+ALTER TABLE adcp_reporting_consumer_statuses ALTER COLUMN chain_key SET NOT NULL;
+ALTER TABLE adcp_reporting_consumer_statuses ALTER COLUMN semantic_fingerprint SET NOT NULL;
+DO $migration$
+DECLARE self_fk RECORD;
+BEGIN
+  FOR self_fk IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'adcp_reporting_consumer_statuses'::regclass
+      AND confrelid = 'adcp_reporting_consumer_statuses'::regclass
+      AND contype = 'f'
+  LOOP
+    EXECUTE format(
+      'ALTER TABLE adcp_reporting_consumer_statuses DROP CONSTRAINT %I',
+      self_fk.conname
+    );
+  END LOOP;
+END
+$migration$;
+ALTER TABLE adcp_reporting_consumer_statuses DROP CONSTRAINT IF EXISTS adcp_reporting_consumer_statuses_pkey;
+ALTER TABLE adcp_reporting_consumer_statuses
+  ADD CONSTRAINT adcp_reporting_consumer_statuses_pkey PRIMARY KEY (account_id, consumer_id, consumer_status_id);
 CREATE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_revision
   ON adcp_reporting_consumer_statuses (revision_id, created_at, consumer_status_id);
+CREATE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_scope
+  ON adcp_reporting_consumer_statuses (account_id, consumer_id, created_at, consumer_status_id);
+CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_current
+  ON adcp_reporting_consumer_statuses (account_id, consumer_id, chain_key) WHERE is_current;
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_consumer_status_batches (
+  account_id TEXT NOT NULL,
+  consumer_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  status_ids JSONB NOT NULL,
+  results JSONB NOT NULL DEFAULT '[]'::jsonb,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (account_id, consumer_id, idempotency_key)
+);
+ALTER TABLE adcp_reporting_consumer_status_batches ADD COLUMN IF NOT EXISTS results JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_issues (
   issue_id TEXT PRIMARY KEY,
@@ -182,6 +260,8 @@ const MAX_SNAPSHOT_ITEMS = 10_000;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
 const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
+const MAX_CONSUMER_STATUS_BATCHES = 10_000;
+const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -559,6 +639,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     );
   }
 
+  async getRevisionMetadata(id: string, accountId: string): Promise<ReportingLedgerRevisionMetadataV1 | null> {
+    return this.one<ReportingLedgerRevisionMetadataV1>(
+      `SELECT revision.data - 'rows' AS data FROM adcp_reporting_revisions revision
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = revision.obligation_id
+        WHERE revision.revision_id = $1 AND obligation.account_id = $2`,
+      [id, accountId]
+    );
+  }
+
   async listRevisions(obligationId: string): Promise<ReportingLedgerRevisionV1[]> {
     const result = await this.query<JsonRow<ReportingLedgerRevisionV1>>(
       `SELECT data FROM adcp_reporting_revisions WHERE obligation_id = $1
@@ -629,32 +718,277 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   }
 
   async putConsumerStatus(status: ReportingLedgerConsumerStatusV1) {
-    const lock = await this.accountLockForObligation(status.reporting_obligation_id);
-    return this.putImmutable(
-      `INSERT INTO adcp_reporting_consumer_statuses
-         (consumer_status_id, revision_id, obligation_id, supersedes_consumer_status_id, data, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
-       ON CONFLICT DO NOTHING RETURNING data`,
-      [
-        status.consumerStatusId,
-        status.reporting_revision_id,
-        status.reporting_obligation_id,
-        status.supersedesConsumerStatusId ?? null,
-        JSON.stringify(status),
-        status.createdAt,
-      ],
-      'SELECT data FROM adcp_reporting_consumer_statuses WHERE consumer_status_id = $1',
-      [status.consumerStatusId],
-      status,
-      value => digest(value),
-      lock
+    const [result] = await this.syncConsumerStatusBatch({
+      account_id: status.account_id,
+      consumerId: status.consumerId,
+      idempotencyKey: `status:${status.reporting_status_id}`,
+      requestFingerprint: consumerStatusFingerprint(status),
+      entries: [{ status }],
+      replayOriginalResults: false,
+    });
+    if (!result || !('value' in result)) {
+      throw new ReportingConsumerStatusConflictError(result?.safeMessage);
+    }
+    return result;
+  }
+
+  async getConsumerStatusBatchReplay(
+    input: ReportingConsumerStatusReplayInputV1
+  ): Promise<ReportingConsumerStatusBatchResultV1[] | null> {
+    const batch = await this.query<
+      QueryResultRow & {
+        request_fingerprint: string;
+        results: Array<{
+          kind: 'recorded' | 'unchanged' | 'failed';
+          id: string;
+          errorCode?: string;
+          safeMessage?: string;
+        }>;
+      }
+    >(
+      `SELECT request_fingerprint, results FROM adcp_reporting_consumer_status_batches
+       WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+      [input.account_id, input.consumerId, input.idempotencyKey]
+    );
+    if (!batch.rows[0]) return null;
+    if (batch.rows[0].request_fingerprint !== input.requestFingerprint) {
+      throw new ReportingConsumerStatusConflictError('Reporting status idempotency key was reused');
+    }
+    const replay: ReportingConsumerStatusBatchResultV1[] = [];
+    for (const result of batch.rows[0].results) {
+      if (result.kind === 'failed') {
+        replay.push({
+          inserted: false,
+          reporting_status_id: result.id,
+          errorCode: result.errorCode ?? 'VALIDATION_ERROR',
+          safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+        });
+        continue;
+      }
+      const row = await this.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+        `SELECT data FROM adcp_reporting_consumer_statuses
+         WHERE consumer_status_id = $1 AND account_id = $2 AND consumer_id = $3`,
+        [result.id, input.account_id, input.consumerId]
+      );
+      if (!row.rows[0]) throw new ReportingConsumerStatusConflictError('Reporting status replay is unavailable');
+      replay.push({ inserted: result.kind === 'recorded', value: clone(row.rows[0].data) });
+    }
+    return replay;
+  }
+
+  async syncConsumerStatusBatch(
+    input: ReportingConsumerStatusBatchInputV1
+  ): Promise<ReportingConsumerStatusBatchResultV1[]> {
+    return this.transaction(
+      async client => {
+        type StoredResult = {
+          kind: 'recorded' | 'unchanged' | 'failed';
+          id: string;
+          errorCode?: string;
+          safeMessage?: string;
+        };
+        const priorBatch = await client.query<
+          QueryResultRow & { request_fingerprint: string; results: StoredResult[] }
+        >(
+          `SELECT request_fingerprint, results FROM adcp_reporting_consumer_status_batches
+           WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+          [input.account_id, input.consumerId, input.idempotencyKey]
+        );
+        if (priorBatch.rows[0]) {
+          if (priorBatch.rows[0].request_fingerprint !== input.requestFingerprint) {
+            throw new ReportingConsumerStatusConflictError('Reporting status idempotency key was reused');
+          }
+          const replay: ReportingConsumerStatusBatchResultV1[] = [];
+          for (const result of priorBatch.rows[0].results) {
+            if (result.kind === 'failed') {
+              replay.push({
+                inserted: false,
+                reporting_status_id: result.id,
+                errorCode: result.errorCode ?? 'VALIDATION_ERROR',
+                safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+              });
+              continue;
+            }
+            const row = await client.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+              `SELECT data FROM adcp_reporting_consumer_statuses
+               WHERE consumer_status_id = $1 AND account_id = $2 AND consumer_id = $3`,
+              [result.id, input.account_id, input.consumerId]
+            );
+            if (!row.rows[0]) throw new ReportingConsumerStatusConflictError('Reporting status replay is unavailable');
+            replay.push({
+              inserted: input.replayOriginalResults !== false && result.kind === 'recorded',
+              value: clone(row.rows[0].data),
+            });
+          }
+          return replay;
+        }
+
+        const chainKeys = input.entries.map(entry => ('status' in entry ? consumerStatusChainKey(entry.status) : null));
+        const duplicateChains = new Set(
+          chainKeys.filter(
+            (value, index): value is string =>
+              value !== null && (chainKeys.indexOf(value) !== index || chainKeys.lastIndexOf(value) !== index)
+          )
+        );
+        const duplicateStatusIds = new Set(
+          input.entries
+            .map(value => ('status' in value ? value.status.reporting_status_id : value.reporting_status_id))
+            .filter((value, index, values) => values.indexOf(value) !== index || values.lastIndexOf(value) !== index)
+        );
+        const capacity = await client.query<QueryResultRow & { batches: string; statuses: string }>(
+          `SELECT
+             (SELECT COUNT(*) FROM adcp_reporting_consumer_status_batches
+               WHERE account_id = $1 AND consumer_id = $2)::text AS batches,
+             (SELECT COUNT(*) FROM adcp_reporting_consumer_statuses
+               WHERE account_id = $1 AND consumer_id = $2)::text AS statuses`,
+          [input.account_id, input.consumerId]
+        );
+        const batchCapacityExhausted = Number(capacity.rows[0]?.batches ?? 0) >= MAX_CONSUMER_STATUS_BATCHES;
+        let remainingStatements = MAX_CONSUMER_STATUS_STATEMENTS - Number(capacity.rows[0]?.statuses ?? 0);
+        const results: ReportingConsumerStatusBatchResultV1[] = [];
+        const storedResults: StoredResult[] = [];
+        const fail = (statusId: string, errorCode: string, safeMessage: string) => {
+          results.push({ inserted: false, reporting_status_id: statusId, errorCode, safeMessage });
+          storedResults.push({ kind: 'failed', id: statusId, errorCode, safeMessage });
+        };
+        for (const [index, entry] of input.entries.entries()) {
+          const statusId = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
+          if (duplicateStatusIds.has(statusId)) {
+            fail(statusId, 'VALIDATION_ERROR', 'reporting_status_id must be unique in a batch');
+            continue;
+          }
+          if (!('status' in entry)) {
+            fail(statusId, 'VALIDATION_ERROR', entry.validationError);
+            continue;
+          }
+          const status = entry.status;
+          if (duplicateChains.has(chainKeys[index]!)) {
+            fail(status.reporting_status_id, 'VALIDATION_ERROR', 'A batch may update each status chain only once');
+            continue;
+          }
+          if (status.account_id !== input.account_id || status.consumerId !== input.consumerId) {
+            fail(status.reporting_status_id, 'PERMISSION_DENIED', 'Reporting status scope is unavailable');
+            continue;
+          }
+          const fingerprint = consumerStatusFingerprint(status);
+          const existing = await client.query<
+            JsonRow<ReportingLedgerConsumerStatusV1> & {
+              semantic_fingerprint: string;
+              account_id: string;
+              consumer_id: string;
+            }
+          >(
+            `SELECT data, semantic_fingerprint, account_id, consumer_id FROM adcp_reporting_consumer_statuses
+             WHERE consumer_status_id = $1 AND account_id = $2 AND consumer_id = $3 FOR UPDATE`,
+            [status.reporting_status_id, input.account_id, input.consumerId]
+          );
+          if (existing.rows[0]) {
+            if (existing.rows[0].semantic_fingerprint !== fingerprint) {
+              fail(status.reporting_status_id, 'IDEMPOTENCY_CONFLICT', 'reporting_status_id is unavailable');
+              continue;
+            }
+            results.push({ inserted: false, value: clone(existing.rows[0].data) });
+            storedResults.push({ kind: 'unchanged', id: status.reporting_status_id });
+            continue;
+          }
+          const prevalidation = entry.validationError;
+          if (prevalidation) {
+            fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation);
+            continue;
+          }
+          if (batchCapacityExhausted || remainingStatements <= 0) {
+            fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status capacity is exhausted');
+            continue;
+          }
+          const chainKey = chainKeys[index]!;
+          const current = await client.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+            `SELECT data FROM adcp_reporting_consumer_statuses
+             WHERE account_id = $1 AND consumer_id = $2 AND chain_key = $3 AND is_current
+             FOR UPDATE`,
+            [input.account_id, input.consumerId, chainKey]
+          );
+          const leaf = current.rows[0]?.data;
+          if ((leaf?.reporting_status_id ?? undefined) !== status.supersedes_reporting_status_id) {
+            fail(status.reporting_status_id, 'IDEMPOTENCY_CONFLICT', 'Status must supersede the exact current leaf');
+            continue;
+          }
+          if (leaf && Date.parse(status.status_as_of) < Date.parse(leaf.status_as_of)) {
+            fail(status.reporting_status_id, 'VALIDATION_ERROR', 'Status time cannot regress');
+            continue;
+          }
+          if (leaf) {
+            await client.query(
+              `UPDATE adcp_reporting_consumer_statuses SET is_current = false
+               WHERE consumer_status_id = $1 AND account_id = $2 AND consumer_id = $3`,
+              [leaf.reporting_status_id, input.account_id, input.consumerId]
+            );
+          }
+          const recorded = await client.query<QueryResultRow & { recorded_at: Date }>(
+            `SELECT GREATEST(
+               clock_timestamp(),
+               COALESCE((
+                 SELECT MAX(ledger_as_of) + INTERVAL '1 millisecond'
+                 FROM adcp_reporting_checkpoints
+                 WHERE account_id = $1
+               ), '-infinity'::timestamptz)
+             ) AS recorded_at`,
+            [input.account_id]
+          );
+          const value: ReportingLedgerConsumerStatusV1 = {
+            ...status,
+            recorded_at: recorded.rows[0]!.recorded_at.toISOString(),
+          };
+          await client.query(
+            `INSERT INTO adcp_reporting_consumer_statuses
+             (consumer_status_id, account_id, consumer_id, chain_key, revision_id, obligation_id,
+              supersedes_consumer_status_id, is_current, semantic_fingerprint, data, created_at, recorded_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9::jsonb, $10, $10)`,
+            [
+              status.reporting_status_id,
+              input.account_id,
+              input.consumerId,
+              chainKey,
+              status.reporting_revision_id ?? null,
+              status.reporting_obligation_id ?? null,
+              status.supersedes_reporting_status_id ?? null,
+              fingerprint,
+              JSON.stringify(value),
+              value.recorded_at,
+            ]
+          );
+          results.push({ inserted: true, value: clone(value) });
+          storedResults.push({ kind: 'recorded', id: status.reporting_status_id });
+          remainingStatements -= 1;
+        }
+        if (!batchCapacityExhausted) {
+          await client.query(
+            `INSERT INTO adcp_reporting_consumer_status_batches
+           (account_id, consumer_id, idempotency_key, request_fingerprint, status_ids, results)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)`,
+            [
+              input.account_id,
+              input.consumerId,
+              input.idempotencyKey,
+              input.requestFingerprint,
+              JSON.stringify(
+                input.entries.map(value =>
+                  'status' in value ? value.status.reporting_status_id : value.reporting_status_id
+                )
+              ),
+              JSON.stringify(storedResults),
+            ]
+          );
+        }
+        return results;
+      },
+      { preBeginAdvisoryLock: accountLock(input.account_id) }
     );
   }
 
   async listConsumerStatuses(revisionId: string): Promise<ReportingLedgerConsumerStatusV1[]> {
     const result = await this.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
       `SELECT data FROM adcp_reporting_consumer_statuses WHERE revision_id = $1
-        ORDER BY created_at, consumer_status_id`,
+        ORDER BY recorded_at, consumer_status_id`,
       [revisionId]
     );
     return result.rows.map(row => clone(row.data));
@@ -922,7 +1256,31 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           })),
           ledgerAsOf
         );
-        if (query.view !== 'revision' && !ledgerCoverage.complete) {
+        let consumerStatuses = query.consumer_id
+          ? await this.listSnapshotConsumerStatuses(client, query, ledgerAsOf, changesAfter, MAX_SNAPSHOT_ITEMS + 1)
+          : [];
+        if (consumerStatuses.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting ledger snapshot exceeds the consumer status limit');
+        }
+        const consumerStatusProjection = query.consumer_id
+          ? await this.listSnapshotConsumerStatuses(client, query, ledgerAsOf, undefined, MAX_SNAPSHOT_ITEMS + 1)
+          : [];
+        if (consumerStatusProjection.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting ledger snapshot exceeds the consumer status projection limit');
+        }
+        const supersededConsumerStatusIds = new Set(
+          consumerStatusProjection
+            .map(value => value.supersedes_reporting_status_id)
+            .filter((value): value is string => Boolean(value))
+        );
+        const exposesMissingObligationStatus =
+          query.view === 'periods' &&
+          consumerStatusProjection.some(
+            value =>
+              value.consumer_status === 'obligation_missing' &&
+              !supersededConsumerStatusIds.has(value.reporting_status_id)
+          );
+        if (query.view !== 'revision' && !ledgerCoverage.complete && !exposesMissingObligationStatus) {
           throw new ReportingLedgerContinuityError('Reporting ledger is missing an elapsed obligation');
         }
         const obligationIds = obligations.map(value => value.reporting_obligation_id);
@@ -934,26 +1292,40 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         if (adjustments.length > adjustmentCapacity) {
           throw new Error('Reporting ledger snapshot exceeds the item limit');
         }
+        const consumerStatusCapacity = adjustmentCapacity - adjustments.length;
+        if (consumerStatuses.length > consumerStatusCapacity) {
+          throw new Error('Reporting ledger snapshot exceeds the item limit');
+        }
         let issues = await this.listSnapshotIssues(client, obligationIds, MAX_SNAPSHOT_ITEMS + 1);
         if (issues.length > MAX_SNAPSHOT_ITEMS) throw new Error('Reporting ledger snapshot exceeds the issue limit');
         if (query.view === 'periods' && query.health) {
           const accepted = new Set(
             obligations
-              .filter(value =>
-                query.health!.includes(
-                  projectReportingObligationHealthV1(
-                    value,
-                    revisions.filter(item => item.reporting_obligation_id === value.reporting_obligation_id),
-                    ledgerAsOf,
-                    reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
-                  ).health
-                )
-              )
+              .filter(value => {
+                const obligationRevisions = revisions.filter(
+                  item => item.reporting_obligation_id === value.reporting_obligation_id
+                );
+                const sellerHealth = projectReportingObligationHealthV1(
+                  value,
+                  obligationRevisions,
+                  ledgerAsOf,
+                  reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
+                ).health;
+                const statuses = consumerStatusProjection.filter(status => statusMatchesObligation(status, value));
+                const leaf = currentConsumerStatus(statuses);
+                const effectiveHealth = hasConsumerStatusMismatch(leaf, obligationRevisions, sellerHealth)
+                  ? 'action_required'
+                  : sellerHealth;
+                return query.health!.includes(effectiveHealth);
+              })
               .map(value => value.reporting_obligation_id)
           );
           obligations = obligations.filter(value => accepted.has(value.reporting_obligation_id));
           revisions = revisions.filter(value => accepted.has(value.reporting_obligation_id));
           adjustments = adjustments.filter(value => accepted.has(value.reporting_obligation_id));
+          consumerStatuses = consumerStatuses.filter(
+            value => !value.reporting_obligation_id || accepted.has(value.reporting_obligation_id)
+          );
           issues = issues.filter(value => accepted.has(value.reporting_obligation_id));
         }
         const changesCheckpoint = randomUUID();
@@ -971,6 +1343,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           obligations,
           revisions,
           adjustments,
+          consumerStatuses,
+          consumerStatusProjection,
           issues,
         };
         const snapshotJson = JSON.stringify(snapshot);
@@ -1047,6 +1421,12 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     const adjustments = selected
       .filter((value): value is Extract<(typeof items)[number], { kind: 'adjustment' }> => value.kind === 'adjustment')
       .map(value => value.value);
+    const consumerStatuses = selected
+      .filter(
+        (value): value is Extract<(typeof items)[number], { kind: 'consumer_status' }> =>
+          value.kind === 'consumer_status'
+      )
+      .map(value => value.value);
     const nextOffset = offset + selected.length;
     const hasMore = nextOffset < items.length;
     return {
@@ -1054,12 +1434,58 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       obligations,
       revisions,
       adjustments,
+      consumerStatuses,
       totalCount: items.length,
       offset,
       limit,
       hasMore,
       ...(hasMore ? { nextCursor: encodeCursor(snapshot, nextOffset) } : {}),
     };
+  }
+
+  private async listSnapshotConsumerStatuses(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    ledgerAsOf: string,
+    changesAfter: string | undefined,
+    limit: number,
+    currentOnly = false
+  ): Promise<ReportingLedgerConsumerStatusV1[]> {
+    const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
+    const result = await client.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+      `SELECT status.data FROM adcp_reporting_consumer_statuses status
+        JOIN adcp_reporting_configurations configuration
+          ON configuration.account_id = status.account_id
+         AND configuration.delivery_config_id = status.data->>'delivery_config_id'
+         AND configuration.delivery_config_version = (status.data->>'delivery_config_version')::integer
+       WHERE status.account_id = $1 AND status.consumer_id = $2
+         AND status.recorded_at <= $3
+         AND ($4::timestamptz IS NULL OR status.recorded_at > $4)
+         AND ($5::text[] IS NULL OR status.data->>'delivery_config_id' = ANY($5))
+         AND ($10::text IS NOT NULL OR (status.data->'period'->>'end')::timestamptz > $6)
+         AND ($10::text IS NOT NULL OR (status.data->'period'->>'start')::timestamptz < $7)
+         AND ($8::text[] IS NULL OR configuration.data->>'feedPurpose' = ANY($8))
+         AND ($9::text[] IS NULL OR configuration.data->'mediaBuyIds' ?| $9::text[])
+         AND ($10::text IS NULL OR status.data->>'reporting_revision_id' = $10)
+         AND (NOT $11::boolean OR status.is_current)
+       ORDER BY status.recorded_at, status.consumer_status_id
+       LIMIT $12`,
+      [
+        query.account_id,
+        query.consumer_id,
+        ledgerAsOf,
+        changesAfter ?? null,
+        query.delivery_config_ids ?? null,
+        period.start,
+        period.end,
+        query.feed_purposes ?? null,
+        query.media_buy_ids ?? null,
+        query.reporting_revision_id ?? null,
+        currentOnly,
+        limit,
+      ]
+    );
+    return result.rows.map(row => clone(row.data));
   }
 
   private async listSnapshotObligations(
@@ -1088,7 +1514,21 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                AND adjustment.recorded_at > $3 AND adjustment.recorded_at <= $2
           ) OR EXISTS (
             SELECT 1 FROM adcp_reporting_consumer_statuses status
-             WHERE status.obligation_id = adcp_reporting_obligations.obligation_id
+             WHERE status.account_id = $1
+               AND status.consumer_id = $10
+               AND (
+                 status.obligation_id = adcp_reporting_obligations.obligation_id
+                 OR (
+                   status.data->>'delivery_config_id' = adcp_reporting_obligations.data->>'delivery_config_id'
+                   AND (status.data->>'delivery_config_version')::bigint =
+                     (adcp_reporting_obligations.data->>'delivery_config_version')::bigint
+                   AND status.data->>'report_definition_id' = adcp_reporting_obligations.data->>'report_definition_id'
+                   AND (status.data->'period'->>'start')::timestamptz = period_start
+                   AND (status.data->'period'->>'end')::timestamptz = period_end
+                   AND status.data->'period'->>'source_timezone' =
+                     adcp_reporting_obligations.data->'period'->>'sourceTimezone'
+                 )
+               )
                AND status.recorded_at > $3 AND status.recorded_at <= $2
           ) OR EXISTS (
             SELECT 1 FROM adcp_reporting_issues issue
@@ -1116,7 +1556,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                AND exact_revision.revision_id = $9 AND exact_revision.recorded_at <= $2
           ))
         ORDER BY period_start, obligation_id
-        LIMIT $10`,
+        LIMIT $11`,
       [
         query.account_id,
         ledgerAsOf,
@@ -1127,6 +1567,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         query.period?.start ?? defaultPeriod.start,
         query.period?.end ?? defaultPeriod.end,
         query.reporting_revision_id ?? null,
+        query.consumer_id ?? null,
         MAX_SNAPSHOT_ITEMS + 1,
       ]
     );
@@ -1327,7 +1768,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       if (
         error instanceof ReportingLedgerLeaseLostError ||
         error instanceof ReportingLedgerContinuityError ||
-        error instanceof ReportingLedgerSnapshotUnavailableError
+        error instanceof ReportingLedgerSnapshotUnavailableError ||
+        error instanceof ReportingConsumerStatusConflictError
       ) {
         throw error;
       }
@@ -1379,17 +1821,22 @@ function snapshotItems(snapshot: ReportingLedgerSnapshotV1) {
     values.push(adjustment);
     adjustments.set(adjustment.reporting_obligation_id, values);
   }
-  return snapshot.obligations.flatMap(obligation => [
-    ...(snapshot.query.view === 'revision' ? [] : [{ kind: 'obligation' as const, value: obligation }]),
-    ...(revisions.get(obligation.reporting_obligation_id) ?? []).map(value => ({
-      kind: 'revision' as const,
-      value,
-    })),
-    ...(adjustments.get(obligation.reporting_obligation_id) ?? []).map(value => ({
-      kind: 'adjustment' as const,
-      value,
-    })),
-  ]);
+  return [
+    ...snapshot.obligations.flatMap(obligation => [
+      ...(snapshot.query.view === 'revision' ? [] : [{ kind: 'obligation' as const, value: obligation }]),
+      ...(revisions.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+        kind: 'revision' as const,
+        value,
+      })),
+      ...(adjustments.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+        kind: 'adjustment' as const,
+        value,
+      })),
+    ]),
+    ...(snapshot.query.view === 'periods' || snapshot.query.view === 'revision'
+      ? (snapshot.consumerStatuses ?? []).map(value => ({ kind: 'consumer_status' as const, value }))
+      : []),
+  ];
 }
 
 function validateRevisionBinding(revision: ReportingLedgerRevisionV1): void {
@@ -1412,6 +1859,40 @@ function validateRevisionBinding(revision: ReportingLedgerRevisionV1): void {
   ) {
     throw new Error('Reporting revision rows do not match their canonical binding');
   }
+}
+
+function statusMatchesObligation(
+  status: ReportingLedgerConsumerStatusV1,
+  obligation: ReportingLedgerObligationV1
+): boolean {
+  return (
+    status.delivery_config_id === obligation.delivery_config_id &&
+    status.delivery_config_version === obligation.delivery_config_version &&
+    status.report_definition_id === obligation.report_definition_id &&
+    Date.parse(status.period.start) === Date.parse(obligation.period.start) &&
+    Date.parse(status.period.end) === Date.parse(obligation.period.end) &&
+    status.period.source_timezone === obligation.period.sourceTimezone
+  );
+}
+
+function currentConsumerStatus(
+  statuses: ReportingLedgerConsumerStatusV1[]
+): ReportingLedgerConsumerStatusV1 | undefined {
+  const superseded = new Set(
+    statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
+  );
+  return statuses.find(value => !superseded.has(value.reporting_status_id));
+}
+
+function hasConsumerStatusMismatch(
+  status: ReportingLedgerConsumerStatusV1 | undefined,
+  revisions: ReportingLedgerRevisionSnapshotV1[],
+  sellerHealth: string
+): boolean {
+  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return false;
+  if (status.consumer_status !== 'received') return true;
+  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+  return !current || current.reporting_revision_id !== status.reporting_revision_id;
 }
 
 function validateBoundRows(value: Pick<ReportingLedgerRevisionV1, 'rows' | 'binding'>): void {
@@ -1494,10 +1975,33 @@ function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
 }
 
+function consumerStatusChainKey(status: ReportingLedgerConsumerStatusInputV1): string {
+  return digest({
+    delivery_config_id: status.delivery_config_id,
+    delivery_config_version: status.delivery_config_version,
+    report_definition_id: status.report_definition_id,
+    period: {
+      start: new Date(status.period.start).toISOString(),
+      end: new Date(status.period.end).toISOString(),
+      source_timezone: status.period.source_timezone,
+    },
+  });
+}
+
+function consumerStatusFingerprint(
+  status: ReportingLedgerConsumerStatusInputV1 | ReportingLedgerConsumerStatusV1
+): string {
+  const semanticValue = Object.fromEntries(
+    Object.entries(status).filter(([key]) => !['account_id', 'consumerId', 'recorded_at'].includes(key))
+  );
+  return digest(JSON.parse(JSON.stringify(semanticValue)) as Record<string, unknown>);
+}
+
 function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): string {
   const sorted = (value: string[]) => [...value].sort();
   return digest({
     account_id: query.account_id,
+    ...(query.consumer_id ? { consumer_id: query.consumer_id } : {}),
     ...(query.media_buy_ids ? { media_buy_ids: sorted(query.media_buy_ids) } : {}),
     ...(query.delivery_config_ids ? { delivery_config_ids: sorted(query.delivery_config_ids) } : {}),
     ...(query.feed_purposes ? { feed_purposes: sorted(query.feed_purposes) } : {}),
