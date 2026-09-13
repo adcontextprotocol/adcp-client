@@ -1238,6 +1238,7 @@ describe('seller reporting ledger', () => {
       },
     };
     const request = redactedReportingSourceRequestV1();
+    const anchor = Date.parse(request.period.start);
     let publication = 0;
     const source = createInlineReportingSourceExecutor(input => {
       publication += 1;
@@ -1249,7 +1250,7 @@ describe('seller reporting ledger', () => {
           totals: { impressions: publication, spend: `0.${publication}0` },
         })),
         data_through: input.end_date,
-        observed_at: input.end_date,
+        observed_at: publication === 1 ? input.end_date : new Date(anchor + 3 * 86_400_000 + 1).toISOString(),
         is_final: true,
         notification_type: publication === 1 ? 'final' : 'adjusted',
       };
@@ -1267,7 +1268,6 @@ describe('seller reporting ledger', () => {
       offerings: [offering],
       contact: { name: 'Reporting operations' },
     });
-    const anchor = Date.parse(request.period.start);
     const officialConfiguration = {
       account: request.account,
       sourceScope: request.sourceScope,

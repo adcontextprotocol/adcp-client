@@ -276,8 +276,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               result.response.manifest,
               manifest,
               rows,
-              adjustments,
-              nowValue
+              adjustments
             );
             const committed = await options.store.commitAdjustment(adjustment, lease);
             if (committed.inserted) counts.revisionsCommitted += 1;
@@ -755,8 +754,7 @@ function buildAdjustment(
   manifestReference: ReportingLedgerAdjustmentV1['manifest'],
   manifest: ReportingSourceManifestV1,
   rows: Record<string, unknown>[],
-  previous: readonly ReportingLedgerAdjustmentV1[],
-  createdAtValue: Date
+  previous: readonly ReportingLedgerAdjustmentV1[]
 ): ReportingLedgerAdjustmentV1 {
   if (obligation.feedPurpose === 'billing') {
     canonicalRowsSha256(rows, obligation.canonicalization!.primaryKeys);
@@ -774,6 +772,7 @@ function buildAdjustment(
   if (correctionObservedAt < officialFinalizedAt) {
     throw new Error('Reporting correction observation predates the official finalization');
   }
+  const createdAtValue = new Date();
   if (createdAtValue.getTime() < correctionObservedAt) {
     throw new Error('Reporting correction creation predates its source observation');
   }
