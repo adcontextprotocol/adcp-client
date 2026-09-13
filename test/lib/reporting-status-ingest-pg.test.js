@@ -214,6 +214,38 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       'failed',
       'snapshot provenance cannot authorize a revision hidden by its finality filter'
     );
+
+    const exactFinalityConsumer = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-exact-finality',
+    };
+    const exactFinalitySnapshot = await reference.store.createSnapshot({
+      account_id: request.account.account_id,
+      consumer_id: exactFinalityConsumer.consumer,
+      view: 'revision',
+      reporting_revision_id: revision.reporting_revision_id,
+      finality: ['official'],
+    });
+    const exactFinalityProvenance = await sync(
+      {
+        ...firstRequest,
+        idempotency_key: 'fixture-status-exact-finality',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-exact-finality',
+            seller_ledger_snapshot_id: exactFinalitySnapshot.snapshotId,
+            seller_ledger_as_of: exactFinalitySnapshot.ledgerAsOf,
+          },
+        ],
+      },
+      exactFinalityConsumer
+    );
+    assert.equal(
+      exactFinalityProvenance.results[0].result,
+      'recorded',
+      'revision-view provenance mirrors the exact read even when periods-only finality filters are present'
+    );
     const first = await sync(firstRequest, consumerA);
     assert.equal(first.results[0].result, 'recorded');
     const revisionReadback = await status(
@@ -848,6 +880,22 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     assert.equal(result.results[0].result, 'recorded');
   });
 
+  test('preserves the predecessor consumer-status store API', async () => {
+    const legacyStatus = {
+      consumerStatusId: 'fixture-legacy-writer-status',
+      reporting_revision_id: revision.reporting_revision_id,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      status: { acknowledged: true },
+      createdAt: new Date().toISOString(),
+    };
+    const inserted = await reference.store.putConsumerStatus(legacyStatus);
+    assert.equal(inserted.inserted, true);
+    const replay = await reference.store.putConsumerStatus(legacyStatus);
+    assert.equal(replay.inserted, false);
+    assert.deepEqual(replay.value, legacyStatus);
+    assert.deepEqual(await reference.store.listConsumerStatuses(revision.reporting_revision_id), [legacyStatus]);
+  });
+
   test('bounds mismatch issue IDs for maximum-length consumer status IDs', async () => {
     const context = { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-long-id' };
     const sync = ledger.createSyncReportingStatusHandler(reference.store, {
@@ -1108,7 +1156,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     }
   });
 
-  test('quarantines populated predecessor rows during migration', async () => {
+  test('preserves populated predecessor rows during migration', async () => {
     await pool.query(
       'ALTER TABLE adcp_reporting_consumer_statuses DROP CONSTRAINT adcp_reporting_consumer_statuses_pkey'
     );

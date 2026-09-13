@@ -13,6 +13,7 @@ import type {
   ReportingLedgerConfigurationV1,
   ReportingLedgerAdjustmentV1,
   ReportingLedgerConsumerStatusV1,
+  ReportingLedgerConsumerStatementV1,
   ReportingLedgerIssueV1,
   ReportingLedgerLeaseV1,
   ReportingLedgerObligationV1,
@@ -147,8 +148,8 @@ ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS consumer_i
 ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS chain_key TEXT;
 ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS is_current BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE adcp_reporting_consumer_statuses ADD COLUMN IF NOT EXISTS semantic_fingerprint TEXT;
--- PR 3 exposed no consumer-status writer. Quarantine any manually inserted
--- predecessor rows under an unreachable principal while preserving them for audit.
+-- Preserve predecessor API rows under a reserved compatibility principal;
+-- putConsumerStatus/listConsumerStatuses continue to serve this namespace.
 UPDATE adcp_reporting_consumer_statuses AS status
 SET account_id = COALESCE(
       status.account_id,
@@ -719,18 +720,37 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   }
 
   async putConsumerStatus(status: ReportingLedgerConsumerStatusV1) {
-    const [result] = await this.syncConsumerStatusBatch({
-      account_id: status.account_id,
-      consumerId: status.consumerId,
-      idempotencyKey: `status:${status.reporting_status_id}`,
-      requestFingerprint: consumerStatusFingerprint(status),
-      entries: [{ status }],
-      replayOriginalResults: false,
-    });
-    if (!result || !('value' in result)) {
-      throw new ReportingConsumerStatusConflictError(result?.safeMessage);
-    }
-    return result;
+    const obligation = await this.getObligation(status.reporting_obligation_id);
+    if (!obligation) throw new Error('Reporting consumer status obligation is unavailable');
+    return this.putImmutable(
+      `INSERT INTO adcp_reporting_consumer_statuses
+         (account_id, consumer_id, consumer_status_id, chain_key, revision_id, obligation_id,
+          supersedes_consumer_status_id, is_current, semantic_fingerprint, data, created_at)
+       SELECT $1, '__legacy_unscoped_consumer__', $2, $3, $4, $5, $6, true, $7, $8::jsonb, $9
+       WHERE NOT EXISTS (
+         SELECT 1 FROM adcp_reporting_consumer_statuses
+          WHERE consumer_id = '__legacy_unscoped_consumer__' AND consumer_status_id = $2
+       )
+       ON CONFLICT DO NOTHING RETURNING data`,
+      [
+        obligation.account.account_id,
+        status.consumerStatusId,
+        `legacy:${status.consumerStatusId}`,
+        status.reporting_revision_id,
+        status.reporting_obligation_id,
+        status.supersedesConsumerStatusId ?? null,
+        digest(status),
+        JSON.stringify(status),
+        status.createdAt,
+      ],
+      `SELECT data FROM adcp_reporting_consumer_statuses
+        WHERE consumer_id = '__legacy_unscoped_consumer__' AND consumer_status_id = $1
+        ORDER BY created_at LIMIT 1`,
+      [status.consumerStatusId],
+      status,
+      value => digest(value),
+      `adcp-reporting-legacy-consumer-status:${status.consumerStatusId}`
+    );
   }
 
   async getConsumerStatusBatchReplay(
@@ -766,7 +786,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         });
         continue;
       }
-      const row = await this.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+      const row = await this.query<JsonRow<ReportingLedgerConsumerStatementV1>>(
         `SELECT data FROM adcp_reporting_consumer_statuses
          WHERE consumer_status_id = $1 AND account_id = $2 AND consumer_id = $3`,
         [result.id, input.account_id, input.consumerId]
@@ -810,7 +830,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
               });
               continue;
             }
-            const row = await client.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+            const row = await client.query<JsonRow<ReportingLedgerConsumerStatementV1>>(
               `SELECT data FROM adcp_reporting_consumer_statuses
                WHERE consumer_status_id = $1 AND account_id = $2 AND consumer_id = $3`,
               [result.id, input.account_id, input.consumerId]
@@ -879,7 +899,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           }
           const fingerprint = consumerStatusFingerprint(status);
           const existing = await client.query<
-            JsonRow<ReportingLedgerConsumerStatusV1> & {
+            JsonRow<ReportingLedgerConsumerStatementV1> & {
               semantic_fingerprint: string;
               account_id: string;
               consumer_id: string;
@@ -912,7 +932,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             continue;
           }
           const chainKey = chainKeys[index]!;
-          const current = await client.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+          const current = await client.query<JsonRow<ReportingLedgerConsumerStatementV1>>(
             `SELECT data FROM adcp_reporting_consumer_statuses
              WHERE account_id = $1 AND consumer_id = $2 AND chain_key = $3 AND is_current
              FOR UPDATE`,
@@ -945,7 +965,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
              ) AS recorded_at`,
             [input.account_id]
           );
-          const value: ReportingLedgerConsumerStatusV1 = {
+          const value: ReportingLedgerConsumerStatementV1 = {
             ...status,
             recorded_at: recorded.rows[0]!.recorded_at.toISOString(),
           };
@@ -999,6 +1019,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   async listConsumerStatuses(revisionId: string): Promise<ReportingLedgerConsumerStatusV1[]> {
     const result = await this.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
       `SELECT data FROM adcp_reporting_consumer_statuses WHERE revision_id = $1
+        AND consumer_id = '__legacy_unscoped_consumer__'
         ORDER BY recorded_at, consumer_status_id`,
       [revisionId]
     );
@@ -1335,7 +1356,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           const obligationsByConsumerStatusChain = new Map(
             scopedObligations.map(value => [consumerStatusChainKeyForObligation(value), value])
           );
-          const projectedStatusesByChain = new Map<string, ReportingLedgerConsumerStatusV1[]>();
+          const projectedStatusesByChain = new Map<string, ReportingLedgerConsumerStatementV1[]>();
           for (const status of consumerStatusProjection) {
             const key = consumerStatusChainKey(status);
             const statuses = projectedStatusesByChain.get(key) ?? [];
@@ -1476,9 +1497,9 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     changesAfter: string | undefined,
     limit: number,
     currentOnly = false
-  ): Promise<ReportingLedgerConsumerStatusV1[]> {
+  ): Promise<ReportingLedgerConsumerStatementV1[]> {
     const period = reportingLedgerEffectivePeriod(query, ledgerAsOf);
-    const result = await client.query<JsonRow<ReportingLedgerConsumerStatusV1>>(
+    const result = await client.query<JsonRow<ReportingLedgerConsumerStatementV1>>(
       `SELECT status.data FROM adcp_reporting_consumer_statuses status
         JOIN adcp_reporting_configurations configuration
           ON configuration.account_id = status.account_id
@@ -1888,7 +1909,7 @@ function validateRevisionBinding(revision: ReportingLedgerRevisionV1): void {
 }
 
 function statusMatchesObligation(
-  status: ReportingLedgerConsumerStatusV1,
+  status: ReportingLedgerConsumerStatementV1,
   obligation: ReportingLedgerObligationV1
 ): boolean {
   return (
@@ -1902,8 +1923,8 @@ function statusMatchesObligation(
 }
 
 function currentConsumerStatus(
-  statuses: ReportingLedgerConsumerStatusV1[]
-): ReportingLedgerConsumerStatusV1 | undefined {
+  statuses: ReportingLedgerConsumerStatementV1[]
+): ReportingLedgerConsumerStatementV1 | undefined {
   const superseded = new Set(
     statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
   );
@@ -1911,7 +1932,7 @@ function currentConsumerStatus(
 }
 
 function hasConsumerStatusMismatch(
-  status: ReportingLedgerConsumerStatusV1 | undefined,
+  status: ReportingLedgerConsumerStatementV1 | undefined,
   revisions: ReportingLedgerRevisionSnapshotV1[],
   sellerHealth: string
 ): boolean {
@@ -2044,7 +2065,7 @@ function consumerStatusChainKeyFromIdentity(value: {
 }
 
 function consumerStatusFingerprint(
-  status: ReportingLedgerConsumerStatusInputV1 | ReportingLedgerConsumerStatusV1
+  status: ReportingLedgerConsumerStatusInputV1 | ReportingLedgerConsumerStatementV1
 ): string {
   const semanticValue = Object.fromEntries(
     Object.entries(status).filter(([key]) => !['account_id', 'consumerId', 'recorded_at'].includes(key))

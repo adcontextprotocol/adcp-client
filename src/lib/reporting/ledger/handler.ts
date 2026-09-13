@@ -16,7 +16,7 @@ import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
   ReportingHealthV1,
   ReportingLedgerConfigurationV1,
-  ReportingLedgerConsumerStatusV1,
+  ReportingLedgerConsumerStatementV1,
   ReportingLedgerCoverageV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
@@ -421,7 +421,7 @@ function wireObligation(
   revisionCount: number,
   adjustmentCount: number,
   projection: ReturnType<typeof projectReportingObligationHealthV1>,
-  currentConsumerStatus?: ReportingLedgerConsumerStatusV1,
+  currentConsumerStatus?: ReportingLedgerConsumerStatementV1,
   consumerStatusCount?: number
 ) {
   return {
@@ -466,7 +466,7 @@ function wireObligation(
 }
 
 function consumerStatusMatchesObligation(
-  status: ReportingLedgerConsumerStatusV1,
+  status: ReportingLedgerConsumerStatementV1,
   obligation: ReportingLedgerObligationV1
 ): boolean {
   return (
@@ -479,7 +479,9 @@ function consumerStatusMatchesObligation(
   );
 }
 
-function currentStatusLeaf(statuses: ReportingLedgerConsumerStatusV1[]): ReportingLedgerConsumerStatusV1 | undefined {
+function currentStatusLeaf(
+  statuses: ReportingLedgerConsumerStatementV1[]
+): ReportingLedgerConsumerStatementV1 | undefined {
   const superseded = new Set(
     statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
   );
@@ -487,7 +489,7 @@ function currentStatusLeaf(statuses: ReportingLedgerConsumerStatusV1[]): Reporti
 }
 
 function consumerStatusMismatch(
-  status: ReportingLedgerConsumerStatusV1 | undefined,
+  status: ReportingLedgerConsumerStatementV1 | undefined,
   revisions: Array<{ reporting_revision_id: string; revisionNumber: number }>,
   sellerHealth: ReportingHealthV1
 ): boolean {
@@ -499,7 +501,7 @@ function consumerStatusMismatch(
 
 function consumerStatusMismatchIssue(
   obligation: ReportingLedgerObligationV1,
-  status: ReportingLedgerConsumerStatusV1,
+  status: ReportingLedgerConsumerStatementV1,
   observedAt: string
 ): ReportingLedgerIssueV1 {
   const digest = createHash('sha256')
@@ -525,7 +527,7 @@ function consumerStatusMismatchIssue(
   };
 }
 
-function wireConsumerStatus(status: ReportingLedgerConsumerStatusV1) {
+function wireConsumerStatus(status: ReportingLedgerConsumerStatementV1) {
   const { consumerId: _consumerId, account_id: _accountId, ...wire } = status;
   return wire;
 }

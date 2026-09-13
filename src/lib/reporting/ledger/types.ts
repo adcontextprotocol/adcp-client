@@ -147,6 +147,15 @@ export type ReportingLedgerRevisionMetadataV1 = Omit<ReportingLedgerRevisionV1, 
 export type ReportingLedgerAdjustmentSnapshotV1 = Omit<ReportingLedgerAdjustmentV1, 'rows'>;
 
 export interface ReportingLedgerConsumerStatusV1 {
+  consumerStatusId: string;
+  reporting_revision_id: string;
+  reporting_obligation_id: string;
+  supersedesConsumerStatusId?: string;
+  status: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ReportingLedgerConsumerStatementV1 {
   /** Authenticated transport principal; never serialized on the wire. */
   consumerId: string;
   account_id: string;
@@ -173,7 +182,7 @@ export interface ReportingLedgerConsumerStatusV1 {
   recorded_at: string;
 }
 
-export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerStatusV1, 'recorded_at'>;
+export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerStatementV1, 'recorded_at'>;
 
 export type ReportingConsumerStatusBatchEntryV1 =
   | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string }
@@ -207,7 +216,7 @@ export type ReportingConsumerStatusReplayInputV1 = Pick<
 >;
 
 export type ReportingConsumerStatusBatchResultV1 =
-  | { inserted: boolean; value: ReportingLedgerConsumerStatusV1 }
+  | { inserted: boolean; value: ReportingLedgerConsumerStatementV1 }
   | { inserted: false; reporting_status_id: string; errorCode: string; safeMessage: string };
 
 export interface ReportingLedgerIssueV1 {
@@ -291,9 +300,9 @@ export interface ReportingLedgerSnapshotV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
-  consumerStatuses?: ReportingLedgerConsumerStatusV1[];
+  consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   /** Full scoped histories retained across changes_after for complete counts and current-leaf projection. */
-  consumerStatusProjection?: ReportingLedgerConsumerStatusV1[];
+  consumerStatusProjection?: ReportingLedgerConsumerStatementV1[];
   issues: ReportingLedgerIssueV1[];
 }
 
@@ -302,7 +311,7 @@ export interface ReportingLedgerPageV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
-  consumerStatuses?: ReportingLedgerConsumerStatusV1[];
+  consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   totalCount: number;
   offset: number;
   limit: number;

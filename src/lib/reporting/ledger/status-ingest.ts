@@ -14,7 +14,7 @@ import {
   type ReportingConsumerStatusLedgerStore,
   type ReportingConsumerStatusBatchEntryV1,
   type ReportingLedgerConfigurationV1,
-  type ReportingLedgerConsumerStatusV1,
+  type ReportingLedgerConsumerStatementV1,
 } from './types';
 
 const id = z
@@ -121,7 +121,7 @@ export const ReportingConsumerStatusPreviewV1Schema = z
 
 export const SyncReportingStatusPreviewRequestV1Schema = z
   .object({
-    account: AccountReferenceSchema,
+    account: accountReference,
     idempotency_key: z
       .string()
       .min(16)
@@ -352,7 +352,9 @@ async function validateStatus(
       page.snapshot.revisions.some(
         value =>
           value.reporting_revision_id === status.reporting_revision_id &&
-          (!page.snapshot.query.finality || page.snapshot.query.finality.includes(value.finality))
+          (page.snapshot.query.view !== 'periods' ||
+            !page.snapshot.query.finality ||
+            page.snapshot.query.finality.includes(value.finality))
       );
     const periodInScope =
       page.snapshot.query.view === 'revision'
@@ -445,7 +447,7 @@ function rawStatusChainIdentity(
 }
 
 function wireConsumerStatus(
-  status: ReportingLedgerConsumerStatusV1
+  status: ReportingLedgerConsumerStatementV1
 ): ReportingConsumerStatusPreviewV1 & { recorded_at: string } {
   const { consumerId: _consumerId, account_id: _accountId, ...wire } = status;
   return wire;
