@@ -1,6 +1,12 @@
 'use strict';
 
-const { createAdcpServer, InMemoryStateStore, registerTestController } = require('@adcp/sdk/server/legacy/v5');
+const {
+  createAdcpServer,
+  createIdempotencyStore,
+  InMemoryStateStore,
+  memoryBackend,
+  registerTestController,
+} = require('@adcp/sdk/server/legacy/v5');
 const {
   createReportingDeliveryHandler,
   createReportingProducer,
@@ -82,6 +88,7 @@ function createReportingLifecycleReference({ pool, source = createSimulatedRepor
     name: 'Reliable Reporting lifecycle reference seller',
     version: '1.0.0',
     stateStore: new InMemoryStateStore(),
+    idempotency: createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 }),
     resolveAccount: async ref => ({ account_id: ref.account_id }),
     resolveAccountFromAuth: async () => ({ account_id: 'fixture-lifecycle-controller' }),
     mediaBuy: { getReportingStatus, getMediaBuyDelivery },
