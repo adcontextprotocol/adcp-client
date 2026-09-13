@@ -182,6 +182,38 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       overlapConsumer
     );
     assert.equal(overlapProvenance.results[0].result, 'recorded');
+
+    const finalityConsumer = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-finality-snapshot',
+    };
+    const finalitySnapshot = await reference.store.createSnapshot({
+      account_id: request.account.account_id,
+      consumer_id: finalityConsumer.consumer,
+      view: 'periods',
+      period: { start: obligation.period.start, end: obligation.period.end },
+      finality: ['official'],
+    });
+    const hiddenRevisionProvenance = await sync(
+      {
+        ...firstRequest,
+        idempotency_key: 'fixture-status-hidden-finality',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-hidden-finality',
+            seller_ledger_snapshot_id: finalitySnapshot.snapshotId,
+            seller_ledger_as_of: finalitySnapshot.ledgerAsOf,
+          },
+        ],
+      },
+      finalityConsumer
+    );
+    assert.equal(
+      hiddenRevisionProvenance.results[0].result,
+      'failed',
+      'snapshot provenance cannot authorize a revision hidden by its finality filter'
+    );
     const first = await sync(firstRequest, consumerA);
     assert.equal(first.results[0].result, 'recorded');
     const revisionReadback = await status(

@@ -349,7 +349,11 @@ async function validateStatus(
       page.snapshot.obligations.some(value => value.reporting_obligation_id === status.reporting_obligation_id);
     const revisionInScope =
       !status.reporting_revision_id ||
-      page.snapshot.revisions.some(value => value.reporting_revision_id === status.reporting_revision_id);
+      page.snapshot.revisions.some(
+        value =>
+          value.reporting_revision_id === status.reporting_revision_id &&
+          (!page.snapshot.query.finality || page.snapshot.query.finality.includes(value.finality))
+      );
     const periodInScope =
       page.snapshot.query.view === 'revision'
         ? Boolean(
