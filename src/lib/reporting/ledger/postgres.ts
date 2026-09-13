@@ -397,7 +397,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     return result.rows.map(row => clone(row.data));
   }
 
-  async updateObligation(obligation: ReportingLedgerObligationV1, lease: ReportingLedgerLeaseV1): Promise<void> {
+  async updateObligation(
+    obligation: ReportingLedgerObligationV1,
+    lease: ReportingLedgerLeaseV1,
+    issue?: ReportingLedgerIssueV1
+  ): Promise<void> {
     assertLeaseTarget(obligation.reporting_obligation_id, lease);
     await this.transaction(
       async client => {
@@ -417,6 +421,28 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           ]
         );
         if (result.rowCount !== 1) throw new ReportingLedgerLeaseLostError();
+        if (issue) {
+          if (issue.reporting_obligation_id !== obligation.reporting_obligation_id) {
+            throw new Error('Reporting issue must belong to the leased obligation');
+          }
+          const issueResult = await client.query(
+            `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
+             VALUES ($1, $2, $3::jsonb, $4, $5)
+             ON CONFLICT (issue_id) DO UPDATE SET
+               data = EXCLUDED.data, observed_at = EXCLUDED.observed_at,
+               resolved_at = EXCLUDED.resolved_at,
+               changed_at = clock_timestamp()
+             WHERE adcp_reporting_issues.obligation_id = EXCLUDED.obligation_id`,
+            [
+              issue.issueId,
+              issue.reporting_obligation_id,
+              JSON.stringify(issue),
+              issue.observedAt,
+              issue.resolvedAt ?? null,
+            ]
+          );
+          if (issueResult.rowCount !== 1) throw new Error('Reporting issue identity belongs to another obligation');
+        }
       },
       { preBeginAdvisoryLock: accountLock(obligation.account.account_id) }
     );

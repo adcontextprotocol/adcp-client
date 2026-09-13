@@ -274,7 +274,12 @@ export interface ReportingLedgerStore {
     account_id?: string;
     limit: number;
   }): Promise<ReportingLedgerObligationV1[]>;
-  updateObligation(obligation: ReportingLedgerObligationV1, lease: ReportingLedgerLeaseV1): Promise<void>;
+  /** Updates a leased obligation and atomically records an optional production issue. */
+  updateObligation(
+    obligation: ReportingLedgerObligationV1,
+    lease: ReportingLedgerLeaseV1,
+    issue?: ReportingLedgerIssueV1
+  ): Promise<void>;
   claimObligation(input: {
     owner: string;
     now: string;

@@ -309,8 +309,11 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             retryable ? nowValue.getTime() + retryDelay : instant(activeRecoveryDeadlineAt, 'activeRecoveryDeadlineAt')
           ).toISOString();
           try {
-            await options.store.putIssue(sourceExecutionIssue(obligation, nowValue.toISOString()));
-            await options.store.updateObligation(obligation, lease);
+            await options.store.updateObligation(
+              obligation,
+              lease,
+              sourceExecutionIssue(obligation, nowValue.toISOString())
+            );
             await reconcileReportingStatusLifecycleV1({
               store: options.store,
               reporting_obligation_id: obligation.reporting_obligation_id,

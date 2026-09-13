@@ -203,6 +203,9 @@ export const DISCOVERY_ARM_SCENARIOS = {
   FORCE_GET_SIGNALS_ARM: 'force_get_signals_arm',
 } as const;
 
+/** Reliable Reporting Core lifecycle harness extension. */
+export const REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO = 'reporting_core_lifecycle_probe' as const;
+
 /**
  * Stable `SeedSuccess.message` strings the SDK's `dispatchSeed` emits.
  * Adopters who want to detect first-seed vs idempotent-replay can match
@@ -246,6 +249,8 @@ void _scenarioExhaustivenessGuard;
  * Unimplemented methods mean that scenario is not advertised in list_scenarios.
  */
 export interface TestControllerStore {
+  /** Drive a deterministic Reliable Reporting source/worker lifecycle step. */
+  reportingCoreLifecycleProbe?(params: Record<string, unknown>): Promise<SimulationSuccess>;
   /** Transition a creative to the specified status. */
   forceCreativeStatus?(
     creativeId: string,
@@ -513,7 +518,7 @@ export interface TestControllerStoreFactory {
    * this verbatim for `list_scenarios` — your `createStore` is skipped on
    * capability probes, so you don't have to load a session just to answer.
    */
-  scenarios: readonly ControllerScenario[];
+  scenarios: readonly (ControllerScenario | (string & {}))[];
 
   /**
    * Build a {@link TestControllerStore} bound to the current request. Invoked
@@ -682,6 +687,7 @@ function allScenariosFromStore(store: TestControllerStore): string[] {
   if (typeof store.forceCatalogItemStatus === 'function') out.push(FORCE_CATALOG_ITEM_STATUS_SCENARIO);
   if (typeof store.forceGetProductsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_PRODUCTS_ARM);
   if (typeof store.forceGetSignalsArm === 'function') out.push(DISCOVERY_ARM_SCENARIOS.FORCE_GET_SIGNALS_ARM);
+  if (typeof store.reportingCoreLifecycleProbe === 'function') out.push(REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO);
   return out;
 }
 
@@ -1493,6 +1499,13 @@ async function handleTestControllerRequestImpl(
             upstream_name: typeof forceParams.upstream_name === 'string' ? forceParams.upstream_name : undefined,
           })
         );
+      }
+
+      case REPORTING_CORE_LIFECYCLE_PROBE_SCENARIO: {
+        if (!store.reportingCoreLifecycleProbe) {
+          return controllerError('UNKNOWN_SCENARIO', `Scenario not supported: ${scenario}`);
+        }
+        return wrapStoreSuccess(await store.reportingCoreLifecycleProbe((params ?? {}) as Record<string, unknown>));
       }
 
       default:
