@@ -5,6 +5,7 @@ import { validateReportingSourceRequestAgainstCapabilitiesV1 } from './conforman
 import { canonicalJsonV1, REPORTING_SOURCE_CONTRACT_VERSION_V1 } from './manifest';
 import {
   completedReportingSourceResponseV1,
+  reportingIsoDurationMillisecondsV1,
   reportingSourceCapabilitiesV1,
   ReportingSourceErrorV1Schema,
   ReportingSourceOfferingV1Schema,
@@ -119,6 +120,14 @@ export function createInlineReportingSourceExecutor(
   }
   if (!parsedOffering.applicability.constituentKinds.includes('media_buy')) {
     throw new TypeError('Inline reporting requires media_buy constituent applicability');
+  }
+  if (
+    parsedOffering.grain !== 'source_day' ||
+    parsedOffering.windowing.kind !== 'fixed_closed_window' ||
+    reportingIsoDurationMillisecondsV1(parsedOffering.windowing.minimumWindow) % 86_400_000 !== 0 ||
+    reportingIsoDurationMillisecondsV1(parsedOffering.windowing.maximumWindow) % 86_400_000 !== 0
+  ) {
+    throw new TypeError('Inline reporting requires whole source-day fixed windows');
   }
   const offering = ReportingSourceOfferingV1Schema.parse({
     ...parsedOffering,
@@ -350,7 +359,7 @@ async function executeAndSeal(
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
   }
   const responseStatus = !isRows(fetched) ? fetched.status?.toLowerCase() : undefined;
-  if (['failed', 'error'].includes(responseStatus ?? '')) {
+  if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
     return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
   }
   if (responseStatus === 'unavailable') {

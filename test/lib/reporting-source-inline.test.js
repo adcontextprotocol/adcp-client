@@ -152,6 +152,14 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('rejects offerings whose advertised windows cannot be fetched by date', () => {
+    const hourly = structuredClone(redactedReportingSourceOfferingV1);
+    hourly.grain = 'source_hour';
+    hourly.windowing.minimumWindow = 'PT1H';
+    hourly.windowing.maximumWindow = 'PT1H';
+    assert.throws(() => createInlineReportingSourceExecutor(() => [], hourly), /whole source-day fixed windows/);
+  });
+
   test('maps null, thrown failures, typed failures, and partial responses', async () => {
     const cases = [
       { fetch: () => null, code: 'NOT_READY' },
@@ -237,6 +245,15 @@ describe('createInlineReportingSourceExecutor', () => {
         }),
         code: 'SOURCE_TRANSIENT',
       },
+      ...['canceled', 'cancelled', 'rejected'].map(status => ({
+        fetch: input => ({
+          status,
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [],
+        }),
+        code: 'SOURCE_TRANSIENT',
+      })),
       {
         fetch: input => ({
           status: 'unavailable',
