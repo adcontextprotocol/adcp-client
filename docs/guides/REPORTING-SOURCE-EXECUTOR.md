@@ -34,6 +34,20 @@ Treat `sourceExecutionKey` as an idempotency key. Replays return the identical m
 
 `logicalSliceFingerprint` is caller-owned planning lineage, not an adapter-computed checksum. The adapter treats it as opaque; conformance verifies that responses, manifests, replays, and revision lineage echo the frozen value.
 
+### Adapt an existing delivery handler
+
+`createInlineReportingSourceExecutor(fetch, offering)` is the shortest migration path for an existing synchronous or promise-returning `get_media_buy_delivery`-shaped fetch. It returns one object implementing both the executor and staged-object reader interfaces and emits a `basic` manifest.
+
+```ts
+import { createInlineReportingSourceExecutor } from '@adcp/sdk/reporting/source';
+
+const source = createInlineReportingSourceExecutor(getMediaBuyDelivery, offering);
+```
+
+Return `null` while the report is not ready, `[]` for a real observed zero-row period, and rows for success. A `get_media_buy_delivery` response must include its exact `reporting_period`, matching `currency`, and either `reporting_rows` or `media_buy_deliveries`. An unclassified throw becomes retryable `SOURCE_TRANSIENT`; throw `InlineReportingSourceError` to retain a specific typed classification. Partial-data flags, unavailable counts, response errors, and unproved full constituent coverage fail closed with `PARTIAL_RESULT`.
+
+The inline adapter narrows the supplied offering to `basic`, non-paginated `media_buy` execution. Every nonzero row must identify an admitted `media_buy_id` and contain each requested metric (directly or under `totals`) and requested dimension; extra or unidentified rows are rejected. Only the identifier and requested evidence fields are retained. `[]` is the only implicit proof of an all-zero period. A response that omits both row collections is a failure, and unfinished pagination is partial. Authoritative publication additionally requires `is_final: true` or a `final`/`adjusted` notification. The fetch context carries the frozen source settings and semantic contract; group reads are rejected because this compatibility adapter cannot prove them. Each inline executor instance admits at most 100 retained executions and 32 MiB per caller scope, 1,000 executions and 256 MiB total, 16 concurrent fetches, and 64 MiB per object. Capacity exhaustion is terminal for that instance; replace it with a durable executor when those bounded compatibility limits are too small.
+
 The object reader MUST authorize and confine every `objectRef` to the supplied `sourceScope`, account, delivery configuration, report definition, and obligation tuple. The harness supplies scope from the frozen request, never from the manifest. Its default pre-read budget is 512 MiB per object and 2 GiB per slice; pass `objectReadLimits` to conformance when a declared adapter format legitimately needs different bounds.
 
 Call the optional host-supplied `heartbeat` after meaningful source progress while a leased worker owns the slice. It is a synchronous liveness signal, not reporting evidence.

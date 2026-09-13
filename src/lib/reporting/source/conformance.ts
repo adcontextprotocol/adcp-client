@@ -83,7 +83,7 @@ export async function validateReportingSourceExecutionV1(input: {
 }): Promise<ReportingSourceManifestV1> {
   const capabilities = ReportingSourceCapabilitiesV1Schema.parse(input.capabilities);
   const request = ReportingSourceSliceRequestV1Schema.parse(structuredClone(input.request));
-  validateRequestAgainstCapabilities(capabilities, request, input.level);
+  validateReportingSourceRequestAgainstCapabilitiesV1(capabilities, request, input.level);
   if (!input.result.ok) {
     const error = ReportingSourceErrorV1Schema.parse(input.result.error);
     throw new ReportingSourceConformanceError(
@@ -156,7 +156,7 @@ export async function runReportingSourceReplayConformanceV1(input: {
 }): Promise<ReportingSourceManifestV1> {
   const request = ReportingSourceSliceRequestV1Schema.parse(structuredClone(input.request));
   const capabilities = ReportingSourceCapabilitiesV1Schema.parse(input.executor.capabilities);
-  validateRequestAgainstCapabilities(capabilities, request, input.level);
+  validateReportingSourceRequestAgainstCapabilitiesV1(capabilities, request, input.level);
   const deadline = deadlineBoundSignal(request.deadline.deadlineAt, input.signal);
   try {
     const [first, second] = await Promise.all([
@@ -367,7 +367,7 @@ export function isUnchangedProvisionalSnapshotV1(
   );
 }
 
-function validateRequestAgainstCapabilities(
+export function validateReportingSourceRequestAgainstCapabilitiesV1(
   capabilities: ReportingSourceCapabilitiesV1,
   request: ReportingSourceSliceRequestV1,
   level: ReportingSourceManifestLevelV1
