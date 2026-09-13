@@ -84,10 +84,11 @@ class MemoryLedgerStore {
     }
     return due;
   }
-  async updateObligation(value, lease) {
+  async updateObligation(value, lease, issue) {
     if (lease && this.leases.get(value.reporting_obligation_id)?.generation !== lease.generation)
       throw new Error('lease lost');
     this.obligations.set(value.reporting_obligation_id, structuredClone(value));
+    if (issue) this.issues.set(issue.issueId, structuredClone(issue));
   }
   async claimObligation({ owner, now, leaseMilliseconds, account_id }) {
     const value = [...this.obligations.values()].find(

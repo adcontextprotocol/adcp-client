@@ -185,6 +185,32 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
     );
     const committed = await store.commitRevision(revision, second);
     assert.equal(committed.inserted, true);
+    const staleFailureIssue = {
+      issueId: 'rpti_pg_stale_worker_failure',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      code: 'PRODUCTION_FAILED',
+      severity: 'delayed',
+      responsibleParty: 'seller',
+      recommendedAction: 'wait_for_retry',
+      openedAt: new Date(now).toISOString(),
+      observedAt: new Date(now).toISOString(),
+    };
+    await assert.rejects(
+      () =>
+        store.updateObligation(
+          { ...first.obligation, attemptCount: first.obligation.attemptCount + 1 },
+          first,
+          staleFailureIssue
+        ),
+      ReportingLedgerLeaseLostError
+    );
+    assert.equal(
+      (await store.listIssues(obligation.reporting_obligation_id)).some(
+        value => value.issueId === staleFailureIssue.issueId
+      ),
+      false,
+      'an expired worker cannot reopen a production issue after its replacement commits'
+    );
     const exactHandler = require('../../dist/lib/reporting/ledger/index.js').createReportingStatusHandler(store);
     const exact = await exactHandler(
       {
