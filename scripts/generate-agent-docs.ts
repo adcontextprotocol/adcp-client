@@ -1994,6 +1994,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`// validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })`);
   ln(`// runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })`);
   ln(`// validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })`);
+  ln(`// createInlineReportingSourceExecutor(deliveryFetch, offering) // basic compatibility adapter`);
   ln('```');
   ln();
   ln(

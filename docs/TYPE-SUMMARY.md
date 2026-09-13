@@ -2727,6 +2727,7 @@ type ReportingSourceExecutorResultV1 =
 // validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })
 // runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })
 // validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })
+// createInlineReportingSourceExecutor(deliveryFetch, offering) // basic compatibility adapter
 ```
 
 `basic` is the Reliable Reporting Core floor: immutable objects, hashes, coverage, finality, and completeness. `evidenced` additionally proves every page, async-job poll, retry, and usage count within the 1 MiB manifest bound. Identity is the caller-owned opaque `sourceScope` plus AdCP account/config/report/period/obligation identities.
