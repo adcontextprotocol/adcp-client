@@ -262,6 +262,7 @@ const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
 const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
 const MAX_CONSUMER_STATUS_BATCHES = 10_000;
 const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
+const MAX_CONSUMER_STATUS_BYTES = 64 * 1024;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -894,6 +895,10 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           const prevalidation = entry.validationError;
           if (prevalidation) {
             fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation);
+            continue;
+          }
+          if (Buffer.byteLength(JSON.stringify(status), 'utf8') > MAX_CONSUMER_STATUS_BYTES) {
+            fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status exceeds 64 KiB');
             continue;
           }
           if (batchCapacityExhausted || remainingStatements <= 0) {

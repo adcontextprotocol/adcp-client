@@ -21,7 +21,14 @@ const id = z
   .max(255)
   .regex(/^[A-Za-z0-9_.:-]+$/);
 const statusId = id.min(16);
-const instant = z.string().datetime({ offset: true });
+const instant = z
+  .string()
+  .max(64)
+  .datetime({ offset: true })
+  .refine(value => {
+    const precision = /\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/.exec(value)?.[1];
+    return precision === undefined || precision.length <= 3;
+  }, 'Reporting instants support at most millisecond precision');
 const accountReference = z
   .record(z.string(), z.unknown())
   .refine(
@@ -31,7 +38,7 @@ const accountReference = z
     'account must be an ID reference or buyer-declared natural key'
   );
 const periodSchema = z
-  .object({ start: instant, end: instant, source_timezone: z.string().min(1) })
+  .object({ start: instant, end: instant, source_timezone: z.string().min(1).max(255) })
   .strict()
   .refine(value => Date.parse(value.start) < Date.parse(value.end), 'period must be half-open');
 
@@ -447,6 +454,7 @@ function statusBatchFingerprint(request: {
     idempotency_key: _idempotencyKey,
     adcp_version: _adcpVersion,
     adcp_major_version: _adcpMajorVersion,
+    context: _context,
     ...semanticRequest
   } = request;
   const wireValue = JSON.parse(JSON.stringify(semanticRequest)) as Record<string, unknown>;

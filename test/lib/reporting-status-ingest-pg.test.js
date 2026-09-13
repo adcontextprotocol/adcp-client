@@ -140,6 +140,11 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       'an exact batch replay returns the original result'
     );
     assert.equal(
+      (await sync({ ...firstRequest, context: { correlation_id: 'changed' } }, consumerA)).results[0].result,
+      'recorded',
+      'retry correlation context is excluded from idempotency equivalence'
+    );
+    assert.equal(
       (await sync({ ...firstRequest, ext: { trace: 'changed' } }, consumerA)).results[0].result,
       'failed',
       'changed extension semantics conflict with an existing idempotency key'
@@ -519,6 +524,32 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     });
     assert.equal((await sync(null, context)).results.length, 1);
     assert.equal((await sync({ statuses: Array(1_000).fill(null) }, context)).results.length, 1);
+    const oversizedTimestamp = `2026-09-01T00:00:00.${'0'.repeat(65_536)}Z`;
+    const oversized = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-oversized-timestamp',
+        statuses: [
+          {
+            reporting_status_id: 'fixture-status-oversized-time',
+            delivery_config_id: configuration.delivery_config_id,
+            delivery_config_version: configuration.delivery_config_version,
+            report_definition_id: configuration.report_definition_id,
+            period: {
+              start: configuration.schedule.anchor,
+              end: new Date(
+                Date.parse(configuration.schedule.anchor) + configuration.schedule.periodMilliseconds
+              ).toISOString(),
+              source_timezone: configuration.sourceTimezone,
+            },
+            consumer_status: 'obligation_missing',
+            status_as_of: oversizedTimestamp,
+          },
+        ],
+      },
+      context
+    );
+    assert.equal(oversized.results[0].result, 'failed');
   });
 
   test('records valid siblings when another batch item is schema-invalid', async () => {
