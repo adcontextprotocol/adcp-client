@@ -9,6 +9,13 @@ import {
 } from './coverage';
 import { acquireAccountReadSlot, ReportingReadCapacityError } from './handler';
 import {
+  compareReportingInstantToOffset,
+  compareReportingInstants,
+  reportingDurationCeilOrdinal,
+  reportingInstantHasDuration,
+  reportingPeriodOrdinal,
+} from './instant';
+import {
   ReportingConsumerStatusConflictError,
   ReportingLedgerSnapshotUnavailableError,
   type ReportingConsumerStatusLedgerStore,
@@ -282,7 +289,7 @@ async function validateStatus(
   now: Date,
   clockSkewMilliseconds = 5 * 60_000
 ): Promise<void> {
-  if (Date.parse(status.status_as_of) > now.getTime() + clockSkewMilliseconds) {
+  if (compareReportingInstantToOffset(status.status_as_of, now.toISOString(), clockSkewMilliseconds) > 0) {
     throw new ReportingStatusValidationError('future status');
   }
   const configuration = configurations.find(
@@ -298,10 +305,9 @@ async function validateStatus(
     configuration.requiredFinality === 'official'
       ? (configuration.schedule.officialAfterMilliseconds ?? configuration.schedule.deliverySlaMilliseconds)
       : configuration.schedule.deliverySlaMilliseconds;
-  const expectedAt = Date.parse(status.period.end) + expectedOffset;
   if (
     (status.consumer_status === 'obligation_missing' || status.consumer_status === 'revision_missing') &&
-    Date.parse(status.status_as_of) < expectedAt
+    compareReportingInstantToOffset(status.status_as_of, status.period.end, expectedOffset) < 0
   ) {
     throw new ReportingStatusValidationError('missing status precedes expected_at');
   }
@@ -313,8 +319,8 @@ async function validateStatus(
       obligation.delivery_config_id !== status.delivery_config_id ||
       obligation.delivery_config_version !== status.delivery_config_version ||
       obligation.report_definition_id !== status.report_definition_id ||
-      Date.parse(obligation.period.start) !== Date.parse(status.period.start) ||
-      Date.parse(obligation.period.end) !== Date.parse(status.period.end) ||
+      compareReportingInstants(obligation.period.start, status.period.start) !== 0 ||
+      compareReportingInstants(obligation.period.end, status.period.end) !== 0 ||
       obligation.period.sourceTimezone !== status.period.source_timezone
     )
       throw new ReportingStatusValidationError('obligation mismatch');
@@ -363,8 +369,8 @@ async function validateStatus(
             page.snapshot.query.reporting_revision_id === status.reporting_revision_id &&
             revisionInScope
           )
-        : Date.parse(status.period.start) < Date.parse(scope.end) &&
-          Date.parse(status.period.end) > Date.parse(scope.start);
+        : compareReportingInstants(status.period.start, scope.end) < 0 &&
+          compareReportingInstants(status.period.end, scope.start) > 0;
     if (
       page.snapshot.query.consumer_id !== consumerId ||
       page.snapshot.ledgerAsOf !== status.seller_ledger_as_of ||
@@ -384,22 +390,21 @@ function isExactPeriod(
   period: ReportingConsumerStatusPreviewV1['period']
 ): boolean {
   if (period.source_timezone !== configuration.sourceTimezone) return false;
-  const start = Date.parse(period.start);
-  const anchor = Date.parse(configuration.schedule.anchor);
   const duration = configuration.schedule.periodMilliseconds;
-  const ordinal = (start - anchor) / duration;
-  if (!Number.isInteger(ordinal) || ordinal < 0 || Date.parse(period.end) !== start + duration) return false;
-  const effectiveFrom = Math.max(anchor, Date.parse(configuration.installedAt));
-  const firstOwnedOrdinal = Math.max(0, Math.ceil((effectiveFrom - anchor) / duration));
+  const scheduleAnchor = new Date(Date.parse(configuration.schedule.anchor)).toISOString();
+  const ordinal = reportingPeriodOrdinal(period.start, scheduleAnchor, duration);
+  if (ordinal === null || !reportingInstantHasDuration(period.start, period.end, duration)) return false;
+  const effectiveFrom =
+    compareReportingInstants(scheduleAnchor, configuration.installedAt) >= 0
+      ? scheduleAnchor
+      : configuration.installedAt;
+  const firstOwnedOrdinal = reportingDurationCeilOrdinal(scheduleAnchor, effectiveFrom, duration);
   const successor = reportingLedgerSuccessor(configuration, configurations);
-  const generationEnd = Math.min(
-    successor ? Date.parse(successor.installedAt) : Number.POSITIVE_INFINITY,
-    configuration.supersededAt ? Date.parse(configuration.supersededAt) : Number.POSITIVE_INFINITY
+  const generationEnds = [successor?.installedAt, configuration.supersededAt].filter((value): value is string =>
+    Boolean(value)
   );
-  const lastOwnedOrdinal = Number.isFinite(generationEnd)
-    ? Math.ceil((generationEnd - anchor) / duration) - 1
-    : Number.POSITIVE_INFINITY;
-  return ordinal >= firstOwnedOrdinal && ordinal <= lastOwnedOrdinal;
+  const generationEnd = generationEnds.sort(compareReportingInstants)[0];
+  return ordinal >= firstOwnedOrdinal && (!generationEnd || compareReportingInstants(period.start, generationEnd) < 0);
 }
 
 function resolvedAccountId(context: unknown): string {

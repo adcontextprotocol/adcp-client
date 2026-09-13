@@ -12,6 +12,7 @@ import {
   reportingLedgerScopeClosed,
 } from './coverage';
 import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from './health';
+import { compareReportingInstants } from './instant';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
   ReportingHealthV1,
@@ -473,8 +474,8 @@ function consumerStatusMatchesObligation(
     status.delivery_config_id === obligation.delivery_config_id &&
     status.delivery_config_version === obligation.delivery_config_version &&
     status.report_definition_id === obligation.report_definition_id &&
-    Date.parse(status.period.start) === Date.parse(obligation.period.start) &&
-    Date.parse(status.period.end) === Date.parse(obligation.period.end) &&
+    compareReportingInstants(status.period.start, obligation.period.start) === 0 &&
+    compareReportingInstants(status.period.end, obligation.period.end) === 0 &&
     status.period.source_timezone === obligation.period.sourceTimezone
   );
 }

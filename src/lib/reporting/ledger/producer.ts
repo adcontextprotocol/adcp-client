@@ -49,17 +49,27 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
 
   return {
     async installConfiguration(input) {
-      const offering = requiredOffering(offeringById, input.offeringId);
-      validateConfigurationAgainstOffering(input, offering);
-      const existing = (await options.store.listConfigurations(input.account.account_id)).filter(
-        value => value.delivery_config_id === input.delivery_config_id
+      const normalizedInput = {
+        ...structuredClone(input),
+        schedule: {
+          ...structuredClone(input.schedule),
+          anchor: new Date(instant(input.schedule.anchor, 'schedule.anchor')).toISOString(),
+        },
+        ...(input.supersededAt
+          ? { supersededAt: new Date(instant(input.supersededAt, 'supersededAt')).toISOString() }
+          : {}),
+      };
+      const offering = requiredOffering(offeringById, normalizedInput.offeringId);
+      validateConfigurationAgainstOffering(normalizedInput, offering);
+      const existing = (await options.store.listConfigurations(normalizedInput.account.account_id)).filter(
+        value => value.delivery_config_id === normalizedInput.delivery_config_id
       );
-      if (existing.some(value => value.delivery_config_version > input.delivery_config_version)) {
+      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
         throw new Error('Reporting configuration version cannot regress');
       }
-      const semantic = { ...input };
+      const semantic = { ...normalizedInput };
       const semanticFingerprint = prefixedDigest(semantic);
-      const replay = existing.find(value => value.delivery_config_version === input.delivery_config_version);
+      const replay = existing.find(value => value.delivery_config_version === normalizedInput.delivery_config_version);
       if (replay) {
         if (replay.semanticFingerprint !== semanticFingerprint) {
           throw new Error('Reporting configuration generation is immutable');
@@ -68,12 +78,12 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       }
       const installedAt = new Date().toISOString();
       const configuration: ReportingLedgerConfigurationV1 = {
-        ...structuredClone(input),
-        sourceTimezone: input.sourceTimezone,
+        ...normalizedInput,
+        sourceTimezone: normalizedInput.sourceTimezone,
         configurationId: `rcfg_${digest([
-          input.account.account_id,
-          input.delivery_config_id,
-          input.delivery_config_version,
+          normalizedInput.account.account_id,
+          normalizedInput.delivery_config_id,
+          normalizedInput.delivery_config_version,
         ]).slice(0, 32)}`,
         installedAt,
         semanticFingerprint,

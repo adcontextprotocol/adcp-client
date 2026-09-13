@@ -44,7 +44,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       mediaBuyIds: request.coverage.mediaBuyIds,
       sourceTimezone: 'UTC',
       schedule: {
-        anchor: new Date(anchorMs).toISOString(),
+        anchor: new Date(anchorMs).toISOString().replace('.000Z', '.0001Z'),
         periodMilliseconds: day,
         deliverySlaMilliseconds: 0,
         recoveryWindowMilliseconds: day,
@@ -53,6 +53,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       sourceSettings: request.sourceSettings,
       contract: request.contract,
     });
+    assert.equal(configuration.schedule.anchor, new Date(anchorMs).toISOString());
     configuration = { ...configuration, installedAt: new Date(anchorMs).toISOString() };
     await pool.query('UPDATE adcp_reporting_configurations SET data = $2::jsonb WHERE configuration_id = $1', [
       configuration.configurationId,
@@ -743,6 +744,130 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     );
   });
 
+  test('preserves sub-millisecond precision for periods and status ordering', async () => {
+    const periodConsumer = 'fixture-consumer-instant-period';
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: value => value.consumer,
+    });
+    const day = configuration.schedule.periodMilliseconds;
+    const alignedStart = new Date(Date.parse(configuration.schedule.anchor) + day).toISOString();
+    const alignedEnd = new Date(Date.parse(alignedStart) + day).toISOString();
+    const fractional = value => value.replace(/\.\d{3}Z$/, '.0001Z');
+    const offBoundary = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-fractional-period',
+        statuses: [
+          {
+            reporting_status_id: 'fixture-status-fractional-period',
+            delivery_config_id: configuration.delivery_config_id,
+            delivery_config_version: configuration.delivery_config_version,
+            report_definition_id: configuration.report_definition_id,
+            period: {
+              start: fractional(alignedStart),
+              end: fractional(alignedEnd),
+              source_timezone: configuration.sourceTimezone,
+            },
+            consumer_status: 'obligation_missing',
+            status_as_of: new Date().toISOString(),
+          },
+        ],
+      },
+      { account: { account_id: request.account.account_id }, consumer: periodConsumer }
+    );
+    assert.equal(offBoundary.results[0].result, 'failed', 'fractional drift is not an aligned period');
+
+    const lowercasePeriod = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-lowercase-period',
+        statuses: [
+          {
+            reporting_status_id: 'fixture-status-lowercase-period',
+            delivery_config_id: configuration.delivery_config_id,
+            delivery_config_version: configuration.delivery_config_version,
+            report_definition_id: configuration.report_definition_id,
+            period: {
+              start: alignedStart.replace('T', 't').replace('Z', 'z'),
+              end: alignedEnd.replace('T', 't').replace('Z', 'z'),
+              source_timezone: configuration.sourceTimezone,
+            },
+            consumer_status: 'obligation_missing',
+            status_as_of: new Date().toISOString().replace('Z', 'z'),
+          },
+        ],
+      },
+      { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-lowercase-period' }
+    );
+    assert.equal(lowercasePeriod.results[0].result, 'recorded', 'RFC 3339 lowercase t and z remain valid');
+
+    const orderingConsumer = 'fixture-consumer-instant-ordering';
+    const second = new Date(Date.now() - 1_000).toISOString().replace(/\.\d{3}Z$/, '');
+    const root = {
+      reporting_status_id: 'fixture-status-fractional-root',
+      delivery_config_id: obligation.delivery_config_id,
+      delivery_config_version: obligation.delivery_config_version,
+      report_definition_id: obligation.report_definition_id,
+      period: {
+        start: obligation.period.start,
+        end: obligation.period.end,
+        source_timezone: obligation.period.sourceTimezone,
+      },
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      consumer_status: 'revision_missing',
+      status_as_of: `${second}.0009z`,
+    };
+    const orderingContext = { account: { account_id: request.account.account_id }, consumer: orderingConsumer };
+    assert.equal(
+      (
+        await sync(
+          { account: request.account, idempotency_key: 'fixture-fractional-root', statuses: [root] },
+          orderingContext
+        )
+      ).results[0].result,
+      'recorded'
+    );
+    const regressing = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-fractional-regression',
+        statuses: [
+          {
+            ...root,
+            reporting_status_id: 'fixture-status-fractional-successor',
+            supersedes_reporting_status_id: root.reporting_status_id,
+            status_as_of: `${second}.0001Z`,
+          },
+        ],
+      },
+      orderingContext
+    );
+    assert.equal(regressing.results[0].result, 'failed', 'sub-millisecond status time cannot regress');
+
+    const futureBoundary = new Date(Math.floor(Date.now() / 1_000) * 1_000);
+    const boundarySecond = futureBoundary.toISOString().replace(/\.\d{3}Z$/, '');
+    const boundarySync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: value => value.consumer,
+      now: () => futureBoundary,
+      clockSkewMilliseconds: 0,
+    });
+    const future = await boundarySync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-fractional-future-boundary',
+        statuses: [
+          {
+            ...root,
+            reporting_status_id: 'fixture-status-fractional-future',
+            status_as_of: `${boundarySecond}.0001Z`,
+          },
+        ],
+      },
+      { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-instant-future' }
+    );
+    assert.equal(future.results[0].result, 'failed', 'fractional time beyond the future ceiling is rejected');
+  });
+
   test('bounds malformed request errors', async () => {
     const context = { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-invalid' };
     const sync = ledger.createSyncReportingStatusHandler(reference.store, {
@@ -841,6 +966,39 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       duplicateWithMalformed.results.map(value => value.result),
       ['failed', 'failed'],
       'a malformed entry with a valid chain identity rejects every duplicate-chain entry'
+    );
+
+    const leapContext = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-partial-leap',
+    };
+    const leapSync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: value => value.consumer,
+    });
+    const laterStart = new Date(Date.parse(periodStart) + configuration.schedule.periodMilliseconds).toISOString();
+    const leapSecond = {
+      ...valid,
+      reporting_status_id: 'fixture-status-leap-second',
+      period: {
+        ...valid.period,
+        start: laterStart,
+        end: new Date(Date.parse(laterStart) + configuration.schedule.periodMilliseconds).toISOString(),
+      },
+      status_as_of: '2016-12-31T23:59:60Z',
+    };
+    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse(leapSecond).success, true);
+    const leapBatch = await leapSync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-leap-partial',
+        statuses: [{ ...valid, reporting_status_id: 'fixture-status-leap-sibling' }, leapSecond],
+      },
+      leapContext
+    );
+    assert.deepEqual(
+      leapBatch.results.map(value => value.result),
+      ['recorded', 'failed'],
+      'a leap-second validation failure does not abort a valid sibling'
     );
   });
 
