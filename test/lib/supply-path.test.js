@@ -964,7 +964,12 @@ it('does not borrow an unscoped owner agent grant from a shared catalog through 
 });
 
 it('records malformed pointers as unavailable evidence while retaining their denials', async () => {
-  for (const location of ['not a URL', 'http://example.com/host.json', 'https://user:password@example.com/host.json']) {
+  for (const location of [
+    'not a URL',
+    'http://example.com/host.json',
+    'https://user:password@example.com/host.json',
+    'https://cdn.example/host.json#',
+  ]) {
     const store = new sdk.InMemorySupplyPathRevocationStore();
     const result = await verifySupplyPath(request, {
       source: 'authoritative',
@@ -992,6 +997,70 @@ it('records malformed pointers as unavailable evidence while retaining their den
 });
 
 describe('authority pins require a successfully validated manifest', () => {
+  it('does not charge authority admission for more than 128 failed target fetches', async () => {
+    const pins = new sdk.InMemorySupplyPathAuthorityStore();
+    for (let i = 0; i < 129; i++) {
+      const host = `failed-${i}.admission.example`;
+      const target = `https://cdn.example/failed-${i}.json`;
+      await verifySupplyPath(
+        { ...request, host_domain: host },
+        {
+          source: 'authoritative',
+          authorityStore: pins,
+          revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+          trustedFetchFn: transport({
+            [`https://${host}/.well-known/adagents.json`]: { authoritative_location: target },
+            [target]: {},
+          }),
+        }
+      );
+      assert.equal(await pins.check(host, 'https://cdn.example/recovery.json'), true);
+    }
+    assert.equal(
+      (
+        await verifySupplyPath(request, {
+          source: 'authoritative',
+          authorityStore: pins,
+          trustedFetchFn: transport(),
+          revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+        })
+      ).state,
+      'verified_owner_sold'
+    );
+  });
+  it('refuses an empty fragment without fetching or pinning its target', async () => {
+    const pins = new sdk.InMemorySupplyPathAuthorityStore();
+    const requests = [];
+    const target = 'https://cdn.example/host.json#';
+    await verifySupplyPath(request, {
+      source: 'authoritative',
+      authorityStore: pins,
+      revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+      trustedFetchFn: transport(
+        {
+          [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: target },
+          [target]: input().hostManifest,
+        },
+        requests
+      ),
+    });
+    assert.equal(
+      requests.some(item => item.url === target),
+      false
+    );
+    assert.equal(await pins.check(HOST, 'https://cdn.example/recovery.json'), true);
+    assert.equal(
+      (
+        await verifySupplyPath(request, {
+          source: 'authoritative',
+          authorityStore: pins,
+          trustedFetchFn: transport(),
+          revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+        })
+      ).state,
+      'verified_owner_sold'
+    );
+  });
   const failures = {
     unavailable: new Response('unavailable', { status: 503 }),
     malformed: new Response('{invalid JSON', { headers: { 'content-type': 'application/json' } }),
