@@ -25,9 +25,7 @@ const record = (value: unknown): value is Record<string, unknown> =>
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
 /** Canonical task alternatives. The live entry chooses among these; mode never selects a task. */
-export function mediaBuyActionTasks(action: MediaBuyAction): readonly MediaBuyTask[] {
-  // Reviewed rc.3 additive action (adcp-client#2907). Remove this bridge once the pin includes it.
-  if (action === 'update_media_buy_frequency_cap') return ['control_media_buy', 'refine_proposals'];
+export function mediaBuyActionTasks(action: string): readonly MediaBuyTask[] {
   return Object.hasOwn(CANONICAL_ACTION_TASKS, action)
     ? ((CANONICAL_ACTION_TASKS as Readonly<Record<string, readonly MediaBuyTask[]>>)[action] ?? [])
     : [];
@@ -43,12 +41,13 @@ export function defaultMediaBuyActionTask(action: MediaBuyAction): MediaBuyTask 
 export function actionAllowedStatuses(term: Pick<ProposalChangeTerm, 'action' | 'allowed_statuses'>): MediaBuyStatus[] {
   return NON_TERMINAL_ACTION_STATUSES.filter(status => {
     if (term.allowed_statuses && !term.allowed_statuses.includes(status)) return false;
-    // Use the existing status helper for operational lifecycle actions; explicit
-    // negotiated scopes can enable other modifications in any non-terminal state.
+    // Explicit negotiated scope admits latent controls (including clearing a
+    // create-time hold while pending). The legacy helper supplies defaults only;
+    // neither path can admit terminal states.
+    if (term.allowed_statuses) return true;
     if (['pause', 'resume', 'cancel'].includes(term.action)) {
       return validActionsForStatus(status).includes(term.action as 'pause' | 'resume' | 'cancel');
     }
-    if (term.allowed_statuses) return true;
     const parent =
       getRollupParent(term.action as MediaBuyActionId) ??
       (['update_budget_allocation', 'update_spend_target'].includes(term.action) ? 'update_budget' : 'update_packages');
@@ -180,11 +179,7 @@ export function changeTermIssues(terms: readonly ProposalChangeTerm[], currency?
     }
     if (typeof term.term_id !== 'string' || !/^[A-Za-z0-9_.:-]+$/.test(term.term_id) || ids.has(term.term_id))
       issues.push('invalid or duplicate term identity');
-    if (
-      actions.has(term.action) ||
-      (!(CHANGE_TERM_ACTIONS as readonly string[]).includes(term.action) &&
-        term.action !== 'update_media_buy_frequency_cap')
-    )
+    if (actions.has(term.action) || !(CHANGE_TERM_ACTIONS as readonly string[]).includes(term.action))
       issues.push('invalid or duplicate action identity');
     if (!MODES.includes(term.service_mode)) issues.push('invalid service mode');
     if (
@@ -270,9 +265,7 @@ export function productTemplateIssues(templates: readonly ProductActionTemplate[
         currency
       ).filter(issue => issue !== 'invalid or duplicate action identity')
     );
-    if (
-      ![...CHANGE_TERM_ACTIONS, ...LEGACY_AVAILABLE_ACTIONS, 'update_media_buy_frequency_cap'].includes(template.action)
-    )
+    if (!([...CHANGE_TERM_ACTIONS, ...LEGACY_AVAILABLE_ACTIONS] as readonly string[]).includes(template.action))
       issues.push('invalid product action');
     if (
       template.allowed_statuses !== undefined &&
@@ -296,7 +289,7 @@ export function findProductAction(
   return templates?.find(t => t.action === action) ?? templates?.find(t => t.action === getRollupParent(action));
 }
 
-export function legacyActionSupported(action: MediaBuyAction): boolean {
+export function legacyActionSupported(action: string): boolean {
   return (V3_1_ACTION_IDS as readonly string[]).includes(action);
 }
 
@@ -347,8 +340,8 @@ export function supportsRc3Actions(version: string): boolean {
   if (Number(match[1]) !== 3 || Number(match[2]) !== 2) return false;
   return !match[4] || (/^rc\.(\d+)$/.test(match[4]) && Number(match[4].slice(3)) >= 3);
 }
-/** Narrow error-details vocabulary is distinct from canonical MediaBuy actions. */
-export function actionFitsErrorDetails(action: MediaBuyAction, version: string): boolean {
+/** Narrow error-details vocabulary is distinct from canonical actions; older served versions stay gated. */
+export function actionFitsErrorDetails(action: string, version: string): boolean {
   if (/^3\.[01](?:\.|-|$)/.test(version)) return legacyActionSupported(action);
   return (
     (LEGACY_AVAILABLE_ACTIONS as readonly string[]).includes(action) ||
@@ -369,5 +362,10 @@ export function packageActionStatus(
 ): string | undefined {
   if (pkg?.canceled === true) return 'canceled';
   if (pkg?.status && ['completed', 'canceled', 'failed', 'rejected'].includes(pkg.status)) return pkg.status;
-  return pkg?.paused === true ? 'paused' : pkg?.paused === false ? 'active' : pkg?.status;
+  if (pkg?.status !== undefined && !(NON_TERMINAL_ACTION_STATUSES as readonly string[]).includes(pkg.status))
+    return undefined;
+  // The package schema defaults an omitted paused flag to false. Absence of
+  // the package itself still supplies no state, and explicit terminal/unknown
+  // statuses are never replaced by that default.
+  return pkg?.paused === true ? 'paused' : (pkg?.status ?? (pkg ? 'active' : undefined));
 }

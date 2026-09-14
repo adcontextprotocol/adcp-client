@@ -3,7 +3,7 @@ import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyActionMode, SLAWi
 
 /** Explicit task vocabulary; update_media_buy is the established 3.1 default. */
 export type MediaBuyTask = 'update_media_buy' | 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
-/** Alias of the shared action vocabulary, including the isolated rc.3 shared-cap bridge. */
+/** Alias of the shared, schema-derived action vocabulary. */
 export type MediaBuyAction = MediaBuyActionId;
 export type ProductActionTemplate = Pick<
   CanonicalProductAction,
@@ -56,7 +56,8 @@ export type { MediaBuyStatus };
 
 /** A readable wire entry, including the established 3.1 shape without task. */
 export interface LiveMediaBuyAction {
-  action: MediaBuyAction;
+  /** Readable wire IDs may be unknown to this SDK; runtime assessment validates them. */
+  action: string;
   mode: MediaBuyActionMode;
   task?: MediaBuyTask;
   sla?: SLAWindow;

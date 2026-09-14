@@ -14,18 +14,21 @@ export type {
   SLAWindow,
 } from '../types/core.generated';
 
-import type { CanonicalMediaBuyAction, MediaBuyAvailableAction, MediaBuyValidAction } from '../types/core.generated';
+import type { MediaBuyAvailableAction, MediaBuyValidAction } from '../types/core.generated';
 import type { SLAWindow } from '../types/core.generated';
+import type { ControlMediaBuyRequest } from '../types/tools.generated';
 import type { MediaBuyUpdateFieldAction } from './update-fields.generated';
+import type { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
 
 /**
  * Every action id the structured `available_actions[].action` surface can
  * carry. Derived from the generated wire type plus the generated
- * `update_media_buy` dispatch table, so it is exactly the legacy
- * `MediaBuyValidAction` enum on schema pins that predate
+ * `update_media_buy` dispatch table, preserving the legacy vocabulary on schema pins that predate
  * `core/media-buy-available-action-id.json` (AdCP <= 3.2.0-rc.2) and widens
  * to include structured-only ids such as `update_media_buy_frequency_cap`
- * once the pin picks that schema up. Use this — not `MediaBuyValidAction` —
+ * once the pin picks that schema up. Canonical task metadata keeps the union
+ * narrow even when a generated oneOf wire type flattens action to string.
+ * Use this — not `MediaBuyValidAction` —
  * wherever code reads `available_actions[].action`, `allowed_actions[].action`,
  * or `ACTION_NOT_ALLOWED.attempted_action`. `MediaBuyValidAction` remains the
  * correct type for the deprecated flat `valid_actions[]` list only.
@@ -33,8 +36,7 @@ import type { MediaBuyUpdateFieldAction } from './update-fields.generated';
 export type MediaBuyActionId =
   | MediaBuyAvailableAction['action']
   | MediaBuyUpdateFieldAction
-  | CanonicalMediaBuyAction['action']
-  | 'update_media_buy_frequency_cap';
+  | keyof typeof CANONICAL_ACTION_TASKS;
 
 /**
  * @deprecated Use `SLAWindow`. Kept as an import-compatibility alias for the
@@ -141,7 +143,9 @@ export interface UpdateMediaBuyRequestLike {
     end_time?: string;
     paused?: boolean;
     canceled?: true;
-    targeting_overlay?: { frequency_cap?: unknown; [k: string]: unknown };
+    targeting_overlay?:
+      | NonNullable<ControlMediaBuyRequest['packages']>[number]['targeting_overlay']
+      | { frequency_cap?: unknown; [k: string]: unknown };
     keyword_targets_add?: unknown;
     keyword_targets_remove?: unknown;
     negative_keywords_add?: unknown;

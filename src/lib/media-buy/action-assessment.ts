@@ -149,6 +149,15 @@ export function assessActionAvailability(
       );
   }
   buy = withActionProposal(buy, options);
+  const decomposition = options.request
+    ? decomposeUpdateMediaBuy(buy as Parameters<typeof decomposeUpdateMediaBuy>[0], options.request)
+    : undefined;
+  if (options.request && decomposition && hasUnmappedMutation(options.request, decomposition))
+    return deny(
+      'condition_unresolved',
+      'At least one requested field has no supported action mapping; executable-now assessment requires a fully mapped request.',
+      'unknown'
+    );
   const metadataOnly = action === 'update_name';
   const proposal = buy.accepted_proposal;
   const terms = proposal?.commercial_terms?.change_terms;
@@ -166,7 +175,9 @@ export function assessActionAvailability(
       'unknown'
     );
   if (
-    (buy.accepted_proposal_id !== undefined && proposal?.proposal_id !== buy.accepted_proposal_id) ||
+    (proposal !== undefined &&
+      buy.accepted_proposal_id !== undefined &&
+      proposal.proposal_id !== buy.accepted_proposal_id) ||
     (proposal?.media_buy_id !== undefined && proposal.media_buy_id !== buy.media_buy_id) ||
     (proposal?.proposal_status !== undefined && proposal.proposal_status !== 'accepted')
   )
@@ -180,10 +191,18 @@ export function assessActionAvailability(
     ['pause', 'resume'].includes(action) &&
     options.request?.packages?.filter(p => p.paused !== undefined && (p.paused ? 'pause' : 'resume') === action);
   const scopedLifecycle = packageLifecycle && packageLifecycle.length > 0 && options.request?.paused === undefined;
+  // Package hold state chooses pause vs resume independently of the buy's hold.
+  // Without negotiated scope, use the operational buy states where the legacy
+  // helper admits either control; pending states still need explicit scope.
+  const packageControlStatuses = scopedLifecycle
+    ? [...actionAllowedStatuses({ action: 'pause' }), ...actionAllowedStatuses({ action: 'resume' })]
+    : [];
   const allowedStatuses = metadataOnly
     ? [...NON_TERMINAL_ACTION_STATUSES]
     : scopedLifecycle
-      ? NON_TERMINAL_ACTION_STATUSES.filter(status => !term?.allowed_statuses || term.allowed_statuses.includes(status))
+      ? NON_TERMINAL_ACTION_STATUSES.filter(status =>
+          term?.allowed_statuses ? term.allowed_statuses.includes(status) : packageControlStatuses.includes(status)
+        )
       : actionAllowedStatuses(term!);
   for (const pkg of packageLifecycle || []) {
     const current = buy.packages?.find(p => p.package_id === pkg.package_id);
@@ -266,9 +285,7 @@ export function assessActionAvailability(
       'blocked',
       { nonDefaultRoute }
     );
-  const mutations = options.request
-    ? decomposeUpdateMediaBuy(buy as Parameters<typeof decomposeUpdateMediaBuy>[0], options.request).mutations
-    : [];
+  const mutations = decomposition?.mutations ?? [];
   if (entry.applicable_package_ids !== undefined) {
     const ids = entry.applicable_package_ids;
     if (

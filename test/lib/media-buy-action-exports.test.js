@@ -56,8 +56,11 @@ test('public task union is narrow, results discriminate, and generated wire obje
       `
 import { assessMediaBuyAction, preflightMediaBuyActions, type MediaBuyTask, type ActionAvailability, type ChangeTermConstraints, type ProposalChangeTerm } from '@adcp/sdk/media-buy/actions';
 import { mediaBuyActionResolver, assertUpdateMediaBuyAllowed } from '@adcp/sdk/server';
-import { preflightUpdateMediaBuy, getAvailableActions, type LiveMediaBuyAction, type ControlMediaBuyRequest, type UpdateMediaBuyRequest } from '@adcp/sdk';
+import { preflightUpdateMediaBuy, getAvailableActions, type LiveMediaBuyAction, type MediaBuyActionId, type ControlMediaBuyRequest, type UpdateMediaBuyRequest } from '@adcp/sdk';
 import type { MediaBuy, CanonicalProduct, CanonicalProposal } from '../src/lib/types/core.generated.js';
+const capAction: MediaBuyActionId = 'update_media_buy_frequency_cap';
+// @ts-expect-error arbitrary strings are not MediaBuy actions
+const invalidAction: MediaBuyActionId = 'definitely_not_an_action';
 const control: MediaBuyTask = 'control_media_buy';
 // @ts-expect-error arbitrary AdCP tasks cannot route a MediaBuy action
 const invalid: MediaBuyTask = 'get_products';

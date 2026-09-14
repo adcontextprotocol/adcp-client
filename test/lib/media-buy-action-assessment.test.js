@@ -341,6 +341,9 @@ test('seller rejects duplicate identities, incompatible constraints/statuses, an
 test('rc.3 shared frequency cap routes use canonical metadata without admitting an incompatible constraint', () => {
   const state = buy([term('update_media_buy_frequency_cap')]);
   assert.equal(assessActionAvailability(state, 'update_media_buy_frequency_cap').nonDefaultRoute, 'control_media_buy');
+  const defaultProjection = mediaBuyActionResolver.resolve({ buy: state, decide: accept });
+  assert.equal(defaultProjection.available_actions[0].action, 'update_media_buy_frequency_cap');
+  assert.equal(defaultProjection.available_actions[0].task, 'control_media_buy');
   assert.throws(
     () => buy([term('update_media_buy_frequency_cap', { constraints: { kind: 'budget', max_delta_percent: 1 } })]),
     TypeError
@@ -789,7 +792,21 @@ test('scoped package pause and resume require known package state and negotiated
   assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p2', paused: false }] }).ok, true);
   assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', paused: false }] }).ok, false);
   assert.equal(preflightUpdateMediaBuy(state, { paused: false }).ok, false);
-  const unknown = buy([term('pause')]);
+  assert.equal(
+    preflightUpdateMediaBuy({ ...state, status: 'paused' }, { packages: [{ package_id: 'p1', paused: true }] }).ok,
+    true
+  );
+  for (const status of ['completed', 'canceled', 'failed', 'rejected']) {
+    assert.equal(
+      preflightUpdateMediaBuy({ ...state, status }, { packages: [{ package_id: 'p1', paused: true }] }).ok,
+      false
+    );
+    assert.equal(
+      preflightUpdateMediaBuy({ ...state, status }, { packages: [{ package_id: 'p2', paused: false }] }).ok,
+      false
+    );
+  }
+  const unknown = buy([term('pause')], { packages: [{ package_id: 'p1', status: 'unrecognized' }] });
   assert.equal(
     preflightUpdateMediaBuy(unknown, { packages: [{ package_id: 'p1', paused: true }] }).denials[0].assessment
       .certainty,
@@ -1160,16 +1177,21 @@ test('terminal package state overrides stale pause toggles in preflight and live
   }
 });
 
-test('seller lifecycle scope narrows mixed and unknown package state without erasing known executable rights', () => {
+test('seller lifecycle scope respects default unpaused state and excludes explicit unknown state', () => {
   const state = buy([term('pause'), term('resume')], {
-    packages: [{ package_id: 'p1', paused: false }, { package_id: 'p2', paused: true }, { package_id: 'p3' }],
+    packages: [
+      { package_id: 'p1', paused: false },
+      { package_id: 'p2', paused: true },
+      { package_id: 'p3' },
+      { package_id: 'p4', status: 'unrecognized' },
+    ],
   });
   const projection = mediaBuyActionResolver.resolve({
     buy: state,
     adcpVersion: '3.2.0-rc.3',
-    decide: () => ({ ...accept(), applicable_package_ids: ['p1', 'p2', 'p3'] }),
+    decide: () => ({ ...accept(), applicable_package_ids: ['p1', 'p2', 'p3', 'p4'] }),
   });
-  assert.deepEqual(projection.available_actions.find(a => a.action === 'pause').applicable_package_ids, ['p1']);
+  assert.deepEqual(projection.available_actions.find(a => a.action === 'pause').applicable_package_ids, ['p1', 'p3']);
   assert.deepEqual(projection.available_actions.find(a => a.action === 'resume').applicable_package_ids, ['p2']);
 });
 
@@ -1214,11 +1236,43 @@ test('served version is explicit at both seller emission and assertion boundarie
   const state = buy([term('increase_budget')]);
   state.available_actions[0].applicable_package_ids = ['p1'];
   const request = { packages: [{ package_id: 'p1', budget: 650 }] };
+  const defaultProjection = mediaBuyActionResolver.resolve({
+    buy: state,
+    decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+  });
+  assert.deepEqual(defaultProjection.available_actions[0].applicable_package_ids, ['p1']);
+  assert.equal(assertUpdateMediaBuyAllowed(state, request).ok, true);
   assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
   assert.throws(
     () => assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.2' }),
     e => e.code === 'ACTION_NOT_ALLOWED'
   );
+});
+
+test('legacy compatibility enforces served versions for native shared caps and package scope', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const [entry, request] of [
+    [{ action: 'update_media_buy_frequency_cap' }, { frequency_cap: null }],
+    [{ action: 'increase_budget', applicable_package_ids: ['p1'] }, { packages: [{ package_id: 'p1', budget: 650 }] }],
+  ]) {
+    const state = {
+      status: 'active',
+      packages: [{ package_id: 'p1', budget: 600 }],
+      available_actions: [{ ...entry, mode: 'self_serve', task: 'control_media_buy' }],
+    };
+    for (const adcpVersion of ['3.1.19', '3.2.0-beta.8', '3.2.0-rc.2']) {
+      const result = preflightUpdateMediaBuy(state, request, { adcpVersion });
+      assert.equal(result.ok, false, adcpVersion);
+      assert.equal(result.denials[0].reason, 'condition_unresolved');
+      assert.match(result.denials[0].assessment.message, /seller version/);
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, request, { adcpVersion }),
+        error => error.code === 'ACTION_NOT_ALLOWED'
+      );
+    }
+    assert.equal(preflightUpdateMediaBuy(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
+    assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
+  }
 });
 
 test('missing stored budget stays unknown rather than throwing a raw property error', () => {
@@ -1282,4 +1336,298 @@ test('opaque new-package extensions never ride an add-package grant', () => {
       e => e.code === 'INVALID_REQUEST'
     );
   }
+});
+
+test('explicit negotiated lifecycle scope admits pending hold controls without widening legacy defaults', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const status of ['pending_creatives', 'pending_start']) {
+    for (const action of ['pause', 'resume']) {
+      for (const service_mode of ['self_serve', 'seller_managed']) {
+        const right = term(action, { allowed_statuses: [status], service_mode });
+        const state = buy([right], { status, paused: action === 'resume' });
+        const request = { paused: action === 'pause', revision: 3 };
+        assert.equal(state.available_actions.length, 1, `${status}/${action}/${service_mode} projection`);
+        assert.equal(state.available_actions[0].mode, service_mode);
+        assert.equal(assessActionAvailability(state, action, { request }).status, 'available_now');
+        assert.equal(assessMediaBuyAction({ action, buy: state, request }).availability.status, 'available_now');
+        assert.equal(preflightMediaBuyActions(state, request).ok, true);
+        assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
+        assert.equal(assertUpdateMediaBuyAllowed(state, request).ok, true);
+        for (const otherStatus of ['active', 'paused', 'completed', 'canceled', 'failed', 'rejected']) {
+          const outside = { ...state, status: otherStatus };
+          assert.equal(assessActionAvailability(outside, action, { request }).reason, 'wrong_status');
+          assert.equal(mediaBuyActionResolver.resolve({ buy: outside, decide: accept }).available_actions.length, 0);
+        }
+        assert.equal(
+          mediaBuyActionResolver.resolve({ buy: state, decide: () => ({ ...accept(), policy: 'unknown' }) })
+            .available_actions.length,
+          0
+        );
+        const mismatched = {
+          ...state,
+          available_actions: [{ ...state.available_actions[0], change_term_id: 'other' }],
+        };
+        assert.equal(assessActionAvailability(mismatched, action, { request }).certainty, 'unknown');
+        assert.equal(
+          assessActionAvailability(state, action, { request: { ...request, revision: 2 } }).code,
+          'CONFLICT'
+        );
+      }
+      const legacyDefault = buy([term(action)], { status });
+      assert.equal(assessActionAvailability(legacyDefault, action).reason, 'wrong_status');
+      assert.equal(legacyDefault.available_actions.length, 0);
+    }
+  }
+});
+
+test('metadata rename needs a current structured grant but no commercial snapshot hydration', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = {
+    media_buy_id: 'buy1',
+    status: 'active',
+    revision: 3,
+    accepted_proposal_id: 'proposal1',
+    accepted_proposal_digest: 'opaque-verified-digest',
+    available_actions: [{ action: 'update_name', mode: 'self_serve', task: 'control_media_buy' }],
+  };
+  const request = { name: 'Updated name', revision: 3 };
+  const result = assessActionAvailability(state, 'update_name', { request });
+  assert.equal(result.status, 'available_now');
+  assert.equal(result.authority, 'live_metadata');
+  assert.equal(result.term, undefined);
+  assert.equal(
+    assessMediaBuyAction({ action: 'update_name', buy: state, request }).availability.status,
+    'available_now'
+  );
+  assert.equal(preflightMediaBuyActions(state, request).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
+  assert.equal(assertUpdateMediaBuyAllowed(state, request).ok, true);
+  assert.deepEqual(
+    mediaBuyActionResolver.resolve({ buy: state, decide: accept, metadata: { update_name: accept() } })
+      .available_actions,
+    state.available_actions
+  );
+  assert.equal(
+    mediaBuyActionResolver.resolve({
+      buy: state,
+      decide: accept,
+      metadata: { update_name: { ...accept(), authorization: false } },
+    }).available_actions.length,
+    0
+  );
+  for (const proposal of [
+    { proposal_id: 'other', proposal_status: 'accepted', media_buy_id: 'buy1' },
+    { proposal_id: 'proposal1', proposal_status: 'draft', media_buy_id: 'buy1' },
+    { proposal_id: 'proposal1', proposal_status: 'accepted', media_buy_id: 'other' },
+  ]) {
+    assert.equal(assessActionAvailability(state, 'update_name', { request, proposal }).certainty, 'unknown');
+    assert.equal(
+      assessActionAvailability({ ...state, accepted_proposal: proposal }, 'update_name', { request }).certainty,
+      'unknown'
+    );
+  }
+  assert.equal(
+    assessActionAvailability(state, 'update_name', { request: { ...request, revision: 2 } }).code,
+    'CONFLICT'
+  );
+  assert.equal(
+    assessActionAvailability({ ...state, status: 'completed' }, 'update_name', { request }).reason,
+    'wrong_status'
+  );
+  assert.equal(
+    assessActionAvailability(
+      { ...state, available_actions: undefined, valid_actions: ['update_name'] },
+      'update_name',
+      { request }
+    ).certainty,
+    'unknown'
+  );
+  assert.equal(
+    assessActionAvailability(state, 'pause', { request: { paused: true } }).compat.reason,
+    'no_change_terms'
+  );
+  const opaque = { ...request, ext: { vendor: { controls: 1 } } };
+  assert.equal(assessActionAvailability(state, 'update_name', { request: opaque }).certainty, 'unknown');
+  assert.equal(preflightMediaBuyActions(state, opaque).ok, false);
+  assert.throws(
+    () => assertUpdateMediaBuyAllowed(state, opaque),
+    e => e.code === 'INVALID_REQUEST'
+  );
+});
+
+test('package pause uses schema default false only for an existing nonterminal package', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const current of [{ package_id: 'p1' }, { package_id: 'p1', paused: false }]) {
+    const state = buy([term('pause')], { packages: [current] });
+    state.available_actions = mediaBuyActionResolver.resolve({
+      buy: state,
+      decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+    }).available_actions;
+    assert.equal(state.available_actions.length, 1);
+    const request = { packages: [{ package_id: 'p1', paused: true }] };
+    assert.equal(assessActionAvailability(state, 'pause', { request }).status, 'available_now');
+    assert.equal(assessMediaBuyAction({ action: 'pause', buy: state, request }).availability.status, 'available_now');
+    assert.equal(preflightMediaBuyActions(state, request).ok, true);
+    assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
+    assert.equal(assertUpdateMediaBuyAllowed(state, request).ok, true);
+    for (const packages of [
+      [],
+      undefined,
+      [{ package_id: 'p1', status: 'unrecognized' }],
+      [{ package_id: 'p1', canceled: true }],
+    ]) {
+      assert.equal(preflightMediaBuyActions({ ...state, packages }, request).ok, false);
+      assert.equal(
+        mediaBuyActionResolver.resolve({
+          buy: { ...state, packages },
+          decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+        }).available_actions.length,
+        0
+      );
+    }
+  }
+});
+
+test('direct and unified availability reject opaque new-package extensions consistently with whole preflight', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = buy([term('add_packages')], { budget_allocation: 'seller_optimized' });
+  const clean = { new_packages: [{ product_id: 'new', pricing_option_id: 'price' }] };
+  assert.equal(assessActionAvailability(state, 'add_packages', { request: clean }).status, 'available_now');
+  for (const ext of [{ vendor: { controls: 1 } }, {}, null]) {
+    const request = { new_packages: [{ ...clean.new_packages[0], ext }] };
+    for (const assessment of [
+      assessActionAvailability(state, 'add_packages', { request }),
+      assessMediaBuyAction({ action: 'add_packages', buy: state, request }).availability,
+    ]) {
+      assert.equal(assessment.status, 'currently_unavailable');
+      assert.equal(assessment.reason, 'condition_unresolved');
+      assert.equal(assessment.certainty, 'unknown');
+    }
+    assert.equal(preflightMediaBuyActions(state, request).ok, false);
+    assert.throws(() => preflightUpdateMediaBuy(state, request), /no supported action mapping/);
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request),
+      e => e.code === 'INVALID_REQUEST'
+    );
+    const projection = mediaBuyActionResolver.resolve({ buy: state, decide: accept, request });
+    assert.equal(projection.request_assessments[0].certainty, 'unknown');
+    assert.equal(projection.available_actions.length, 1, 'request refusal does not erase the bounded right');
+  }
+});
+
+test('explicit unknown package status outranks either pause flag in assessment and seller scope', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const paused of [undefined, false, true]) {
+    for (const action of ['pause', 'resume']) {
+      const state = buy([term(action)], { packages: [{ package_id: 'p1', status: 'unrecognized', paused }] });
+      const request = { packages: [{ package_id: 'p1', paused: action === 'pause' }] };
+      const assessment = assessActionAvailability(state, action, { request });
+      assert.equal(assessment.status, 'currently_unavailable');
+      assert.equal(assessment.certainty, 'unknown');
+      assert.equal(preflightMediaBuyActions(state, request).ok, false);
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, request),
+        e => e.code === 'ACTION_NOT_ALLOWED'
+      );
+      assert.equal(
+        mediaBuyActionResolver.resolve({ buy: state, decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }) })
+          .available_actions.length,
+        0
+      );
+    }
+  }
+});
+
+test('pending package controls require explicit negotiated buy-status scope too', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const status of ['pending_creatives', 'pending_start']) {
+    for (const action of ['pause', 'resume']) {
+      const state = buy([term(action)], {
+        status,
+        packages: [{ package_id: 'p1', paused: action === 'resume' }],
+        available_actions: [
+          {
+            action,
+            mode: 'self_serve',
+            task: 'control_media_buy',
+            change_term_id: `right_${action}`,
+            applicable_package_ids: ['p1'],
+          },
+        ],
+      });
+      const request = { packages: [{ package_id: 'p1', paused: action === 'pause' }] };
+      assert.equal(assessActionAvailability(state, action, { request }).reason, 'wrong_status');
+      assert.equal(preflightMediaBuyActions(state, request).ok, false);
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, request),
+        e => e.code === 'ACTION_NOT_ALLOWED'
+      );
+      const decide = () => ({ ...accept(), applicable_package_ids: ['p1'] });
+      assert.equal(mediaBuyActionResolver.resolve({ buy: state, decide }).available_actions.length, 0);
+      state.accepted_proposal.commercial_terms.change_terms[0].allowed_statuses = [status];
+      assert.equal(assessActionAvailability(state, action, { request }).status, 'available_now');
+      assert.equal(preflightMediaBuyActions(state, request).ok, true);
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
+      assert.equal(mediaBuyActionResolver.resolve({ buy: state, decide }).available_actions.length, 1);
+    }
+  }
+});
+
+test('explicit false never overrides a locally pending package status', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const status of ['pending_creatives', 'pending_start']) {
+    for (const paused of [undefined, false]) {
+      const state = buy([term('pause')], { packages: [{ package_id: 'p1', status, paused }] });
+      const request = { packages: [{ package_id: 'p1', paused: true }] };
+      assert.equal(assessActionAvailability(state, 'pause', { request }).reason, 'wrong_status');
+      assert.equal(preflightMediaBuyActions(state, request).ok, false);
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, request),
+        e => e.code === 'ACTION_NOT_ALLOWED'
+      );
+      assert.equal(
+        mediaBuyActionResolver.resolve({ buy: state, decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }) })
+          .available_actions.length,
+        0
+      );
+    }
+  }
+});
+
+test('a modern term-linked projection cannot downgrade to legacy compatibility when its snapshot is missing', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = buy([term('increase_budget', { constraints: { kind: 'budget', max_delta_percent: 10 } })]);
+  const proposal = state.accepted_proposal;
+  delete state.accepted_proposal;
+  const request = { total_budget: { amount: 10000, currency: 'USD' } };
+  const missing = preflightUpdateMediaBuy(state, request);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.denials[0].assessment.compat.reason, 'no_change_terms');
+  assert.equal(preflightMediaBuyActions(state, request).ok, false);
+  assert.throws(
+    () => assertUpdateMediaBuyAllowed(state, request),
+    e => e.code === 'ACTION_NOT_ALLOWED'
+  );
+  assert.equal(preflightUpdateMediaBuy(state, request, { proposal }).ok, false);
+  assert.equal(
+    preflightUpdateMediaBuy(state, { total_budget: { amount: 1050, currency: 'USD' } }, { proposal }).ok,
+    true
+  );
+  const legacy = {
+    ...state,
+    available_actions: [{ action: 'increase_budget', mode: 'self_serve', terms_ref: 'opaque-3.1-reference' }],
+  };
+  assert.equal(preflightUpdateMediaBuy(legacy, request, { adcpVersion: '3.1.19' }).ok, true);
+  assert.equal(assessActionAvailability(legacy, 'increase_budget', { request }).certainty, 'unknown');
 });

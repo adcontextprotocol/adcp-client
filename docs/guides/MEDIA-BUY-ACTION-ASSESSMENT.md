@@ -106,9 +106,13 @@ rejected. `preflightUpdateMediaBuy` defaults to the facade. The route-neutral
 a mixed-route request, and its denial explains that remedy. Each assessment
 retains the advertised compact route even when the attempted route is the facade.
 Unmapped mutation
-fields fail closed. These helpers assess patches and do not validate a full wire
+fields, including opaque `new_packages[].ext`, produce unknown in direct and
+unified availability assessments and fail closed in both whole-request preflights.
+These helpers assess patches and do not validate a full wire
 request: callers must retain schema validation and the required revision and
-idempotency envelope at dispatch. The legacy helper throws `ValidationError`
+idempotency envelope at dispatch. Run `assertUpdateMediaBuyAllowed` on the wire
+request before resolving targeting clear commands with `resolveTargetingInput`
+for persistence or readback. The legacy helper throws `ValidationError`
 for an unmapped/no-op request and returns `denials`; the strict helper returns
 `ok: false` with `assessments` and a message for that case.
 A task-less entry uses only the documented `update_media_buy` default: refetch
@@ -138,16 +142,34 @@ when the 3.2 producer deliberately emits both fields as aliases; equality then
 becomes mandatory. Without that declaration, an independent opaque `terms_ref`
 remains opaque. A proposal term's own `terms_ref` is a contract-document reference
 and may always differ from its `term_id`. No helper fetches that reference.
-The rc.3 shared-frequency-cap action and `applicable_package_ids` are supported
-without copying unrelated schema-adoption changes. Seller emission defaults to
-the SDK pin; supply `adcpVersion: '3.2.0-rc.3'` (or a newer served version) to
-emit these fields. Older target versions receive an unavailable diagnostic. Package scope requires every
+The rc.3 shared-frequency-cap action comes from the pinned canonical metadata;
+`applicable_package_ids` provides an exact live package scope. Seller emission
+defaults to the SDK pin. Set `adcpVersion` to the version actually served at both
+emission and assertion boundaries (for example, `adcpVersion: '3.2.0-rc.3'`);
+older targets receive an unavailable diagnostic. Package scope requires every
 requested package to belong to the emitted set; it never authorizes a buy-wide
 mutation. Without the requested packages, assessment remains unknown.
 
 `update_name` is a noncommercial metadata action and cannot be a change term.
 Its explicit current structured entry provides `authority: 'live_metadata'`
-without a `term`; commercial actions return `authority: 'accepted_term'`.
+without a `term`; commercial actions return `authority: 'accepted_term'`. A buy
+with only an accepted proposal ID/digest can be renamed without hydrating that
+snapshot. A supplied snapshot must still identify the current accepted proposal.
+
+Explicit negotiated `allowed_statuses` can admit pause/resume while pending,
+including clearing a create-time hold. Absent explicit scope, the existing status
+helper provides defaults. Terminal states never admit these actions. An existing
+package whose `paused` field is omitted uses the schema default `false`; missing
+packages and explicit unknown lifecycle states supply no positive authority.
+An additional local package `status` is checked for terminal or unknown state
+before interpreting the canonical `paused` flag. A true flag supplies positive hold state; false or omission preserves any
+known local status, otherwise defaulting to active. Negotiated `allowed_statuses` describes the MediaBuy lifecycle;
+package controls also require explicit scope to operate while the buy is pending.
+Without explicit scope, package holds operate on active or paused buys independently
+of the buy's own hold, using the union of the status helper's pause/resume defaults.
+A local pending package status can still restrict pause. Positive `paused: true`
+allows clearing that hold independently of local delivery status, subject to the
+negotiated MediaBuy scope.
 Legacy flat hints never establish this metadata authority.
 
 ## Seller builder
@@ -183,7 +205,12 @@ const projection = mediaBuyActionResolver.resolve({
 
 Each gate must explicitly return true. Missing or unknown results do not admit an
 action. The seller owns authentication, signed delegation verification, field
-scopes, account isolation, and loading the currently accepted snapshot. Never
+scopes, account isolation, and loading the currently accepted snapshot. An entry
+with `change_term_id` requires the current accepted snapshot (embedded or supplied
+as `options.proposal`) for preflight/assertion; it cannot fall back to legacy hints.
+These standalone helpers cannot read `createAdcpServer` configuration. Pass the
+server's actual `adcpVersion` and compact handler task explicitly at both boundaries
+when they differ from the SDK pin and update facade defaults. Never
 copy these gate values from buyer parameters. Call under the existing mutation
 transaction and revision/idempotency safeguards. The builder performs no I/O.
 

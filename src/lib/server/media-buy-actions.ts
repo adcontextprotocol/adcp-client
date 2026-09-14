@@ -17,7 +17,6 @@ import {
   preflightUpdateMediaBuy,
   type ActionNotAllowedReason,
   type MediaBuyActionContext,
-  type MediaBuyActionId,
   type MediaBuyActionMode,
   type PreflightAllowed,
   type PreflightDenied,
@@ -164,7 +163,7 @@ function actionNotAllowedFromDenied(
 }
 
 function actionNotAllowed(
-  attemptedAction: MediaBuyActionId,
+  attemptedAction: string,
   reason: ActionNotAllowedReason,
   currentlyAvailable: MediaBuyAvailableAction[],
   version = ADCP_VERSION
@@ -196,6 +195,6 @@ function actionNotAllowed(
   });
 }
 
-function buildActionNotAllowedMessage(action: MediaBuyActionId, reason: ActionNotAllowedReason): string {
+function buildActionNotAllowedMessage(action: string, reason: ActionNotAllowedReason): string {
   return `update_media_buy rejected: \`${action}\` not allowed (${reason}).`;
 }

@@ -198,11 +198,8 @@ export function decomposeUpdateMediaBuy(
     // the generated table instead of being hardcoded: on schema pins that
     // predate that file there is no binding and the field is left unmapped
     // exactly like any other unrecognized request key.
-    const frequencyCapAction =
-      ACTIONS_BY_FIELD['frequency_cap']?.[0] ??
-      (currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined
-        ? 'update_media_buy_frequency_cap'
-        : undefined);
+    const frequencyCapActions = ACTIONS_BY_FIELD['frequency_cap'];
+    const frequencyCapAction = frequencyCapActions?.length === 1 ? frequencyCapActions[0] : undefined;
     if (frequencyCapAction) {
       push({
         action: frequencyCapAction,

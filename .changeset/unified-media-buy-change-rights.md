@@ -11,3 +11,13 @@ The existing update facade can subsume advertised compact tasks, including atomi
 Compatibility preflight also rejects unknown sibling mutations and unknown structured modes, and honors explicit package scopes and compact route restrictions without an accepted snapshot. Separately supplied proposal snapshots require accepted status and a current MediaBuy/proposal identity link.
 
 Flat legacy `update_name` hints no longer authorize metadata changes; sellers must advertise explicit structured live authority for naming updates.
+
+Explicit negotiated status scope can admit pause/resume while pending, including clearing a create-time hold. Existing packages default an omitted `paused` flag to false; missing packages, unknown lifecycle statuses, and terminal states remain unavailable. A structured naming grant no longer requires hydrating an accepted proposal snapshot, while supplied snapshot identities remain checked.
+
+Direct and unified availability stay unknown for unmapped request fields, including opaque new-package extensions. Both preflight paths enforce the served-version ceiling for rc.3 shared caps and package scope, including legacy snapshots without embedded terms.
+
+Known action IDs use closed canonical metadata. Readable live entries preserve unknown wire IDs as strings without granting them authority.
+
+Modern term-linked live entries require the accepted snapshot for preflight/assertion; missing terms cannot silently downgrade to legacy compatibility. Legacy opaque references retain the existing compatibility path.
+
+Package holds operate independently on active or paused buys; pending buy states require explicit negotiated status scope.

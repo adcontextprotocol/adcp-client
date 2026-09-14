@@ -12,7 +12,7 @@ import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-typ
 //      resolver + gate checks into a single ok/not-ok decision.
 
 import { ValidationError } from '../errors';
-import { withActionProposal, liveActionIssues } from './action-contracts';
+import { withActionProposal, liveActionIssues, supportsRc3Actions } from './action-contracts';
 import { assessActionAvailability, type ActionAssessmentOptions } from './action-assessment';
 import { findAvailableAction, getAvailableActions, type AvailableActionsResult } from './available-actions';
 import type {
@@ -128,8 +128,8 @@ export type ModeMismatchRecovery =
  * `available_actions[]`. All missing actions are reported in `denials[]`
  * so callers can render every blocker in a single pass.
  *
- * Throws `ValidationError` when the request touches no recognized
- * `update_media_buy` field. This is a buyer-side bug (the SDK was asked to
+ * Throws `ValidationError` for unmapped mutation fields or when the request
+ * touches no recognized `update_media_buy` field. This is a buyer-side bug (the SDK was asked to
  * dispatch a no-op), not a seller-side denial.
  */
 export function preflightUpdateMediaBuy(
@@ -142,7 +142,9 @@ export function preflightUpdateMediaBuy(
   options = { ...options, task: options.task ?? 'update_media_buy' };
   const decomposition = decomposeUpdateMediaBuy(currentBuy, request);
   const resolved = decomposition.actions;
-  const strict = currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined;
+  const strict =
+    currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined ||
+    currentBuy.available_actions?.some(entry => entry?.change_term_id !== undefined) === true;
   if (hasUnmappedMutation(request, decomposition))
     throw new ValidationError(
       'request',
@@ -182,6 +184,25 @@ export function preflightUpdateMediaBuy(
       // preflight failure when a seller doesn't advertise the action on
       // this specific buy.
       denials.push({ action: resolvedAction.action, reason: 'not_supported_on_buy' });
+      continue;
+    }
+    // Native field bindings must not grant newer wire features to a legacy snapshot.
+    if (
+      options.adcpVersion &&
+      !supportsRc3Actions(options.adcpVersion) &&
+      (resolvedAction.action === 'update_media_buy_frequency_cap' || lookup.entry.applicable_package_ids !== undefined)
+    ) {
+      denials.push({
+        action: resolvedAction.action,
+        reason: 'condition_unresolved',
+        assessment: {
+          status: 'currently_unavailable',
+          action: resolvedAction.action,
+          reason: 'condition_unresolved',
+          certainty: 'unknown',
+          message: 'The action uses metadata introduced after the supplied seller version.',
+        },
+      });
       continue;
     }
     // Legacy compatibility must still honor explicit current scope and route restrictions.
