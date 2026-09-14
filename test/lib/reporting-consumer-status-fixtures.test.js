@@ -78,6 +78,17 @@ test('portable consumer-status vectors retain exact bytes, clocks, principals, r
   };
   inspect(fixture.wire_parity);
   inspect(fixture.scenario_groups);
+
+  const restatement = fixture.scenario_groups.repair_and_restatement;
+  const mismatchIndex = restatement.findIndex(scenario => scenario.id === 'seller-restatement-mismatch');
+  const readbackIndex = restatement.findIndex(scenario => scenario.id === 'seller-restatement-readback');
+  assert.ok(mismatchIndex > 0 && mismatchIndex < readbackIndex);
+  const mismatch = restatement[mismatchIndex];
+  assert.equal(mismatch.seller_state.current_revision, 'portable-revision-0002');
+  assert.equal(mismatch.request.statuses[0].reporting_revision_id, 'portable-revision-0001');
+  assert.equal(mismatch.post_state.current_leaf, 'portable-status-repaired-0001');
+  assert.equal(mismatch.post_state.mismatch, true);
+  assert.equal(restatement[readbackIndex].post_state.mismatch, false);
 });
 
 test('portable wire-parity statuses cover all four rc.2 states and reject every declared mutation', () => {
