@@ -2559,6 +2559,29 @@ async function executeStoryboardPass(
   const routedStepRequirements = new Map<StoryboardStep, string>();
   const routedRootCapabilitySkips: string[] = [];
   const routedErrors = new Map<StoryboardStep, unknown>();
+  const reportedRoutingErrors = new Set<StoryboardStep>();
+  let context: StoryboardContext = { ...storyboard.context, ...options.context };
+  const routingFailedStep = (step: StoryboardStep, phaseId: string, err: unknown): StoryboardStepResult => {
+    const detail = redactOAuthUrlsInText(
+      err instanceof RoutingError ? err.message : ((err as Error)?.message ?? String(err))
+    );
+    const failedAgentKey = step.agent ?? options.default_agent;
+    const failedAgentUrl = failedAgentKey ? options.agents?.[failedAgentKey]?.url : undefined;
+    return {
+      storyboard_id: storyboard.id,
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: false,
+      duration_ms: 0,
+      validations: [],
+      context,
+      error: detail,
+      ...(failedAgentUrl && { agent_url: redactOAuthUrlForOutput(failedAgentUrl) }),
+      extraction: { path: 'none' },
+    };
+  };
   if (routingContext) {
     for (const phase of storyboard.phases) {
       for (const step of phase.steps) {
@@ -2674,10 +2697,31 @@ async function executeStoryboardPass(
     );
     if ('requirement' in requirementCheck) {
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
-      return {
-        ...buildRequirementUnmetResult(agentUrls, storyboard, requirementCheck.requirement, requirementCheck.detail),
-        notices: preflightNotices,
-      };
+      const result = buildRequirementUnmetResult(
+        agentUrls,
+        storyboard,
+        requirementCheck.requirement,
+        requirementCheck.detail
+      );
+      // Runtime adapters still prevent wire execution, but cannot erase
+      // routing failures already established by authoritative discovery.
+      for (const phase of storyboard.phases) {
+        const failures = phase.steps
+          .filter(step => routedErrors.has(step))
+          .map(step => routingFailedStep(step, phase.id, routedErrors.get(step)));
+        if (failures.length) {
+          result.phases.push({
+            phase_id: phase.id,
+            phase_title: phase.title,
+            passed: false,
+            steps: failures,
+            duration_ms: 0,
+          });
+          result.failed_count += failures.length;
+          result.overall_passed = false;
+        }
+      }
+      return { ...result, notices: preflightNotices };
     }
     if (requirementCheck.preparedPublisherAuthProbes) {
       options = withPreparedTrustedMatchPublisherAuth(options, requirementCheck.preparedPublisherAuthProbes);
@@ -2735,7 +2779,6 @@ async function executeStoryboardPass(
     }
   }
 
-  let context: StoryboardContext = { ...storyboard.context, ...options.context };
   if (storyboard.context) forwardAliasCache(storyboard.context, context);
   if (options.context) forwardAliasCache(options.context, context);
   const contributions = new Set<string>();
@@ -3136,27 +3179,6 @@ async function executeStoryboardPass(
       storyboard.requires?.includes('trusted_match_publisher_auth_runner') === true,
     fixtureBindings,
   });
-  const routingFailedStep = (step: StoryboardStep, phaseId: string, err: unknown): StoryboardStepResult => {
-    const detail = redactOAuthUrlsInText(
-      err instanceof RoutingError ? err.message : ((err as Error)?.message ?? String(err))
-    );
-    const failedAgentKey = step.agent ?? options.default_agent;
-    const failedAgentUrl = failedAgentKey ? options.agents?.[failedAgentKey]?.url : undefined;
-    return {
-      storyboard_id: storyboard.id,
-      step_id: step.id,
-      phase_id: phaseId,
-      title: step.title,
-      task: step.task,
-      passed: false,
-      duration_ms: 0,
-      validations: [],
-      context,
-      error: detail,
-      ...(failedAgentUrl && { agent_url: redactOAuthUrlForOutput(failedAgentUrl) }),
-      extraction: { path: 'none' },
-    };
-  };
 
   if (
     !creativeAssetFixtureGap &&
@@ -3233,11 +3255,11 @@ async function executeStoryboardPass(
     if (phaseCapabilitySkipDetail !== undefined) {
       const skippedSteps = routingContext
         ? phase.steps.map(step => {
-            const selected = dispatch.nextFor(step);
+            const selected = step.task === VALIDATION_ONLY_TASK ? undefined : dispatch.nextFor(step);
             const skipped = buildPhaseCapabilitySkippedSteps(
               storyboard,
               { ...phase, steps: [step] },
-              routedStepCapabilitySkips.get(step)!,
+              routedStepCapabilitySkips.get(step) ?? phaseCapabilitySkipDetail,
               context
             )[0]!;
             return {
@@ -3245,8 +3267,10 @@ async function executeStoryboardPass(
               ...(routedStepRequirements.has(step) && {
                 skip: { ...skipped.skip!, requirement: routedStepRequirements.get(step)! },
               }),
-              agent_url: redactOAuthUrlForOutput(selected.agentUrl),
-              agent_index: selected.instanceIndex + 1,
+              ...(selected && {
+                agent_url: redactOAuthUrlForOutput(selected.agentUrl),
+                agent_index: selected.instanceIndex + 1,
+              }),
             };
           })
         : buildPhaseCapabilitySkippedSteps(storyboard, phase, phaseCapabilitySkipDetail, context);
@@ -3365,6 +3389,7 @@ async function executeStoryboardPass(
     let phaseAbsent = false;
     const routedOauthAbsent = new Set<number>();
     let presenceDetected = false;
+    const routedOauthPresent = new Set<number>();
 
     if (shouldSkipPhase(phase, options, context)) {
       phaseResults.push({
@@ -3519,6 +3544,7 @@ async function executeStoryboardPass(
         // a failed step with the routing error verbatim so the report
         // tells the operator exactly what's missing.
         const failed = routingFailedStep(step, phase.id, err);
+        reportedRoutingErrors.add(step);
         stepResults.push(failed);
         countedAsFailed.add(failed);
         priorStepResults.set(step.id, failed);
@@ -3775,7 +3801,8 @@ async function executeStoryboardPass(
         } else {
           const status = (result.response as HttpProbeResult | undefined)?.status;
           if (typeof status === 'number' && status >= 200 && status < 300) {
-            presenceDetected = true;
+            if (routingContext) routedOauthPresent.add(assignment.instanceIndex);
+            else presenceDetected = true;
           }
         }
       }
@@ -3928,7 +3955,7 @@ async function executeStoryboardPass(
         // detected the agent IS advertising OAuth, subsequent validation
         // failures in this phase are hard failures (adcp-client#677). An
         // agent that serves PRM MUST serve it correctly.
-        if (!phase.optional || presenceDetected) {
+        if (!phase.optional || (routingContext ? routedOauthPresent.has(assignment.instanceIndex) : presenceDetected)) {
           failedCount++;
           countedAsFailed.add(result);
         }
@@ -4082,21 +4109,27 @@ async function executeStoryboardPass(
     priorPhaseIds.push(phase.id);
   }
 
-  // Fixture coverage gaps may suppress ordinary rows, but cannot turn a
-  // known failed route into a clean run. Preserve the gap and report each
-  // unresolved declared route that the preflight prevented us from reaching.
-  if ((fixtureUnsatisfied || creativeAssetFixtureGap) && routedErrors.size > 0) {
-    for (const phase of storyboard.phases) {
-      const result = phaseResults.find(p => p.phase_id === phase.id)!;
-      for (const step of phase.steps) {
-        if (!routedErrors.has(step) || result.steps.some(s => s.step_id === step.id)) continue;
-        const failed = routingFailedStep(step, phase.id, routedErrors.get(step));
+  // Preflight and phase skips cannot erase a known routing failure.
+  // Track authored step identity so repeated IDs in other phases remain distinct.
+  for (const phase of storyboard.phases) {
+    const result = phaseResults.find(p => p.phase_id === phase.id)!;
+    for (const step of phase.steps) {
+      if (!routedErrors.has(step) || reportedRoutingErrors.has(step)) continue;
+      const failed = routingFailedStep(step, phase.id, routedErrors.get(step));
+      const existingIndex = result.steps.findIndex(row => row.step_id === step.id);
+      if (existingIndex >= 0) {
+        const existing = result.steps[existingIndex]!;
+        if (existing.skipped) skippedCount--;
+        if (countedAsFailed.delete(existing)) failedCount--;
+        result.steps[existingIndex] = failed;
+      } else {
         result.steps.push(failed);
-        countedAsFailed.add(failed);
-        result.passed = false;
-        priorStepResults.set(step.id, failed);
-        failedCount++;
       }
+      reportedRoutingErrors.add(step);
+      countedAsFailed.add(failed);
+      result.passed = false;
+      priorStepResults.set(step.id, failed);
+      failedCount++;
     }
   }
 

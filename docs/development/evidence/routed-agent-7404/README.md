@@ -81,8 +81,9 @@ strategy is reached. An unused fallback cannot require another route. Failed
 stateful routes preserve the dependency cascade.
 Dynamic task references resolve before protocol routing and ambiguity checks, so a
 conflicting dynamic step cannot be discovered only after earlier calls have run. Tool-family applicability and fixture-availability skips cannot conceal an
-unresolved route or failed discovery. Independent missing runtime adapters remain
-explicit requirement skips before wire execution.
+unresolved route or failed discovery. Missing runtime adapters remain explicit requirement skips before wire execution;
+known routing failures are retained alongside those skips. Phase skips cannot
+erase a previously established routing failure.
 Runtime tool-family/controller availability remains a topology-level prerequisite;
 it cannot authorize a step that its selected agent does not advertise.
 
@@ -126,7 +127,7 @@ overrides, missing routes, discovery failures, stale caller lists, account-mode
 isolation, root/phase/conjunctive capabilities in reversed agent-map order,
 stateful cascades, creative preflight, dynamic tasks, actual per-agent Authorization headers and anonymous overrides, and mixed MCP/A2A
 transport with both run-level transport defaults. Additional tests cover OAuth
-metadata probes and 404 cascades, runtime adapters, validation-only rows, repeated
+metadata probes, 404 cascades, and per-agent presence accounting, runtime adapters, validation-only rows, repeated
 step IDs, implicit signing opt-in, fixture route failures and unavailable fixtures.
 Versioned declaration tests cover both
 selection seams and canonical storyboard IDs versus bundle aliases. Tests also

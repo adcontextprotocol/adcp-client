@@ -176,12 +176,13 @@ export function routedAgentOptions(
     // Scenario opt-in must be the selected agent's declaration too; a
     // comply() caller's controller cache belongs to its single agent.
     _controllerCapabilities:
-      scenarios && typeof scenarios === 'object' && tools.includes('comply_test_controller')
+      Array.isArray(scenarios) &&
+      scenarios.length > 0 &&
+      scenarios.every(s => typeof s === 'string') &&
+      tools.includes('comply_test_controller')
         ? {
             detected: true,
-            scenarios: Array.isArray(scenarios)
-              ? scenarios.filter((s): s is string => typeof s === 'string')
-              : Object.keys(scenarios),
+            scenarios,
           }
         : { detected: false },
     profile,
@@ -501,7 +502,7 @@ export function resolveAgentForStep(
       `protocol ${protocol} unclaimed`
     );
   }
-  // Tool not in TASK_FEATURE_MAP (e.g., sync_creatives, comply_test_controller,
+  // Tool not in TASK_FEATURE_MAP (e.g., sync_creatives, list_authorized_properties,
   // get_adcp_capabilities post-discovery, future tasks).
   if (options.default_agent) return options.default_agent;
   throw new RoutingError(

@@ -1826,7 +1826,7 @@ export interface StoryboardRunOptions extends TestOptions {
   agents?: Record<string, AgentEntry>;
   /**
    * Fallback agent key (must be present in `agents`) for tasks with no entry
-   * in `TASK_FEATURE_MAP` — e.g., `comply_test_controller`, future tasks
+   * in `TASK_FEATURE_MAP` — e.g., `sync_creatives`, future tasks
    * shipped before the SDK adds them to the map. When omitted, unmapped
    * tasks fail-fast with `unroutable_task`.
    */

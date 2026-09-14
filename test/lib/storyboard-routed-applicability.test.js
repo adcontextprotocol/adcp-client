@@ -13,7 +13,7 @@ const { routedAgentOptions } = require('../../dist/lib/testing/storyboard/agent-
 
 // Real routed discovery and MCP dispatch, with deterministic protocol fixtures.
 // No union/profile injection stands in for options.agents.
-async function startAgent(tools, capabilities = {}, rejectTools = false, products = []) {
+async function startAgent(tools, capabilities = {}, rejectTools = false, products = [], metadataStatus = 404) {
   const calls = [];
   const authorization = [];
   const connections = [];
@@ -21,7 +21,7 @@ async function startAgent(tools, capabilities = {}, rejectTools = false, product
   const server = http.createServer(async (req, res) => {
     if (req.url.includes('/.well-known/')) {
       metadataRequests.push(req.url);
-      res.writeHead(404, { 'content-type': 'application/json' });
+      res.writeHead(metadataStatus, { 'content-type': 'application/json' });
       res.end('{}');
       return;
     }
@@ -777,19 +777,21 @@ test('runtime requirements remain enforced with an unresolved route', async () =
   const { result, calls } = await run({ a: [[], { request_signing: { supported: true } }] }, sb);
   assert.equal(result.phases[0].steps[0].skip.requirement, 'webhook_receiver');
   assert.deepEqual(sets(result), {
-    selected: [],
+    selected: ['unroutable'],
     skipped: [['requirement_unmet:webhook_receiver', 'requirement_unmet']],
-    failed: [],
+    failed: ['unroutable'],
   });
   assert.deepEqual(calls, { a: ['get_adcp_capabilities'] });
 });
 
-test('a missing any-of tool family cannot conceal an unresolved selected route', async () => {
-  const sb = storyboard([{ id: 'unroutable', task: 'unknown_tool' }]);
-  sb.required_tools = ['absent_tool'];
-  const { result, calls } = await run({ a: [[], {}] }, sb);
-  assert.deepEqual(sets(result), { selected: ['unroutable'], skipped: [], failed: ['unroutable'] });
-  assert.deepEqual(calls, { a: ['get_adcp_capabilities'] });
+test('missing any-of tool gates cannot conceal an unresolved selected route', async () => {
+  for (const field of ['required_tools', 'required_any_of_tools']) {
+    const sb = storyboard([{ id: 'unroutable', task: 'unknown_tool' }]);
+    sb[field] = field === 'required_tools' ? ['absent_tool'] : [{ tools: ['absent_tool', 'another_absent_tool'] }];
+    const { result, calls } = await run({ a: [[], {}] }, sb);
+    assert.deepEqual(sets(result), { selected: ['unroutable'], skipped: [], failed: ['unroutable'] });
+    assert.deepEqual(calls, { a: ['get_adcp_capabilities'] });
+  }
 });
 
 test('implicit signing applicability preserves per-agent opt-in and requirement details', async () => {
@@ -808,8 +810,15 @@ test('implicit signing applicability preserves per-agent opt-in and requirement 
   assert.deepEqual(calls, { a: ['get_adcp_capabilities'], b: ['get_adcp_capabilities', 'get_adcp_capabilities'] });
 });
 
-test('routed controller scenario declarations accept object maps without inheriting another agent cache', () => {
-  for (const scenarios of [undefined, { query_upstream_traffic: 'supported' }]) {
+test('routed controller scenarios require a valid selected-agent declaration', () => {
+  for (const scenarios of [
+    undefined,
+    {},
+    { query_upstream_traffic: 'supported' },
+    [],
+    [1],
+    ['query_upstream_traffic'],
+  ]) {
     const selected = routedAgentOptions(
       { url: 'https://controller.example/mcp' },
       { _controllerCapabilities: { detected: true, scenarios: ['foreign'] } },
@@ -817,7 +826,9 @@ test('routed controller scenario declarations accept object maps without inherit
     );
     assert.deepEqual(
       selected._controllerCapabilities,
-      scenarios ? { detected: true, scenarios: ['query_upstream_traffic'] } : { detected: false }
+      Array.isArray(scenarios) && scenarios.length && typeof scenarios[0] === 'string'
+        ? { detected: true, scenarios: ['query_upstream_traffic'] }
+        : { detected: false }
     );
   }
 });
@@ -980,4 +991,109 @@ test('validation-only rows do not trigger fixture routes for a capability-skippe
     controller_a: ['get_adcp_capabilities'],
     controller_b: ['get_adcp_capabilities'],
   });
+});
+
+test('a skipped phase cannot erase its failed route or confuse a repeated step ID', async () => {
+  const sb = storyboard([]);
+  sb.context = { skip: true };
+  sb.phases = [
+    { id: 'read', title: 'Read', steps: [{ id: 'same', title: 'Same', task: 'get_adcp_capabilities', agent: 'a' }] },
+    {
+      id: 'skipped',
+      title: 'Skipped',
+      skip_if: 'context.skip',
+      steps: [{ id: 'same', title: 'Same', task: 'unknown_tool' }],
+    },
+  ];
+  const { result, calls } = await run({ a: [[], {}] }, sb);
+  assert.deepEqual(sets(result), { selected: ['same', 'same'], skipped: [], failed: ['same'] });
+  assert.equal(result.phases[0].steps[0].passed, true);
+  assert.equal(result.phases[1].steps[0].passed, false);
+  assert.equal(result.failed_count, 1);
+  assert.equal(result.overall_passed, false);
+  assert.deepEqual(calls, { a: ['get_adcp_capabilities', 'get_adcp_capabilities'] });
+});
+
+test('OAuth presence escalates optional failures only on the agent that served metadata', async () => {
+  const present = await startAgent(
+    ['get_signals'],
+    { oauth: { supported: true }, supported_protocols: ['signals'] },
+    true,
+    [],
+    200
+  );
+  const other = await startAgent(
+    ['get_signals'],
+    { oauth: { supported: true }, supported_protocols: ['signals'] },
+    true
+  );
+  try {
+    for (const failingAgent of ['other', 'present']) {
+      const sb = storyboard([{ id: 'read', task: 'get_adcp_capabilities', agent: 'other' }]);
+      sb.phases.push({
+        id: 'optional',
+        title: 'Optional',
+        optional: true,
+        steps: [
+          {
+            id: 'metadata',
+            title: 'Metadata',
+            task: 'protected_resource_metadata',
+            agent: 'present',
+            validations: [{ check: 'http_status', value: 200 }],
+          },
+          {
+            id: 'rejected',
+            title: 'Rejected',
+            task: 'get_signals',
+            agent: failingAgent,
+            sample_request: { signal_spec: 'test' },
+          },
+        ],
+      });
+      const result = await runStoryboard('', sb, {
+        allow_http: true,
+        invariants: [],
+        strictResponseSchemaValidation: false,
+        agents: { present: { url: present.url }, other: { url: other.url } },
+      });
+      assert.deepEqual(sets(result), { selected: ['read', 'metadata', 'rejected'], skipped: [], failed: ['rejected'] });
+      assert.equal(result.failed_count, failingAgent === 'present' ? 1 : 0);
+      assert.equal(result.overall_passed, failingAgent !== 'present');
+    }
+    assert.ok(present.metadataRequests.length > 0);
+    assert.deepEqual(other.metadataRequests, []);
+  } finally {
+    await closeConnections();
+    await present.close();
+    await other.close();
+  }
+});
+
+test('unavailable seed resolution retains its coverage gap and a known routing failure', async () => {
+  const sb = storyboard([{ id: 'unroutable', task: 'unknown_tool' }]);
+  sb.fixtures = { products: [{ product_id: 'declared-product' }] };
+  sb.fixture_resolution = { products: [{ handle: 'declared-product', strategies: ['seed'] }] };
+  const { result, calls } = await run(
+    { controller: [['comply_test_controller'], { compliance_testing: { scenarios: ['unrelated'] } }] },
+    sb
+  );
+  assert.deepEqual(
+    sets(result),
+    {
+      selected: ['unroutable'],
+      skipped: [],
+      failed: ['unroutable'],
+    },
+    JSON.stringify(result)
+  );
+  assert.equal(result.failed_count, 1);
+  assert.equal(result.skipped_count, 1);
+  assert.equal(result.overall_passed, false);
+  assert.deepEqual(
+    result.coverage_gaps.map(gap => gap.reason),
+    ['fixture_unsatisfied']
+  );
+  assert.equal(result.fixture_resolutions[0].strategies_attempted[0].disposition, 'unavailable');
+  assert.deepEqual(calls, { controller: ['get_adcp_capabilities'] });
 });
