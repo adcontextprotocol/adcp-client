@@ -3944,9 +3944,9 @@ async function executeStoryboardPass(
   }
 
   // Overall pass requires (a) no required-phase failures, (b) either an
-  // executed pass, every required phase grading canonically not_applicable,
-  // or every required step being gated by an unavailable test-kit contract,
-  // and (c) no assertion failures. Without (b), a storyboard where every phase
+  // executed pass or every required step being skipped because it is canonically
+  // not_applicable or gated by an unavailable test-kit contract, and (c) no
+  // assertion failures. Without (b), a storyboard where every phase
   // is optional or every required step is skipped for another reason (for
   // example, missing_tool) would pass vacuously. Contract-gated storyboards
   // are the deliberate exception: the runner has positively established that
@@ -3965,7 +3965,7 @@ async function executeStoryboardPass(
     return p.steps.some(s => !s.skipped && s.passed);
   });
   const requiredPhaseDefs = storyboard.phases.filter(phaseDef => !phaseDef.optional);
-  const requiredPhasesNotApplicable =
+  const requiredPhasesNonFailingSkipped =
     requiredPhaseDefs.length > 0 &&
     requiredPhaseDefs.every(phaseDef => {
       const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
@@ -3973,18 +3973,10 @@ async function executeStoryboardPass(
         !!phaseResult &&
         phaseResult.passed &&
         phaseResult.steps.length > 0 &&
-        phaseResult.steps.every(step => step.skipped && step.skip?.reason === 'not_applicable')
-      );
-    });
-  const requiredPhasesContractGated =
-    requiredPhaseDefs.length > 0 &&
-    requiredPhaseDefs.every(phaseDef => {
-      const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
-      return (
-        !!phaseResult &&
-        phaseResult.passed &&
-        phaseResult.steps.length > 0 &&
-        phaseResult.steps.every(step => step.skipped && step.skip_reason === 'missing_test_kit_contract')
+        phaseResult.steps.every(
+          step =>
+            step.skipped && (step.skip?.reason === 'not_applicable' || step.skip_reason === 'missing_test_kit_contract')
+        )
       );
     });
   const requiredPhasesCoveredByCapabilityGates =
@@ -3998,8 +3990,7 @@ async function executeStoryboardPass(
   const requiredPhasesPassed =
     !hasExecutableSteps ||
     requiredPhaseHasExecutedPass ||
-    requiredPhasesNotApplicable ||
-    requiredPhasesContractGated ||
+    requiredPhasesNonFailingSkipped ||
     (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
   const storyboardWideFixtureUnavailable =
     (seedingUnsupported || fixtureUnsatisfied || creativeAssetFixtureGap !== undefined) && failedCount === 0;
