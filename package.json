@@ -646,9 +646,9 @@
     "esbuild": "$esbuild",
     "rollup": ">=4.59.0",
     "@types/glob": "^8.1.0",
-    "js-yaml": "^4.1.1",
+    "js-yaml": "^4.3.2",
     "@changesets/parse": {
-      "js-yaml": "^3.14.1"
+      "js-yaml": "^3.15.2"
     },
     "minimatch": "^10.2.1"
   },
