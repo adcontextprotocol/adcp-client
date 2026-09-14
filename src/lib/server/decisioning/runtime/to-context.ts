@@ -220,7 +220,7 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
   // no-account tools, or buyers calling without auth). Adopter handlers
   // for those tools are responsible for either deriving the account
   // themselves (e.g., via `media_buy_id` ownership) or throwing
-  // `AdcpError('ACCOUNT_NOT_FOUND')` if account is required.
+  // `AdcpError('ACCOUNT_REQUIRED')` if account is required.
   //
   // The `RequestContext.account` type is non-optional for ergonomic typing
   // — adopters writing handlers for the 90% case (tools with `account` on

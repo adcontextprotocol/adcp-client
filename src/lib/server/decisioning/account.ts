@@ -468,9 +468,10 @@ export interface AccountToolContext<TCtxMeta = Record<string, unknown>> extends 
  *   2. **Auth-derived lookup** — in `accounts.resolve(undefined, ctx)`, look
  *      up by `ctx.authInfo.clientId` (or whichever principal field your auth
  *      wires) and return the matching account.
- *   3. **Error out** — throw `AdcpError({ code: 'ACCOUNT_NOT_FOUND' })` from
+ *   3. **Error out** — throw `AdcpError({ code: 'ACCOUNT_REQUIRED' })` from
  *      within the handler when `ctx.account == null` and the operation
- *      requires tenant scoping.
+ *      requires tenant scoping. The platform adapter does this automatically
+ *      for its account-required operations.
  *
  * The narrowed type catches the mismatch at authorship time — adopters who
  * forget to handle `ctx.account === undefined` get a TS error, not a runtime
@@ -669,8 +670,11 @@ export interface AccountStore<TCtxMeta = Record<string, unknown>> {
    * }
    * ```
    *
-   * Two failure shapes:
-   * - **Unknown / cross-tenant reference**: return `null` (canonical) — OR
+   * Three failure shapes:
+   * - **No buyer reference and no auth-derived selection**: return `null`.
+   *   Account-required operations emit correctable `ACCOUNT_REQUIRED`; truly
+   *   publisher-wide operations may continue without `ctx.account`.
+   * - **Unknown / cross-tenant buyer reference**: return `null` (canonical) — OR
    *   throw `AccountNotFoundError` if your codebase already throws a
    *   not-found exception class. Framework emits the spec's fixed
    *   `ACCOUNT_NOT_FOUND` envelope either way. The buyer learns no detail

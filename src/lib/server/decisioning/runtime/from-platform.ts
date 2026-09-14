@@ -1856,6 +1856,36 @@ function accountNotFoundSuggestion(resolution: AccountResolutionMode | undefined
   }
 }
 
+const ACCOUNT_VIA_RESOURCE_TOOLS = new Set(['refine_proposals', 'decline_proposals']);
+
+function accountRequiredSuggestion(toolName: string, resolution: AccountResolutionMode | undefined): string {
+  const viaResource = ACCOUNT_VIA_RESOURCE_TOOLS.has(toolName);
+  switch (normalizeAccountResolution(resolution)) {
+    case 'implicit':
+      return 'Call sync_accounts to associate an account with this authenticated principal, then retry without an inline account_id.';
+    case 'derived':
+      return viaResource
+        ? 'Provide a context_id or proposal reference whose owning account the seller can resolve; use list_accounts to discover reachable accounts.'
+        : 'Call list_accounts to discover the accounts your credential can reach, then retry with account: { account_id }.';
+    default:
+      return viaResource
+        ? 'Provide a context_id or proposal reference whose owning account the seller can resolve.'
+        : 'Pass the account reference required by this seller; use list_accounts to discover available accounts when supported.';
+  }
+}
+
+function missingAccountError(toolName: string, resolution: AccountResolutionMode | undefined): AdcpError {
+  const asyncDiscovery = toolName === 'get_products' || toolName === 'get_signals';
+  return new AdcpError('ACCOUNT_REQUIRED', {
+    message: asyncDiscovery
+      ? `Async ${toolName} and push_notification_config require an account selection, but the request and authentication did not identify one`
+      : `${toolName} requires an account selection, but the request and referenced resources did not identify one`,
+    recovery: 'correctable',
+    field: ACCOUNT_VIA_RESOURCE_TOOLS.has(toolName) ? 'context_id' : 'account',
+    suggestion: accountRequiredSuggestion(toolName, resolution),
+  });
+}
+
 /**
  * Defense in depth for `resolution: 'derived'`: the account a resolver hands
  * back for a buyer-named `{ account_id }` MUST be that account.
@@ -3196,20 +3226,41 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     //     regardless of declared `resolution` mode; only adopters who
     //     intentionally don't model these tools return null.
     //
-    // A `null` return is legal — handler runs with `ctx.account`
-    // undefined. Appropriate for tools that don't need tenant scoping
-    // (publisher-wide format catalogs).
+    // A `null` return is legal for tools that don't need tenant scoping
+    // (publisher-wide format catalogs). Authenticated compact mutations
+    // instead get the mode-aware ACCOUNT_REQUIRED envelope below; anonymous
+    // calls fall through so the dispatcher's AUTH_MISSING gate keeps priority.
     resolveAccountFromAuth: async ctx => {
       const start = Date.now();
       let resolved = false;
       let resolvedAccountId: string | undefined;
+      const compactAccountRequired =
+        COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(ctx.toolName) && authenticatedPrincipalFor(ctx) !== undefined;
       try {
         const account = await platform.accounts.resolve(undefined, toResolveCtx(ctx, ctx.toolName, ctx.input));
         resolved = account != null;
         resolvedAccountId = account?.id;
+        if (account == null && compactAccountRequired) {
+          throw missingAccountError(ctx.toolName, platform.accounts.resolution);
+        }
         return account;
       } catch (err) {
-        if (err instanceof AccountNotFoundError) return null;
+        if (err instanceof AccountNotFoundError) {
+          if (compactAccountRequired) {
+            throw missingAccountError(ctx.toolName, platform.accounts.resolution);
+          }
+          return null;
+        }
+        if (
+          err instanceof AdcpError &&
+          err.code === 'ACCOUNT_NOT_FOUND' &&
+          COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(ctx.toolName)
+        ) {
+          if (compactAccountRequired) {
+            throw missingAccountError(ctx.toolName, platform.accounts.resolution);
+          }
+          return null;
+        }
         throw err;
       } finally {
         safeFire(
@@ -4147,6 +4198,15 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
             resolvedAccount = resolved;
           }
         } catch (err) {
+          if (err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND') {
+            const missing = missingAccountError('tasks_get', platform.accounts.resolution);
+            return adcpError(missing.code, {
+              message: missing.message,
+              recovery: missing.recovery,
+              field: missing.field,
+              suggestion: missing.suggestion,
+            });
+          }
           if (!(err instanceof AccountNotFoundError)) {
             logger.error?.('Auth-derived account resolution failed during tasks_get poll', {
               error: err instanceof Error ? err.message : String(err),
@@ -4180,9 +4240,12 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       }
 
       if (resolvedAccountId === undefined) {
-        return adcpError('REFERENCE_NOT_FOUND', {
-          message: `Task ${args.task_id} not found`,
-          field: 'task_id',
+        const missing = missingAccountError('tasks_get', platform.accounts.resolution);
+        return adcpError(missing.code, {
+          message: missing.message,
+          recovery: missing.recovery,
+          field: missing.field,
+          suggestion: missing.suggestion,
         });
       }
       const ownerCtx: HandlerContext<Account> = withImmutableServedAdcpVersion(
@@ -4880,7 +4943,7 @@ function taskOwnerScopeFor(ctx: HandlerContext<Account>, accountId: string): str
   return `account:${accountId}`;
 }
 
-function authenticatedPrincipalFor(ctx: HandlerContext<Account>): string | undefined {
+function authenticatedPrincipalFor(ctx: Pick<HandlerContext<Account>, 'agent' | 'authInfo'>): string | undefined {
   if (ctx.agent?.agent_url) return `agent:${ctx.agent.agent_url}`;
   const credential = ctx.authInfo?.credential;
   if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
@@ -6295,10 +6358,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
     resolveScope: ctx => {
       const accountId = ctx.account?.id;
       if (!accountId) {
-        throw new AdcpError('ACCOUNT_NOT_FOUND', {
-          message: 'refine_proposals requires an authenticated account scope',
-          recovery: 'correctable',
-        });
+        throw missingAccountError('refine_proposals', platform.accounts.resolution);
       }
       const principalId = authenticatedPrincipalFor(ctx);
       if (!principalId) {
@@ -6313,10 +6373,7 @@ function buildProposalNegotiationHandlers<P extends DecisioningPlatform<any, any
       const request = params as unknown as Readonly<Record<string, unknown>>;
       const reqCtx = ctxFor(ctx, request);
       if (!reqCtx.account?.id) {
-        throw new AdcpError('ACCOUNT_NOT_FOUND', {
-          message: 'refine_proposals requires an authenticated account scope',
-          recovery: 'correctable',
-        });
+        throw missingAccountError('refine_proposals', platform.accounts.resolution);
       }
       return projectSync(
         async () => {
@@ -6394,10 +6451,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         const accountId = ctx.account?.id;
         if (!accountId) {
-          throw new AdcpError('ACCOUNT_NOT_FOUND', {
-            message: `${tool} requires a resolved account scope`,
-            recovery: 'correctable',
-          });
+          throw missingAccountError(tool, platform.accounts.resolution);
         }
         const principalId = authenticatedPrincipalFor(ctx);
         if (!principalId) {
@@ -6681,11 +6735,7 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
             }
             const accountId = reqCtx.account?.id;
             if (accountId === undefined) {
-              throw new AdcpError('INVALID_REQUEST', {
-                message: 'Async get_products and push_notification_config require account-scoped discovery.',
-                field: 'account',
-                recovery: 'correctable',
-              });
+              throw missingAccountError('get_products', platform.accounts.resolution);
             }
             return routeIfHandoff(
               taskRegistry,
@@ -7582,11 +7632,7 @@ function buildSignalsHandlers<P extends DecisioningPlatform<any, any>>(
           }
           const accountId = reqCtx.account?.id;
           if (accountId === undefined) {
-            throw new AdcpError('INVALID_REQUEST', {
-              message: 'Async get_signals and push_notification_config require account-scoped discovery.',
-              field: 'account',
-              recovery: 'correctable',
-            });
+            throw missingAccountError('get_signals', platform.accounts.resolution);
           }
           return routeIfHandoff(
             taskRegistry,

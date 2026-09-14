@@ -69,6 +69,17 @@ describe('decideRetry — operator-grade defaults', () => {
   });
 
   describe('correctable codes mutate-and-retry with FRESH idempotency_key + jitter', () => {
+    it('ACCOUNT_REQUIRED → re-discover the account and retry', () => {
+      const d = decideRetry(
+        err('ACCOUNT_REQUIRED', { field: 'account', suggestion: 'use list_accounts to select an account' })
+      );
+      assert.equal(d.action, 'mutate-and-retry');
+      assert.equal(d.sameIdempotencyKey, false);
+      assert.equal(d.reason, 'redirect');
+      assert.equal(d.field, 'account');
+      assert.match(d.suggestion, /list_accounts/);
+    });
+
     it('PACKAGE_NOT_FOUND → mutate-and-retry (redirect) with delayMs jitter', () => {
       const d = decideRetry(err('PACKAGE_NOT_FOUND', { field: 'package_id', suggestion: 'verify via get_media_buys' }));
       assert.equal(d.action, 'mutate-and-retry');

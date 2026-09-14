@@ -51,7 +51,8 @@
  *    external creative agents still receive a response.
  * 3. **Explicit-mode with defensive read** — cast `ctx.account as Account |
  *    undefined` and derive the account from the request body (e.g., via a
- *    `media_buy_id` lookup), or throw `AdcpError('ACCOUNT_NOT_FOUND')`.
+ *    `media_buy_id` lookup), or throw `AdcpError('ACCOUNT_REQUIRED')` when
+ *    the request omitted the account needed to select a tenant.
  *    Full `resolveAccount(undefined, { authInfo, toolName })` support for
  *    explicit-mode lands in rc.1.
  *

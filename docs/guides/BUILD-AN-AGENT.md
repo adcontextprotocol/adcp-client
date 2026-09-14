@@ -179,7 +179,7 @@ serve(() => createAdcpServerFromPlatform(platform, { name: 'My Publisher', versi
 - **Compile-time specialism enforcement** via `RequiredPlatformsFor<S>` — claim `'sales-non-guaranteed'` and the typechecker requires `SalesCorePlatform & SalesIngestionPlatform` on `sales` (`SalesPlatform` was split in 6.7 with all methods individually optional; per-specialism enforcement moves up to the type-level).
 - **Auto-generates `get_adcp_capabilities`** from registered platform methods — no manual capability declaration.
 - **Auto-applies response builders** — return raw data, the framework wraps them in MCP `CallToolResult` with `structuredContent`.
-- **Resolves accounts** — `accounts.resolve(ref, ctx)` runs before your platform method, the resolved account lands at `ctx.account`. Returns `ACCOUNT_NOT_FOUND` envelope if resolution returns null. `accounts.resolution: 'implicit'` enforces inline-`{account_id}` refusal at the framework boundary (post-6.7 — pre-6.7 the docstring was aspirational).
+- **Resolves accounts** — `accounts.resolve(ref, ctx)` runs before your platform method, and the resolved account lands at `ctx.account`. A buyer-supplied unknown, unauthorized, or mismatched ref returns terminal `ACCOUNT_NOT_FOUND`; an account-required operation with no supplied or auth-derived selection returns correctable `ACCOUNT_REQUIRED`. `accounts.resolution: 'implicit'` enforces inline-`{account_id}` refusal at the framework boundary (post-6.7 — pre-6.7 the docstring was aspirational).
 - **Idempotency, signing, async tasks, status normalization, lifecycle state** are framework-owned. Synchronous terminal responses do not emit completion webhooks by default; the inline result is authoritative. Adopters write the business decisions.
 - **Catches handler errors** — unhandled exceptions return `SERVICE_UNAVAILABLE` instead of crashing. Throw a typed error class (see § "Returning errors from handlers") to surface a structured envelope.
 
@@ -426,7 +426,7 @@ mediaBuy: {
 
 ### Account Resolution
 
-`AccountStore.resolve(ref, ctx)` runs before every platform method. The resolved account lands at `ctx.account`. If `resolve` returns `null`, the framework responds with `ACCOUNT_NOT_FOUND` and your method never runs.
+`AccountStore.resolve(ref, ctx)` runs before every platform method. The resolved account lands at `ctx.account`. If a supplied ref resolves to `null`, the framework responds with terminal `ACCOUNT_NOT_FOUND`. If no ref was supplied and auth-derived resolution cannot select an account, account-required operations respond with correctable `ACCOUNT_REQUIRED`; account-optional operations may still run without `ctx.account`.
 
 ```typescript
 import { definePlatform, refAccountId, AccountNotFoundError } from '@adcp/sdk/server';
@@ -447,7 +447,7 @@ const platform = definePlatform({
       if (ctx?.authInfo?.credential?.client_id) {
         return db.findByClient(ctx.authInfo.credential.client_id);
       }
-      return null; // → ACCOUNT_NOT_FOUND
+      return null; // account-required operation → ACCOUNT_REQUIRED
     },
   },
   sales: defineSalesCorePlatform({

@@ -319,9 +319,10 @@ export function createDerivedAccountStore<TCtxMeta = Record<string, unknown>>(
       // mode; `null` here is the defensive path for direct resolver calls.
       if (ref !== undefined) return null;
 
-      // Ref-less call (tools with no `account` field on the wire). Auto-select
-      // only when the credential reaches exactly one account — ambiguity
-      // resolves to ACCOUNT_NOT_FOUND, never to an arbitrary pick.
+      // Ref-less call (including tools with no `account` field on the wire).
+      // Auto-select only when the credential reaches exactly one account —
+      // an account-required operation projects any other roster size as
+      // ACCOUNT_REQUIRED, never as an arbitrary pick.
       const accounts = await reachable(ctx);
       return accounts.length === 1 ? accounts[0]! : null;
     },

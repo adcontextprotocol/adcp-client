@@ -89,8 +89,10 @@ entity, not the ephemeral token.
 
 ### 3 · When no sync has happened
 
-Return `null` from `resolve()`. The framework emits `ACCOUNT_NOT_FOUND` to
-the buyer with `recovery: 'terminal'`.
+Return `null` from `resolve()`. When the request omitted `account`, the
+framework emits `ACCOUNT_REQUIRED` with `recovery: 'correctable'` and guidance
+to call `sync_accounts`. A buyer-supplied reference that does not resolve still
+emits `ACCOUNT_NOT_FOUND` with `recovery: 'terminal'`.
 
 **Do NOT return `AUTH_REQUIRED`, `AUTH_MISSING`, or `AUTH_INVALID`.** Those
 errors signal missing or rejected credentials — not a missing pre-sync. Buyers
@@ -101,7 +103,7 @@ receiving auth errors will refresh credentials or escalate, not call
 // ✓ Correct
 resolve: async (_ref, ctx) => {
   const account = await db.findByPrincipal(extractKey(ctx?.authInfo));
-  return account ?? null;  // null → ACCOUNT_NOT_FOUND
+  return account ?? null;  // omitted account → ACCOUNT_REQUIRED
 },
 
 // ✗ Wrong — misleads buyers about how to recover
@@ -112,9 +114,11 @@ resolve: async (_ref, ctx) => {
 },
 ```
 
-You MAY add a `details.hint` on the `ACCOUNT_NOT_FOUND` error in your error
-normalizer (SDK extension point) if your platform's documentation mentions
-it, but the error code itself must remain `ACCOUNT_NOT_FOUND`.
+Do not replace the omitted-account result with an auth error. The framework's
+`ACCOUNT_REQUIRED` suggestion tells the buyer to establish the implicit
+linkage. For buyer-supplied unknown, unauthorized, or mismatched references,
+the error code must remain `ACCOUNT_NOT_FOUND` to preserve enumeration
+resistance.
 
 ### 4 · TTL and sync-linkage staleness
 
@@ -219,7 +223,10 @@ The contract:
    `list_accounts` suggestion — a natural key is not a durable reference into
    someone else's roster.
 3. Your `resolve` **verifies** that id against what the *caller's credential*
-   can reach, and returns `null` on a miss (framework → `ACCOUNT_NOT_FOUND`).
+   can reach. A buyer-supplied miss returns `null` (framework → terminal
+   `ACCOUNT_NOT_FOUND`). On ref-less operations, zero or multiple reachable
+   accounts return `null`; account-required operations then emit correctable
+   `ACCOUNT_REQUIRED` with `list_accounts` guidance.
    `createDerivedAccountStore` does this for you. As a backstop the framework
    also refuses a resolved account whose `id` isn't the one the buyer named —
    that catches a resolver that ignores `ref`, but it can't tell whether your
@@ -281,7 +288,8 @@ accounts: {
     // (The framework also refuses a resolved account whose id isn't the one
     // the buyer named — but own the check; it's your tenant boundary.)
     if (id !== undefined) return reachable.find(a => a.id === id) ?? null;
-    // Ref-less tools: auto-select only when there is exactly one.
+    // Ref-less tools: auto-select only when there is exactly one. An
+    // account-required operation maps any other roster size to ACCOUNT_REQUIRED.
     return reachable.length === 1 ? reachable[0] : null;
   },
   // The framework does not filter or page for you: honor req.account /
