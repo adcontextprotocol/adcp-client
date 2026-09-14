@@ -1,5 +1,12 @@
 # Changelog
 
+## 13.0.4
+
+### Patch Changes
+
+- 87faf5c: Align capability-driven suite selection with the storyboard runner's any-of `required_tools` semantics.
+- 763f158: Restore packaged response validation for compliance controller tools when an external protocol schema bundle has no matching schema.
+
 ## 13.0.3
 
 ### Patch Changes
