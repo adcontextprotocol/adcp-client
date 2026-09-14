@@ -1010,10 +1010,67 @@ function requiredOffering(
   return offering;
 }
 
+/**
+ * A configuration named a reserved capability this seller does not implement.
+ *
+ * Distinct from an ordinary validation failure because the buyer's request was
+ * well formed: callers map this to `UNSUPPORTED_FEATURE` rather than to
+ * `VALIDATION_ERROR`, which is what tells the buyer to stop retrying the same
+ * shape and wait for the capability instead of correcting a field.
+ */
+export class UnsupportedReportingFeatureError extends Error {
+  readonly code = 'UNSUPPORTED_FEATURE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnsupportedReportingFeatureError';
+  }
+}
+
+/**
+ * Reject a reserved `authoritative_party` before a configuration generation can
+ * become ready.
+ *
+ * `authoritative_party: 'consumer'` is reserved for a buyer-deposited billing
+ * revision task that no released AdCP version defines. The wire schema keeps
+ * the value parseable precisely so a seller can answer `UNSUPPORTED_FEATURE`
+ * instead of a parse error — which means the refusal has to live in seller
+ * code. Coercing to `'seller'` would silently install a different contract than
+ * the buyer asked for, and relaxing the billing implication for that value
+ * would let a buyer-authoritative billing feed through with no consumer receipt
+ * and no delivery method.
+ *
+ * Call this from a `sync_accounts` handler on each requested
+ * `reporting_delivery_configs[].configuration` as well; `installConfiguration`
+ * applies it to the SDK's own install path.
+ *
+ * @see https://github.com/adcontextprotocol/adcp/issues/7440
+ */
+export function assertSupportedReportingAuthoritativeParty(configuration: {
+  delivery_config_id?: string;
+  authoritative_party?: unknown;
+  authoritativeParty?: unknown;
+}): void {
+  const requested = configuration.authoritative_party ?? configuration.authoritativeParty;
+  if (requested === undefined || requested === 'seller') return;
+  const label = configuration.delivery_config_id ? ` "${configuration.delivery_config_id}"` : '';
+  throw new UnsupportedReportingFeatureError(
+    `Reporting delivery configuration${label} requests authoritative_party ${JSON.stringify(requested)}, ` +
+      'which no AdCP 3.2 seller implements. See https://github.com/adcontextprotocol/adcp/issues/7440.'
+  );
+}
+
 function validateConfigurationAgainstOffering(
   configuration: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'>,
   offering: ReportingSourceOfferingV1
 ): void {
+  // Refuse the reserved capability before any other validation so the buyer
+  // gets UNSUPPORTED_FEATURE rather than an incidental complaint about a
+  // field it would have had to change anyway.
+  assertSupportedReportingAuthoritativeParty({
+    delivery_config_id: configuration.delivery_config_id,
+    authoritativeParty: configuration.authoritativeParty,
+  });
   positiveInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
   if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
     throw new Error('Reporting period must be representable as whole ISO 8601 seconds');

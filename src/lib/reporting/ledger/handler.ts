@@ -15,12 +15,14 @@ import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from '
 import { compareReportingInstants } from './instant';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
+  ReportingConsumerMismatchEscalationV1,
   ReportingHealthV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerConsumerStatementV1,
   ReportingLedgerCoverageV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
+  ReportingLedgerRevisionSnapshotV1,
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
   ReportingDeliveryHandlerV1,
@@ -29,6 +31,15 @@ import type {
 
 export interface ReportingStatusConsumerScopeOptionsV1<TContext = unknown> {
   resolveConsumerId(context: TContext): string | Promise<string>;
+  /**
+   * Mirror of the seller's advertised `consumer_mismatch_escalation_seconds` +
+   * `operations_contact` capability block. Supply it only when the capability
+   * document actually advertises both — the projection uses it to decide when
+   * an unattended `CONSUMER_STATUS_MISMATCH` must become `action_required`
+   * with a `contact_*` action, and advertising a window the reads don't honor
+   * (or honoring one the document doesn't advertise) is worse than silence.
+   */
+  consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
 }
 
 export function createReportingStatusHandler<TContext = unknown>(
@@ -176,21 +187,32 @@ export function createReportingStatusHandler<TContext = unknown>(
           []
         ).filter(value => consumerStatusMatchesObligation(value, obligation));
         const currentConsumerStatus = currentStatusLeaf(consumerStatusProjection);
-        const mismatch = consumerStatusMismatch(currentConsumerStatus, revisions, projection.health);
-        const mismatchIssue =
-          mismatch && currentConsumerStatus
-            ? consumerStatusMismatchIssue(obligation, currentConsumerStatus, page.snapshot.ledgerAsOf)
-            : undefined;
+        const mismatch = projectReportingConsumerStatusMismatchV1(
+          obligation,
+          currentConsumerStatus,
+          revisions,
+          projection.health,
+          page.snapshot.ledgerAsOf,
+          options?.consumerMismatchEscalation
+        );
+        // A buyer that owes a status and has not posted one is a counted
+        // unknown, never a conflict: it creates no issue, changes no health,
+        // and is invisible to every other caller.
+        const consumerStatusPending =
+          consumerId !== undefined &&
+          consumerStatusProjection.length === 0 &&
+          compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) >= 0;
         return {
           obligation,
           revisions,
           consumerStatusHistory,
           consumerStatusProjection,
           currentConsumerStatus,
+          consumerStatusPending,
           projection: {
             ...projection,
-            ...(mismatch ? { health: 'action_required' as const } : {}),
-            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatchIssue ? [mismatchIssue] : [])]),
+            ...(mismatch ? { health: mismatch.health } : {}),
+            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
           },
         };
       });
@@ -303,7 +325,13 @@ export function createReportingStatusHandler<TContext = unknown>(
         ),
         data_through: aggregateDataThrough(selected),
         ...nextExpectedAt(selected),
-        obligation_counts: counts(healthValues),
+        obligation_counts: counts(
+          healthValues,
+          // Required whenever the seller advertises consumer_status_task, which
+          // in this handler is exactly when a consumer principal is resolved.
+          // It overlaps the health counts rather than partitioning them.
+          consumerId !== undefined ? selected.filter(value => value.consumerStatusPending).length : undefined
+        ),
         issues: issues.map(wireIssue),
       } as never;
     } finally {
@@ -489,22 +517,138 @@ function currentStatusLeaf(
   return statuses.find(value => !superseded.has(value.reporting_status_id));
 }
 
-function consumerStatusMismatch(
-  status: ReportingLedgerConsumerStatementV1 | undefined,
-  revisions: Array<{ reporting_revision_id: string; revisionNumber: number }>,
-  sellerHealth: ReportingHealthV1
-): boolean {
-  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return false;
-  if (status.consumer_status !== 'received') return true;
-  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-  return !current || status.reporting_revision_id !== current.reporting_revision_id;
+/**
+ * Caller-scoped consumer-status disagreement, projected from immutable ledger
+ * facts only.
+ *
+ * `health` is the caller/account view this mismatch forces. Everything except
+ * a stale-`received` statement inside its grace window is immediately
+ * `action_required`.
+ */
+export interface ReportingConsumerStatusMismatchProjectionV1 {
+  issue: ReportingLedgerIssueV1;
+  health: 'delayed' | 'action_required';
+  /**
+   * Boundary at which a `received` statement made stale by a seller
+   * restatement stops being `delayed`. Absent for every other conflict kind,
+   * which never had a grace window to begin with.
+   */
+  staleReceivedGraceDeadline?: string;
 }
 
-function consumerStatusMismatchIssue(
+/**
+ * Project the caller-scoped consumer-status mismatch for one obligation.
+ *
+ * Separately attributed by construction: it degrades only this authenticated
+ * caller's view and never touches seller-authored obligation, revision, or
+ * reliability evidence. Returns `undefined` when the caller's current leaf
+ * agrees with the seller's projection, when there is no leaf at all (silence
+ * is a counted unknown, not a conflict — see `consumer_status_pending`), or
+ * when the seller's own projection is already degraded and therefore carries
+ * its own production issue.
+ */
+export function projectReportingConsumerStatusMismatchV1(
   obligation: ReportingLedgerObligationV1,
-  status: ReportingLedgerConsumerStatementV1,
-  observedAt: string
-): ReportingLedgerIssueV1 {
+  status: ReportingLedgerConsumerStatementV1 | undefined,
+  revisions: readonly Pick<
+    ReportingLedgerRevisionSnapshotV1,
+    'reporting_revision_id' | 'revisionNumber' | 'supersedes_reporting_revision_id' | 'createdAt'
+  >[],
+  sellerHealth: ReportingHealthV1,
+  ledgerAsOf: string,
+  escalation?: ReportingConsumerMismatchEscalationV1
+): ReportingConsumerStatusMismatchProjectionV1 | undefined {
+  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return undefined;
+
+  let staleReceivedGraceDeadline: string | undefined;
+  // `openedAt` must survive re-emission, so both branches anchor it to an
+  // immutable ledger instant rather than to `ledgerAsOf`. Using the read time
+  // would restart the escalation clock on every poll.
+  let openedAt = status.recorded_at;
+
+  if (status.consumer_status === 'received') {
+    const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+    // The buyer named the revision the seller still requires: no disagreement.
+    if (current && status.reporting_revision_id === current.reporting_revision_id) return undefined;
+    const firstSuperseding = firstSupersedingRevision(revisions, status.reporting_revision_id);
+    if (firstSuperseding) {
+      // Stale only because the seller restated. The buyer consumed exactly what
+      // was then required and has not yet had a bounded chance to re-read, so
+      // the deadline is anchored to the FIRST supersession of the revision the
+      // buyer named. Later restatements supersede later revisions, so they
+      // cannot restart this window — a seller cannot hold a genuinely
+      // unresolved mismatch below `action_required` by restating on a timer.
+      const slaMilliseconds = obligation.schedule.deliverySlaMilliseconds;
+      const graceMilliseconds = slaMilliseconds > 0 ? slaMilliseconds : obligation.schedule.recoveryWindowMilliseconds;
+      staleReceivedGraceDeadline = new Date(
+        instant(firstSuperseding.createdAt, 'revision createdAt') + graceMilliseconds
+      ).toISOString();
+      openedAt = firstSuperseding.createdAt;
+    }
+    // No revision claims to supersede the one the buyer named, so the SDK
+    // cannot prove the buyer read what the seller then required. Fail closed
+    // to the immediate-escalation path rather than granting an unearned grace.
+  }
+
+  const nowMilliseconds = instant(ledgerAsOf, 'ledgerAsOf');
+  const escalated =
+    escalation !== undefined && nowMilliseconds >= instant(openedAt, 'openedAt') + escalation.escalationSeconds * 1_000;
+  const withinGrace =
+    staleReceivedGraceDeadline !== undefined &&
+    nowMilliseconds < instant(staleReceivedGraceDeadline, 'staleReceivedGraceDeadline');
+  // The escalation boundary takes precedence over the grace window when the
+  // two overlap: an unattended mismatch is an escalation, not a retry.
+  const severity: 'delayed' | 'action_required' = !escalated && withinGrace ? 'delayed' : 'action_required';
+  const responsibleParty: ReportingLedgerIssueV1['responsibleParty'] =
+    status.consumer_status === 'unreadable' ? 'provider' : 'seller';
+
+  return {
+    issue: {
+      issueId: consumerStatusMismatchIssueId(obligation, status),
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      reporting_status_id: status.reporting_status_id,
+      code: 'CONSUMER_STATUS_MISMATCH',
+      severity,
+      responsibleParty,
+      recommendedAction: consumerStatusMismatchAction(status, severity, responsibleParty, escalated),
+      openedAt,
+      observedAt: ledgerAsOf,
+    },
+    health: severity,
+    ...(staleReceivedGraceDeadline ? { staleReceivedGraceDeadline } : {}),
+  };
+}
+
+/**
+ * Earliest revision that explicitly supersedes `reportingRevisionId`.
+ *
+ * Ordered by `createdAt` with `revisionNumber` as the tie-break so the anchor
+ * is stable even when two revisions share a commit instant.
+ */
+function firstSupersedingRevision<
+  T extends { revisionNumber: number; supersedes_reporting_revision_id?: string; createdAt: string },
+>(revisions: readonly T[], reportingRevisionId: string | undefined): T | undefined {
+  if (!reportingRevisionId) return undefined;
+  return revisions
+    .filter(revision => revision.supersedes_reporting_revision_id === reportingRevisionId)
+    .sort(
+      (left, right) =>
+        compareReportingInstants(left.createdAt, right.createdAt) || left.revisionNumber - right.revisionNumber
+    )[0];
+}
+
+/**
+ * The issue identity is one logical condition: this obligation plus the exact
+ * consumer statement that caused it. Deliberately excludes severity and the
+ * read time so the same `issueId` and `openedAt` carry across the `delayed` →
+ * `action_required` transition and consumers age one work item instead of two.
+ * A consumer superseding the causing statement is a new condition and
+ * correctly produces a new `issueId`.
+ */
+function consumerStatusMismatchIssueId(
+  obligation: ReportingLedgerObligationV1,
+  status: ReportingLedgerConsumerStatementV1
+): string {
   const digest = createHash('sha256')
     .update(
       canonicalJsonV1({
@@ -515,17 +659,29 @@ function consumerStatusMismatchIssue(
     )
     .digest('hex')
     .slice(0, 32);
-  return {
-    issueId: `rpti_${digest}`,
-    reporting_obligation_id: obligation.reporting_obligation_id,
-    reporting_status_id: status.reporting_status_id,
-    code: 'CONSUMER_STATUS_MISMATCH',
-    severity: 'action_required',
-    responsibleParty: status.consumer_status === 'unreadable' ? 'provider' : 'seller',
-    recommendedAction: status.consumer_status === 'unreadable' ? 'repair_access' : 'contact_seller',
-    openedAt: observedAt,
-    observedAt,
-  };
+  return `rpti_${digest}`;
+}
+
+function consumerStatusMismatchAction(
+  status: ReportingLedgerConsumerStatementV1,
+  severity: 'delayed' | 'action_required',
+  responsibleParty: ReportingLedgerIssueV1['responsibleParty'],
+  escalated: boolean
+): ReportingLedgerIssueV1['recommendedAction'] {
+  // Past the advertised escalation boundary the action must name a human on
+  // the diagnosed party. `wait_for_retry` and `repair_access` are both
+  // automation hints, so neither may survive that boundary.
+  if (escalated) {
+    return responsibleParty === 'provider' ? 'contact_provider' : 'contact_seller';
+  }
+  if (severity === 'delayed') return 'wait_for_retry';
+  return status.consumer_status === 'unreadable' ? 'repair_access' : 'contact_seller';
+}
+
+function instant(value: string, name: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) throw new TypeError(`${name} must be an RFC 3339 instant`);
+  return parsed;
 }
 
 function wireConsumerStatus(status: ReportingLedgerConsumerStatementV1) {
@@ -576,6 +732,13 @@ function wireIssue(issue: ReportingLedgerIssueV1) {
     severity: issue.severity,
     responsible_party: issue.responsibleParty,
     recommended_action: issue.recommendedAction,
+    opened_at: issue.openedAt,
+    // Omission means `open`, so only emit a state a store actually set. A
+    // retired issue is removed from the projection rather than published at
+    // `resolved` / `waived`, which keeps "nonempty issues[] means degraded"
+    // true for readers.
+    ...(issue.issueState === 'open' || issue.issueState === 'acknowledged' ? { issue_state: issue.issueState } : {}),
+    ...(issue.externalRef ? { external_ref: issue.externalRef } : {}),
     ...(issue.reporting_status_id ? { reporting_status_id: issue.reporting_status_id } : {}),
     ...(issue.reporting_obligation_id === 'scope' ? {} : { reporting_obligation_id: issue.reporting_obligation_id }),
   };
@@ -653,7 +816,7 @@ function nextExpectedAt(
   return values[0] ? { next_expected_at: values[0] } : {};
 }
 
-function counts(values: ReportingHealthV1[]) {
+function counts(values: ReportingHealthV1[], consumerStatusPending?: number) {
   return {
     total: values.length,
     waiting: values.filter(value => value === 'waiting').length,
@@ -661,6 +824,10 @@ function counts(values: ReportingHealthV1[]) {
     delayed: values.filter(value => value === 'delayed').length,
     action_required: values.filter(value => value === 'action_required').length,
     complete: values.filter(value => value === 'complete').length,
+    // Visibility count over the caller's own silence. Never a health input: it
+    // must not change health, any other count, or advertised reliability
+    // statistics, so it is computed independently of `values`.
+    ...(consumerStatusPending !== undefined ? { consumer_status_pending: consumerStatusPending } : {}),
   };
 }
 
