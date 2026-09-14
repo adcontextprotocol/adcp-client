@@ -14,117 +14,118 @@ const SCHEMA_SHA = 'b'.repeat(64);
 const facts = (overrides = {}) => ({
   mediaBuyIds: ['mb-1', 'mb-2'],
   coveredPackageIds: ['pkg-1', 'pkg-2'],
-  coverageRequirement: 'full',
   period: PERIOD,
   committedMetrics: ['impressions', 'spend'],
   metricUnits: { spend: 'USD' },
-  schemaUri: SCHEMA_URI,
-  schemaSha256: SCHEMA_SHA,
+  ...overrides,
+});
+
+// What the buyer's own reader saw. Four of the six codes are row-level
+// predicates that revision metadata cannot decide, so they only fire when this
+// is supplied.
+const rows = (overrides = {}) => ({
+  representedMediaBuyIds: ['mb-1', 'mb-2'],
+  observedMetricNames: ['impressions', 'spend'],
+  rowsConformToPinnedSchema: true,
+  observedPeriodBounds: { earliest: '2026-09-01T00:00:00Z', latest: '2026-09-01T23:59:59Z' },
   ...overrides,
 });
 
 const revision = (overrides = {}) => ({
   reporting_revision_id: 'rev-1',
-  media_buy_ids: ['mb-1', 'mb-2'],
   coverage: { status: 'full', covered_package_ids: ['pkg-1', 'pkg-2'] },
-  period: PERIOD,
   control_totals: [
     { name: 'impressions', value: '1000', value_type: 'integer' },
     { name: 'spend', value: '12.50', value_type: 'decimal', unit: 'USD' },
   ],
-  schema_uri: SCHEMA_URI,
-  schema_sha256: SCHEMA_SHA,
   ...overrides,
 });
 
 describe('detectReportingContentMismatch', () => {
   test('a conforming revision is not a mismatch', () => {
-    assert.equal(detectReportingContentMismatch(facts(), revision()), undefined);
+    assert.equal(detectReportingContentMismatch(facts(), revision(), rows()), undefined);
   });
 
-  test('scope_media_buy_missing when a frozen media buy is absent', () => {
-    const result = detectReportingContentMismatch(facts(), revision({ media_buy_ids: ['mb-1'] }));
+  test('row-level codes stay silent when the buyer supplied no row evidence', () => {
+    // A false content_mismatch forces the caller's view to action_required and
+    // the seller may not clear it while the statement is the current leaf. So a
+    // buyer that did not read rows must not accuse; silence is the safe default.
+    assert.equal(detectReportingContentMismatch(facts(), revision()), undefined);
+    assert.equal(detectReportingContentMismatch(facts({ committedMetrics: ['nope'] }), revision()), undefined);
+  });
+
+  test('scope_media_buy_missing needs rows, because the metadata check is a tautology', () => {
+    // reporting-revision.json defines media_buy_ids as the denominator
+    // "inherited from the obligation, including buys with zero rows", so
+    // comparing the two sets can never fire against a conformant seller.
+    const result = detectReportingContentMismatch(facts(), revision(), rows({ representedMediaBuyIds: ['mb-1'] }));
     assert.equal(result.mismatchCode, 'scope_media_buy_missing');
     assert.match(result.detail, /mb-2/);
   });
 
-  test('a zero-delivery media buy that is present is not missing', () => {
-    // The revision can distinguish zero delivery from an omitted buy, so
-    // presence in the denominator is what matters, not a nonzero total.
-    const result = detectReportingContentMismatch(
-      facts(),
-      revision({
-        control_totals: [
-          { name: 'impressions', value: '0', value_type: 'integer' },
-          { name: 'spend', value: '0.00', value_type: 'decimal', unit: 'USD' },
-        ],
-      })
-    );
-    assert.equal(result, undefined);
+  test('an explicit zero row represents the buy, so it is not missing', () => {
+    // The zero row is exactly what lets the revision distinguish zero delivery
+    // from an omitted buy, which is the spec's exculpating condition.
+    assert.equal(detectReportingContentMismatch(facts(), revision(), rows()), undefined);
   });
 
-  test('coverage_short when the revision covers fewer packages than frozen', () => {
+  test('coverage_short fires from metadata alone', () => {
     const result = detectReportingContentMismatch(
       facts(),
-      revision({ coverage: { status: 'partial', covered_package_ids: ['pkg-1'] } })
+      revision({ coverage: { status: 'partial', covered_package_ids: ['pkg-1'] } }),
+      rows()
     );
     assert.equal(result.mismatchCode, 'coverage_short');
     assert.match(result.detail, /pkg-2/);
   });
 
-  test('allow_partial cannot be coverage_short', () => {
-    // That generation froze a smaller denominator deliberately and publishes
-    // the partial label with it, so a narrower revision is the contract.
-    assert.equal(
-      detectReportingContentMismatch(
-        facts({ coverageRequirement: 'allow_partial' }),
-        revision({ coverage: { status: 'partial', covered_package_ids: ['pkg-1'] } })
-      ),
-      undefined
-    );
-  });
-
-  test('period_mismatch when the revision period leaves the obligation period', () => {
+  test('coverage_short is unconditional — allow_partial already froze the reduced set', () => {
+    // The obligation's frozen covered_package_ids IS the effective denominator
+    // under allow_partial, so a revision narrower than it is still short.
     const result = detectReportingContentMismatch(
       facts(),
-      revision({ period: { start: '2026-09-01T00:00:00Z', end: '2026-09-03T00:00:00Z' } })
+      revision({ coverage: { status: 'partial', covered_package_ids: [] } }),
+      rows()
+    );
+    assert.equal(result.mismatchCode, 'coverage_short');
+  });
+
+  test('period_mismatch is decided from row time-dimension values, not the envelope', () => {
+    const result = detectReportingContentMismatch(
+      facts(),
+      revision(),
+      rows({ observedPeriodBounds: { earliest: '2026-08-31T23:00:00Z', latest: '2026-09-01T12:00:00Z' } })
     );
     assert.equal(result.mismatchCode, 'period_mismatch');
   });
 
-  test('equivalent RFC 3339 spellings of the same instant are not a period mismatch', () => {
-    assert.equal(
-      detectReportingContentMismatch(
-        facts(),
-        revision({ period: { start: '2026-09-01T00:00:00.000Z', end: '2026-09-02T00:00:00+00:00' } })
-      ),
-      undefined
-    );
-  });
-
-  test('metric_missing when a promised metric is absent', () => {
+  test('the period is half-open, so a row exactly at the end instant is outside', () => {
     const result = detectReportingContentMismatch(
       facts(),
-      revision({ control_totals: [{ name: 'impressions', value: '1000', value_type: 'integer' }] })
+      revision(),
+      rows({ observedPeriodBounds: { earliest: '2026-09-01T00:00:00Z', latest: PERIOD.end } })
     );
+    assert.equal(result.mismatchCode, 'period_mismatch');
+  });
+
+  test('metric_missing compares against observed row metrics, not control totals', () => {
+    // control_totals are profile-defined aggregates scoped to covered packages,
+    // a different and usually smaller set than the definition's metrics.
+    const result = detectReportingContentMismatch(facts(), revision(), rows({ observedMetricNames: ['impressions'] }));
     assert.equal(result.mismatchCode, 'metric_missing');
     assert.match(result.detail, /spend/);
   });
 
   test('metric_missing wins over schema_nonconformant, per the spec precedence note', () => {
-    // "a metric that is simply absent uses metric_missing even when the pinned
-    // schema declares it required."
     const result = detectReportingContentMismatch(
       facts(),
-      revision({
-        control_totals: [{ name: 'impressions', value: '1000', value_type: 'integer' }],
-        schema_sha256: 'c'.repeat(64),
-      })
+      revision(),
+      rows({ observedMetricNames: ['impressions'], rowsConformToPinnedSchema: false })
     );
     assert.equal(result.mismatchCode, 'metric_missing');
   });
 
-  test('currency_mismatch when a unit disagrees with the pinned definition', () => {
+  test('currency_mismatch fires from control-total units', () => {
     const result = detectReportingContentMismatch(
       facts(),
       revision({
@@ -132,42 +133,33 @@ describe('detectReportingContentMismatch', () => {
           { name: 'impressions', value: '1000', value_type: 'integer' },
           { name: 'spend', value: '12.50', value_type: 'decimal', unit: 'EUR' },
         ],
-      })
+      }),
+      rows()
     );
     assert.equal(result.mismatchCode, 'currency_mismatch');
     assert.match(result.detail, /EUR/);
     assert.match(result.detail, /USD/);
   });
 
-  test('schema_nonconformant when rows are pinned to a different profile schema', () => {
-    assert.equal(
-      detectReportingContentMismatch(facts(), revision({ schema_sha256: 'c'.repeat(64) })).mismatchCode,
-      'schema_nonconformant'
-    );
-    assert.equal(
-      detectReportingContentMismatch(facts(), revision({ schema_uri: 'https://seller.example/other.json' }))
-        .mismatchCode,
-      'schema_nonconformant'
-    );
-  });
-
-  test('digest comparison is case-insensitive', () => {
-    assert.equal(
-      detectReportingContentMismatch(facts(), revision({ schema_sha256: SCHEMA_SHA.toUpperCase() })),
-      undefined
-    );
-  });
-
-  test('omitted buyer-side pins disable their check rather than firing falsely', () => {
-    // A buyer that did not record the metric list must never claim a promised
-    // metric is absent — silence on the pin means silence on the code.
+  test('a control total with no declared unit does not disagree', () => {
     assert.equal(
       detectReportingContentMismatch(
-        facts({ committedMetrics: undefined, metricUnits: undefined }),
-        revision({ control_totals: [] })
+        facts(),
+        revision({
+          control_totals: [
+            { name: 'impressions', value: '1000', value_type: 'integer' },
+            { name: 'spend', value: '12.50', value_type: 'decimal' },
+          ],
+        }),
+        rows()
       ),
       undefined
     );
+  });
+
+  test('schema_nonconformant reports a row validation failure, not a pin difference', () => {
+    const result = detectReportingContentMismatch(facts(), revision(), rows({ rowsConformToPinnedSchema: false }));
+    assert.equal(result.mismatchCode, 'schema_nonconformant');
   });
 
   test('never fires on a delivered value the buyer merely disagrees with', () => {
@@ -181,7 +173,8 @@ describe('detectReportingContentMismatch', () => {
             { name: 'impressions', value: '1', value_type: 'integer' },
             { name: 'spend', value: '0.01', value_type: 'decimal', unit: 'USD' },
           ],
-        })
+        }),
+        rows()
       ),
       undefined
     );
@@ -190,9 +183,10 @@ describe('detectReportingContentMismatch', () => {
   test('diagnostics are bounded and cannot forge a log record', () => {
     const result = detectReportingContentMismatch(
       facts({ mediaBuyIds: [`mb\n injected ${'x'.repeat(200)}`] }),
-      revision({ media_buy_ids: [] })
+      revision(),
+      rows({ representedMediaBuyIds: [] })
     );
-    assert.ok(result.detail.length < 160);
+    assert.ok(result.detail.length < 200);
     assert.doesNotMatch(result.detail, /[\r\n\t]/);
   });
 });

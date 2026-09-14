@@ -12,6 +12,9 @@ import type {
   SyncReportingReceiptsResponse,
 } from '../types/tools.generated';
 import { generateIdempotencyKey } from '../utils/idempotency';
+
+/** `sync-reporting-status-request.json` caps `statuses` at 100 per batch. */
+const CONSUMER_STATUS_BATCH_MAX = 100;
 import {
   detectReportingContentMismatch,
   type ReportingContractFactsV1,
@@ -160,6 +163,12 @@ interface ExpectedReportingPeriodBase {
    * unknown, whereas posting on a guessed clock would churn the status chain.
    */
   automatedRecoveryWindowSeconds?: number;
+  /**
+   * `period.source_timezone` for the accepted generation. Used only when the
+   * seller omitted the obligation, since the chain's logical key needs it and
+   * there is then no obligation to read it from.
+   */
+  periodSourceTimezone?: string;
   /** Consumer-pinned finality rule, required whenever an official revision is accepted. */
   officialFinality?: {
     policyId: string;
@@ -266,6 +275,12 @@ export interface ReportingConsumerStatusPlanV1 {
   deadline?: string;
   /** True once the deadline has passed — the status is owed now, not at scope close. */
   overdue: boolean;
+  /**
+   * When the consumer established this status. Derived from immutable evidence
+   * — the revision's observation instant for `received`, the deadline or
+   * ledger instant otherwise — so an exact retry is byte-identical.
+   */
+  statusAsOf: string;
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -336,6 +351,12 @@ interface ReconcileReportingBaseOptions {
   inspectionRetryBaseDelayMs?: number;
   ledgerLimits?: ReportingLedgerLimits;
   now?: Date;
+  /**
+   * The seller's advertised `operations_contact`, recorded by the buyer from
+   * the capability document. Surfaced on every escalation so an SDK user can
+   * page a human. Inert display metadata — never dereference it.
+   */
+  operationsContact?: { url?: string; email?: string };
 }
 
 type ReportingCheckpointOptions =
@@ -1262,10 +1283,20 @@ function planReportingConsumerStatuses(
 ): ReportingConsumerStatusPlanV1[] {
   const missing = new Set(missingExpectedPeriods);
   return expectedPeriods.map(expected => {
+    const obligationForPeriod = ledger.obligations.find(candidate =>
+      expectedPeriodMatches(expected, candidate, ledger)
+    );
+    // `source_timezone` is part of the consumer-status chain's logical key, so
+    // a wrong value forks the chain rather than failing loudly. Prefer the
+    // seller's own obligation, fall back to the buyer's pin, and only then to
+    // UTC.
     const period = {
       start: expected.periodStart,
       end: expected.periodEnd,
-      source_timezone: 'UTC',
+      source_timezone:
+        (obligationForPeriod as { period?: { source_timezone?: string } } | undefined)?.period?.source_timezone ??
+        expected.periodSourceTimezone ??
+        'UTC',
     };
     const base = {
       deliveryConfigId: expected.deliveryConfigId,
@@ -1284,16 +1315,18 @@ function planReportingConsumerStatuses(
         // buyer derived this period independently, so it is owed as soon as its
         // own recovery window has elapsed past the period end.
         ...independentDeadline(expected, now),
+        statusAsOf: expected.periodEnd,
         reason: 'the independently expected period is absent from the seller ledger',
       };
     }
 
-    const obligation = ledger.obligations.find(candidate => expectedPeriodMatches(expected, candidate, ledger));
+    const obligation = obligationForPeriod;
     if (!obligation) {
       return {
         ...base,
         consumerStatus: 'obligation_missing' as const,
         ...independentDeadline(expected, now),
+        statusAsOf: expected.periodEnd,
         reason: 'no obligation in the ledger matches this expected period',
       };
     }
@@ -1316,6 +1349,7 @@ function planReportingConsumerStatuses(
         ...chain,
         ...(deadline ? { deadline } : {}),
         overdue,
+        statusAsOf: deadline ?? String(obligation.expected_at),
         reason: 'the obligation exists but no required revision was available',
       };
     }
@@ -1332,6 +1366,7 @@ function planReportingConsumerStatuses(
         mismatchCode: mismatch.mismatchCode,
         ...(deadline ? { deadline } : {}),
         overdue,
+        statusAsOf: revisionObservedAt(revision),
         reason: mismatch.detail,
       };
     }
@@ -1345,6 +1380,8 @@ function planReportingConsumerStatuses(
       ...chain,
       ...(deadline ? { deadline } : {}),
       overdue,
+      // "when the named revision first became consumable to this consumer".
+      statusAsOf: revisionObservedAt(revision),
       reason: 'the exact revision content was consumed and honors every frozen contract fact',
     };
   });
@@ -1367,6 +1404,11 @@ function independentDeadline(expected: ExpectedReportingPeriod, now: Date): { de
   return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
 }
 
+/** When the named revision first became consumable, from immutable revision evidence. */
+function revisionObservedAt(revision: ManagedReportingRevision): string {
+  return String(revision.observed_at ?? revision.created_at ?? '');
+}
+
 /** Facts the accepted generation froze, drawn from the obligation plus the buyer's own pins. */
 function contractFactsFor(
   obligation: ManagedReportingObligation,
@@ -1375,12 +1417,9 @@ function contractFactsFor(
   return {
     ...(Array.isArray(obligation.media_buy_ids) ? { mediaBuyIds: obligation.media_buy_ids } : {}),
     ...(obligation.coverage?.covered_package_ids ? { coveredPackageIds: obligation.coverage.covered_package_ids } : {}),
-    coverageRequirement: expected.coverageRequirement,
     period: { start: expected.periodStart, end: expected.periodEnd },
     ...(expected.committedMetrics ? { committedMetrics: expected.committedMetrics } : {}),
     ...(expected.metricUnits ? { metricUnits: expected.metricUnits } : {}),
-    schemaUri: expected.schemaUri,
-    schemaSha256: expected.schemaSha256,
   };
 }
 
@@ -1409,10 +1448,15 @@ function reportingConsumerStatusDeadline(
  * Flatten seller-reported issues into a page-a-human shape, carrying the rc.3
  * lifecycle fields and the advertised escalation destination.
  */
-function collectReportingEscalations(ledger: ReportingLedger): ReportingEscalationV1[] {
-  const operationsContact = (
-    ledger.scope as { reporting_delivery?: { operations_contact?: { url?: string; email?: string } } }
-  ).reporting_delivery?.operations_contact;
+function collectReportingEscalations(
+  ledger: ReportingLedger,
+  options?: { operationsContact?: { url?: string; email?: string } }
+): ReportingEscalationV1[] {
+  // Not read from the ledger: `operations_contact` lives on
+  // reporting-delivery-capabilities.json, and get_reporting_status's `scope` is
+  // additionalProperties:false with no such key. Reading it there was dead code
+  // that could never populate, so the buyer supplies its own recorded copy.
+  const operationsContact = options?.operationsContact;
   const escalations: ReportingEscalationV1[] = [];
   for (const obligation of ledger.obligations) {
     for (const issue of (obligation as { issues?: Array<Record<string, unknown>> }).issues ?? []) {
@@ -1520,7 +1564,13 @@ function buildExpectedIdentityIndex(
 export function evaluateReportingLedger(
   ledger: ReportingLedger,
   expectedPeriods: ExpectedReportingPeriod[] | undefined,
-  now = new Date()
+  now = new Date(),
+  /**
+   * The seller's advertised `operations_contact`, as the buyer recorded it from
+   * the capability document. It is not carried on any `get_reporting_status`
+   * response, so it cannot be derived here.
+   */
+  operationsContact?: { url?: string; email?: string }
 ): Omit<ReportingReconciliationResult, 'submittedReceipts'> {
   assertDirectReportingLedgerGraph(ledger);
   const obligationResults: ObligationReconciliation[] = [];
@@ -1568,7 +1618,7 @@ export function evaluateReportingLedger(
     expected => !ledger.obligations.some(obligation => expectedPeriodMatches(expected, obligation, ledger))
   );
   const consumerStatuses = planReportingConsumerStatuses(ledger, expectedPeriods ?? [], missingExpectedPeriods, now);
-  const escalations = collectReportingEscalations(ledger);
+  const escalations = collectReportingEscalations(ledger, { ...(operationsContact ? { operationsContact } : {}) });
   const scopeDefinitive = ledger.scope.scope_closed && ledger.scope.coverage_complete;
   return {
     definitive:
@@ -1852,7 +1902,7 @@ export async function reconcileReporting<TCredential = unknown>(
     );
   }
 
-  const evaluated = evaluateReportingLedger(ledger, options.expectedPeriods, options.now);
+  const evaluated = evaluateReportingLedger(ledger, options.expectedPeriods, options.now, options.operationsContact);
 
   // rc.3 buyer duty: a current status is owed by `expected_at` plus the
   // seller's advertised recovery window — not merely before the scope closes.
@@ -1862,15 +1912,18 @@ export async function reconcileReporting<TCredential = unknown>(
   const postedConsumerStatuses: ReportingConsumerStatusPlanV1[] = [];
   if (owed.length > 0 && options.client.syncReportingStatus) {
     const deadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
-    for (const plan of owed) {
-      const idempotencyKey = generateIdempotencyKey();
+    // One batch per request, up to the schema's maxItems. Posting one call per
+    // status against a single shared budget meant a later timeout threw away
+    // the record of everything the seller had already accepted.
+    for (let offset = 0; offset < owed.length; offset += CONSUMER_STATUS_BATCH_MAX) {
+      const batch = owed.slice(offset, offset + CONSUMER_STATUS_BATCH_MAX);
       const response = await callBeforeDeadline(
         signal =>
           options.client.syncReportingStatus!(
             {
               ...(options.request.account ? { account: options.request.account } : {}),
-              idempotency_key: idempotencyKey,
-              statuses: [wireConsumerStatus(plan)],
+              idempotency_key: generateIdempotencyKey(),
+              statuses: batch.map(wireConsumerStatus),
             },
             { signal }
           ),
@@ -1879,16 +1932,18 @@ export async function reconcileReporting<TCredential = unknown>(
         'sync_reporting_status exceeded the reporting request deadline'
       );
       const results = Array.isArray(response.results) ? response.results : [];
-      const result = results[0] as { result?: string } | undefined;
-      if (response.status !== 'completed' || results.length !== 1 || !result) {
+      if (response.status !== 'completed' || results.length !== batch.length) {
         throw new ReportingReconciliationError(
           'CONSUMER_STATUS_WRITE_FAILED',
-          'seller did not return one result for the submitted consumer status'
+          'seller did not return one result per submitted consumer status'
         );
       }
-      // Partial-success batch: each status is independent, and a failed one
-      // must not be reported as posted.
-      if (['recorded', 'unchanged'].includes(result.result ?? '')) postedConsumerStatuses.push(plan);
+      // Partial success: each status is independent, so a failed sibling must
+      // not be reported as posted and must not discard its successful peers.
+      batch.forEach((plan, index) => {
+        const result = results[index] as { result?: string } | undefined;
+        if (result && ['recorded', 'unchanged'].includes(result.result ?? '')) postedConsumerStatuses.push(plan);
+      });
     }
   }
 
@@ -1922,6 +1977,7 @@ function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1): Record<string,
           plan.reportingRevisionId ?? null,
           plan.observedRevisionContentSha256 ?? null,
           plan.supersedesReportingStatusId ?? null,
+          plan.statusAsOf,
         ])
       )
       .digest('hex')
@@ -1932,7 +1988,12 @@ function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1): Record<string,
     report_definition_id: plan.reportDefinitionId,
     period: plan.period,
     consumer_status: plan.consumerStatus,
-    status_as_of: new Date().toISOString(),
+    // Deterministic, not the reconcile clock. The ID is derived from statement
+    // content, so a wall-clock timestamp would make an "exact retry" reuse the
+    // same ID with different content — which the spec calls an idempotency
+    // conflict. For `received` the spec also wants when the revision first
+    // became consumable, not when we happened to poll.
+    status_as_of: plan.statusAsOf,
     ...(plan.reportingObligationId ? { reporting_obligation_id: plan.reportingObligationId } : {}),
     ...(plan.reportingRevisionId ? { reporting_revision_id: plan.reportingRevisionId } : {}),
     ...(plan.observedRevisionContentSha256
@@ -1954,12 +2015,38 @@ function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1): Record<string,
 async function readReportingConsumerStatusPending<TCredential>(
   options: ReconcileReportingOptions<TCredential>
 ): Promise<number | undefined> {
+  // Only a seller advertising `consumer_status_task` populates the field, and
+  // the client only carries `syncReportingStatus` for such a seller. Skipping
+  // otherwise avoids an unconditional extra round trip for every adopter.
+  if (!options.client.syncReportingStatus) return undefined;
+  // The summary view forbids `health` and `changes_after`, and `pagination` /
+  // `reporting_revision_id` are periods/revision concerns. Spreading the
+  // periods request wholesale made the call fail exactly on the incremental
+  // path, where the bare catch then hid it.
+  const {
+    health: _health,
+    changes_after: _changesAfter,
+    pagination: _pagination,
+    reporting_revision_id: _revisionId,
+    ...summaryRequest
+  } = options.request as Record<string, unknown>;
   try {
-    const summary = await options.client.getReportingStatus({ ...options.request, view: 'summary' });
+    const summary = await callBeforeDeadline(
+      signal =>
+        options.client.getReportingStatus(
+          { ...(summaryRequest as unknown as GetReportingStatusRequest), view: 'summary' },
+          { signal }
+        ),
+      Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000),
+      'CONSUMER_STATUS_PENDING_READ_FAILED',
+      'summary get_reporting_status exceeded the reporting request deadline'
+    );
     const counts = (summary as { obligation_counts?: { consumer_status_pending?: unknown } }).obligation_counts;
     const pending = counts?.consumer_status_pending;
     return typeof pending === 'number' && Number.isInteger(pending) && pending >= 0 ? pending : undefined;
   } catch {
+    // Visibility, not evidence: a seller that omits the field and a read that
+    // failed are both "unknown", and neither should fail reconciliation.
     return undefined;
   }
 }
