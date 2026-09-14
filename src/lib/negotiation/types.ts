@@ -10,7 +10,14 @@ import type {
   ProductPurchase as GeneratedProductPurchase,
 } from '../types/core.generated';
 
-export type { CanonicalDeliveryForecast, CanonicalForecastPoint } from '../types/core.generated';
+export type {
+  AcceptanceContext,
+  CanonicalDeliveryForecast,
+  CanonicalForecastPoint,
+  MediaBuyFrequencyCap,
+  OutcomeTarget,
+  ProductMediaBuySupportRequirements,
+} from '../types/core.generated';
 
 export const PROPOSAL_REFINEMENT_DIMENSIONS = [
   'total_budget',

@@ -166,6 +166,16 @@ export function validateRefineProposalsRequest(
         fail('remove_media_buy_frequency_cap must be true when provided', `${base}.remove_media_buy_frequency_cap`);
       }
       if (
+        refinement.remove_media_buy_frequency_cap === true &&
+        isRecord(refinement.criteria) &&
+        refinement.criteria.media_buy_frequency_cap !== undefined
+      ) {
+        fail(
+          'remove_media_buy_frequency_cap cannot be combined with criteria.media_buy_frequency_cap',
+          `${base}.remove_media_buy_frequency_cap`
+        );
+      }
+      if (
         refinement.change_kind !== undefined &&
         refinement.change_kind !== 'amendment' &&
         refinement.change_kind !== 'cancellation'
@@ -236,7 +246,16 @@ function validateConstraints(refinement: Extract<ProposalRefinement, { action: '
     if (Object.keys(refinement.criteria).length === 0) fail('criteria must not be empty', `${base}.criteria`);
     validateNonemptyUniqueStrings(refinement.criteria.product_ids, `${base}.criteria.product_ids`);
     validateNonemptyUniqueStrings(refinement.criteria.policy_ids, `${base}.criteria.policy_ids`);
-    for (const key of ['offer_filters', 'targeting_overlay', 'required_overlay_support', 'ext'] as const) {
+    for (const key of [
+      'offer_filters',
+      'targeting_overlay',
+      'media_buy_frequency_cap',
+      'required_overlay_support',
+      'required_media_buy_support',
+      'outcome_target',
+      'acceptance_context',
+      'ext',
+    ] as const) {
       if (refinement.criteria[key] !== undefined && !isRecord(refinement.criteria[key])) {
         fail(`${key} must be an object`, `${base}.criteria.${key}`);
       }

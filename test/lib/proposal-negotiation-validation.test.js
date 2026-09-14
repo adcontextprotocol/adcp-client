@@ -11,6 +11,7 @@ const {
   assertProposalCommercialTerms,
   buildRefineProposalsRequest,
   canonicalize,
+  createProposalRefinementHandler,
   extractProposalRefinementSupport,
   proposalTermsDigest,
   validateRefineProposalsRequest,
@@ -702,6 +703,111 @@ test('remove_media_buy_frequency_cap rejects false even beside another revision'
       error.field === 'refinements[0].remove_media_buy_frequency_cap' &&
       error.message.includes('must be true when provided')
   );
+});
+
+test('remove_media_buy_frequency_cap rejects a contradictory replacement cap', () => {
+  assert.throws(
+    () =>
+      buildRefineProposalsRequest({
+        refinements: [
+          {
+            proposal_id: 'source-1',
+            action: 'revise',
+            remove_media_buy_frequency_cap: true,
+            criteria: {
+              media_buy_frequency_cap: {
+                max_impressions: 3,
+                per: 'individuals',
+                window: { interval: 1, unit: 'days' },
+              },
+            },
+          },
+        ],
+      }),
+    error =>
+      error instanceof ProposalRefinementValidationError &&
+      error.field === 'refinements[0].remove_media_buy_frequency_cap' &&
+      error.message.includes('cannot be combined with criteria.media_buy_frequency_cap')
+  );
+});
+
+test('seller admission rejects contradictory frequency-cap instructions before callbacks', async () => {
+  let callbackReached = false;
+  const handler = createProposalRefinementHandler({
+    capabilities: { supported_dimensions: ['criteria'] },
+    scope: () => {
+      callbackReached = true;
+      return { tenant_id: 'seller-tenant', principal_id: 'buyer-a' };
+    },
+    store: {
+      get: () => {
+        callbackReached = true;
+        return null;
+      },
+    },
+    evaluate: () => {
+      callbackReached = true;
+      throw new Error('seller evaluation must not run');
+    },
+  });
+
+  await assert.rejects(
+    handler(
+      {
+        adcp_version: '3.2',
+        adcp_major_version: 3,
+        idempotency_key: 'contradictory-cap-key-0001',
+        refinements: [
+          {
+            proposal_id: 'source-1',
+            action: 'revise',
+            remove_media_buy_frequency_cap: true,
+            criteria: {
+              media_buy_frequency_cap: {
+                max_impressions: 3,
+                per: 'individuals',
+                window: { interval: 1, unit: 'days' },
+              },
+            },
+          },
+        ],
+      },
+      {}
+    ),
+    error =>
+      error?.name === 'AdcpError' &&
+      error.code === 'VALIDATION_ERROR' &&
+      error.field === 'refinements[0].remove_media_buy_frequency_cap' &&
+      error.message.includes('cannot be combined with criteria.media_buy_frequency_cap')
+  );
+  assert.equal(callbackReached, false);
+});
+
+test('schema-backed proposal discovery criteria require object values', () => {
+  for (const field of [
+    'media_buy_frequency_cap',
+    'required_media_buy_support',
+    'outcome_target',
+    'acceptance_context',
+  ]) {
+    assert.throws(
+      () =>
+        buildRefineProposalsRequest({
+          refinements: [
+            {
+              proposal_id: 'source-1',
+              action: 'revise',
+              criteria: { [field]: [] },
+            },
+          ],
+        }),
+      error =>
+        error instanceof ProposalRefinementValidationError &&
+        error.field === `refinements[0].criteria.${field}` &&
+        error.message === `${field} must be an object`,
+      field
+    );
+  }
 });
 
 test('compact submitted responses validate without completed-field access', () => {

@@ -53,6 +53,14 @@ export type {
   PlacementPresentationDocument,
   PlacementPresentationReference,
 } from './core.generated';
+// Supporting proposal-discovery criteria types are part of the public 3.2
+// negotiation surface and must not require deep generated-file imports.
+export type {
+  AcceptanceContext,
+  MediaBuyFrequencyCap,
+  OutcomeTarget,
+  ProductMediaBuySupportRequirements,
+} from './core.generated';
 import type { FormatReferenceStructuredObject } from './core.generated';
 export type { RequireCacheScopeWhenProducts, ServerPayload } from './server-payload';
 export * from './server-payload-aliases';

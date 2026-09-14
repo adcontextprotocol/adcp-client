@@ -1,14 +1,22 @@
 import type {
+  AcceptanceContext as RootAcceptanceContext,
   CanonicalDeliveryForecast as RootCanonicalDeliveryForecast,
   CanonicalForecastPoint as RootCanonicalForecastPoint,
   CanonicalProposal,
+  MediaBuyFrequencyCap as RootMediaBuyFrequencyCap,
+  OutcomeTarget as RootOutcomeTarget,
   ProposalDiscoveryCriteria,
   ProposalPurchase,
+  ProductMediaBuySupportRequirements as RootProductMediaBuySupportRequirements,
   ReviseProposalRefinement,
 } from '../lib';
 import type {
+  AcceptanceContext as TypesAcceptanceContext,
   CanonicalDeliveryForecast as TypesCanonicalDeliveryForecast,
   CanonicalForecastPoint as TypesCanonicalForecastPoint,
+  MediaBuyFrequencyCap as TypesMediaBuyFrequencyCap,
+  OutcomeTarget as TypesOutcomeTarget,
+  ProductMediaBuySupportRequirements as TypesProductMediaBuySupportRequirements,
 } from '../lib/types';
 import type {
   CanonicalProposal as GeneratedCanonicalProposal,
@@ -64,6 +72,12 @@ type _RemoveFrequencyCapParity = Assert<
 // The forecast supporting type is reachable from both documented barrels.
 type _RootForecastExport = Assert<Equal<RootCanonicalDeliveryForecast, TypesCanonicalDeliveryForecast>>;
 type _RootForecastPointExport = Assert<Equal<RootCanonicalForecastPoint, TypesCanonicalForecastPoint>>;
+type _RootFrequencyCapExport = Assert<Equal<RootMediaBuyFrequencyCap, TypesMediaBuyFrequencyCap>>;
+type _RootMediaBuySupportExport = Assert<
+  Equal<RootProductMediaBuySupportRequirements, TypesProductMediaBuySupportRequirements>
+>;
+type _RootOutcomeTargetExport = Assert<Equal<RootOutcomeTarget, TypesOutcomeTarget>>;
+type _RootAcceptanceContextExport = Assert<Equal<RootAcceptanceContext, TypesAcceptanceContext>>;
 
 const purchaseWithSchemaFields: ProposalPurchase = {
   product_id: 'product-1',
