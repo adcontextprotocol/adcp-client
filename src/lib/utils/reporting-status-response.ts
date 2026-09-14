@@ -63,6 +63,7 @@ function isReportingStatusIssue(value: unknown): boolean {
       'RECEIPT_REJECTED',
       'ADJUSTMENT_RECEIPT_REQUIRED',
       'ADJUSTMENT_RECEIPT_REJECTED',
+      'CONSUMER_STATUS_MISMATCH',
     ].includes(String(value.code)) &&
     ['delayed', 'action_required'].includes(String(value.severity)) &&
     ['buyer', 'seller', 'provider'].includes(String(value.responsible_party)) &&
@@ -90,7 +91,7 @@ function isReportingSchedule(value: unknown): boolean {
   if (
     typeof value.period_duration !== 'string' ||
     !periodDuration.test(value.period_duration) ||
-    !['utc', 'account_timezone', 'billing_cycle'].includes(String(value.alignment)) ||
+    !['utc', 'account_timezone', 'source_timezone', 'billing_cycle'].includes(String(value.alignment)) ||
     typeof value.delivery_sla !== 'string' ||
     !deliverySla.test(value.delivery_sla)
   )
@@ -99,7 +100,11 @@ function isReportingSchedule(value: unknown): boolean {
     ? isOffsetDateTime(value.period_anchor) &&
         isNonEmptyString(value.period_timezone) &&
         value.period_timezone.length <= 255
-    : value.period_anchor === undefined && value.period_timezone === undefined;
+    : value.alignment === 'source_timezone'
+      ? value.period_anchor === undefined &&
+        isNonEmptyString(value.period_timezone) &&
+        value.period_timezone.length <= 255
+      : value.period_anchor === undefined && value.period_timezone === undefined;
 }
 
 function isReportingResource(value: unknown): value is Record<string, unknown> {
@@ -256,17 +261,12 @@ function isReportingObligation(value: unknown): boolean {
     'period',
     'expected_at',
     'schedule',
-    'destination_ref',
     'required_finality',
     'reconciliation_mode',
     'reconciliation_status',
     'health',
     'production_status',
     'revision_count',
-    'materialization_count',
-    'successful_materialization_count',
-    'receipt_count',
-    'accepted_receipt_count',
     'issues',
   ];
   if (!isRecord(value) || !hasFields(value, fields)) return false;
@@ -285,19 +285,16 @@ function isReportingObligation(value: unknown): boolean {
     isReportingPeriod(value.period) &&
     isOffsetDateTime(value.expected_at) &&
     isReportingSchedule(value.schedule) &&
-    isNonEmptyString(value.destination_ref) &&
+    (value.destination_ref === undefined || isNonEmptyString(value.destination_ref)) &&
     ['snapshot', 'official'].includes(String(value.required_finality)) &&
     ['delivery_only', 'consumer_receipt'].includes(String(value.reconciliation_mode)) &&
     ['not_required', 'pending', 'accepted', 'rejected'].includes(String(value.reconciliation_status)) &&
     ['waiting', 'healthy', 'delayed', 'action_required', 'complete'].includes(String(value.health)) &&
     ['not_due', 'pending', 'published', 'failed'].includes(String(value.production_status)) &&
-    [
-      'revision_count',
-      'materialization_count',
-      'successful_materialization_count',
-      'receipt_count',
-      'accepted_receipt_count',
-    ].every(field => nonnegativeInteger(value[field])) &&
+    nonnegativeInteger(value.revision_count) &&
+    ['materialization_count', 'successful_materialization_count', 'receipt_count', 'accepted_receipt_count'].every(
+      field => value[field] === undefined || nonnegativeInteger(value[field])
+    ) &&
     Array.isArray(value.issues) &&
     value.issues.every(isReportingStatusIssue)
   );

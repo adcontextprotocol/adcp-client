@@ -42,7 +42,11 @@ export function compareReportingInstants(left: string, right: string): number {
 
 export function canonicalReportingInstant(value: string): string {
   const parsed = parseReportingInstant(value);
-  const fraction = parsed.fraction.replace(/0+$/, '');
+  let fractionEnd = parsed.fraction.length;
+  while (fractionEnd > 0 && parsed.fraction.charCodeAt(fractionEnd - 1) === 0x30) {
+    fractionEnd -= 1;
+  }
+  const fraction = parsed.fraction.slice(0, fractionEnd);
   const wholeSecond = new Date(Number(parsed.epochSecond) * 1_000).toISOString().replace('.000Z', 'Z');
   return fraction ? wholeSecond.replace('Z', `.${fraction}Z`) : wholeSecond;
 }

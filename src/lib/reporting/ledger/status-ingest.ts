@@ -1,7 +1,12 @@
 import { z } from 'zod';
 
-import { canonicalJsonSha256 } from '../../utils/jcs';
+import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
+import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReportingStatusResponse } from '../../types';
+import { canonicalJsonSha256PreservingLoneSurrogates } from '../../utils/jcs';
+import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
+import { validateSyncReportingStatusEnvelope } from '../../validation/sync-reporting-status-envelope';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import {
   reportingLedgerConfigurationMatchesScope,
   reportingLedgerEffectivePeriod,
@@ -17,151 +22,134 @@ import {
   reportingPeriodOrdinal,
 } from './instant';
 import {
+  REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES,
   ReportingConsumerStatusConflictError,
   ReportingLedgerSnapshotUnavailableError,
   type ReportingConsumerStatusLedgerStore,
   type ReportingConsumerStatusBatchEntryV1,
+  type ReportingConsumerStatusBatchResultV1,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
 } from './types';
 
-const id = z
+const statusId = z
   .string()
-  .min(1)
+  .min(16)
   .max(255)
   .regex(/^[A-Za-z0-9_.:-]+$/);
-const statusId = id.min(16);
-const instant = z
-  .string()
-  .max(64)
-  .refine(value => {
-    try {
-      canonicalReportingInstant(value);
-      return true;
-    } catch {
-      return false;
-    }
-  }, 'value must be an RFC 3339 instant');
-const accountReference = z
-  .record(z.string(), z.unknown())
-  .refine(
-    value =>
-      (typeof value.account_id === 'string' && value.account_id.length > 0) ||
-      (isRecord(value.brand) && typeof value.operator === 'string' && value.operator.length > 0),
-    'account must be an ID reference or buyer-declared natural key'
-  );
-const periodSchema = z
-  .object({ start: instant, end: instant, source_timezone: z.string().min(1).max(255) })
-  .strict()
-  .refine(value => Date.parse(value.start) < Date.parse(value.end), 'period must be half-open');
+const INVALID_REPORTING_STATUS_ID = 'invalid-reporting-status-id';
 
-export const ReportingConsumerStatusPreviewV1Schema = z
-  .object({
-    reporting_status_id: statusId,
-    supersedes_reporting_status_id: statusId.optional(),
-    delivery_config_id: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9_.:-]+$/),
-    delivery_config_version: z.number().int().min(1),
-    report_definition_id: id,
-    period: periodSchema,
-    reporting_obligation_id: id.optional(),
-    reporting_revision_id: id.optional(),
-    observed_revision_content_sha256: z
-      .string()
-      .regex(/^[A-Fa-f0-9]{64}$/)
-      .optional(),
-    consumer_status: z.enum(['received', 'obligation_missing', 'revision_missing', 'unreadable']),
-    status_as_of: instant,
-    failure_code: z
-      .enum(['access_denied', 'resource_not_found', 'integrity_mismatch', 'reader_incompatible', 'transport_failed'])
-      .optional(),
-    consumer_commit_ref: z
-      .string()
-      .min(1)
-      .max(512)
-      .regex(/^[A-Za-z0-9_.:-]+$/)
-      .optional(),
-    seller_ledger_snapshot_id: z.string().min(1).max(255).optional(),
-    seller_ledger_as_of: instant.optional(),
-  })
-  .strict()
-  .superRefine((value, context) => {
-    const require = (field: keyof typeof value) => {
-      if (value[field] === undefined)
-        context.addIssue({ code: 'custom', path: [field], message: `${field} is required` });
-    };
-    const forbid = (field: keyof typeof value) => {
-      if (value[field] !== undefined)
-        context.addIssue({ code: 'custom', path: [field], message: `${field} is forbidden` });
-    };
-    if (value.consumer_status === 'received') {
-      require('reporting_obligation_id');
-      require('reporting_revision_id');
-      require('observed_revision_content_sha256');
-      forbid('failure_code');
-    } else if (value.consumer_status === 'obligation_missing') {
-      for (const field of [
-        'reporting_obligation_id',
-        'reporting_revision_id',
-        'observed_revision_content_sha256',
-        'failure_code',
-      ] as const)
-        forbid(field);
-    } else if (value.consumer_status === 'revision_missing') {
-      require('reporting_obligation_id');
-      forbid('reporting_revision_id');
-      forbid('observed_revision_content_sha256');
-      forbid('failure_code');
-    } else {
-      require('reporting_obligation_id');
-      require('reporting_revision_id');
-      require('failure_code');
-      forbid('observed_revision_content_sha256');
-    }
-    if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
+/** Published AdCP 3.2.0-rc.2 consumer status schema with request-only instant bounds. */
+export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.superRefine((value, context) => {
+  if (value.recorded_at !== undefined) {
+    context.addIssue({ code: 'custom', path: ['recorded_at'], message: 'recorded_at is response-only' });
+  }
+  let periodInstantsValid = true;
+  for (const [path, instant] of [
+    [['status_as_of'], value.status_as_of],
+    [['period', 'start'], value.period.start],
+    [['period', 'end'], value.period.end],
+    [['seller_ledger_as_of'], value.seller_ledger_as_of],
+  ] as const) {
+    if (instant === undefined) continue;
+    if (instant.length > 64) {
+      if (path[0] === 'period') periodInstantsValid = false;
       context.addIssue({
         code: 'custom',
-        path: ['seller_ledger_snapshot_id'],
-        message: 'snapshot identity and time pair',
+        path: [...path],
+        message: 'Reporting instants must not exceed 64 characters',
+      });
+      continue;
+    }
+    try {
+      canonicalReportingInstant(instant);
+    } catch {
+      if (path[0] === 'period') periodInstantsValid = false;
+      context.addIssue({
+        code: 'custom',
+        path: [...path],
+        message: 'value must be a canonical RFC 3339 instant',
       });
     }
-  });
-
-export const SyncReportingStatusPreviewRequestV1Schema = z
-  .object({
-    account: accountReference,
-    idempotency_key: z
-      .string()
-      .min(16)
-      .max(255)
-      .regex(/^[A-Za-z0-9_.:-]+$/),
-    statuses: z.array(ReportingConsumerStatusPreviewV1Schema).min(1).max(100),
-    adcp_version: z.string().optional(),
-    adcp_major_version: z.number().int().optional(),
-    context: z.unknown().optional(),
-    ext: z.unknown().optional(),
-  })
-  .strict();
-
-const SyncReportingStatusPreviewEnvelopeV1Schema = SyncReportingStatusPreviewRequestV1Schema.extend({
-  statuses: z.array(z.unknown()).min(1).max(100),
+  }
+  if (periodInstantsValid && compareReportingInstants(value.period.start, value.period.end) >= 0) {
+    context.addIssue({
+      code: 'custom',
+      path: ['period', 'end'],
+      message: 'period must be a non-empty half-open interval',
+    });
+  }
+  for (const key of Object.keys(value.period)) {
+    if (!['start', 'end', 'source_timezone'].includes(key)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['period', key],
+        message: 'period contains an unsupported field',
+      });
+    }
+  }
+  if (value.period.source_timezone.length > 255) {
+    context.addIssue({
+      code: 'custom',
+      path: ['period', 'source_timezone'],
+      message: 'source_timezone must not exceed 255 characters',
+    });
+  }
 });
 
-export type ReportingConsumerStatusPreviewV1 = z.infer<typeof ReportingConsumerStatusPreviewV1Schema>;
-export type SyncReportingStatusPreviewRequestV1 = z.infer<typeof SyncReportingStatusPreviewRequestV1Schema>;
+/** Published AdCP 3.2.0-rc.2 request schema with the SDK's consumer-only item refinements. */
+export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema.safeExtend({
+  statuses: z.array(ReportingConsumerStatusV1Schema).min(1).max(100),
+}).strict();
 
-export interface SyncReportingStatusPreviewResponseV1 {
-  adcp_version: string;
-  adcp_major_version: number;
+// Validate the envelope independently so one malformed status does not reject
+// valid siblings. Each status is checked against the published schema below.
+export type ReportingConsumerStatusV1 = Omit<ReportingConsumerStatus, 'recorded_at'>;
+export type SyncReportingStatusRequestV1 = Omit<SyncReportingStatusRequest, 'statuses'> & {
+  statuses: ReportingConsumerStatusV1[];
+};
+/** Raw partial-success handler input. Status items are parsed independently. */
+export type SyncReportingStatusHandlerRequestV1 = Omit<SyncReportingStatusRequest, 'statuses'> & {
+  statuses: unknown[];
+};
+export type RecordedReportingConsumerStatusV1 = {
+  result: 'recorded' | 'unchanged';
+  consumer_status: ReportingConsumerStatusV1 & { recorded_at: string };
+};
+export type FailedReportingConsumerStatusV1 = {
+  result: 'failed';
+  reporting_status_id: string;
+  errors: [
+    {
+      code: string;
+      recovery?: ErrorRecovery;
+      retry_after?: number;
+      message: string;
+      field?: string;
+      issues?: Array<{ pointer: string; message: string; keyword: string }>;
+      details?: Record<string, unknown>;
+    },
+    ...Array<{
+      code: string;
+      recovery?: ErrorRecovery;
+      retry_after?: number;
+      message: string;
+      field?: string;
+      issues?: Array<{ pointer: string; message: string; keyword: string }>;
+      details?: Record<string, unknown>;
+    }>,
+  ];
+};
+export type ReportingConsumerStatusResultV1 = RecordedReportingConsumerStatusV1 | FailedReportingConsumerStatusV1;
+export type SyncReportingStatusResponseV1 = Omit<SyncReportingStatusResponse, 'status' | 'results'> & {
   status: 'completed';
-  results: Array<
-    | { result: 'recorded' | 'unchanged'; consumer_status: ReportingConsumerStatusPreviewV1 & { recorded_at: string } }
-    | { result: 'failed'; reporting_status_id: string; errors: Array<{ code: string; message: string }> }
-  >;
-}
+  results: [ReportingConsumerStatusResultV1, ...ReportingConsumerStatusResultV1[]];
+};
+export type SyncReportingStatusHandlerV1<TContext = unknown> = (
+  request: SyncReportingStatusHandlerRequestV1,
+  context: TContext
+) => Promise<SyncReportingStatusResponseV1>;
 
 export interface SyncReportingStatusHandlerOptionsV1<TContext = unknown> {
   /** Resolve the durable authenticated consumer principal. Payloads cannot assert it. */
@@ -170,33 +158,44 @@ export interface SyncReportingStatusHandlerOptionsV1<TContext = unknown> {
   clockSkewMilliseconds?: number;
 }
 
-class ReportingStatusValidationError extends Error {}
+type ReportingStatusValidationReason =
+  | 'future status'
+  | 'ineligible period'
+  | 'missing status precedes expected_at'
+  | 'obligation mismatch'
+  | 'revision mismatch'
+  | 'revision binding mismatch'
+  | 'snapshot provenance unavailable'
+  | 'snapshot provenance mismatch';
+
+class ReportingStatusValidationError extends Error {
+  constructor(readonly reason: ReportingStatusValidationReason) {
+    super(reason);
+  }
+}
 
 export function createSyncReportingStatusHandler<TContext = unknown>(
   store: ReportingConsumerStatusLedgerStore,
   options: SyncReportingStatusHandlerOptionsV1<TContext>
-): (request: SyncReportingStatusPreviewRequestV1, context: TContext) => Promise<SyncReportingStatusPreviewResponseV1> {
+): SyncReportingStatusHandlerV1<TContext> {
   const activeReadsByAccount = new Map<string, number>();
   return async (requestInput, context) => {
-    const parsed = SyncReportingStatusPreviewEnvelopeV1Schema.safeParse(requestInput);
-    if (!parsed.success) {
-      const rawStatuses = isRecord(requestInput) && Array.isArray(requestInput.statuses) ? requestInput.statuses : [];
-      const ids =
-        rawStatuses.length > 0 && rawStatuses.length <= 100
-          ? rawStatuses.map(value => {
-              const candidate = isRecord(value) ? value.reporting_status_id : undefined;
-              return statusId.safeParse(candidate).success ? (candidate as string) : 'invalid-reporting-status-id';
-            })
-          : ['invalid-reporting-status-id'];
-      return failed(ids, 'VALIDATION_ERROR', 'Reporting consumer status request is invalid');
+    const envelope = validateSyncReportingStatusEnvelope(requestInput);
+    if (!envelope.valid) {
+      const ids = requestStatusIds(requestInput);
+      const issue = envelope.issues[0];
+      return failed(
+        ids,
+        'VALIDATION_ERROR',
+        issue?.message ?? 'Reporting consumer status request is invalid',
+        issue?.pointer,
+        issue?.keyword
+      );
     }
-    const request = parsed.data;
-    const parsedStatuses = request.statuses.map(value => ReportingConsumerStatusPreviewV1Schema.safeParse(value));
-    const statusIds = parsedStatuses.map((value, index) =>
-      value.success ? value.data.reporting_status_id : reportingStatusId(request.statuses[index])
-    );
+    const request = requestInput;
+    const statusIds = request.statuses.map(reportingStatusId);
     const accountId = resolvedAccountId(context);
-    if (typeof request.account.account_id === 'string' && accountId !== request.account.account_id) {
+    if ('account_id' in request.account && accountId !== request.account.account_id) {
       return failed(statusIds, 'PERMISSION_DENIED', 'Reporting consumer status account is unavailable');
     }
     const consumerId = await options.resolveConsumerId(context);
@@ -210,11 +209,19 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       if (!(error instanceof ReportingReadCapacityError)) throw error;
       return failed(
         statusIds,
-        'RESOURCE_EXHAUSTED',
-        'Reporting consumer status read capacity is temporarily exhausted'
+        'RATE_LIMITED',
+        'Reporting consumer status read capacity is temporarily exhausted',
+        undefined,
+        undefined,
+        'transient',
+        1
       );
     }
     try {
+      // Item parsing and canonical hashing are deliberately inside the
+      // account/global read slot so authenticated callers cannot multiply
+      // their CPU and allocation cost without bound.
+      const parsedStatuses = request.statuses.map(value => ReportingConsumerStatusV1Schema.safeParse(value));
       const requestFingerprint = statusBatchFingerprint(request);
       try {
         const replay = await store.getConsumerStatusBatchReplay({
@@ -226,7 +233,7 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         if (replay) return completed(replay);
       } catch (error) {
         if (!(error instanceof ReportingConsumerStatusConflictError)) throw error;
-        return failed(statusIds, 'IDEMPOTENCY_CONFLICT', error.message);
+        return failed(statusIds, 'IDEMPOTENCY_CONFLICT', 'Reporting status idempotency conflict');
       }
       const now = (options.now ?? (() => new Date()))();
       if (!(now instanceof Date) || !Number.isFinite(now.getTime())) {
@@ -240,29 +247,47 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       ) {
         throw new RangeError('clockSkewMilliseconds must be a safe integer between 0 and 3600000');
       }
-      const configurations = await store.listConfigurations(accountId);
+      const configurations = (await store.listConfigurations(accountId)).filter(
+        value => value?.account?.account_id === accountId
+      );
       try {
         const entries: ReportingConsumerStatusBatchEntryV1[] = [];
         for (const [index, parsedStatus] of parsedStatuses.entries()) {
-          if (!parsedStatus.success) {
+          const rawStatus = request.statuses[index];
+          const hasPrototypeKey = isRecord(rawStatus) && Object.hasOwn(rawStatus, '__proto__');
+          if (!parsedStatus.success || hasPrototypeKey) {
+            const issue = !parsedStatus.success ? parsedStatus.error.issues[0] : undefined;
+            const path = hasPrototypeKey ? ['__proto__'] : issue?.path;
+            const validationField =
+              issue || hasPrototypeKey ? zodPathToPointer(['statuses', index, ...(path ?? [])]) : undefined;
+            const identity = reportingStatusIdentity(rawStatus);
             entries.push({
-              reporting_status_id: reportingStatusId(request.statuses[index]),
+              reporting_status_id: identity.value,
+              ...(identity.synthetic ? { syntheticReportingStatusId: true } : {}),
               validationError: 'Reporting consumer status request is invalid',
-              ...rawStatusChainIdentity(request.statuses[index]),
+              ...(validationField ? { validationField } : {}),
+              ...(validationField
+                ? { validationKeyword: hasPrototypeKey ? 'additionalProperties' : zodIssueKeyword(issue) }
+                : {}),
+              ...rawStatusChainIdentity(rawStatus),
             });
             continue;
           }
           const status = parsedStatus.data;
           let validationError: string | undefined;
+          let validationField: string | undefined;
           try {
             await validateStatus(store, configurations, accountId, consumerId, status, now, clockSkewMilliseconds);
           } catch (error) {
             if (!(error instanceof ReportingStatusValidationError)) throw error;
-            validationError = 'Reporting consumer status does not match the seller ledger';
+            const diagnostic = reportingStatusValidationDiagnostic(error.reason, index);
+            validationError = diagnostic.message;
+            validationField = diagnostic.field;
           }
           entries.push({
             status: { ...status, account_id: accountId, consumerId },
             ...(validationError ? { validationError } : {}),
+            ...(validationField ? { validationField } : {}),
           });
         }
         const results = await store.syncConsumerStatusBatch({
@@ -279,7 +304,9 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         return failed(
           statusIds,
           conflict ? 'IDEMPOTENCY_CONFLICT' : 'VALIDATION_ERROR',
-          conflict ? error.message : 'Reporting consumer status does not match the seller ledger'
+          conflict
+            ? 'Reporting status idempotency conflict'
+            : 'Reporting consumer status does not match the seller ledger'
         );
       }
     } finally {
@@ -293,7 +320,7 @@ async function validateStatus(
   configurations: ReportingLedgerConfigurationV1[],
   accountId: string,
   consumerId: string,
-  status: ReportingConsumerStatusPreviewV1,
+  status: ReportingConsumerStatusV1,
   now: Date,
   clockSkewMilliseconds = 5 * 60_000
 ): Promise<void> {
@@ -306,7 +333,11 @@ async function validateStatus(
       value.delivery_config_version === status.delivery_config_version &&
       value.report_definition_id === status.report_definition_id
   );
-  if (!configuration || !isExactPeriod(configuration, configurations, status.period)) {
+  if (
+    !configuration ||
+    configuration.account.account_id !== accountId ||
+    !isExactPeriod(configuration, configurations, status.period)
+  ) {
     throw new ReportingStatusValidationError('ineligible period');
   }
   const expectedOffset =
@@ -320,7 +351,7 @@ async function validateStatus(
     throw new ReportingStatusValidationError('missing status precedes expected_at');
   }
   if (status.reporting_obligation_id) {
-    const obligation = await store.getObligation(status.reporting_obligation_id);
+    const obligation = await store.getObligation(status.reporting_obligation_id, accountId);
     if (
       !obligation ||
       obligation.account.account_id !== accountId ||
@@ -335,7 +366,11 @@ async function validateStatus(
   }
   if (status.reporting_revision_id) {
     const revision = await store.getRevisionMetadata(status.reporting_revision_id, accountId);
-    if (!revision || revision.reporting_obligation_id !== status.reporting_obligation_id)
+    if (
+      !revision ||
+      revision.wireRevision.account_id !== accountId ||
+      revision.reporting_obligation_id !== status.reporting_obligation_id
+    )
       throw new ReportingStatusValidationError('revision mismatch');
     if (
       status.consumer_status === 'received' &&
@@ -345,6 +380,9 @@ async function validateStatus(
       throw new ReportingStatusValidationError('revision binding mismatch');
   }
   if (status.seller_ledger_snapshot_id) {
+    if (!store.readSnapshotPage) {
+      throw new ReportingStatusValidationError('snapshot provenance unavailable');
+    }
     let page;
     try {
       page = await store.readSnapshotPage(status.seller_ledger_snapshot_id, accountId, undefined, 1);
@@ -380,6 +418,7 @@ async function validateStatus(
         : compareReportingInstants(status.period.start, scope.end) < 0 &&
           compareReportingInstants(status.period.end, scope.start) > 0;
     if (
+      page.snapshot.query.account_id !== accountId ||
       page.snapshot.query.consumer_id !== consumerId ||
       page.snapshot.ledgerAsOf !== status.seller_ledger_as_of ||
       !configurationInScope ||
@@ -395,7 +434,7 @@ async function validateStatus(
 function isExactPeriod(
   configuration: ReportingLedgerConfigurationV1,
   configurations: ReportingLedgerConfigurationV1[],
-  period: ReportingConsumerStatusPreviewV1['period']
+  period: ReportingConsumerStatusV1['period']
 ): boolean {
   if (period.source_timezone !== configuration.sourceTimezone) return false;
   const duration = configuration.schedule.periodMilliseconds;
@@ -442,12 +481,14 @@ function rawStatusChainIdentity(
     typeof fields.delivery_config_id !== 'string' ||
     fields.delivery_config_id.length === 0 ||
     fields.delivery_config_id.length > 255 ||
-    !Number.isInteger(fields.delivery_config_version) ||
+    !Number.isSafeInteger(fields.delivery_config_version) ||
     typeof fields.report_definition_id !== 'string' ||
     fields.report_definition_id.length === 0 ||
     fields.report_definition_id.length > 255 ||
     typeof fields.periodStart !== 'string' ||
+    fields.periodStart.length > 64 ||
     typeof fields.periodEnd !== 'string' ||
+    fields.periodEnd.length > 64 ||
     typeof fields.sourceTimezone !== 'string' ||
     fields.sourceTimezone.length === 0 ||
     fields.sourceTimezone.length > 255
@@ -465,44 +506,132 @@ function rawStatusChainIdentity(
 
 function wireConsumerStatus(
   status: ReportingLedgerConsumerStatementV1
-): ReportingConsumerStatusPreviewV1 & { recorded_at: string } {
+): ReportingConsumerStatusV1 & { recorded_at: string } {
   const { consumerId: _consumerId, account_id: _accountId, ...wire } = status;
   return wire;
 }
 
-function failed(ids: string[], code: string, message: string): SyncReportingStatusPreviewResponseV1 {
+function failed(
+  ids: string[],
+  code: string,
+  message: string,
+  field?: string,
+  keyword?: string,
+  recovery: ErrorRecovery = getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+  retryAfterSeconds?: number
+): SyncReportingStatusResponseV1 {
+  const results = ids.map(reporting_status_id => ({
+    result: 'failed' as const,
+    reporting_status_id,
+    errors: [
+      {
+        code,
+        recovery,
+        ...(retryAfterSeconds !== undefined ? { retry_after: retryAfterSeconds } : {}),
+        message,
+        ...wireValidationDiagnostic(field, message, keyword),
+      },
+    ] as FailedReportingConsumerStatusV1['errors'],
+  }));
+  if (results.length === 0) throw new TypeError('sync_reporting_status requires at least one result');
   return {
     adcp_version: wireAdcpVersion(),
     adcp_major_version: ADCP_MAJOR_VERSION,
     status: 'completed',
-    results: ids.map(reporting_status_id => ({
-      result: 'failed',
-      reporting_status_id,
-      errors: [{ code, message }],
-    })),
+    results: results as [FailedReportingConsumerStatusV1, ...FailedReportingConsumerStatusV1[]],
   };
 }
 
 function completed(
   results: Awaited<ReturnType<ReportingConsumerStatusLedgerStore['syncConsumerStatusBatch']>>
-): SyncReportingStatusPreviewResponseV1 {
+): SyncReportingStatusResponseV1 {
+  const wireResults: ReportingConsumerStatusResultV1[] = results.map(result =>
+    'value' in result
+      ? {
+          result: result.inserted ? ('recorded' as const) : ('unchanged' as const),
+          consumer_status: wireConsumerStatus(result.value),
+        }
+      : completedFailure(result)
+  );
+  if (wireResults.length === 0) throw new TypeError('sync_reporting_status store returned no item results');
   return {
     adcp_version: wireAdcpVersion(),
     adcp_major_version: ADCP_MAJOR_VERSION,
     status: 'completed',
-    results: results.map(result =>
-      'value' in result
-        ? {
-            result: result.inserted ? ('recorded' as const) : ('unchanged' as const),
-            consumer_status: wireConsumerStatus(result.value),
-          }
-        : {
-            result: 'failed' as const,
-            reporting_status_id: result.reporting_status_id,
-            errors: [{ code: result.errorCode, message: result.safeMessage }],
-          }
-    ),
+    results: wireResults as [ReportingConsumerStatusResultV1, ...ReportingConsumerStatusResultV1[]],
   };
+}
+
+function completedFailure(
+  result: Extract<ReportingConsumerStatusBatchResultV1, { errorCode: string }>
+): FailedReportingConsumerStatusV1 {
+  const code = boundedErrorCode(result.errorCode);
+  const message = boundedErrorMessage(result.safeMessage);
+  const retryAfterSeconds = boundedRetryAfterSeconds(result.retryAfterSeconds);
+  const recovery = boundedRecovery(result.recovery) ?? getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY;
+  const errorField = boundedErrorField(result.errorField);
+  const errorKeyword = boundedErrorKeyword(result.errorKeyword);
+  return {
+    result: 'failed',
+    reporting_status_id: statusId.safeParse(result.reporting_status_id).success
+      ? result.reporting_status_id
+      : INVALID_REPORTING_STATUS_ID,
+    errors: [
+      {
+        code,
+        recovery,
+        ...(retryAfterSeconds !== undefined ? { retry_after: retryAfterSeconds } : {}),
+        message,
+        ...wireValidationDiagnostic(errorField, message, errorKeyword),
+      },
+    ],
+  };
+}
+
+function boundedErrorCode(value: unknown): string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 64 && isWellFormedUnicodeString(value)
+    ? value
+    : 'VALIDATION_ERROR';
+}
+
+function boundedRetryAfterSeconds(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 3600 ? Number(value) : undefined;
+}
+
+function boundedRecovery(value: unknown): ErrorRecovery | undefined {
+  return value === 'transient' || value === 'correctable' || value === 'terminal' ? value : undefined;
+}
+
+function boundedErrorField(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    !value.includes('\u0000') &&
+    isWellFormedUnicodeString(value) &&
+    Buffer.byteLength(value, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
+    ? value
+    : undefined;
+}
+
+function boundedErrorKeyword(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value) ? value : undefined;
+}
+
+function boundedErrorMessage(value: unknown): string {
+  if (typeof value !== 'string') return 'Reporting consumer status was rejected';
+  const wellFormed = Buffer.from(value, 'utf8')
+    .toString('utf8')
+    .replace(/\u0000/g, '\ufffd');
+  if (Buffer.byteLength(wellFormed, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) {
+    return wellFormed || 'Reporting consumer status was rejected';
+  }
+  let bounded = '';
+  let bytes = 0;
+  for (const character of wellFormed) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) break;
+    bounded += character;
+    bytes += characterBytes;
+  }
+  return bounded || 'Reporting consumer status was rejected';
 }
 
 function statusBatchFingerprint(request: {
@@ -522,12 +651,136 @@ function statusBatchFingerprint(request: {
     ...semanticRequest
   } = request;
   const wireValue = JSON.parse(JSON.stringify(semanticRequest)) as Record<string, unknown>;
-  return canonicalJsonSha256(wireValue);
+  return canonicalJsonSha256PreservingLoneSurrogates(wireValue);
 }
 
 function reportingStatusId(value: unknown): string {
+  return reportingStatusIdentity(value).value;
+}
+
+function reportingStatusIdentity(value: unknown): { value: string; synthetic: boolean } {
   const candidate = isRecord(value) ? value.reporting_status_id : undefined;
-  return statusId.safeParse(candidate).success ? (candidate as string) : 'invalid-reporting-status-id';
+  return statusId.safeParse(candidate).success
+    ? { value: candidate as string, synthetic: false }
+    : { value: INVALID_REPORTING_STATUS_ID, synthetic: true };
+}
+
+function requestStatusIds(value: unknown): string[] {
+  const statuses = isRecord(value) && Array.isArray(value.statuses) ? value.statuses : [];
+  return statuses.length > 0 && statuses.length <= 100
+    ? statuses.map(reportingStatusId)
+    : ['invalid-reporting-status-id'];
+}
+
+function zodPathToPointer(path: PropertyKey[]): string | undefined {
+  let pointer = '';
+  for (const value of path) {
+    const raw = String(value);
+    // PostgreSQL jsonb rejects NUL and lone UTF-16 surrogates even though
+    // JSON.stringify can escape them. Omit the optional diagnostic rather
+    // than turning one malformed item into a transaction-wide failure.
+    if (raw.includes('\u0000') || !isWellFormedUnicodeString(raw)) return undefined;
+    if (Buffer.byteLength(raw, 'utf8') > REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES) return undefined;
+    const segment = raw.replace(/~/g, '~0').replace(/\//g, '~1');
+    const next = `${pointer}/${segment}`;
+    if (Buffer.byteLength(next, 'utf8') > REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES) return undefined;
+    pointer = next;
+  }
+  return pointer || undefined;
+}
+
+function wireValidationDiagnostic(
+  pointer: string | undefined,
+  message: string,
+  keyword?: string
+): { field?: string; issues?: Array<{ pointer: string; message: string; keyword: string }> } {
+  if (!pointer || Buffer.byteLength(pointer, 'utf8') > REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES) {
+    return {};
+  }
+  if (!pointer.startsWith('/')) return { field: pointer };
+  const field = jsonPointerToJsonPathLite(pointer);
+  if (!field) return {};
+  return {
+    field,
+    ...(keyword ? { issues: [{ pointer, message, keyword }] } : {}),
+  };
+}
+
+function jsonPointerToJsonPathLite(pointer: string): string | undefined {
+  if (!pointer.startsWith('/')) return undefined;
+  if (pointer === '/') return '$';
+  let field = '';
+  for (const encoded of pointer.slice(1).split('/')) {
+    const segment = encoded.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (/^(0|[1-9][0-9]*)$/.test(segment)) {
+      if (!field) return undefined;
+      field += `[${segment}]`;
+    } else if (/^[A-Za-z_][A-Za-z0-9_-]*$/.test(segment)) {
+      field += field ? `.${segment}` : segment;
+    } else {
+      field += `${field ? '' : '$'}[${JSON.stringify(segment)}]`;
+    }
+  }
+  return Buffer.byteLength(field, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES ? field : undefined;
+}
+
+function zodIssueKeyword(
+  issue: { code?: string; origin?: string; message?: string; format?: string } | undefined
+): string {
+  switch (issue?.code) {
+    case 'invalid_type':
+      return issue.message?.includes('received undefined') ? 'required' : 'type';
+    case 'invalid_union':
+      return 'oneOf';
+    case 'invalid_value':
+      return 'enum';
+    case 'not_multiple_of':
+      return 'multipleOf';
+    case 'too_small':
+      return issue.origin === 'array' ? 'minItems' : issue.origin === 'string' ? 'minLength' : 'minimum';
+    case 'too_big':
+      return issue.origin === 'array' ? 'maxItems' : issue.origin === 'string' ? 'maxLength' : 'maximum';
+    case 'invalid_format':
+      return issue.format === 'regex' ? 'pattern' : 'format';
+    case 'unrecognized_keys':
+      return 'additionalProperties';
+    case 'custom':
+      if (issue.message?.includes('unsupported field') || issue.message?.includes('Unrecognized key')) {
+        return 'additionalProperties';
+      }
+      if (issue.message?.includes('RFC 3339') || issue.message?.includes('date-time')) return 'format';
+      if (issue.message?.includes('response-only')) return 'not';
+      return 'allOf';
+    default:
+      return 'allOf';
+  }
+}
+
+function reportingStatusValidationDiagnostic(
+  reason: ReportingStatusValidationReason,
+  index: number
+): { message: string; field?: string } {
+  switch (reason) {
+    case 'future status':
+      return {
+        message: 'status_as_of exceeds the allowed clock skew',
+        field: `/statuses/${index}/status_as_of`,
+      };
+    case 'ineligible period':
+      return {
+        message: 'Reporting consumer status period is not eligible for the selected configuration',
+        field: `/statuses/${index}/period`,
+      };
+    case 'missing status precedes expected_at':
+      return {
+        message: 'Missing reporting status cannot precede the expected reporting time',
+        field: `/statuses/${index}/status_as_of`,
+      };
+    default:
+      // Obligation, revision, and snapshot lookups remain deliberately
+      // indistinguishable so this endpoint cannot become an existence oracle.
+      return { message: 'Reporting consumer status does not match the seller ledger' };
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

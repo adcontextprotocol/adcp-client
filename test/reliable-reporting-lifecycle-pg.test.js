@@ -165,7 +165,7 @@ describe('reliable reporting lifecycle reference', { skip: !DATABASE_URL && 'Pos
         getReportingStatus: input => reference.getReportingStatus(input, context),
         syncReportingReceipts: async () => ({ status: 'completed', results: [] }),
       },
-      request: { account: request.account },
+      request: { account: request.account, period: { start: first.period.start, end: first.period.end } },
       expectedPeriods: [],
       now: new Date(),
       inspect: async () => ({
@@ -174,7 +174,12 @@ describe('reliable reporting lifecycle reference', { skip: !DATABASE_URL && 'Pos
         consumerCommitRef: 'lifecycle-reference-buyer',
       }),
     });
-    assert.ok(Array.isArray(buyer.obligations), 'the existing buyer reconcile path consumed the seller ledger');
+    assert.equal(buyer.ledger.obligations.length, 1, 'buyer loaded the exact seller obligation');
+    assert.equal(buyer.ledger.revisions.length, 2, 'buyer loaded the immutable Core revision chain');
+    assert.ok(
+      !buyer.obligations[0].reasons.includes('MISSING_CURRENT_REVISION'),
+      'buyer joined the Core revision without requiring a managed materialization'
+    );
 
     const {
       createReportingLifecycleReference,

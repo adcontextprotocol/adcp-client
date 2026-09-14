@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-13
+> Generated at: 2026-09-14
 > @adcp/sdk v14.0.0-rc.35
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -501,7 +501,7 @@ _Request:_
 ```
 {
   idempotency_key: string  // required
-  notification_configs: object[]  // required
+  notification_configs: Agent Notification Config[]  // required
   dry_run: boolean
   context: Context
 }
@@ -745,7 +745,7 @@ _Request:_
   required_overlay_support: Targeting Overlay Requirements
   property_list: Property List Ref
   fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'acceptance_policy_profile_ids' | 'identity' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'targeting_resolution' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
-  time_budget
+  time_budget: Duration
   push_notification_config: Push Notification Config
   pagination: Pagination Request
   if_wholesale_feed_version: string
@@ -794,10 +794,10 @@ _Request:_
   adcp_version: string
   idempotency_key: string
   context_id: string
-  context
+  context: Context
   governance_context: string
-  push_notification_config
-  account
+  push_notification_config: Push Notification Config
+  account: Canonical Account Ref
   brand: Brand Key
   criteria: Product Discovery Criteria
   fields: Product Fields
@@ -834,13 +834,13 @@ _Request:_
   brief: string  // required
   adcp_version: string
   context_id: string
-  context
+  context: Context
   governance_context: string
-  push_notification_config
-  account
+  push_notification_config: Push Notification Config
+  account: Canonical Account Ref
   brand: Brand Key
   criteria: Product Discovery Criteria
-  opportunity
+  opportunity: Opportunity Context
 }
 ```
 
@@ -848,7 +848,7 @@ _Response (success branch):_
 ```
 {
   outcome: 'proposed'  // required
-  proposals: object[]  // required
+  proposals: Canonical Proposal[]  // required
   products: Canonical Product[]  // required
   adcp_version: string
   incomplete: object[]
@@ -872,9 +872,9 @@ _Request:_
   refinements: Proposal Refinement[]  // required
   adcp_version: string
   context_id: string
-  context
+  context: Context
   governance_context: string
-  push_notification_config
+  push_notification_config: Push Notification Config
 }
 ```
 
@@ -903,9 +903,9 @@ _Request:_
   declines: Proposal Decline[]  // required
   adcp_version: string
   context_id: string
-  context
+  context: Context
   governance_context: string
-  push_notification_config
+  push_notification_config: Push Notification Config
   opportunity: Opportunity Context
 }
 ```
@@ -929,7 +929,7 @@ _Request:_
 ```
 {
   idempotency_key: string  // required
-  account  // required
+  account: Canonical Account Ref  // required
   feed_version: string  // required
   purchases: Product Purchase[]  // required
   start_time: Start Timing  // required
@@ -951,7 +951,7 @@ _Request:_
   governance_context: string
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
-  opportunity
+  opportunity: Opportunity Context
   context: Context
 }
 ```
@@ -977,7 +977,7 @@ _Request:_
   governance_context: string
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
-  opportunity
+  opportunity: Opportunity Context
   context: Context
 }
 ```
@@ -1023,7 +1023,7 @@ _Response (success branch):_
   implementation_date: string,null
   affected_package_ids: string[]
   available_actions: Canonical Media Buy Action[]
-  warnings: object[]
+  warnings: Warning[]
   context: Context
   replayed: 'true'
 }
@@ -1089,11 +1089,11 @@ _Request:_
   governance_context: string
   plan_id: string
   proposal_id: string
-  opportunity
+  opportunity: Opportunity Context
   total_budget: object
   daily_budget_cap: number
   budget_cap_timezone: string
-  budget_allocation
+  budget_allocation: Budget Allocation
   packages: Package Request[]
   advertiser_industry: Advertiser Industry
   invoice_recipient: Business Entity
@@ -1102,7 +1102,7 @@ _Request:_
   name: string
   agency_estimate_number: string
   pacing: Pacing
-  bidding
+  bidding: Bidding Policy
   paused: boolean
   push_notification_config: Push Notification Config
   reporting_webhook: Reporting Webhook
@@ -1128,9 +1128,9 @@ _Response (success branch):_
   total_budget: number
   daily_budget_cap: number
   budget_cap_timezone: string
-  budget_allocation
+  budget_allocation: Budget Allocation
   pacing: Pacing
-  bidding
+  bidding: Bidding Policy
   valid_actions: Media Buy Valid Action[]
   available_actions: Media Buy Available Action[]
   planned_delivery: Planned Delivery
@@ -1164,7 +1164,7 @@ _Request:_
   total_budget: object
   daily_budget_cap: number,null
   budget_cap_timezone: string,null
-  budget_allocation
+  budget_allocation: Budget Allocation
   pacing: Pacing
   bidding: Bidding Policy | null
   packages: Package Update[]
@@ -1187,9 +1187,9 @@ _Response (success branch):_
   total_budget: number
   daily_budget_cap: number
   budget_cap_timezone: string
-  budget_allocation
+  budget_allocation: Budget Allocation
   pacing: Pacing
-  bidding
+  bidding: Bidding Policy
   implementation_date: string,null
   invoice_recipient: Business Entity
   affected_packages: Package[]
@@ -1227,7 +1227,7 @@ _Request:_
 _Response (success branch):_
 ```
 {
-  media_buys: object[]  // required
+  media_buys: Indicator Bearing[]  // required
   errors: Error[]
   pagination: Pagination Response
   sandbox: boolean
@@ -1323,6 +1323,7 @@ _Response (success branch):_
   periods: Reporting Obligation[]
   revisions: Reporting Revision[]
   adjustments: Reporting Adjustment[]
+  consumer_statuses: Reporting Consumer Status[]
   adjustment_receipts: Reporting Adjustment Receipt[]
   pagination: Pagination Response
   revision: Reporting Revision
@@ -1332,6 +1333,34 @@ _Response (success branch):_
   context: Context
 }
 ```
+
+#### `sync_reporting_status`
+
+Submit authenticated consumer status for expected reporting periods.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  idempotency_key: string  // required
+  statuses: Reporting Consumer Status[]  // required
+  adcp_version: string
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+  results: (Recorded reporting consumer status | Unchanged reporting consumer status | Failed reporting consumer status)[]  // required
+  context: Context
+}
+```
+
+_Watch out:_
+- A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. For a schema-valid envelope, results map one-for-one to submitted statuses in request order.
+- `recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.
 
 #### `sync_reporting_receipts`
 
@@ -1343,8 +1372,8 @@ _Request:_
   account: Canonical Account Ref  // required
   idempotency_key: string  // required
   adcp_version: string
-  receipts: object[]
-  adjustment_receipts: object[]
+  receipts: Reporting Receipt[]
+  adjustment_receipts: Reporting Adjustment Receipt[]
   context: Context
 }
 ```
@@ -1524,7 +1553,7 @@ _Request:_
   mode: 'execute' | 'estimate'
   max_spend: object
   max_creatives: integer
-  signal_conditions: object[]
+  signal_conditions: Signal Targeting[]
   max_variants: integer
   variant_axis: object
   keep_mode: 'keep_all' | 'keep_one' | 'keep_some'
@@ -1765,7 +1794,7 @@ _Request:_
 {
   account: Account Ref  // required
   idempotency_key: string  // required
-  creatives: object[]
+  creatives: Creative Asset[]
   creative_ids: string[]
   assignments: object[]
   assignment_operations: (Assign or update | Unassign | Replace assignment)[]
@@ -1838,7 +1867,7 @@ _Request:_
 _Response (success branch):_
 ```
 {
-  signals: object[]
+  signals: Signal Listing[]
   errors: Error[]
   incomplete: object[]
   wholesale_feed_version: string
@@ -2483,7 +2512,7 @@ _Request:_
   planned_delivery: Planned Delivery
   delivery_metrics: object
   modification_summary: string
-  runtime_attestations: object[]
+  runtime_attestations: Attestation Reference[]
   invoice_recipient: Business Entity
   context: Context
 }
@@ -2506,7 +2535,7 @@ _Response (success branch):_
   categories_evaluated: string[]
   policies_evaluated: string[]
   mode: Governance Mode
-  runtime_attestation_evaluations: object[]
+  runtime_attestation_evaluations: Attestation Evaluation[]
   runtime_attestation_binding_digest: string
   governance_context: string
   context: Context
@@ -2658,6 +2687,7 @@ These are the main domain objects returned in tool responses. Defined in `src/li
 | `ContentStandards` | Brand safety config — has standards_id, name, scope, policy entries, calibration exemplars |
 | `Catalog` | Data feed — typed (offering, product, store, etc.) with items, URL, or inline data |
 | `Offering` | Promotable item with asset groups — used in sponsored intelligence and catalog creatives |
+| `Reporting Consumer Status` | Consumer acknowledgement for one config/report/half-open period — received requires obligation, revision, and observed SHA-256; obligation_missing forbids them; revision_missing requires obligation only; unreadable requires obligation, revision, and failure_code; snapshot ID/time are paired; recorded_at is response-only |
 
 ## PricingOption Variants
 
@@ -2743,14 +2773,15 @@ const producer = createReportingProducer({ store, source, offerings, contact });
 await producer.planObligations();
 await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
+const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
 
-// AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.
+// AdCP 3.2.0-rc.2: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });
 ```
 
-The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
 
 ## Key Enums
 

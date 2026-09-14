@@ -35,6 +35,8 @@ import type {
   GetMediaBuyDeliveryResponse,
   GetReportingStatusRequest,
   GetReportingStatusResponse,
+  SyncReportingStatusRequest,
+  SyncReportingStatusResponse,
   SyncReportingReceiptsRequest,
   SyncReportingReceiptsResponse,
   ProvidePerformanceFeedbackRequest,
@@ -307,6 +309,13 @@ export class Agent {
    */
   async getReportingStatus(params: GetReportingStatusRequest): Promise<GetReportingStatusResponse> {
     return this.callTool<GetReportingStatusResponse>('get_reporting_status', params);
+  }
+
+  /**
+   * Official AdCP sync_reporting_status tool schema
+   */
+  async syncReportingStatus(params: MutatingRequestInput<SyncReportingStatusRequest>): Promise<SyncReportingStatusResponse> {
+    return this.callTool<SyncReportingStatusResponse>('sync_reporting_status', params);
   }
 
   /**
@@ -793,6 +802,13 @@ export class AgentCollection {
    */
   async getReportingStatus(params: GetReportingStatusRequest): Promise<GetReportingStatusResponse[]> {
     return this.callToolOnAll<GetReportingStatusResponse>('get_reporting_status', params);
+  }
+
+  /**
+   * Official AdCP sync_reporting_status tool schema (across multiple agents)
+   */
+  async syncReportingStatus(params: MutatingRequestInput<SyncReportingStatusRequest>): Promise<SyncReportingStatusResponse[]> {
+    return this.callToolOnAll<SyncReportingStatusResponse>('sync_reporting_status', params);
   }
 
   /**

@@ -190,6 +190,7 @@ const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
+import { validateSyncReportingStatusEnvelope } from '../validation/sync-reporting-status-envelope';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
 import { hashPayload, IdempotencyClaimOwnershipError, type IdempotencyStore } from './idempotency';
 import {
@@ -343,6 +344,8 @@ import type {
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
   GetReportingStatusResponse,
+  SyncReportingStatusRequest,
+  SyncReportingStatusResponse,
   SyncReportingReceiptsResponse,
   GetTaskStatusResponse,
   ListTasksResponse,
@@ -713,6 +716,11 @@ export interface AdcpToolMap {
     result: ServerPayload<GetReportingStatusResponse>;
     response: GetReportingStatusResponse;
   };
+  sync_reporting_status: {
+    params: Omit<SyncReportingStatusRequest, 'statuses'> & { statuses: unknown[] };
+    result: ServerPayload<SyncReportingStatusResponse>;
+    response: SyncReportingStatusResponse;
+  };
   sync_reporting_receipts: {
     params: z.input<typeof SyncReportingReceiptsRequestSchema>;
     result: ServerPayload<SyncReportingReceiptsResponse>;
@@ -1076,6 +1084,16 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
   getMediaBuyDelivery?: DomainHandler<'get_media_buy_delivery', TAccount>;
   getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
+  /**
+   * Partial-success batch handler. Custom handlers must validate each status
+   * with ReportingConsumerStatusV1Schema from @adcp/sdk/reporting/ledger; the
+   * framework validates only the published request envelope so one malformed
+   * sibling cannot reject all. The framework also enforces the SDK's 8 MiB,
+   * 10,000-node, and maximum-depth request bounds before dispatch. Custom
+   * handlers must also reject every duplicate ID and every entry in a
+   * duplicate logical status chain at batch scope.
+   */
+  syncReportingStatus?: DomainHandler<'sync_reporting_status', TAccount>;
   syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;
   providePerformanceFeedback?: DomainHandler<'provide_performance_feedback', TAccount>;
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
@@ -1582,6 +1600,7 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'sync_creatives',
   'sync_event_sources',
   'sync_governance',
+  'sync_reporting_status',
   'sync_reporting_receipts',
 ] as const;
 
@@ -3002,6 +3021,12 @@ function validateFrameworkPayload(
   version: Parameters<typeof validateRequest>[2],
   proposalCapabilities?: ProposalRefinementCapabilities
 ) {
+  // `sync_reporting_status` is intentionally a partial-success batch. Validate
+  // the official envelope here while leaving each item to the registered
+  // handler so one malformed sibling cannot reject all.
+  if (toolName === 'sync_reporting_status' && direction === 'request') {
+    return validateSyncReportingStatusEnvelope(payload, version);
+  }
   if (toolName !== 'refine_proposals') {
     return direction === 'request'
       ? validateRequest(toolName, payload, version)
@@ -3088,6 +3113,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
   get_reporting_status: { wrap: null, annotations: RO },
+  sync_reporting_status: { wrap: null, annotations: IDEMP },
   sync_reporting_receipts: { wrap: null, annotations: IDEMP },
   provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
 
@@ -3373,6 +3399,7 @@ const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getMediaBuys', toolName: 'get_media_buys' },
   { handlerKey: 'getMediaBuyDelivery', toolName: 'get_media_buy_delivery' },
   { handlerKey: 'getReportingStatus', toolName: 'get_reporting_status' },
+  { handlerKey: 'syncReportingStatus', toolName: 'sync_reporting_status' },
   { handlerKey: 'syncReportingReceipts', toolName: 'sync_reporting_receipts' },
   { handlerKey: 'providePerformanceFeedback', toolName: 'provide_performance_feedback' },
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
@@ -6380,7 +6407,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
         }
-        if (callRequestValidationMode !== 'off') {
+        // This envelope validation is the load-bearing batch-size bound for
+        // custom handlers, so it remains strict even when general AJV is off.
+        const effectiveFrameworkRequestValidationMode =
+          toolName === 'sync_reporting_status' ? 'strict' : callRequestValidationMode;
+        if (effectiveFrameworkRequestValidationMode !== 'off') {
           const outcome = validateFrameworkPayload(
             toolName,
             'request',
@@ -6422,7 +6453,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
                 : outcome.issues;
             if (issues.length > 0) {
-              if (callRequestValidationMode === 'strict') {
+              if (effectiveFrameworkRequestValidationMode === 'strict') {
                 // Thread `exposeSchemaPath` the same way response-side does
                 // so request-side schemaPath also ships in dev and stays
                 // gated in production. Prior to this, request-side silently

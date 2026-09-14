@@ -696,6 +696,13 @@ describe('hashPayload', () => {
     assert.equal(hashPayload({ a: 1, b: 2 }), hashPayload({ b: 2, a: 1 }));
   });
 
+  it('preserves distinct malformed Unicode identities', () => {
+    const values = ['\ud800', '\ud801', '\udc00', '\udc01', '\ufffd', '\\ud800'];
+    const hashes = values.map(value => hashPayload({ statuses: [{ extra: value }] }));
+    assert.equal(new Set(hashes).size, values.length);
+    assert.equal(hashPayload({ value: '\ud83d\ude80' }), hashPayload({ value: '🚀' }));
+  });
+
   it('excludes context only when it is an object (echo-back shape)', () => {
     // Object context (echo-back) is excluded from the hash
     assert.equal(

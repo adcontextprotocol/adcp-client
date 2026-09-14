@@ -15,13 +15,14 @@ test/fixtures/webhook-signing-vectors/
 # Vendored AdCP 3.2 OAuth metadata-graph storyboard and vectors. Keep these
 # byte-identical to the upstream compliance bundle.
 test/fixtures/oauth-setup/
-schemas-preview/
-
 # AdCP 3.1 v2 projection fixtures — vendored from the spec repo's
 # `static/examples/products/canonical/` + `server/src/creative-agent/`.
 # Byte-identical to upstream so projection tests don't drift on local
 # formatting changes.
 test/lib/v2-projection-fixtures/
+
+# Portable reporting vectors are byte/hash pinned across SDK implementations.
+test/fixtures/reporting-reconciliation/
 
 # Vendored AdCP media-buy action schemas (enumMetadata sources for
 # scripts/generate-media-buy-update-fields.ts). Byte-identical to the upstream

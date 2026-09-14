@@ -372,6 +372,12 @@ test('rejects out-of-scope and orphan records before evaluating ledger completen
       });
     },
     raw => {
+      raw.revisions.push({
+        ...structuredClone(revision),
+        reporting_revision_id: 'orphan-same-scope',
+      });
+    },
+    raw => {
       raw.materializations.push({
         ...structuredClone(materialization('orphan-materialization')),
         reporting_obligation_id: 'missing-obligation',
@@ -427,6 +433,116 @@ test('rejects out-of-scope and orphan records before evaluating ledger completen
       error => error.code === 'LEDGER_GRAPH_INTEGRITY_FAILED'
     );
   }
+});
+
+test('loads a scope-matched Core revision without a managed materialization', async () => {
+  const raw = response([]);
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  delete raw.periods[0].destination_ref;
+  delete raw.periods[0].materialization_count;
+  delete raw.periods[0].successful_materialization_count;
+  delete raw.periods[0].receipt_count;
+  delete raw.periods[0].accepted_receipt_count;
+  raw.materializations = [];
+  raw.pagination.total_count = raw.periods.length + raw.revisions.length;
+
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+    },
+    { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
+  );
+
+  assert.equal(ledger.obligations.length, 1);
+  assert.equal(ledger.revisions.length, 1);
+  assert.equal(ledger.materializations.length, 0);
+  const evaluated = evaluateReportingLedger(ledger, [expectedPeriod()]);
+  assert.ok(!evaluated.obligations[0].reasons.includes('MISSING_CURRENT_REVISION'));
+  assert.ok(evaluated.obligations[0].reasons.includes('MISSING_VERIFIED_MATERIALIZATION'));
+});
+
+test('reuses one canonical direct-Core revision across feed purposes for the same logical slice', async () => {
+  const raw = response([]);
+  const first = raw.periods[0];
+  first.reconciliation_mode = 'delivery_only';
+  first.reconciliation_status = 'not_required';
+  delete first.destination_ref;
+  delete first.materialization_count;
+  delete first.successful_materialization_count;
+  delete first.receipt_count;
+  delete first.accepted_receipt_count;
+  const second = structuredClone(first);
+  second.reporting_obligation_id = 'obligation-analytics';
+  second.feed_purpose = 'analytics';
+  raw.periods.push(second);
+  raw.materializations = [];
+  raw.pagination.total_count = raw.periods.length + raw.revisions.length;
+
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+    },
+    { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
+  );
+  assert.equal(ledger.obligations.length, 2);
+  assert.equal(ledger.revisions.length, 1);
+});
+
+test('reuses one canonical revision for direct-Core and managed materialization consumers', async () => {
+  const raw = response([]);
+  const directCore = feedPurpose => {
+    const item = obligation(`obligation-direct-${feedPurpose}`);
+    item.feed_purpose = feedPurpose;
+    item.reconciliation_mode = 'delivery_only';
+    item.reconciliation_status = 'not_required';
+    delete item.destination_ref;
+    delete item.materialization_count;
+    delete item.successful_materialization_count;
+    delete item.receipt_count;
+    delete item.accepted_receipt_count;
+    return item;
+  };
+  raw.periods.push(directCore('analytics'));
+  raw.pagination.total_count = raw.periods.length + raw.revisions.length + raw.materializations.length;
+
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+    },
+    { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
+  );
+  assert.equal(ledger.obligations.length, 2);
+  assert.equal(ledger.revisions.length, 1);
+  assert.equal(ledger.materializations.length, 1);
+});
+
+test('fails closed when healthy obligations omit conditionally required history counts', () => {
+  const item = obligation();
+  item.health = 'complete';
+  delete item.materialization_count;
+  delete item.successful_materialization_count;
+  delete item.receipt_count;
+  delete item.accepted_receipt_count;
+  const ledger = {
+    ledgerSnapshotId: 'snapshot-missing-required-counts',
+    ledgerAsOf: '2026-09-02T00:00:06Z',
+    accountId: 'account-1',
+    scope: response([]).scope,
+    obligations: [item],
+    revisions: [structuredClone(revision)],
+    materializations: [structuredClone(materialization())],
+    receipts: [],
+  };
+
+  const result = evaluateReportingLedger(ledger, [expectedPeriod()]);
+  assert.ok(result.obligations[0].reasons.includes('ASSOCIATED_HISTORY_INCOMPLETE'));
 });
 
 test('rejects unbounded ledger loading and snapshot restart policies', async () => {

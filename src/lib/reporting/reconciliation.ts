@@ -765,10 +765,34 @@ function assertReportingLedgerGraph(
     }
     referencedRevisions.add(materialization.reporting_revision_id);
   }
+  const materializedObligations = new Set(
+    [...materializations.values()].map(materialization => materialization.reporting_obligation_id)
+  );
+  const directCoreScopeCounts = new Map<string, number>();
+  for (const obligation of obligations.values()) {
+    if (
+      !isDirectCoreObligation(obligation) ||
+      !Array.isArray(obligation.media_buy_ids) ||
+      materializedObligations.has(obligation.reporting_obligation_id)
+    ) {
+      continue;
+    }
+    const scopeKey = reportingRevisionScopeKey(obligation);
+    directCoreScopeCounts.set(scopeKey, (directCoreScopeCounts.get(scopeKey) ?? 0) + 1);
+  }
   for (const revision of revisions.values()) {
+    const referenced = referencedRevisions.has(revision.reporting_revision_id);
+    const directCoreScopeCount = Array.isArray(revision.media_buy_ids)
+      ? (directCoreScopeCounts.get(reportingRevisionScopeKey(revision)) ?? 0)
+      : 0;
+    // A Core revision intentionally excludes feed purpose, destination, and
+    // obligation identity. Obligations that share one logical reporting slice
+    // therefore share the same canonical revision, including mixed direct-Core
+    // and managed-materialization consumers.
+    const directlyScopedCoreRevision = directCoreScopeCount > 0;
     if (
       revision.account_id !== accountId ||
-      !referencedRevisions.has(revision.reporting_revision_id) ||
+      (!referenced && !directlyScopedCoreRevision) ||
       !isReportingControlTotals(revision.control_totals)
     ) {
       fail();
@@ -789,6 +813,35 @@ function assertReportingLedgerGraph(
       fail();
     }
   }
+}
+
+function isDirectCoreObligation(obligation: ManagedReportingObligation): boolean {
+  return obligation.reconciliation_mode === 'delivery_only' && obligation.destination_ref === undefined;
+}
+
+function revisionMatchesObligationScope(
+  revision: ManagedReportingRevision,
+  obligation: ManagedReportingObligation
+): boolean {
+  return (
+    revision.account_id === obligation.account_id &&
+    revision.report_definition_id === obligation.report_definition_id &&
+    revision.reporting_profile === obligation.reporting_profile &&
+    Array.isArray(revision.media_buy_ids) &&
+    Array.isArray(obligation.media_buy_ids) &&
+    sameStringSet(revision.media_buy_ids, obligation.media_buy_ids) &&
+    same(revision.period, obligation.period)
+  );
+}
+
+function reportingRevisionScopeKey(value: ManagedReportingRevision | ManagedReportingObligation): string {
+  return canonical({
+    account_id: value.account_id,
+    report_definition_id: value.report_definition_id,
+    reporting_profile: value.reporting_profile,
+    media_buy_ids: [...value.media_buy_ids].sort(),
+    period: value.period,
+  });
 }
 
 function assertDirectReportingLedgerGraph(ledger: ReportingLedger): void {
@@ -820,17 +873,31 @@ function selectCurrent(
     item => item.reporting_obligation_id === obligation.reporting_obligation_id
   );
   const revisionIds = new Set(attempts.map(item => item.reporting_revision_id));
-  const candidates = ledger.revisions.filter(item => revisionIds.has(item.reporting_revision_id));
+  // Core sellers can expose immutable revision rows directly through
+  // get_media_buy_delivery without creating a managed destination
+  // materialization. In that case the protocol-authored revision scope is the
+  // join key. Once materializations exist, keep using their explicit IDs.
+  const candidates = ledger.revisions.filter(item => {
+    if (attempts.length > 0) return revisionIds.has(item.reporting_revision_id);
+    return isDirectCoreObligation(obligation) && revisionMatchesObligationScope(item, obligation);
+  });
   const receipts = ledger.receipts.filter(item => item.reporting_obligation_id === obligation.reporting_obligation_id);
   const successfulAttempts = attempts.filter(item => item.status === 'available' || item.status === 'delivered');
   const acceptedReceipts = receipts.filter(item => item.status === 'accepted');
+  const closedHealthy = obligation.health === 'healthy' || obligation.health === 'complete';
+  const materializationCountsRequired = closedHealthy && obligation.destination_ref !== undefined;
+  const receiptCountsRequired = closedHealthy && obligation.reconciliation_mode === 'consumer_receipt';
   if (obligation.account_id !== ledger.accountId) reasons.push('OBLIGATION_ACCOUNT_MISMATCH');
   if (
     candidates.length !== obligation.revision_count ||
-    attempts.length !== obligation.materialization_count ||
-    successfulAttempts.length !== obligation.successful_materialization_count ||
-    receipts.length !== obligation.receipt_count ||
-    acceptedReceipts.length !== obligation.accepted_receipt_count
+    countMismatch(obligation.materialization_count, attempts.length, materializationCountsRequired) ||
+    countMismatch(
+      obligation.successful_materialization_count,
+      successfulAttempts.length,
+      materializationCountsRequired
+    ) ||
+    countMismatch(obligation.receipt_count, receipts.length, receiptCountsRequired) ||
+    countMismatch(obligation.accepted_receipt_count, acceptedReceipts.length, receiptCountsRequired)
   ) {
     reasons.push('ASSOCIATED_HISTORY_INCOMPLETE');
   }
@@ -1044,6 +1111,10 @@ function selectCurrent(
     }
   }
   return { revision, materialization, reasons };
+}
+
+function countMismatch(declared: number | undefined, observed: number, required: boolean): boolean {
+  return declared === undefined ? required : declared !== observed;
 }
 
 function expectedPeriodMatches(

@@ -11,6 +11,8 @@ import {
   createReportingDeliveryHandler,
   createReportingProducer,
   createReportingStatusHandler,
+  createSyncReportingStatusHandler,
+  type ReportingConsumerStatusLedgerStore,
 } from '@adcp/sdk/reporting/ledger';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -47,9 +49,9 @@ When `get_reporting_status` omits a period, the operational default horizon is t
 
 `projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and `reporting.status_changed` transitions, then calls only subscribers already authorized and supplied by the host.
 
-## Consumer status preview
+## Consumer status ingest
 
-AdCP 3.2.0-rc.2 adds `sync_reporting_status`. This draft stack exposes the handler and runtime validation from the ledger subpath while preserving the ratified schemas under `schemas-preview/` from protocol commit `388e78e63`; a dedicated protocol-adoption change will move the SDK default pin from rc.1 and regenerate the complete type surface.
+The SDK is pinned to AdCP 3.2.0-rc.2 and exposes `sync_reporting_status` from the ledger subpath. Its request, response, consumer-status, obligation, issue, delivery-capabilities, and reporting-status types come from the published rc.2 schema bundle.
 
 ```ts
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
@@ -62,4 +64,91 @@ const getReportingStatus = createReportingStatusHandler(store, {
 });
 ```
 
+Existing authoritative ledgers only need the narrow
+`ReportingConsumerStatusLedgerStore` port—not the producer/worker store. An
+adapter supplies `listConfigurations`, `getObligation`,
+`getRevisionMetadata`, `readSnapshotPage`, `getConsumerStatusBatchReplay`, and
+`syncConsumerStatusBatch`. Keep the adapter over the existing authority store:
+derive the internal account and durable consumer principal from authenticated
+transport, authorize before every replay or read, return immutable revision
+bindings, and implement current-leaf compare + append + original batch-result
+replay in one transaction. Several authorized principals for one external
+account must receive separate `(internal account, consumer principal)` chain
+namespaces; never create a second authority store or trust either identity from
+the request body.
+
+```ts
+const statusStore: ReportingConsumerStatusLedgerStore = {
+  listConfigurations: accountId => existingLedger.configurations(accountId),
+  getObligation: (id, accountId) => existingLedger.obligationForAuthorizedCaller(id, accountId),
+  getRevisionMetadata: (id, accountId) => existingLedger.boundRevision(id, accountId),
+  readSnapshotPage: (id, accountId, cursor, limit) =>
+    existingLedger.authorizedSnapshotPage(id, accountId, cursor, limit),
+  getConsumerStatusBatchReplay: input => existingLedger.statusBatchReplay(input),
+  syncConsumerStatusBatch: input => existingLedger.compareAppendAndReplayStatusBatch(input),
+};
+```
+
+Use `reportingConsumerStatusChainKeyV1`,
+`reportingConsumerStatusChainKeyFromIdentityV1`,
+`reportingConsumerStatusFingerprintV1`, and
+`normalizeReportingConsumerStatusIdsV1` from `@adcp/sdk/reporting/ledger` when
+implementing duplicate, exact-leaf, unchanged, and replay behavior. This keeps
+equivalent RFC 3339 spellings in one logical chain. `readSnapshotPage` is
+optional; omitting it makes seller snapshot provenance unavailable without
+blocking statuses that do not claim snapshot provenance. Store failure results
+use `retryAfterSeconds` (integer seconds from 1 through 3600); invalid hints and
+oversized custom codes are omitted or replaced before reaching the wire.
+
+`sync_reporting_status` is a partial-success batch. The server validates the
+closed request envelope, then the handler validates every status independently.
+Custom handlers should parse each item with the exported
+`ReportingConsumerStatusV1Schema` from `@adcp/sdk/reporting/ledger`; the ledger
+handler already does this. The framework always applies strict envelope
+validation for this task—even when general request validation is `warn` or
+`off`—and rejects requests above 8 MiB, 10,000 JSON nodes, or the SDK maximum
+JSON depth before dispatching either the built-in or a custom handler. Results
+map one-for-one to submitted statuses in request order; inspect each `result`
+even when the response envelope is `completed`. Custom handlers must also
+reject every duplicate ID and every entry in a duplicate logical status chain.
+`recorded_at` is seller-authored and response-only.
+
+Clock-skew, ineligible-period, and too-early missing-status failures identify
+the caller-controlled field. Obligation, revision, and snapshot mismatches are
+intentionally indistinguishable so consumer status ingest cannot become an
+existence oracle across retained ledger objects.
+
+Per-item failures carry an explicit recovery classification. Schema and
+authorization failures are `correctable`; an exhausted transient read slot is
+`RATE_LIMITED`/`transient` with `retry_after`; oversized durable statements are
+`REPORTING_STATUS_TOO_LARGE`/`correctable`; and exhausted append-only store
+capacity is `REPORTING_STATUS_CAPACITY_EXHAUSTED`/`terminal`. The last two are
+open-vocabulary AdCP extension codes, so clients must use their accompanying
+`recovery` value rather than a closed code switch.
+
+The language-neutral acceptance vectors ship at
+`@adcp/sdk/compliance-fixtures/reporting-consumer-status-v1.json`. They pin
+exact request bytes and SHA-256 digests, frozen clocks and principals, ordered
+results, and post-operation ledger state so non-TypeScript adapters can run the
+same contract without installing the SDK ledger as a second authority store.
+
 The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.
+
+Core revisions intentionally omit feed purpose, destination, obligation, and
+recipient identity. Obligations sharing the same account, report definition,
+period, media-buy scope, and canonical content therefore reuse one revision,
+including fan-out across direct-Core and managed-materialization consumers.
+
+For account-local calendar periods, expand each boundary externally into an
+immutable configuration generation. Do not model a local day as a constant
+86,400,000 ms across daylight-saving changes. For example, the New York daily
+periods `2026-03-08T05:00:00Z` → `2026-03-09T04:00:00Z` and
+`2026-11-01T04:00:00Z` → `2026-11-02T05:00:00Z` use 82,800,000 and 90,000,000
+milliseconds respectively. Give each generated boundary its own delivery
+configuration version, set `anchor` and `installedAt` to the exact start,
+`supersededAt` to the exact end, and set `periodMilliseconds` to `end - start`.
+The repository-only fixture at
+`test/fixtures/reporting-reconciliation/consumer-status.json` contains those
+23/25-hour cases,
+a calendar-month boundary, and the obligation-missing path with no invented
+obligation ID.
