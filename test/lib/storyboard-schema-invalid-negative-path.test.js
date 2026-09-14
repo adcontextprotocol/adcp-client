@@ -1,8 +1,7 @@
 const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { ProtocolClient } = require('../../dist/lib/index.js');
-const { createTestClient } = require('../../dist/lib/testing/client.js');
+const { ProtocolClient, SingleAgentClient } = require('../../dist/lib/index.js');
 const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
 
 function storyboard(negativePath) {
@@ -11,7 +10,7 @@ function storyboard(negativePath) {
     version: '1.0.0',
     title: 'Schema-invalid negative path',
     category: 'test',
-    summary: 'Grades SDK-local request validation as INVALID_REQUEST.',
+    summary: 'Grades seller validation responses for malformed requests.',
     narrative: '',
     agent: { interaction_model: 'sync', capabilities: [] },
     caller: { role: 'buyer_agent' },
@@ -41,9 +40,17 @@ function storyboard(negativePath) {
   };
 }
 
-function options(error) {
+function mcpResponse(data) {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data) }],
+    structuredContent: data,
+  };
+}
+
+function options(error, inspectTaskOptions = () => {}) {
   const client = {
-    async getProducts() {
+    async getProducts(_params, _inputHandler, taskOptions) {
+      inspectTaskOptions(taskOptions);
       return { success: false, error };
     },
   };
@@ -55,37 +62,152 @@ function options(error) {
 }
 
 describe('storyboard schema-invalid negative paths', () => {
-  test('grades the real SDK pre-dispatch request validator without contacting the seller', async () => {
+  test('dispatches malformed requests and grades response-derived checks against the seller response', async () => {
     const originalCallTool = ProtocolClient.callTool;
-    let dispatches = 0;
-    ProtocolClient.callTool = async () => {
-      dispatches += 1;
-      throw new Error('seller transport must not be called');
+    const agent = {
+      id: 'test',
+      name: 'Strict request client',
+      agent_uri: 'https://stub.example/mcp',
+      protocol: 'mcp',
+    };
+    const client = new SingleAgentClient(agent, {
+      adcpVersion: '3.2.0-rc.2',
+      validateFeatures: false,
+      validation: { requests: 'strict', responses: 'off' },
+    });
+    client.getCapabilities = async () => ({
+      version: 'v3',
+      majorVersions: [3],
+      supportedVersions: ['3.2.0-rc.2'],
+      protocols: ['media_buy'],
+      features: {},
+      extensions: [],
+      _synthetic: false,
+    });
+    client.ensureEndpointDiscovered = async () => agent;
+    const dispatches = [];
+    ProtocolClient.callTool = async (_agent, taskName, params) => {
+      dispatches.push({ taskName, params });
+      return mcpResponse({
+        status: 'failed',
+        errors: [
+          {
+            code: 'INVALID_REQUEST',
+            message: 'buying_mode is invalid',
+            recovery: 'correctable',
+            field: 'buying_mode',
+          },
+        ],
+        context: { correlation_id: 'schema-invalid-correlation' },
+      });
     };
 
     try {
-      const result = await runStoryboardStep(
-        'https://stub.example/mcp',
-        storyboard('schema_invalid'),
-        'reject_invalid_request',
+      const sb = storyboard('schema_invalid');
+      sb.phases[0].steps[0].sample_request.context = {
+        correlation_id: 'schema-invalid-correlation',
+      };
+      sb.phases[0].steps[0].validations.push(
         {
-          protocol: 'mcp',
-          _client: createTestClient('https://stub.example/mcp'),
-          _profile: { name: 'Strict request client', tools: ['get_products'], raw_capabilities: {} },
+          check: 'field_present',
+          path: 'errors[0].recovery',
+          description: 'Seller returns a recovery classification',
+        },
+        {
+          check: 'field_present',
+          path: 'context',
+          description: 'Seller echoes the request context',
+        },
+        {
+          check: 'field_value',
+          path: 'context.correlation_id',
+          value: 'schema-invalid-correlation',
+          description: 'Seller preserves the correlation id',
         }
       );
+      const result = await runStoryboardStep('https://stub.example/mcp', sb, 'reject_invalid_request', {
+        protocol: 'mcp',
+        _client: client,
+        _profile: { name: 'Strict request client', tools: ['get_products'], raw_capabilities: {} },
+      });
 
-      assert.equal(dispatches, 0, 'request validation must reject before protocol dispatch');
+      const malformedDispatch = dispatches.find(call => call.taskName === 'get_products');
+      assert.ok(
+        malformedDispatch,
+        `schema-invalid request must reach the seller: ${JSON.stringify({ dispatches, result })}`
+      );
+      assert.equal(malformedDispatch.params.buying_mode, 'invalid-mode');
       assert.equal(result.passed, true, JSON.stringify(result.validations));
-      assert.equal(result.response.synthetic, true);
-      assert.equal(result.response.errors[0].code, 'INVALID_REQUEST');
-      assert.match(result.response.errors[0].message, /Request validation failed for get_products/);
+      assert.equal(result.response.synthetic, undefined);
+      assert.equal(result.response.errors[0].message, 'buying_mode is invalid');
+      assert.equal(result.validations.length, 4);
+      assert.ok(
+        result.validations.every(validation => validation.passed),
+        JSON.stringify(result.validations)
+      );
     } finally {
       ProtocolClient.callTool = originalCallTool;
     }
   });
 
-  test('normalizes a field-level SDK-local request rejection to synthetic INVALID_REQUEST', async () => {
+  test('fails context checks when the seller does not echo schema-invalid request context', async () => {
+    const sb = storyboard('schema_invalid');
+    sb.phases[0].steps[0].sample_request.context = { correlation_id: 'expected-correlation' };
+    sb.phases[0].steps[0].validations.push({
+      check: 'field_value',
+      path: 'context.correlation_id',
+      value: 'expected-correlation',
+      description: 'Seller preserves the correlation id',
+    });
+    const client = {
+      async getProducts(_params, _inputHandler, taskOptions) {
+        assert.equal(taskOptions.skipRequestValidation, true);
+        return {
+          success: false,
+          data: {
+            errors: [{ code: 'INVALID_REQUEST', message: 'invalid request' }],
+            context: { correlation_id: 'wrong-correlation' },
+          },
+        };
+      },
+    };
+
+    const result = await runStoryboardStep('https://stub.example/mcp', sb, 'reject_invalid_request', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'Seller response stub', tools: ['get_products'], raw_capabilities: {} },
+    });
+
+    assert.equal(result.passed, false);
+    assert.equal(result.response.synthetic, undefined);
+    assert.equal(result.validations[0].passed, true);
+    assert.equal(result.validations[1].passed, false);
+    assert.equal(result.validations[1].actual, 'wrong-correlation');
+  });
+
+  test('uses schema_invalid as the backwards-compatible expect_error default', async () => {
+    const sb = storyboard(undefined);
+    const client = {
+      async getProducts(_params, _inputHandler, taskOptions) {
+        assert.equal(taskOptions.skipRequestValidation, true);
+        return {
+          success: false,
+          data: { errors: [{ code: 'INVALID_REQUEST', message: 'invalid request' }] },
+        };
+      },
+    };
+
+    const result = await runStoryboardStep('https://stub.example/mcp', sb, 'reject_invalid_request', {
+      protocol: 'mcp',
+      _client: client,
+      _profile: { name: 'Default negative-path stub', tools: ['get_products'], raw_capabilities: {} },
+    });
+
+    assert.equal(result.passed, true, JSON.stringify(result.validations));
+    assert.equal(result.skipped, undefined);
+  });
+
+  test('does not grade seller validations when an injected client rejects locally', async () => {
     const result = await runStoryboardStep(
       'https://stub.example/mcp',
       storyboard('schema_invalid'),
@@ -93,7 +215,10 @@ describe('storyboard schema-invalid negative paths', () => {
       options('Validation failed for field buying_mode: must be equal to one of the allowed values')
     );
 
-    assert.equal(result.passed, true, JSON.stringify(result.validations));
+    assert.equal(result.passed, true);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'not_applicable');
+    assert.match(result.skip.detail, /Seller was not reached/);
     assert.deepEqual(result.response, {
       errors: [
         {
@@ -103,8 +228,7 @@ describe('storyboard schema-invalid negative paths', () => {
       ],
       synthetic: true,
     });
-    assert.equal(result.validations[0].passed, true);
-    assert.equal(result.validations[0].actual, undefined);
+    assert.deepEqual(result.validations, []);
   });
 
   test('does not normalize a post-transport response-schema rejection', async () => {
@@ -125,7 +249,9 @@ describe('storyboard schema-invalid negative paths', () => {
       'https://stub.example/mcp',
       storyboard('payload_well_formed'),
       'reject_invalid_request',
-      options('Schema validation failed: seller rejected the request')
+      options('Schema validation failed: seller rejected the request', taskOptions => {
+        assert.equal(taskOptions, undefined);
+      })
     );
 
     assert.equal(result.passed, false);

@@ -732,9 +732,9 @@ export interface StoryboardStep {
   /**
    * Classifies an expected rejection as either an intentionally malformed
    * request (`schema_invalid`) or a schema-valid request rejected by seller
-   * policy/state (`payload_well_formed`). The distinction lets the runner
-   * treat an SDK-local request-schema rejection as `INVALID_REQUEST` without
-   * masking seller-side validation on well-formed negative paths.
+   * policy/state (`payload_well_formed`). The runner skips buyer-side request
+   * validation for `schema_invalid` so the malformed vector reaches the
+   * seller; schema validation remains enabled for `payload_well_formed`.
    */
   negative_path?: 'schema_invalid' | 'payload_well_formed';
   /**
