@@ -127,6 +127,16 @@ function boundedJsonShapeIssue(root: unknown): BoundedJsonShapeIssue | undefined
     stack.push({ value, depth, pointer, exit: true });
     const children: Array<{ value: unknown; pointer: string }> = [];
     if (Array.isArray(value)) {
+      if (nodes + pendingValues + value.length > MAX_JSON_NODES) {
+        return shapeIssue(
+          pointer,
+          'sync_reporting_status exceeds the 10,000-node request bound',
+          'x-adcp-max-json-nodes'
+        );
+      }
+      if (bytes + 2 + value.length > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) {
+        return shapeIssue(pointer, 'sync_reporting_status exceeds the 8 MiB request bound', 'x-adcp-max-json-bytes');
+      }
       for (let index = 0; index < value.length; index += 1) {
         children.push({ value: value[index], pointer: childPointer(pointer, String(index)) });
       }

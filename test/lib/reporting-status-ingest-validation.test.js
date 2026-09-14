@@ -421,6 +421,25 @@ describe('reporting consumer status validation', () => {
     assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
   });
 
+  test('rejects an attacker-sized array before reading its items', () => {
+    let itemReads = 0;
+    const wide = new Proxy(new Array(200_000), {
+      get(target, property, receiver) {
+        if (/^(0|[1-9][0-9]*)$/.test(String(property))) itemReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const result = validateSyncReportingStatusEnvelope({
+      account: { account_id: 'account-1' },
+      idempotency_key: 'reporting-status-wide-array-0001',
+      statuses: [consumerStatus()],
+      ext: wide,
+    });
+    assert.equal(result.valid, false);
+    assert.equal(result.issues[0].keyword, 'x-adcp-max-json-nodes');
+    assert.equal(itemReads, 0);
+  });
+
   test('permits repeated object references when the input graph is acyclic', async () => {
     const sharedPeriod = consumerStatus().period;
     const handler = createSyncReportingStatusHandler(

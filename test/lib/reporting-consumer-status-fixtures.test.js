@@ -14,6 +14,14 @@ const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'fixture.json')
 const fixtureBytes = fs.readFileSync(path.join(directory, 'consumer-status.json'));
 const fixture = JSON.parse(fixtureBytes.toString('utf8'));
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+const canonicalJson = value => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+    .join(',')}}`;
+};
 
 test('portable consumer-status vectors retain exact bytes, clocks, principals, results, and ledger state', () => {
   assert.equal(fixtureBytes.byteLength, manifest.files['consumer-status.json'].size_bytes);
@@ -42,9 +50,30 @@ test('portable consumer-status vectors retain exact bytes, clocks, principals, r
   }
   assert.ok(inputCount >= 16);
 
-  const bindingBytes = Buffer.from(fixture.frozen.core_revision_binding.canonical_json_utf8_base64, 'base64');
-  assert.equal(bindingBytes.toString('utf8'), JSON.stringify(fixture.frozen.core_revision_binding.value));
-  assert.equal(sha256(bindingBytes), fixture.frozen.core_revision_binding.sha256);
+  const bindings = [fixture.frozen.core_revision_binding, fixture.frozen.restated_core_revision_binding];
+  for (const binding of bindings) {
+    const bindingBytes = Buffer.from(binding.canonical_json_utf8_base64, 'base64');
+    assert.equal(bindingBytes.toString('utf8'), canonicalJson(binding.value));
+    assert.equal(sha256(bindingBytes), binding.sha256);
+    assert.deepEqual(Object.keys(binding.value).sort(), [
+      'control_totals',
+      'reporting_revision_id',
+      'reporting_rows',
+      'row_count',
+    ]);
+  }
+
+  const digestByRevision = new Map(bindings.map(binding => [binding.value.reporting_revision_id, binding.sha256]));
+  const inspect = value => {
+    if (Array.isArray(value)) return value.forEach(inspect);
+    if (!value || typeof value !== 'object') return;
+    if (value.consumer_status === 'received') {
+      assert.equal(value.observed_revision_content_sha256, digestByRevision.get(value.reporting_revision_id));
+    }
+    Object.values(value).forEach(inspect);
+  };
+  inspect(fixture.wire_parity);
+  inspect(fixture.scenario_groups);
 });
 
 test('portable wire-parity statuses cover all four rc.2 states and reject every declared mutation', () => {
