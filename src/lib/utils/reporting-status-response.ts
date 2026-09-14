@@ -63,6 +63,7 @@ function isReportingStatusIssue(value: unknown): boolean {
       'RECEIPT_REJECTED',
       'ADJUSTMENT_RECEIPT_REQUIRED',
       'ADJUSTMENT_RECEIPT_REJECTED',
+      'CONSUMER_STATUS_MISMATCH',
     ].includes(String(value.code)) &&
     ['delayed', 'action_required'].includes(String(value.severity)) &&
     ['buyer', 'seller', 'provider'].includes(String(value.responsible_party)) &&

@@ -54,7 +54,11 @@ import {
   type AdcpServerConfig as V5AdcpServerConfig,
   type MediaBuyHandlers as V5MediaBuyHandlers,
 } from '../lib/server/legacy/v5';
-import type { ListTransformersRequest, SyncPlansRequest } from '../lib/types/tools.generated';
+import type {
+  ListTransformersRequest,
+  SyncPlansRequest,
+  SyncReportingStatusRequest,
+} from '../lib/types/tools.generated';
 import type { FormatReferenceStructuredObject } from '../lib/types/core.generated';
 
 declare const client: CreativeAgentClient;
@@ -74,6 +78,7 @@ declare const buildRequest: MutatingRequestInput<LegacyBuildCreativeRequest>;
 declare const standardTaskName: AdcpTaskName;
 declare const standardTaskParams: TaskRequestFor<typeof standardTaskName>;
 declare const syncPlansRequest: SyncPlansRequest;
+declare const syncReportingStatusRequest: MutatingRequestInput<SyncReportingStatusRequest>;
 declare const listTransformersRequest: ListTransformersRequest;
 declare const product: CanonicalProduct;
 declare const rootProduct: RootProduct;
@@ -247,6 +252,11 @@ single.executeTask('sync_plans', syncPlansRequest).then(result => {
     // @ts-expect-error Typed standard-task responses are not `any`.
     const impossible: string = result.data.not_a_real_sync_plans_field;
     void impossible;
+  }
+});
+single.executeTask('sync_reporting_status', syncReportingStatusRequest).then(result => {
+  if (result.success && result.status === 'completed') {
+    void result.data.results;
   }
 });
 // @ts-expect-error Every protected primary task has its exact request type.
