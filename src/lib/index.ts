@@ -1584,6 +1584,7 @@ export {
   ProtocolClient,
   callMCPTool,
   callA2ATool,
+  createA2AClientFromCardUrl,
   createMCPClient,
   createA2AClient,
   closeMCPConnections,
@@ -1599,6 +1600,7 @@ export type {
   TransportActivityContext,
   TransportActivityHandler,
   TransportOptions,
+  A2ALegacyCompatOptions,
 } from './protocols';
 
 // ====== WIRE VERSION HELPERS (NAMESPACE) ======

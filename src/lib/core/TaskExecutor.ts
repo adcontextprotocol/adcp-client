@@ -3289,7 +3289,8 @@ export class TaskExecutor {
               agent,
               a2aCancellationTaskId,
               cancelTransport?.trustedFetchFn,
-              cancelTransport?.allowPrivateIp
+              cancelTransport?.allowPrivateIp,
+              cancelTransport?.legacyCompat
             ).catch(() => {
               /* see SECURITY note above */
             });

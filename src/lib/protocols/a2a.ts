@@ -31,8 +31,10 @@ import { createAgentTransportFetch } from '../net/agent-transport-fetch';
 import { isLikelyPrivateUrl } from '../net/address-guards';
 
 const ADCP_A2A_EXTENSION = 'https://adcontextprotocol.org/extensions/adcp/v3';
-const defaultTestFromCardUrl = (cardUrl: string, options: { fetchImpl: typeof fetch }) =>
-  createNativeA2AClientFromCardUrl(cardUrl, options.fetchImpl);
+const defaultTestFromCardUrl = (
+  cardUrl: string,
+  options: { fetchImpl: typeof fetch; legacyCompat?: A2ALegacyCompatOptions }
+) => createNativeA2AClientFromCardUrl(cardUrl, options.fetchImpl, options.legacyCompat);
 export const legacyA2AClientTestShim = { fromCardUrl: defaultTestFromCardUrl };
 
 /**
@@ -48,12 +50,25 @@ interface A2ACallContext {
   requestTimeoutMs?: number;
   fetchFn?: typeof fetch;
   allowPrivateIp?: boolean;
+  legacyCompat?: A2ALegacyCompatOptions;
 }
+
+/**
+ * Controls the official A2A SDK's opt-in v0.3 compatibility layer.
+ *
+ * The AdCP SDK defaults this to enabled for backwards compatibility. Set
+ * `enabled: false` to require the native A2A 1.0 card and JSON-RPC path.
+ */
+export interface A2ALegacyCompatOptions {
+  enabled: boolean;
+}
+
+const DEFAULT_A2A_LEGACY_COMPAT: Readonly<A2ALegacyCompatOptions> = Object.freeze({ enabled: true });
 
 const callContextStorage = new AsyncLocalStorage<A2ACallContext>();
 
 /**
- * Cached A2AClient keyed by (agentUrl, authToken hash). Avoids re-fetching
+ * Cached A2AClient keyed by connection identity and transport policy. Avoids re-fetching
  * /.well-known/agent.json on every tool call. The cached client's fetchImpl
  * reads per-call state from callContextStorage, so concurrent calls to the
  * same cache entry are safe.
@@ -101,7 +116,8 @@ function a2aCacheKey(
   authToken?: string,
   signingCacheKey?: string,
   customHeaders?: Record<string, string>,
-  allowPrivateIp = false
+  allowPrivateIp = false,
+  legacyCompatEnabled = true
 ): string {
   // Use the exact credential/header material in this private, in-memory key.
   // The cached client already retains the same credential, so hashing would
@@ -111,7 +127,14 @@ function a2aCacheKey(
   const headersKey = headersCacheMaterial(customHeaders);
   // A serialized tuple avoids delimiter ambiguity between attacker-controlled
   // URLs and the policy/auth suffixes (for example, a URL ending in a suffix).
-  return JSON.stringify([agentUrl, fingerprint ?? null, headersKey ?? null, signingCacheKey ?? null, allowPrivateIp]);
+  return JSON.stringify([
+    agentUrl,
+    fingerprint ?? null,
+    headersKey ?? null,
+    signingCacheKey ?? null,
+    allowPrivateIp,
+    legacyCompatEnabled,
+  ]);
 }
 
 /**
@@ -213,7 +236,8 @@ export async function cancelA2ATask(
   agent: AgentConfig,
   taskId: string,
   fetchFn?: typeof fetch,
-  allowPrivateIp?: boolean
+  allowPrivateIp?: boolean,
+  legacyCompat?: A2ALegacyCompatOptions
 ): Promise<void> {
   // Defense-in-depth (ad-tech-protocol-expert review of #1640): the cancel
   // request targets the discovered A2A endpoint. Calling this on an MCP agent
@@ -267,7 +291,7 @@ export async function cancelA2ATask(
   let lastError: unknown;
   for (const cardUrl of buildCardUrls(agentUrl)) {
     try {
-      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl);
+      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl, legacyCompat);
       break;
     } catch (err) {
       lastError = err;
@@ -291,7 +315,8 @@ async function getOrCreateA2AClient(
     authToken,
     signingContext?.cacheKey,
     customHeaders,
-    callContext?.allowPrivateIp === true
+    callContext?.allowPrivateIp === true,
+    callContext?.legacyCompat?.enabled ?? DEFAULT_A2A_LEGACY_COMPAT.enabled
   );
   // Scoped fetchers often carry request/tenant-specific egress policy. Keep
   // those calls one-shot so neither agent-card discovery nor a client created
@@ -339,7 +364,7 @@ async function createA2AClient(agentUrl: string, authToken: string | undefined):
   let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
   for (const cardUrl of cardUrls) {
     try {
-      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl);
+      client = await createA2AClientFromCardUrl(cardUrl, fetchImpl, context?.legacyCompat);
       break;
     } catch (err: unknown) {
       lastError = err as Error;
@@ -351,18 +376,38 @@ async function createA2AClient(agentUrl: string, authToken: string | undefined):
   return client;
 }
 
-export async function createA2AClientFromCardUrl(cardUrl: string, fetchImpl: typeof fetch): Promise<Client> {
+/**
+ * Create an official A2A client from an agent-card URL.
+ *
+ * v0.3 compatibility remains enabled by default. Pass
+ * `{ enabled: false }` as the third argument to require native A2A 1.0 card
+ * resolution and JSON-RPC transport behavior.
+ */
+export async function createA2AClientFromCardUrl(
+  cardUrl: string,
+  fetchImpl: typeof fetch,
+  legacyCompat: A2ALegacyCompatOptions = DEFAULT_A2A_LEGACY_COMPAT
+): Promise<Client> {
+  // Snapshot the policy so mutating a caller-owned options object cannot
+  // change the dialect of an already-created official SDK client.
+  const resolvedLegacyCompat = { enabled: legacyCompat.enabled !== false };
   // Keep the long-standing unit-test seam while production uses the v1
   // factory. Existing tests replace this shim with deterministic stubs;
   // never consult it outside tests.
   if (process.env.NODE_ENV === 'test' && legacyA2AClientTestShim.fromCardUrl !== defaultTestFromCardUrl) {
-    return legacyA2AClientTestShim.fromCardUrl(cardUrl, { fetchImpl }) as unknown as Client;
+    return legacyA2AClientTestShim.fromCardUrl(cardUrl, {
+      fetchImpl,
+      legacyCompat: resolvedLegacyCompat,
+    }) as unknown as Client;
   }
-  return createNativeA2AClientFromCardUrl(cardUrl, fetchImpl);
+  return createNativeA2AClientFromCardUrl(cardUrl, fetchImpl, resolvedLegacyCompat);
 }
 
-async function createNativeA2AClientFromCardUrl(cardUrl: string, fetchImpl: typeof fetch): Promise<Client> {
-  const legacyCompat = { enabled: true } as const;
+async function createNativeA2AClientFromCardUrl(
+  cardUrl: string,
+  fetchImpl: typeof fetch,
+  legacyCompat: A2ALegacyCompatOptions = DEFAULT_A2A_LEGACY_COMPAT
+): Promise<Client> {
   const factory = new ClientFactory({
     transports: [new JsonRpcTransportFactory({ fetchImpl, legacyCompat })],
     cardResolver: new DefaultAgentCardResolver({ fetchImpl, legacyCompat }),
@@ -639,7 +684,8 @@ export async function callA2ATool(
   signal?: AbortSignal,
   requestTimeoutMs?: number,
   fetchFn?: typeof fetch,
-  allowPrivateIp?: boolean
+  allowPrivateIp?: boolean,
+  legacyCompat?: A2ALegacyCompatOptions
 ): Promise<unknown> {
   return withSpan(
     'adcp.a2a.call_tool',
@@ -656,6 +702,7 @@ export async function callA2ATool(
         requestTimeoutMs,
         fetchFn,
         allowPrivateIp,
+        legacyCompat,
       };
       return signingContextStorage.run(signingContext, () =>
         callContextStorage.run(context, () =>
@@ -811,7 +858,8 @@ async function callA2AToolImpl(
           authToken,
           signingContext?.cacheKey,
           context.customHeaders,
-          context.allowPrivateIp === true
+          context.allowPrivateIp === true,
+          context.legacyCompat?.enabled ?? DEFAULT_A2A_LEGACY_COMPAT.enabled
         )
       );
 

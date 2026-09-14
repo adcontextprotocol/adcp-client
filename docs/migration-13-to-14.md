@@ -63,6 +63,24 @@ installed. Existing `createA2AAdapter()` card options remain accepted, but
 `preferredTransport` and `protocolVersion` are deprecated because the adapter
 now advertises JSON-RPC 1.0 plus its 0.3 compatibility interface.
 
+Compatibility remains enabled by default. Native-only conformance and
+deployments can opt out without patching the package:
+
+```ts
+const client = await createA2AClientFromCardUrl(cardUrl, fetch, { enabled: false });
+const adapter = createA2AAdapter({
+  server,
+  agentCard,
+  legacyCompat: { enabled: false },
+});
+```
+
+For regular `AdCPClient` calls, set
+`transport: { legacyCompat: { enabled: false } }` on the client or task. The
+setting is forwarded to both the official card resolver and JSON-RPC
+transport. It is also part of the A2A client-cache identity, so native-only
+and compatibility-enabled calls never reuse each other's discovered client.
+
 ### Cross-origin signing-key delegation
 
 Signing-key discovery now evaluates the complete matching

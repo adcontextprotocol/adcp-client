@@ -26,6 +26,18 @@ interface DelegatedOperatorAuthorizationContext {
   country?: string;
 }
 
+interface A2ALegacyCompatOptions {
+  enabled: boolean; // false requires native A2A 1.0; defaults to true
+}
+
+interface TransportOptions {
+  maxResponseBytes?: number;
+  trustedFetchFn?: typeof fetch;
+  allowPrivateIp?: boolean;
+  requestTimeoutMs?: number;
+  legacyCompat?: A2ALegacyCompatOptions; // A2A only
+}
+
 interface TaskOptions {
   // Trusted local receiver policy; snapshotted and persisted with generated
   // webhook registrations, never inferred from or sent in task arguments.

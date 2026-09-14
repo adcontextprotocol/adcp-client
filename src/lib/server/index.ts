@@ -467,6 +467,7 @@ export type {
   LegacyHttpSecurityScheme,
   LegacySecurityScheme,
 } from './a2a-adapter';
+export type { A2ALegacyCompatOptions } from '../protocols/a2a';
 
 export { createWebhookEmitter, memoryWebhookDeliveryStore, memoryWebhookKeyStore } from './webhook-emitter';
 export {

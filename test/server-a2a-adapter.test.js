@@ -303,6 +303,30 @@ describe('createA2AAdapter', () => {
       assert.strictEqual(res.body.result.task.status.state, 'TASK_STATE_FAILED');
       assert.strictEqual(res.body.result.task.artifacts[0].parts[0].data.reason, 'REQUIRED_EXTENSION_MISSING');
     });
+
+    it('can disable the legacy handler and advertise only the native 1.0 interface', async () => {
+      const adcp = createAdcpServer({ mediaBuy: { getProducts: async () => ({ products: [] }) } });
+      const a2a = createA2AAdapter({
+        server: adcp,
+        agentCard: baseCard(),
+        legacyCompat: { enabled: false },
+      });
+      const card = await a2a.getAgentCard();
+      assert.deepStrictEqual(
+        card.supportedInterfaces.map(candidate => candidate.protocolVersion),
+        ['1.0']
+      );
+
+      const app = mountAdapter(a2a);
+      const cardResponse = await getAgentCard(app, { 'A2A-Version': '0.3' });
+      assert.ok(Array.isArray(cardResponse.body.supportedInterfaces));
+      assert.strictEqual(cardResponse.body.url, undefined);
+
+      const legacyResponse = await postJsonRpc(app, messageSend(dataPartMessage('get_products', {})), {
+        'A2A-Version': '1.0',
+      });
+      assert.strictEqual(legacyResponse.body.error.code, -32601);
+    });
   });
 
   describe('agent card', () => {
