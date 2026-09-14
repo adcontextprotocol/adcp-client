@@ -11,10 +11,16 @@ import {
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
 } from './coverage';
-import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from './health';
+import {
+  aggregateReportingHealthV1,
+  assertReportingConsumerMismatchEscalation,
+  projectReportingConsumerStatusMismatchV1,
+  projectReportingObligationHealthV1,
+} from './health';
 import { compareReportingInstants } from './instant';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
+  ReportingConsumerMismatchEscalationV1,
   ReportingHealthV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerConsumerStatementV1,
@@ -29,12 +35,29 @@ import type {
 
 export interface ReportingStatusConsumerScopeOptionsV1<TContext = unknown> {
   resolveConsumerId(context: TContext): string | Promise<string>;
+  /**
+   * Mirror of the seller's advertised `consumer_mismatch_escalation_seconds` +
+   * `operations_contact` capability block. Supply it only when the capability
+   * document actually advertises both — the projection uses it to decide when
+   * an unattended `CONSUMER_STATUS_MISMATCH` must become `action_required`
+   * with a `contact_*` action, and advertising a window the reads don't honor
+   * (or honoring one the document doesn't advertise) is worse than silence.
+   */
+  consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
 }
 
 export function createReportingStatusHandler<TContext = unknown>(
   store: ReportingLedgerStore,
   options?: ReportingStatusConsumerScopeOptionsV1<TContext>
 ): ReportingStatusHandlerV1 {
+  // Fail at wiring time, not on the first escalated read. Inherit the store's
+  // setting when the handler was not given one, and refuse a disagreement
+  // outright: the store applies the `health` filter while building the
+  // snapshot and the handler projects severity afterwards, so two different
+  // windows would make a filtered periods read contradict the summary.
+  const consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(
+    resolveConsumerMismatchEscalation(options?.consumerMismatchEscalation, store)
+  );
   const activeReadsByAccount = new Map<string, number>();
   return async (request, context) => {
     const raw = request as unknown as Record<string, unknown>;
@@ -164,7 +187,25 @@ export function createReportingStatusHandler<TContext = unknown>(
         const persistedIssues =
           projection.health === 'delayed' || projection.health === 'action_required'
             ? page.snapshot.issues.filter(
-                issue => issue.reporting_obligation_id === obligation.reporting_obligation_id && !issue.resolvedAt
+                issue =>
+                  issue.reporting_obligation_id === obligation.reporting_obligation_id &&
+                  !issue.resolvedAt &&
+                  // A CONSUMER_STATUS_MISMATCH is caller-scoped, but the issue
+                  // store is keyed by obligation alone and carries no consumer
+                  // dimension. Republishing a persisted one would hand every
+                  // other consumer on the same obligation the causing
+                  // `reporting_status_id`, its `opened_at` (i.e. another
+                  // tenant's exact ingest timing), and any `external_ref`
+                  // ticket key — the precise cross-tenant leak the field's own
+                  // contract forbids. This projection recomputes the mismatch
+                  // from the caller's current leaf on every read, so the
+                  // persisted copy is redundant as well as unsafe.
+                  issue.code !== 'CONSUMER_STATUS_MISMATCH' &&
+                  // Retiring an issue removes it from the projection rather
+                  // than publishing it at a terminal state, which is what lets
+                  // a reader treat a nonempty `issues[]` as degradation.
+                  issue.issueState !== 'resolved' &&
+                  issue.issueState !== 'waived'
               )
             : [];
         const consumerStatusHistory = (page.snapshot.consumerStatuses ?? []).filter(value =>
@@ -176,21 +217,42 @@ export function createReportingStatusHandler<TContext = unknown>(
           []
         ).filter(value => consumerStatusMatchesObligation(value, obligation));
         const currentConsumerStatus = currentStatusLeaf(consumerStatusProjection);
-        const mismatch = consumerStatusMismatch(currentConsumerStatus, revisions, projection.health);
-        const mismatchIssue =
-          mismatch && currentConsumerStatus
-            ? consumerStatusMismatchIssue(obligation, currentConsumerStatus, page.snapshot.ledgerAsOf)
-            : undefined;
+        // Gated on the authenticated consumer like every other consumer-derived
+        // output here. The bundled store returns no statuses without a
+        // `consumer_id`, but the `ReportingLedgerStore` interface does not
+        // require that, and an unscoped custom store would otherwise publish
+        // one caller's statement id into the shared `issues[]`.
+        const mismatch =
+          consumerId === undefined
+            ? undefined
+            : projectReportingConsumerStatusMismatchV1(
+                obligation,
+                currentConsumerStatus,
+                revisions,
+                projection.health,
+                page.snapshot.ledgerAsOf,
+                consumerMismatchEscalation
+              );
+        // A buyer that owes a status and has not posted one is a counted
+        // unknown, never a conflict: it creates no issue, changes no health,
+        // and is invisible to every other caller.
+        const consumerStatusPending =
+          consumerId !== undefined &&
+          consumerStatusProjection.length === 0 &&
+          // Strictly after: the duty is to post "no later than" the deadline, so
+          // a buyer that posts at exactly that instant has met it.
+          compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
         return {
           obligation,
           revisions,
           consumerStatusHistory,
           consumerStatusProjection,
           currentConsumerStatus,
+          consumerStatusPending,
           projection: {
             ...projection,
-            ...(mismatch ? { health: 'action_required' as const } : {}),
-            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatchIssue ? [mismatchIssue] : [])]),
+            ...(mismatch ? { health: mismatch.health } : {}),
+            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
           },
         };
       });
@@ -303,13 +365,45 @@ export function createReportingStatusHandler<TContext = unknown>(
         ),
         data_through: aggregateDataThrough(selected),
         ...nextExpectedAt(selected),
-        obligation_counts: counts(healthValues),
+        obligation_counts: counts(
+          healthValues,
+          // Required whenever the seller advertises consumer_status_task, which
+          // in this handler is exactly when a consumer principal is resolved.
+          // It overlaps the health counts rather than partitioning them.
+          consumerId !== undefined ? selected.filter(value => value.consumerStatusPending).length : undefined
+        ),
         issues: issues.map(wireIssue),
       } as never;
     } finally {
       releaseReadSlot();
     }
   };
+}
+
+/**
+ * One escalation commitment for both the snapshot pre-filter and the
+ * projection. Throws when the handler and the store were configured with
+ * different windows rather than letting the two views silently diverge.
+ */
+function resolveConsumerMismatchEscalation(
+  fromOptions: ReportingConsumerMismatchEscalationV1 | undefined,
+  store: ReportingLedgerStore
+): ReportingConsumerMismatchEscalationV1 | undefined {
+  const fromStore = (store as { consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1 })
+    .consumerMismatchEscalation;
+  if (!fromOptions) return fromStore;
+  if (!fromStore) return fromOptions;
+  if (
+    fromOptions.escalationSeconds !== fromStore.escalationSeconds ||
+    fromOptions.operationsContact.url !== fromStore.operationsContact.url ||
+    fromOptions.operationsContact.email !== fromStore.operationsContact.email
+  ) {
+    throw new TypeError(
+      'consumerMismatchEscalation differs between createReportingStatusHandler and the reporting ledger store; ' +
+        'configure one value so a health-filtered periods read cannot disagree with the summary'
+    );
+  }
+  return fromOptions;
 }
 
 /** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
@@ -489,45 +583,6 @@ function currentStatusLeaf(
   return statuses.find(value => !superseded.has(value.reporting_status_id));
 }
 
-function consumerStatusMismatch(
-  status: ReportingLedgerConsumerStatementV1 | undefined,
-  revisions: Array<{ reporting_revision_id: string; revisionNumber: number }>,
-  sellerHealth: ReportingHealthV1
-): boolean {
-  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return false;
-  if (status.consumer_status !== 'received') return true;
-  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-  return !current || status.reporting_revision_id !== current.reporting_revision_id;
-}
-
-function consumerStatusMismatchIssue(
-  obligation: ReportingLedgerObligationV1,
-  status: ReportingLedgerConsumerStatementV1,
-  observedAt: string
-): ReportingLedgerIssueV1 {
-  const digest = createHash('sha256')
-    .update(
-      canonicalJsonV1({
-        kind: 'consumer_status_mismatch',
-        reporting_obligation_id: obligation.reporting_obligation_id,
-        reporting_status_id: status.reporting_status_id,
-      })
-    )
-    .digest('hex')
-    .slice(0, 32);
-  return {
-    issueId: `rpti_${digest}`,
-    reporting_obligation_id: obligation.reporting_obligation_id,
-    reporting_status_id: status.reporting_status_id,
-    code: 'CONSUMER_STATUS_MISMATCH',
-    severity: 'action_required',
-    responsibleParty: status.consumer_status === 'unreadable' ? 'provider' : 'seller',
-    recommendedAction: status.consumer_status === 'unreadable' ? 'repair_access' : 'contact_seller',
-    openedAt: observedAt,
-    observedAt,
-  };
-}
-
 function wireConsumerStatus(status: ReportingLedgerConsumerStatementV1) {
   const { consumerId: _consumerId, account_id: _accountId, ...wire } = status;
   return wire;
@@ -576,6 +631,13 @@ function wireIssue(issue: ReportingLedgerIssueV1) {
     severity: issue.severity,
     responsible_party: issue.responsibleParty,
     recommended_action: issue.recommendedAction,
+    opened_at: issue.openedAt,
+    // Omission means `open`, so only emit a state a store actually set. A
+    // retired issue is removed from the projection rather than published at
+    // `resolved` / `waived`, which keeps "nonempty issues[] means degraded"
+    // true for readers.
+    ...(issue.issueState === 'open' || issue.issueState === 'acknowledged' ? { issue_state: issue.issueState } : {}),
+    ...(issue.externalRef ? { external_ref: issue.externalRef } : {}),
     ...(issue.reporting_status_id ? { reporting_status_id: issue.reporting_status_id } : {}),
     ...(issue.reporting_obligation_id === 'scope' ? {} : { reporting_obligation_id: issue.reporting_obligation_id }),
   };
@@ -653,7 +715,7 @@ function nextExpectedAt(
   return values[0] ? { next_expected_at: values[0] } : {};
 }
 
-function counts(values: ReportingHealthV1[]) {
+function counts(values: ReportingHealthV1[], consumerStatusPending?: number) {
   return {
     total: values.length,
     waiting: values.filter(value => value === 'waiting').length,
@@ -661,6 +723,10 @@ function counts(values: ReportingHealthV1[]) {
     delayed: values.filter(value => value === 'delayed').length,
     action_required: values.filter(value => value === 'action_required').length,
     complete: values.filter(value => value === 'complete').length,
+    // Visibility count over the caller's own silence. Never a health input: it
+    // must not change health, any other count, or advertised reliability
+    // statistics, so it is computed independently of `values`.
+    ...(consumerStatusPending !== undefined ? { consumer_status_pending: consumerStatusPending } : {}),
   };
 }
 
@@ -743,7 +809,11 @@ function historyUnavailableIssue(query: ReportingLedgerSnapshotQueryV1, observed
     severity: 'action_required',
     responsibleParty: 'seller',
     recommendedAction: 'contact_seller',
-    openedAt: observedAt,
+    // Anchored to the period, not the read. `issueId` is already stable across
+    // polls for one account+period, and rc.3 emits `opened_at` on the wire, so
+    // using `observedAt` here would advance a supposedly-fixed instant on every
+    // poll of the same issue.
+    openedAt: period.start,
     observedAt,
   };
 }

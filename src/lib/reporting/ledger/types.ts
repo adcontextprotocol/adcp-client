@@ -38,6 +38,22 @@ export interface ReportingLedgerConfigurationV1 {
   offeringId: string;
   report_definition_id: string;
   feedPurpose: 'pacing' | 'analytics' | 'billing';
+  /**
+   * Which party's count of this feed is authoritative. Absence is identical to
+   * `'seller'`.
+   *
+   * `'consumer'` is reserved for the buyer-deposited billing revision task
+   * scoped to a later minor. No released version defines that task, so every
+   * AdCP 3.2 seller MUST reject the value with `UNSUPPORTED_FEATURE` at
+   * `sync_accounts` validation — before the generation becomes ready and
+   * before any obligation exists — and MUST NOT silently coerce it to
+   * `'seller'`, which would accept a different contract than the one asked
+   * for. The field is typed here so a configuration can carry the buyer's
+   * request as far as the rejection.
+   *
+   * See https://github.com/adcontextprotocol/adcp/issues/7440.
+   */
+  authoritativeParty?: 'seller' | 'consumer';
   requiredFinality: ReportingFinalityV1;
   finalityPolicy?:
     | { policyId: string; basis: 'source_final'; sourceSignal: string }
@@ -239,6 +255,18 @@ export type ReportingConsumerStatusBatchResultV1 =
       errorKeyword?: string;
     };
 
+/**
+ * Seller-maintained lifecycle for one `issueId`.
+ *
+ * All four values are storable, but only `open` and `acknowledged` are
+ * publishable: retiring an issue removes it from the projection instead of
+ * emitting it at a terminal state, which is what lets a reader treat a nonempty
+ * `issues[]` as degradation. The read handler drops `resolved` and `waived`
+ * issues rather than emitting them with the state elided, so marking an issue
+ * retired in a custom store does what it looks like it does.
+ */
+export type ReportingIssueStateV1 = 'open' | 'acknowledged' | 'resolved' | 'waived';
+
 export interface ReportingLedgerIssueV1 {
   issueId: string;
   reporting_obligation_id: string;
@@ -269,11 +297,109 @@ export interface ReportingLedgerIssueV1 {
     | 'change_reporting_scope'
     | 'use_supported_reader';
   detail?: Record<string, unknown>;
+  /**
+   * Consumer statement that caused this issue. Required on the wire for
+   * `CONSUMER_STATUS_MISMATCH` — see {@link ReportingLedgerConsumerMismatchIssueV1},
+   * which is the variant to construct for that code.
+   */
   reporting_status_id?: string;
+  /**
+   * When the seller first observed this logical condition.
+   *
+   * Fixed at first emission and carried unchanged across every re-emission of
+   * the same `issueId` — including across ledger snapshots and across a
+   * severity change from `delayed` to `action_required`. It anchors the
+   * escalation clock advertised as `consumer_mismatch_escalation_seconds`, so
+   * advancing it on re-emission would let a seller hold an unresolved issue
+   * below `action_required` indefinitely. The SDK derives it from immutable
+   * ledger facts rather than from the current read time for exactly that
+   * reason. Required on the wire for `CONSUMER_STATUS_MISMATCH`.
+   */
   openedAt: string;
+  /**
+   * Optional seller-maintained lifecycle for this `issueId`. Omission means
+   * `open`. Only `open` and `acknowledged` issues may appear in `issues[]`:
+   * retiring an issue removes it from the projection instead of publishing it
+   * at `resolved` or `waived`, so a reader that treats a nonempty `issues[]`
+   * as degradation stays correct.
+   *
+   * For `CONSUMER_STATUS_MISMATCH` retirement is additionally constrained —
+   * see `consumer_mismatch_lifecycle` on `core/reporting-status-issue.json`.
+   * A seller MUST NOT return a period to `healthy` or `complete` while the
+   * consumer statement that caused the mismatch is still that consumer's
+   * current unsuperseded leaf. The SDK's derived projection satisfies this by
+   * construction because it recomputes the mismatch from the current leaf on
+   * every read; a custom store that persists issues must enforce it.
+   */
+  issueState?: ReportingIssueStateV1;
+  /**
+   * Optional opaque, non-secret correlation string for the emitting party's
+   * own tracker — a ticket key, incident ID, or case number.
+   *
+   * Inert display text with no protocol meaning. The wire character class
+   * excludes whitespace and the solidus so the value cannot express a URL or
+   * a sentence; receivers compare, store, and display it and never
+   * dereference, resolve, or execute it. A seller MUST NOT reuse one
+   * `externalRef` across callers on a caller-scoped issue: a
+   * `CONSUMER_STATUS_MISMATCH` is caller-scoped, so a shared ref would leak
+   * the blast radius of a seller-side incident between tenants.
+   */
+  externalRef?: string;
   observedAt: string;
   resolvedAt?: string;
 }
+
+/**
+ * Non-secret human escalation path for reporting issues the protocol cannot
+ * resolve. Display metadata for an operator, not an AdCP endpoint: agents MUST
+ * NOT dereference, probe, or send protocol traffic to these values, and they
+ * carry no authorization. At least one of `url` / `email` is required.
+ */
+export interface ReportingOperationsContactV1 {
+  /**
+   * HTTPS page a human uses to open or track a reporting issue. Constrained to
+   * the same hardened public-origin shape as the offering document URIs — never
+   * an IP literal, userinfo URL, loopback host, AdCP task endpoint, webhook
+   * target, or credentialed link — so never-dereference holds by construction.
+   */
+  url?: string;
+  /** Monitored operations mailbox. A role address, not an individual. */
+  email?: string;
+}
+
+/**
+ * Seller commitment that an unattended `CONSUMER_STATUS_MISMATCH` escalates to
+ * a human within a bounded window.
+ *
+ * Advertise both fields or neither: the wire schema conditions
+ * `consumer_mismatch_escalation_seconds` on `operations_contact` so the
+ * escalation always has a destination. Absence means the seller publishes no
+ * escalation commitment; it never means an unbounded one.
+ */
+export interface ReportingConsumerMismatchEscalationV1 {
+  /**
+   * Maximum interval after an issue's `openedAt` during which the seller may
+   * keep it at a non-escalated `recommendedAction`. At or after that boundary
+   * the issue is emitted at severity `action_required` with a `contact_*`
+   * action naming the diagnosed responsible party. `wait_for_retry` MUST NOT
+   * survive the boundary: an unattended mismatch is an escalation, not a retry.
+   */
+  escalationSeconds: number;
+  operationsContact: ReportingOperationsContactV1;
+}
+
+/**
+ * `CONSUMER_STATUS_MISMATCH` narrowed to what the wire actually requires.
+ *
+ * `opened_at` and `reporting_status_id` are both mandatory on this code, so a
+ * store that builds the base shape can typecheck its way into a response the
+ * SDK's own validator rejects. Construct this variant instead.
+ */
+export type ReportingLedgerConsumerMismatchIssueV1 = ReportingLedgerIssueV1 & {
+  code: 'CONSUMER_STATUS_MISMATCH';
+  reporting_status_id: string;
+  openedAt: string;
+};
 
 export interface ReportingLedgerStatusTransitionV1 {
   transitionId: string;
@@ -460,6 +586,24 @@ export interface ReportingConsumerStatusLedgerStore {
     reporting_revision_id: string,
     account_id: string
   ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
+  /**
+   * Every retained revision for one obligation, without materializing rows.
+   *
+   * Required to accept `content_mismatch`, which per `expected_period` is
+   * *"valid only against a revision the seller currently requires for that
+   * period"*. Deciding that needs the sibling set: a revision is superseded
+   * when another one names it, which cannot be read off the named revision
+   * alone. A store that does not implement this rejects `content_mismatch`
+   * rather than accepting a statement it cannot validate — the other four
+   * statuses are unaffected.
+   *
+   * `ReportingLedgerStore` implementors already satisfy this through
+   * `listRevisions`; the handler uses whichever is present.
+   */
+  listRevisionMetadata?(
+    reporting_obligation_id: string,
+    account_id: string
+  ): Promise<ReportingLedgerRevisionMetadataV1[]>;
   /** Reads only the caller-bound snapshot needed to validate optional provenance. */
   readSnapshotPage?(
     snapshotId: string,

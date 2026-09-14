@@ -134,6 +134,117 @@ same contract without installing the SDK ledger as a second authority store.
 
 The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.
 
+### rc.3 consumer-status hardening
+
+`content_mismatch` is the fifth consumer status: the buyer consumed the exact
+revision the seller requires and it contradicts a fact the accepted
+configuration generation already fixed. It carries a required closed
+`mismatch_code` (`scope_media_buy_missing`, `coverage_short`, `metric_missing`,
+`schema_nonconformant`, `currency_mismatch`, `period_mismatch`) plus the
+obligation id, the revision id, and the recomputed
+`observed_revision_content_sha256`, so the disagreement names the exact bytes
+that were read. It is **not** a measurement dispute — a buyer must not use it to
+argue about how many impressions the seller counted; that is
+`measurement_terms` / `makegood_policy` territory.
+
+Not every conflict is an immediate escalation. A `received` statement made stale
+*only* by a seller restatement projects the caller-scoped view as `delayed`
+until a bounded re-read grace deadline, then `action_required`. The buyer read
+exactly what the seller then required, so it gets one bounded chance to re-read
+before the disagreement escalates. The deadline is the `created_at` of the
+**first** revision that superseded the one the buyer named, plus the generation's
+`schedule.delivery_sla` — or `automated_recovery_window_seconds` when that SLA is
+zero, so a zero-SLA feed still yields a bounded window. Later restatements
+supersede later revisions and therefore cannot restart it; a seller cannot hold
+an unresolved mismatch below `action_required` by restating on a timer. Every
+other conflict kind is `action_required` immediately.
+
+`projectReportingConsumerStatusMismatchV1` is that projection as a pure
+function, exported so a custom store can reuse the exact logic the built-in
+handler runs. It returns the issue, the caller-scoped health it forces, and the
+grace deadline when one applies.
+
+Issues now carry `opened_at`, which is fixed at first emission and carried
+unchanged across every re-emission — including across the `delayed` →
+`action_required` transition, which reuses the same `issue_id` so consumers age
+one work item instead of two. The SDK derives it from immutable ledger facts
+(the first superseding revision's `created_at` for a stale read, the statement's
+`recorded_at` otherwise) rather than from the read time, because advancing it on
+re-emission would reset the escalation clock on every poll. Optional
+`issue_state` (`open` / `acknowledged` only — a retired issue leaves the
+projection instead of being published at `resolved` / `waived`) and
+`external_ref` (inert correlation text, never dereferenced, never shared across
+callers on a caller-scoped issue) round out the lifecycle.
+
+Pass `consumerMismatchEscalation` to `createReportingStatusHandler` when the
+capability document advertises `consumer_mismatch_escalation_seconds` and
+`operations_contact` — the schema requires both or neither, so the escalation
+always has a destination:
+
+```ts
+const getReportingStatus = createReportingStatusHandler(store, {
+  resolveConsumerId: context => context.agent.agent_url,
+  consumerMismatchEscalation: {
+    escalationSeconds: 86_400,
+    operationsContact: { email: 'reporting-ops@seller.example' },
+  },
+});
+```
+
+Advertise the same commitment in the capability document from that one value,
+so the reads and the document cannot drift:
+
+```ts
+const escalation = {
+  escalationSeconds: 86_400,
+  operationsContact: { email: 'reporting-ops@seller.example' },
+};
+
+const reportingDelivery = {
+  reliable_reporting_version: '1.0',
+  consumer_status_task: 'sync_reporting_status',
+  ...reportingConsumerStatusCapabilityV1(escalation), // consumer_mismatch_escalation_seconds + operations_contact
+};
+
+const getReportingStatus = createReportingStatusHandler(store, {
+  resolveConsumerId,
+  consumerMismatchEscalation: escalation,
+});
+```
+
+Both entry points run the same validation, so a window with no destination — or
+a `NaN` / negative one — fails at wiring time rather than silently never firing.
+If you also apply the `health` query filter in a custom store, pass
+`consumerMismatchEscalation` there too; the bundled `PostgresReportingLedgerStore`
+takes it as a constructor option for exactly that reason.
+
+Past `opened_at` plus that window an open mismatch is emitted at
+`action_required` with a `contact_*` action naming the diagnosed responsible
+party. `wait_for_retry` and `repair_access` are automation hints and neither
+survives the boundary. The escalation boundary takes precedence over the
+stale-received grace window when the two overlap. `operations_contact` is inert
+display metadata for a human operator: agents surface it and MUST NOT fetch the
+URL, send protocol traffic to it, or treat either value as a credential.
+
+The summary view gains `obligation_counts.consumer_status_pending` whenever a
+consumer principal is resolved (which is exactly when this handler advertises
+`consumer_status_task`). It counts obligations whose consumer-status deadline —
+`expected_at` plus `automated_recovery_window_seconds` — has passed with an
+*empty* status chain for the authenticated caller. A chain with any unsuperseded
+leaf counts as current whatever that leaf says. It is a visibility count over
+the caller's own silence and never a health input: it does not change health,
+any other count, or advertised reliability statistics, and it overlaps the
+health counts rather than partitioning them.
+
+Finally, `authoritative_party: 'consumer'` on a delivery configuration is
+reserved for a buyer-deposited billing revision task that no released AdCP
+version defines. `assertSupportedReportingAuthoritativeParty` refuses it with
+`UNSUPPORTED_FEATURE`; call it from your `sync_accounts` handler on each
+requested configuration, before the generation becomes ready and before any
+obligation exists. `installConfiguration` already applies it. Do not coerce the
+value to `seller` — that silently installs a different contract than the buyer
+asked for.
+
 Core revisions intentionally omit feed purpose, destination, obligation, and
 recipient identity. Obligations sharing the same account, report definition,
 period, media-buy scope, and canonical content therefore reuse one revision,

@@ -9,7 +9,11 @@ import {
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
 } from './coverage';
-import { projectReportingObligationHealthV1 } from './health';
+import {
+  assertReportingConsumerMismatchEscalation,
+  projectReportingConsumerStatusMismatchV1,
+  projectReportingObligationHealthV1,
+} from './health';
 import { compareReportingInstants } from './instant';
 import {
   REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES,
@@ -40,6 +44,7 @@ import type {
   ReportingLedgerRevisionMetadataV1,
 } from './types';
 import { ReportingConsumerStatusConflictError } from './types';
+import type { ReportingConsumerMismatchEscalationV1 } from './types';
 import {
   normalizeReportingConsumerStatusIdsV1,
   reportingConsumerStatusChainKeyFromIdentityV1,
@@ -296,6 +301,15 @@ type StoredConsumerStatusBatchResult = {
 export interface PostgresReportingLedgerStoreOptions {
   /** Assert that the supplied PostgreSQL database/schema is isolated to this deployment. */
   acknowledgeIsolatedDatabase?: boolean;
+  /**
+   * Same advertised escalation commitment passed to
+   * `createReportingStatusHandler`. The store needs it because the `health`
+   * query filter is applied while building the snapshot, before the handler
+   * projects anything — so if the two disagree about when a consumer-status
+   * mismatch escalates, a filtered `periods` read silently omits obligations
+   * the unfiltered read shows.
+   */
+  consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -349,6 +363,15 @@ export async function sweepExpiredReportingLedgerState(
 }
 
 export class PostgresReportingLedgerStore implements ReportingLedgerStore {
+  /**
+   * Exposed so `createReportingStatusHandler` can inherit it and refuse a
+   * disagreement. The store applies `health` while building the snapshot and
+   * the handler projects severity afterwards, so two independently configured
+   * copies of the escalation window would let a filtered periods read
+   * contradict the summary.
+   */
+  readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+
   constructor(
     private readonly pool: ReportingPgPool,
     options: PostgresReportingLedgerStoreOptions = {}
@@ -359,6 +382,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         'PostgresReportingLedgerStore requires an isolated database/schema or acknowledgeIsolatedDatabase: true'
       );
     }
+    this.consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(options.consumerMismatchEscalation);
   }
 
   async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
@@ -534,8 +558,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           const issueResult = await client.query(
             `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
              VALUES ($1, $2, $3::jsonb, $4, $5)
+             -- rc.3 fixes opened_at at first emission: it MUST NOT advance while
+             -- the same issue_id is re-emitted, including across the delayed ->
+             -- action_required severity change that re-upserts this row. Keep the
+             -- stored anchor and let every other field advance.
              ON CONFLICT (issue_id) DO UPDATE SET
-               data = EXCLUDED.data, observed_at = EXCLUDED.observed_at,
+               data = jsonb_set(EXCLUDED.data, '{openedAt}', COALESCE(adcp_reporting_issues.data -> 'openedAt', EXCLUDED.data -> 'openedAt')),
+               observed_at = EXCLUDED.observed_at,
                resolved_at = EXCLUDED.resolved_at,
                changed_at = clock_timestamp()
              WHERE adcp_reporting_issues.obligation_id = EXCLUDED.obligation_id`,
@@ -1124,8 +1153,10 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const result = await client.query(
           `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
        VALUES ($1, $2, $3::jsonb, $4, $5)
+       -- opened_at is fixed at first emission; see recordIssue.
        ON CONFLICT (issue_id) DO UPDATE SET
-         data = EXCLUDED.data, observed_at = EXCLUDED.observed_at,
+         data = jsonb_set(EXCLUDED.data, '{openedAt}', COALESCE(adcp_reporting_issues.data -> 'openedAt', EXCLUDED.data -> 'openedAt')),
+         observed_at = EXCLUDED.observed_at,
          resolved_at = EXCLUDED.resolved_at,
          changed_at = clock_timestamp()
        WHERE adcp_reporting_issues.obligation_id = EXCLUDED.obligation_id`,
@@ -1257,8 +1288,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           await client.query(
             `INSERT INTO adcp_reporting_issues (issue_id, obligation_id, data, observed_at, resolved_at)
              VALUES ($1, $2, $3::jsonb, $4, NULL)
+             -- opened_at is fixed at first emission; see recordIssue. A reopened
+             -- issue keeps the anchor because it is the same issue_id.
              ON CONFLICT (issue_id) DO UPDATE SET
-               data = EXCLUDED.data, observed_at = EXCLUDED.observed_at,
+               data = jsonb_set(EXCLUDED.data, '{openedAt}', COALESCE(adcp_reporting_issues.data -> 'openedAt', EXCLUDED.data -> 'openedAt')),
+               observed_at = EXCLUDED.observed_at,
                resolved_at = NULL, changed_at = clock_timestamp()
              WHERE adcp_reporting_issues.obligation_id = EXCLUDED.obligation_id`,
             [issue.issueId, input.reporting_obligation_id, JSON.stringify(issue), issue.observedAt]
@@ -1437,10 +1471,22 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 ).health;
                 const statuses = consumerStatusProjection.filter(status => statusMatchesObligation(status, value));
                 const leaf = currentConsumerStatus(statuses);
-                const effectiveHealth = hasConsumerStatusMismatch(leaf, obligationRevisions, sellerHealth)
-                  ? 'action_required'
-                  : sellerHealth;
-                return query.health!.includes(effectiveHealth);
+                // Must use the same projection the handler emits, not a second
+                // copy of the rule. rc.3 made a stale-`received` mismatch
+                // `delayed` inside its grace window, so hardcoding
+                // `action_required` here made such an obligation unreachable
+                // under every health filter: excluded from the snapshot when
+                // the caller asks for `delayed`, and dropped by the handler's
+                // own filter when the caller asks for `action_required`.
+                const mismatch = projectReportingConsumerStatusMismatchV1(
+                  value,
+                  leaf,
+                  obligationRevisions,
+                  sellerHealth,
+                  ledgerAsOf,
+                  this.consumerMismatchEscalation
+                );
+                return query.health!.includes(mismatch?.health ?? sellerHealth);
               })
               .map(value => value.reporting_obligation_id)
           );
@@ -2020,17 +2066,6 @@ function currentConsumerStatus(
     statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
   );
   return statuses.find(value => !superseded.has(value.reporting_status_id));
-}
-
-function hasConsumerStatusMismatch(
-  status: ReportingLedgerConsumerStatementV1 | undefined,
-  revisions: ReportingLedgerRevisionSnapshotV1[],
-  sellerHealth: string
-): boolean {
-  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return false;
-  if (status.consumer_status !== 'received') return true;
-  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-  return !current || current.reporting_revision_id !== status.reporting_revision_id;
 }
 
 function validateBoundRows(value: Pick<ReportingLedgerRevisionV1, 'rows' | 'binding'>): void {

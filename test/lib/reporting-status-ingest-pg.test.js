@@ -513,11 +513,16 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
       consumerB
     );
 
+    // Same filter set as the delta read below: `snapshot_consistency` makes a
+    // changes checkpoint unusable across a different filter set, so the
+    // checkpoint has to come from a read shaped like the one that consumes it.
+    // rc.3 projects the post-restatement stale-received mismatch as `delayed`,
+    // so both reads filter on that.
     const beforeRestatement = await status(
       {
         account: request.account,
         view: 'periods',
-        health: ['action_required'],
+        health: ['delayed'],
         period: { start: obligation.period.start, end: obligation.period.end },
         pagination: { max_results: 100 },
       },
@@ -543,9 +548,33 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(periods.consumer_statuses.length, 1);
     assert.equal(periods.consumer_statuses[0].reporting_status_id, 'fixture-status-a-0001');
     assert.equal(periods.periods[0].current_consumer_status_id, 'fixture-status-a-0001');
-    assert.equal(periods.periods[0].health, 'action_required');
-    assert.ok(periods.periods[0].issues.some(issue => issue.code === 'CONSUMER_STATUS_MISMATCH'));
+    // rc.3: a `received` statement made stale ONLY by a seller restatement is
+    // `delayed` until the re-read grace deadline, not immediately escalated —
+    // the buyer consumed exactly what the seller then required. Every other
+    // conflict kind stays immediate; the `revision_missing` supersession below
+    // is the companion case.
+    assert.equal(periods.periods[0].health, 'delayed');
+    const staleMismatch = periods.periods[0].issues.find(issue => issue.code === 'CONSUMER_STATUS_MISMATCH');
+    assert.ok(staleMismatch, 'the disagreement is still typed while the buyer has time to re-read');
+    assert.equal(staleMismatch.severity, 'delayed');
+    assert.equal(staleMismatch.recommended_action, 'wait_for_retry');
+    assert.ok(staleMismatch.opened_at, 'the issue carries the instant that anchors escalation');
+    assert.equal(staleMismatch.reporting_status_id, 'fixture-status-a-0001');
     const filtered = await status(
+      {
+        account: request.account,
+        view: 'periods',
+        health: ['delayed'],
+        period: { start: obligation.period.start, end: obligation.period.end },
+        pagination: { max_results: 100 },
+      },
+      consumerA
+    );
+    assert.equal(filtered.periods.length, 1, 'consumer mismatch participates in health filtering');
+    // The store applies `health` while building the snapshot, so it has to agree
+    // with the handler's projection. If it still hardcoded `action_required` for
+    // any mismatch, this obligation would be unreachable under BOTH filters.
+    const filteredEscalated = await status(
       {
         account: request.account,
         view: 'periods',
@@ -555,12 +584,12 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
       },
       consumerA
     );
-    assert.equal(filtered.periods.length, 1, 'consumer mismatch participates in health filtering');
+    assert.equal(filteredEscalated.periods.length, 0, 'a grace-window mismatch is not action_required yet');
     const delta = await status(
       {
         account: request.account,
         view: 'periods',
-        health: ['action_required'],
+        health: ['delayed'],
         changes_after: beforeRestatement.changes_checkpoint,
         period: { start: obligation.period.start, end: obligation.period.end },
         pagination: { max_results: 100 },
@@ -614,6 +643,15 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(successorReadback.consumer_statuses.length, 2);
     assert.equal(successorReadback.periods[0].consumer_status_count, 2);
     assert.equal(successorReadback.periods[0].current_consumer_status_id, 'fixture-status-a-0002');
+    // Companion to the grace case above: the new leaf is `revision_missing`, a
+    // negative status, which is action_required immediately with no grace.
+    assert.equal(successorReadback.periods[0].health, 'action_required');
+    const negativeMismatch = successorReadback.periods[0].issues.find(
+      issue => issue.code === 'CONSUMER_STATUS_MISMATCH'
+    );
+    assert.equal(negativeMismatch.severity, 'action_required');
+    assert.notEqual(negativeMismatch.recommended_action, 'wait_for_retry');
+    assert.equal(negativeMismatch.reporting_status_id, 'fixture-status-a-0002');
 
     const stale = await sync(
       {
@@ -630,6 +668,107 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
       consumerA
     );
     assert.equal(stale.results[0].result, 'failed');
+  });
+
+  test('rejects content_mismatch against a superseded revision', async () => {
+    const consumer = { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-superseded' };
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: context => context.consumer,
+    });
+    const base = {
+      delivery_config_id: obligation.delivery_config_id,
+      delivery_config_version: obligation.delivery_config_version,
+      report_definition_id: obligation.report_definition_id,
+      period: {
+        start: obligation.period.start,
+        end: obligation.period.end,
+        source_timezone: obligation.period.sourceTimezone,
+      },
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      consumer_status: 'content_mismatch',
+      mismatch_code: 'coverage_short',
+      status_as_of: new Date().toISOString(),
+    };
+
+    // Fixture state is shared across tests in this file and an earlier one
+    // already restated, so resolve the current revision rather than assuming
+    // the one captured at setup is still required.
+    const revisions = await reference.store.listRevisions(obligation.reporting_obligation_id);
+    assert.ok(revisions.length >= 2, 'the fixture has a superseded revision to dispute');
+    const superseded = new Set(revisions.map(value => value.supersedes_reporting_revision_id).filter(Boolean));
+    const currentRevision = revisions
+      .filter(value => !superseded.has(value.reporting_revision_id))
+      .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+    const staleRevision = revisions.find(value => superseded.has(value.reporting_revision_id));
+    assert.ok(currentRevision && staleRevision && currentRevision !== staleRevision);
+
+    // Against the revision the seller currently requires this is a legitimate
+    // dispute and must be recorded.
+    const current = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-cm-current',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-cm-0001',
+            reporting_revision_id: currentRevision.reporting_revision_id,
+            observed_revision_content_sha256: currentRevision.wireRevision.revision_content_sha256,
+          },
+        ],
+      },
+      consumer
+    );
+    assert.equal(current.results[0].result, 'recorded', JSON.stringify(current.results[0]));
+
+    // Same statement shape, same matching digest, now naming stale bytes.
+    // `expected_period`: content_mismatch is valid only against a revision the
+    // seller currently requires. Without the currency check this is accepted
+    // and pins the caller's own view at action_required.
+    const stale = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-cm-stale',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-cm-0002',
+            supersedes_reporting_status_id: 'fixture-status-cm-0001',
+            reporting_revision_id: staleRevision.reporting_revision_id,
+            observed_revision_content_sha256: staleRevision.wireRevision.revision_content_sha256,
+          },
+        ],
+      },
+      consumer
+    );
+    assert.equal(stale.results[0].result, 'failed');
+    assert.match(
+      stale.results[0].errors[0].message,
+      /currently requires/,
+      'the buyer is told which revision to dispute, not given a generic lookup failure'
+    );
+
+    // A `received` naming the same stale revision stays acceptable — it is a
+    // stale read, which rc.3 handles with the grace window, not a rejection.
+    const staleReceived = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-cm-stale-received',
+        statuses: [
+          {
+            ...base,
+            consumer_status: 'received',
+            mismatch_code: undefined,
+            reporting_status_id: 'fixture-status-cm-0003',
+            supersedes_reporting_status_id: 'fixture-status-cm-0001',
+            reporting_revision_id: staleRevision.reporting_revision_id,
+            observed_revision_content_sha256: staleRevision.wireRevision.revision_content_sha256,
+          },
+        ],
+      },
+      consumer
+    );
+    assert.equal(staleReceived.results[0].result, 'recorded', JSON.stringify(staleReceived.results[0]));
   });
 
   test('accepts an independently derived missing-obligation period', async () => {
