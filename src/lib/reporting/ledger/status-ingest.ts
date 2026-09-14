@@ -129,7 +129,7 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.omi
   });
 
 /** Published AdCP 3.2.0-rc.2 request schema with the SDK's consumer-only item refinements. */
-export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema.extend({
+export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema.safeExtend({
   statuses: z.array(ReportingConsumerStatusV1Schema).min(1).max(100),
 }).strict();
 

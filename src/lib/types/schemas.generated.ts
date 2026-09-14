@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T02:14:16.410Z
+// Generated at: 2026-09-14T02:19:42.971Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6677,7 +6677,7 @@ export const ReportingConsumerStatusSchema = (() => {
           "delivery_config_version", "report_definition_id", "period", "reporting_obligation_id",
           "reporting_revision_id", "observed_revision_content_sha256", "consumer_status",
           "status_as_of", "failure_code", "consumer_commit_ref", "seller_ledger_snapshot_id",
-          "seller_ledger_as_of", "recorded_at", "ext"
+          "seller_ledger_as_of", "recorded_at"
       ]);
       for (const field of Object.keys(value as Record<string, unknown>)) {
           if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
@@ -6713,7 +6713,7 @@ export const ReportingConsumerStatusSchema = (() => {
           return Object.assign(exactSchema, {
               pick: objectSchema.pick.bind(objectSchema),
               omit: objectSchema.omit.bind(objectSchema),
-              extend: objectSchema.extend.bind(objectSchema),
+              extend: exactSchema.extend.bind(exactSchema),
               safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });
       })();
@@ -9409,7 +9409,7 @@ export const SyncReportingStatusRequestSchema = (() => {
           return Object.assign(exactSchema, {
               pick: objectSchema.pick.bind(objectSchema),
               omit: objectSchema.omit.bind(objectSchema),
-              extend: objectSchema.extend.bind(objectSchema),
+              extend: exactSchema.extend.bind(exactSchema),
               safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });
       })();

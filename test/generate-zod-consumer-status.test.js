@@ -77,6 +77,12 @@ const cases = [
   },
   { id: 'closed-status', schema: 'status', value: status('obligation_missing', { unexpected: true }), expected: false },
   {
+    id: 'closed-status-extension',
+    schema: 'status',
+    value: status('obligation_missing', { ext: { 'example.invalid': { value: true } } }),
+    expected: false,
+  },
+  {
     id: 'closed-period',
     schema: 'status',
     value: status('obligation_missing', { period: { ...period, unexpected: true } }),
@@ -169,6 +175,7 @@ const schemas = { status: ReportingConsumerStatusSchema, request: SyncReportingS
 const cases = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf8'));
 writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({
   direct: cases.map(entry => schemas[entry.schema].safeParse(entry.value).success),
+  extended: cases.map(entry => schemas[entry.schema].extend({}).safeParse(entry.value).success),
   safeExtended: cases.map(entry => schemas[entry.schema].safeExtend({}).safeParse(entry.value).success),
 }));
 `
@@ -187,5 +194,6 @@ test('generated consumer-status schemas preserve published rc.2 wire constraints
   assert.deepEqual(await authoritativeOutcomes(), expected, 'fixture expectations match the published JSON Schemas');
   const generated = generatedOutcomes();
   assert.deepEqual(generated.direct, expected, 'public Zod exports match the published JSON Schemas');
+  assert.deepEqual(generated.extended, expected, 'extend preserves the public schema refinements');
   assert.deepEqual(generated.safeExtended, expected, 'safeExtend preserves the public schema refinements');
 });
