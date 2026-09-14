@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { AccountReferenceSchema, ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
 import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReportingStatusResponse } from '../../types';
+import { MAX_JSON_DEPTH } from '../../utils/json-depth';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
 import {
@@ -76,6 +77,7 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.omi
         message: 'snapshot identity and time pair',
       });
     }
+    let periodInstantsValid = true;
     for (const [path, instant] of [
       [['status_as_of'], value.status_as_of],
       [['period', 'start'], value.period.start],
@@ -88,6 +90,32 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.omi
           code: 'custom',
           path: [...path],
           message: 'Reporting instants must not exceed 64 characters',
+        });
+      }
+      try {
+        canonicalReportingInstant(instant);
+      } catch {
+        if (path[0] === 'period') periodInstantsValid = false;
+        context.addIssue({
+          code: 'custom',
+          path: [...path],
+          message: 'value must be a canonical RFC 3339 instant',
+        });
+      }
+    }
+    if (periodInstantsValid && compareReportingInstants(value.period.start, value.period.end) >= 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['period', 'end'],
+        message: 'period must be a non-empty half-open interval',
+      });
+    }
+    for (const key of Object.keys(value.period)) {
+      if (!['start', 'end', 'source_timezone'].includes(key)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['period', key],
+          message: 'period contains an unsupported field',
         });
       }
     }
@@ -140,6 +168,13 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
 ): (request: SyncReportingStatusRequestV1, context: TContext) => Promise<SyncReportingStatusResponseV1> {
   const activeReadsByAccount = new Map<string, number>();
   return async (requestInput, context) => {
+    if (!hasBoundedJsonDepth(requestInput)) {
+      return failed(
+        ['invalid-reporting-status-id'],
+        'VALIDATION_ERROR',
+        'Reporting consumer status request is invalid'
+      );
+    }
     const parsed = SyncReportingStatusEnvelopeV1Schema.safeParse(requestInput);
     if (!parsed.success) {
       const rawStatuses = isRecord(requestInput) && Array.isArray(requestInput.statuses) ? requestInput.statuses : [];
@@ -248,6 +283,26 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       releaseReadSlot();
     }
   };
+}
+
+function hasBoundedJsonDepth(root: unknown): boolean {
+  const stack: Array<{ value: unknown; depth: number; exit?: boolean }> = [{ value: root, depth: 0 }];
+  const active = new WeakSet<object>();
+  while (stack.length > 0) {
+    const { value, depth, exit } = stack.pop()!;
+    if (value === null || typeof value !== 'object') continue;
+    if (exit) {
+      active.delete(value);
+      continue;
+    }
+    if (active.has(value)) return false;
+    active.add(value);
+    if (depth > MAX_JSON_DEPTH) return false;
+    stack.push({ value, depth, exit: true });
+    const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+    for (const child of children) stack.push({ value: child, depth: depth + 1 });
+  }
+  return true;
 }
 
 async function validateStatus(

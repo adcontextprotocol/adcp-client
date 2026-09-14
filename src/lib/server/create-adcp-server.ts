@@ -2994,7 +2994,7 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
 // item to the registered handler so one malformed sibling cannot reject all.
 const SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA = SyncReportingStatusRequestRuntimeSchema.extend({
   statuses: z.array(z.unknown()).min(1).max(100),
-});
+}).strict();
 
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
@@ -3032,13 +3032,20 @@ function validateFrameworkPayload(
         }
       : {
           valid: false as const,
-          issues: parsed.error.issues.map(issue => ({
-            pointer: `/${issue.path.map(value => String(value).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`,
-            message: issue.message,
-            keyword: issue.code,
-            schemaPath: '#/local/envelope-validation',
-            schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-          })),
+          issues: parsed.error.issues.map(issue => {
+            const pointer = `/${issue.path.map(value => String(value).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;
+            const missingIdempotencyKey =
+              pointer === '/idempotency_key' &&
+              issue.code === 'invalid_type' &&
+              (!isPlainObject(payload) || payload.idempotency_key === undefined);
+            return {
+              pointer,
+              message: issue.message,
+              keyword: missingIdempotencyKey ? 'required' : issue.code,
+              schemaPath: '#/local/envelope-validation',
+              schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
+            };
+          }),
           schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
           variant: undefined,
         };

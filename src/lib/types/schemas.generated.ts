@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-13T23:59:56.654Z
+// Generated at: 2026-09-14T00:29:42.705Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3946,11 +3946,13 @@ export const CanonicalMetricQualifierSchema = z.object({
     lift_dimension: LiftDimensionSchema.optional()
 }).strict();
 
-export const ForecastRateRangeSchema = ForecastRangeSchema.and(z.object({
-    low: z.object({}).passthrough().optional(),
-    mid: z.object({}).passthrough().optional(),
-    high: z.object({}).passthrough().optional()
-}).passthrough());
+export const ForecastRateRangeSchema = ForecastRangeSchema.superRefine((value, ctx) => {
+    for (const field of ["low", "mid", "high"] as const) {
+        if (value[field] !== undefined && value[field] > 1) {
+            ctx.addIssue({ code: "custom", path: [field], message: "forecast rate values must not exceed 1" });
+        }
+    }
+});
 
 export const CanonicalReportingCapabilitiesSchema = z.object({
     available_reporting_frequencies: z.array(ReportingFrequencySchema),

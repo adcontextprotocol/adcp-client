@@ -62,4 +62,9 @@ const getReportingStatus = createReportingStatusHandler(store, {
 });
 ```
 
+`sync_reporting_status` is a partial-success batch. The server validates the
+closed request envelope, then the handler validates every status independently.
+Custom handlers should parse each item with the exported
+`ReportingConsumerStatusV1Schema`; the ledger handler already does this.
+
 The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.

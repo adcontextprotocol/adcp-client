@@ -21,6 +21,9 @@ import { parsePhaseCondition } from './phase-condition';
  */
 export const BRANCH_SET_SEMANTICS = ['any_of'] as const;
 
+/** Internal runner task used for protocol-authored steps that grade an agent's own synthesized output. */
+export const VALIDATION_ONLY_TASK = '__validation_only__';
+
 const IDENTIFIER_PATH_SEGMENT = String.raw`[A-Za-z_][A-Za-z0-9_-]*(?:\[\*\])*`;
 const IDENTIFIER_PATH_PATTERN = new RegExp(`^${IDENTIFIER_PATH_SEGMENT}(?:\\.${IDENTIFIER_PATH_SEGMENT})*$`);
 const CAPABILITY_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
@@ -81,6 +84,13 @@ export function validateStoryboardShape(storyboard: Storyboard): void {
     validateBranchSet(storyboard.id, phase);
     if (!phase.steps) continue;
     for (const step of phase.steps) {
+      const rawStep = step as unknown as { task?: unknown; validations?: unknown };
+      if (rawStep.task === undefined) {
+        if (!Array.isArray(rawStep.validations) || rawStep.validations.length === 0) {
+          throw new Error(`[${storyboard.id}] phase '${phase.id}' step '${step.id}': missing task and validations`);
+        }
+        rawStep.task = VALIDATION_ONLY_TASK;
+      }
       resolveContributesShorthand(storyboard.id, phase, step);
       validateFixtureForMutatingStep(storyboard.id, phase, step);
       validateOmitFlagCoherence(storyboard.id, phase, step);

@@ -91,7 +91,7 @@ function isReportingSchedule(value: unknown): boolean {
   if (
     typeof value.period_duration !== 'string' ||
     !periodDuration.test(value.period_duration) ||
-    !['utc', 'account_timezone', 'billing_cycle'].includes(String(value.alignment)) ||
+    !['utc', 'account_timezone', 'source_timezone', 'billing_cycle'].includes(String(value.alignment)) ||
     typeof value.delivery_sla !== 'string' ||
     !deliverySla.test(value.delivery_sla)
   )
@@ -100,7 +100,11 @@ function isReportingSchedule(value: unknown): boolean {
     ? isOffsetDateTime(value.period_anchor) &&
         isNonEmptyString(value.period_timezone) &&
         value.period_timezone.length <= 255
-    : value.period_anchor === undefined && value.period_timezone === undefined;
+    : value.alignment === 'source_timezone'
+      ? value.period_anchor === undefined &&
+        isNonEmptyString(value.period_timezone) &&
+        value.period_timezone.length <= 255
+      : value.period_anchor === undefined && value.period_timezone === undefined;
 }
 
 function isReportingResource(value: unknown): value is Record<string, unknown> {

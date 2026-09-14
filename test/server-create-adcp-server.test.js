@@ -776,6 +776,62 @@ describe('createAdcpServer', () => {
       );
     });
 
+    it('keeps the reporting status envelope closed in strict mode', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: 'disabled',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async () => {
+            calls += 1;
+            return { status: 'completed', results: [] };
+          },
+        },
+      });
+      const response = await callToolRaw(server, 'sync_reporting_status', {
+        account: { account_id: 'account-reporting-status' },
+        idempotency_key: 'reporting-status-closed-envelope-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-valid-0001' }],
+        unexpected: true,
+      });
+      assert.equal(response.isError, true);
+      assert.equal(response.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      assert.equal(calls, 0);
+    });
+
+    it('honors disabled idempotency for reporting status framework dispatch', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: 'disabled',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async params => {
+            calls += 1;
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'failed',
+                reporting_status_id: status.reporting_status_id,
+                errors: [{ code: 'VALIDATION_ERROR', message: 'Item validation failed' }],
+              })),
+            };
+          },
+        },
+      });
+      const response = await callToolRaw(server, 'sync_reporting_status', {
+        account: { account_id: 'account-reporting-status' },
+        statuses: [{ reporting_status_id: 'reporting-status-valid-0001' }],
+      });
+      assert.notEqual(response.isError, true);
+      assert.equal(calls, 1);
+    });
+
     it('registers signals tools', () => {
       const server = createAdcpServer({
         name: 'Test',

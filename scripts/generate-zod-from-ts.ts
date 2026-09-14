@@ -910,7 +910,23 @@ function postProcessForecastRangeConstraint(content: string): string {
     }
 });`
   );
-  return content.slice(0, start) + constrained + content.slice(end);
+  const withForecastRange = content.slice(0, start) + constrained + content.slice(end);
+  const rateTarget = findSchemaExportExpressions(withForecastRange).find(
+    entry => entry.name === 'ForecastRateRangeSchema'
+  );
+  if (!rateTarget) throw new Error('Unable to locate ForecastRateRangeSchema');
+  const rateConstraint = `ForecastRangeSchema.superRefine((value, ctx) => {
+    for (const field of ["low", "mid", "high"] as const) {
+        if (value[field] !== undefined && value[field] > 1) {
+            ctx.addIssue({ code: "custom", path: [field], message: "forecast rate values must not exceed 1" });
+        }
+    }
+})`;
+  return (
+    withForecastRange.slice(0, rateTarget.expressionStart) +
+    rateConstraint +
+    withForecastRange.slice(rateTarget.expressionEnd)
+  );
 }
 
 /** Restore the price-adjustment XOR and signed 1..20 array bounds. */
@@ -5240,6 +5256,7 @@ export const __test__ = {
   postProcessObjectUnionIntersections,
   postProcessObjectIntersections,
   postProcessRecordSizeConstraints,
+  postProcessForecastRangeConstraint,
 };
 
 export { generateZodSchemas };

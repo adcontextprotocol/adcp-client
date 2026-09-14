@@ -482,7 +482,7 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
       },
       consumerA
     );
-    assert.equal(successor.results[0].result, 'recorded');
+    assert.equal(successor.results[0].result, 'recorded', JSON.stringify(successor.results[0]));
     assert.equal(successor.results[1].result, 'failed');
     const successorReadback = await status(
       {
@@ -946,7 +946,8 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     );
     assert.deepEqual(
       result.results.map(value => value.result),
-      ['recorded', 'failed']
+      ['recorded', 'failed'],
+      JSON.stringify(result.results)
     );
     assert.equal(result.results[0].consumer_status.reporting_status_id, valid.reporting_status_id);
     assert.equal(result.results[1].reporting_status_id, invalid.reporting_status_id);

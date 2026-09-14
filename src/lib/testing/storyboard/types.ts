@@ -651,7 +651,9 @@ export interface StoryboardStep {
    * AdCP task name (snake_case), e.g. "sync_accounts", "get_products".
    * May reference a test-kit field with `"$test_kit.<path>"` — the runner
    * resolves to the value at that path, or to `task_default` when the kit
-   * doesn't supply the field.
+   * doesn't supply the field. Protocol YAML may omit `task` only for a step
+   * with validations that grade agent-synthesized output; the loader
+   * normalizes that form to the internal `__validation_only__` pseudo-task.
    */
   task: string;
   /** Fallback task name when `task` is a `$test_kit.*` reference that resolves to null/undefined. */

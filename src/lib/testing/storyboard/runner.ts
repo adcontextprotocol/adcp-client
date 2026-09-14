@@ -84,7 +84,7 @@ import {
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { resolveDeclaredTestKit, selectProbeTask, validateTestKit } from './test-kit';
-import { validateStoryboardShape } from './loader';
+import { validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
@@ -3445,6 +3445,31 @@ async function executeStoryboardPass(
         continue;
       }
 
+      if (step.task === VALIDATION_ONLY_TASK) {
+        const detail =
+          'Validation-only agent output requires an orchestrator output adapter and is not dispatched as an AdCP tool.';
+        const result: StoryboardStepResult = {
+          storyboard_id: storyboard.id,
+          step_id: step.id,
+          phase_id: phase.id,
+          title: step.title,
+          task: step.task,
+          passed: true,
+          skipped: true,
+          skip_reason: 'not_applicable',
+          skip: buildSkip('not_applicable', detail),
+          duration_ms: 0,
+          validations: [],
+          context,
+          next: getNextStepPreview(step.id, allSteps, context, runnerVars),
+          extraction: { path: 'none', note: detail },
+        };
+        stepResults.push(result);
+        priorStepResults.set(step.id, result);
+        skippedCount++;
+        continue;
+      }
+
       let assignment;
       try {
         assignment = dispatch.nextFor(step);
@@ -4686,6 +4711,26 @@ async function executeStep(
     responseDerivedNotApplicableContextKeys: new Map(),
     capabilityUnavailableContextKeys: new Set(),
   };
+
+  if (step.task === VALIDATION_ONLY_TASK) {
+    const detail =
+      'Validation-only agent output requires an orchestrator output adapter and is not dispatched as an AdCP tool.';
+    return {
+      step_id: step.id,
+      phase_id: phaseId,
+      title: step.title,
+      task: step.task,
+      passed: true,
+      skipped: true,
+      skip_reason: 'not_applicable',
+      skip: buildSkip('not_applicable', detail),
+      duration_ms: 0,
+      validations: [],
+      context,
+      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
+      extraction: { path: 'none', note: detail },
+    };
+  }
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
   // overrides, missing-tool checks, or MCP/A2A routing.

@@ -254,6 +254,10 @@ function fieldType(prop: any, rootSchema?: any): string {
     const filename = parts[parts.length - 1].replace('.json', '');
     return kebabToTitle(filename);
   }
+  if (Array.isArray(prop.allOf)) {
+    const structuralType = prop.allOf.map((value: any) => fieldType(value, rootSchema)).find(Boolean);
+    if (structuralType) return structuralType;
+  }
   if (prop.oneOf || prop.anyOf) {
     const variants = prop.oneOf || prop.anyOf;
     if (variants.length <= 3) {
@@ -2019,7 +2023,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(`// AdCP 3.2.0-rc.2: identity comes from authenticated transport.`);
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
-  ln(`  resolveConsumerId: context => context.agent.id,`);
+  ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);
   ln('```');
   ln();

@@ -13,6 +13,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
+const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
 const { hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TASK_TO_METHOD } = require('../../dist/lib/testing/storyboard/task-map.js');
 const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas.js');
@@ -26,6 +27,7 @@ const storyboards = allStoryboards.filter(sb => Array.isArray(sb.phases) && sb.p
 
 // Tasks that are part of the test harness — not protocol tools
 const HARNESS_TASKS = new Set([
+  '__validation_only__',
   'comply_test_controller',
   // Synthetic tasks dispatched by the storyboard runner — no corresponding
   // AdCP tool or response schema. Raw HTTP probes and flag-accumulator steps.
@@ -134,7 +136,7 @@ describe('storyboard structural completeness', () => {
               it('has required fields', () => {
                 assert.ok(step.id, 'missing step id');
                 assert.ok(step.title, 'missing step title');
-                if (step.task === undefined) {
+                if (step.task === '__validation_only__') {
                   assert.ok(
                     Array.isArray(step.validations) && step.validations.length > 0,
                     'a validation-only step must have validations'
@@ -215,5 +217,45 @@ describe('task execution coverage', () => {
     const fallback = [...allTasks].filter(t => !(t in TASK_TO_METHOD));
     assert.ok(mapped.length > 0, 'should have at least some mapped tasks');
     assert.ok(mapped.length + fallback.length === allTasks.size);
+  });
+});
+
+describe('validation-only storyboard steps', () => {
+  it('normalizes and skips a validation-only step without dispatching a protocol tool', async () => {
+    let dispatches = 0;
+    const profile = { name: 'Test', tools: [] };
+    const storyboard = {
+      id: 'validation_only_test',
+      version: '1.0.0',
+      title: 'Validation-only test',
+      category: 'test',
+      phases: [
+        {
+          id: 'interpretation',
+          title: 'Interpretation',
+          steps: [
+            {
+              id: 'interpret',
+              title: 'Interpret',
+              validations: [{ check: 'output_contains', field: 'candidates' }],
+            },
+          ],
+        },
+      ],
+    };
+    const result = await runStoryboardStep('https://seller.example/mcp', storyboard, 'interpret', {
+      protocol: 'mcp',
+      _profile: profile,
+      _client: {
+        getAgentInfo: async () => profile,
+        callTool: async () => {
+          dispatches += 1;
+        },
+      },
+    });
+    assert.equal(result.task, '__validation_only__');
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'not_applicable');
+    assert.equal(dispatches, 0);
   });
 });

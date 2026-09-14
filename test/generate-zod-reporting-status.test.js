@@ -330,6 +330,17 @@ test('current reporting-status guard accepts the rc.2 consumer mismatch issue', 
   assert.deepEqual(currentResponseOutcomes([mismatch]), [true]);
 });
 
+test('current reporting-status guard accepts source-timezone schedule alignment', () => {
+  const sourceTimezone = response();
+  sourceTimezone.periods[0].schedule = {
+    period_duration: 'P1D',
+    alignment: 'source_timezone',
+    period_timezone: 'America/New_York',
+    delivery_sla: 'PT1H',
+  };
+  assert.deepEqual(currentResponseOutcomes([sourceTimezone]), [true]);
+});
+
 test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {
   const valid = response();
   const missingMaterializations = response();
