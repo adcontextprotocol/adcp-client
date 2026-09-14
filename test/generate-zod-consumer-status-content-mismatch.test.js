@@ -91,6 +91,7 @@ test('canonical content_mismatch constraints survive TypeScript -> Zod generatio
       path.join(directory, 'harness.ts'),
       `
 import { readFileSync, writeFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
 import { compile } from 'json-schema-to-typescript';
 import { generate } from 'ts-to-zod';
 import { __test__ } from '../../scripts/generate-zod-from-ts';
@@ -102,7 +103,19 @@ async function main() {
   const types = await compile(injectJsdocConstraints(flat), 'ReportingConsumerStatus', { bannerComment: '' });
   const declarations = types + '\\nexport interface SyncReportingStatusRequest { statuses: ReportingConsumerStatus[]; }\\nexport interface SyncReportingStatusResponse { status: "completed"; results: ({ result: "recorded" | "unchanged"; consumer_status: ReportingConsumerStatus } | { result: "failed"; errors: unknown[] })[]; }';
   const generated = generate({ sourceText: declarations, getSchemaName: name => name + 'Schema' }).getZodSchemasFile('./types');
-  const refined = __test__.postProcessReportingConsumerStatusConstraints(__test__.postProcessForPassthrough(generated), source);
+  const passthrough = __test__.postProcessForPassthrough(generated);
+  for (const mutate of [
+    schema => { schema.allOf[0].else = { not: { required: ['consumer_commit_ref'] } }; },
+    schema => { schema.allOf.push({ if: { required: ['mismatch_code'] }, then: { required: ['consumer_commit_ref'] } }); },
+    schema => { schema.allOf[0].then.not = { required: ['failure_code', 'mismatch_code'] }; },
+    schema => { schema.allOf[0].then.not = { anyOf: [{ type: 'object' }] }; },
+    schema => { schema.allOf.pop(); },
+  ]) {
+    const changed = structuredClone(source);
+    mutate(changed);
+    assert.throws(() => __test__.postProcessReportingConsumerStatusConstraints(passthrough, changed), /consumer-status|Consumer-status/);
+  }
+  const refined = __test__.postProcessReportingConsumerStatusConstraints(passthrough, source);
   writeFileSync(new URL('./generated.ts', import.meta.url), refined);
   const { ReportingConsumerStatusSchema: schema, SyncReportingStatusRequestSchema: request, SyncReportingStatusResponseSchema: response } = await import('./generated');
   const cases = JSON.parse(readFileSync(new URL('./cases.json', import.meta.url), 'utf8'));

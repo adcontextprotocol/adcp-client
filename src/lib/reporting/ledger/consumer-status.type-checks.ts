@@ -5,7 +5,7 @@ import type { ReportingLedgerConsumerStatementV1, ReportingLedgerConsumerStatusI
 type Assert<T extends true> = T;
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
 
-// Compiled by typecheck on both the primary pin and candidate bundles. New
+// Run npm run typecheck after generation (including candidate bundles). New
 // wire fields/statuses must survive the generated -> ledger -> wire roundtrip.
 export type LedgerInputMatchesWire = Assert<
   Equal<Omit<ReportingLedgerConsumerStatusInputV1, 'account_id' | 'consumerId'>, ReportingConsumerStatusV1>

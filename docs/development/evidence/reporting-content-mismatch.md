@@ -43,7 +43,8 @@ conformance. The canonical prose additionally restricts `content_mismatch` to a
 revision currently required for the period. The public consumer-status store
 exposes point lookup by revision ID, so the handler does not determine whether a
 successor exists or apply a current-required-finality policy. That requires a
-separate store/producer contract change and maintainer review. The rc.4 issue
+separate store/producer contract change and maintainer review before claiming
+rc.4 reporting conformance. The rc.4 issue
 lifecycle (`opened_at` on mismatch issues) and optional escalation capabilities
 also remain protocol-adoption work. These limitations do not change the exact
 JSON Schema field constraints tested here.

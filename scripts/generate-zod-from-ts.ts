@@ -1956,13 +1956,27 @@ function postProcessReportingConsumerStatusConstraints(
   // Read the closed status arms from the pinned bundle. TypeScript flattens
   // these if/then rules, so ts-to-zod alone cannot preserve their constraints.
   const rules: Record<string, { required: string[]; forbidden: string[] }> = {};
+  const snapshotPairing = {
+    if: { required: ['seller_ledger_snapshot_id'] },
+    then: { required: ['seller_ledger_as_of'] },
+    else: { not: { required: ['seller_ledger_as_of'] } },
+  };
+  let sawSnapshotPairing = false;
   for (const arm of source.allOf) {
     const status = arm.if?.properties?.consumer_status?.const;
-    if (typeof status !== 'string') continue; // Snapshot pairing is handled below.
+    if (typeof status !== 'string') {
+      if (sawSnapshotPairing || !isDeepStrictEqual(arm, snapshotPairing)) {
+        throw new Error('Unsupported reporting consumer-status non-status conditional; expected snapshot pairing');
+      }
+      sawSnapshotPairing = true;
+      continue;
+    }
     const required: string[] = arm.then.required ?? [];
     const forbidden: string[] = arm.then.not?.anyOf
       ? arm.then.not.anyOf.map((entry: { required: string[] }) => {
-          if (entry.required.length !== 1) throw new Error('Unexpected consumer-status forbidden field group');
+          if (!Array.isArray(entry.required) || entry.required.length !== 1) {
+            throw new Error(`Unexpected consumer-status forbidden field group for ${status}`);
+          }
           return entry.required[0]!;
         })
       : (arm.then.not?.required ?? []);
@@ -1973,6 +1987,7 @@ function postProcessReportingConsumerStatusConstraints(
         : undefined;
     if (
       rules[status] ||
+      Object.keys(arm).some(key => !['if', 'then'].includes(key)) ||
       !isDeepStrictEqual(arm.if, {
         properties: { consumer_status: { const: status } },
         required: ['consumer_status'],
@@ -1980,12 +1995,13 @@ function postProcessReportingConsumerStatusConstraints(
       !isDeepStrictEqual(arm.then.not, expectedNot) ||
       Object.keys(arm.then).some(key => !['required', 'not'].includes(key))
     ) {
-      throw new Error('Unexpected consumer-status conditional constraints');
+      throw new Error(`Unexpected consumer-status conditional constraints for ${status}`);
     }
     rules[status] = { required, forbidden };
   }
   if (
     source.additionalProperties !== false ||
+    !sawSnapshotPairing ||
     !isDeepStrictEqual(Object.keys(rules).sort(), [...source.properties.consumer_status.enum].sort())
   ) {
     throw new Error('Consumer-status constraints must cover every canonical status');
