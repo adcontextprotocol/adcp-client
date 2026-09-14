@@ -196,6 +196,16 @@ export const REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES = 8 * 1024 * 1024;
 /** Replay metadata is bounded per immutable batch row. */
 export const REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES = 64 * 1024;
 
+/** Canonical identity of one consumer-status supersession chain. */
+export interface ReportingConsumerStatusChainIdentityV1 {
+  delivery_config_id: string;
+  delivery_config_version: number;
+  report_definition_id: string;
+  periodStart: string;
+  periodEnd: string;
+  sourceTimezone: string;
+}
+
 export type ReportingConsumerStatusBatchEntryV1 =
   | {
       status: ReportingLedgerConsumerStatusInputV1;
@@ -210,14 +220,7 @@ export type ReportingConsumerStatusBatchEntryV1 =
       validationError: string;
       validationField?: string;
       validationKeyword?: string;
-      chainIdentity?: {
-        delivery_config_id: string;
-        delivery_config_version: number;
-        report_definition_id: string;
-        periodStart: string;
-        periodEnd: string;
-        sourceTimezone: string;
-      };
+      chainIdentity?: ReportingConsumerStatusChainIdentityV1;
     };
 
 export interface ReportingConsumerStatusBatchInputV1 {
@@ -243,7 +246,8 @@ export type ReportingConsumerStatusBatchResultV1 =
       reporting_status_id: string;
       errorCode: string;
       recovery?: ErrorRecovery;
-      retryAfter?: number;
+      /** Integer wire seconds from 1 through 3600. Invalid values are omitted. */
+      retryAfterSeconds?: number;
       safeMessage: string;
       errorField?: string;
       errorKeyword?: string;
@@ -364,6 +368,10 @@ export class ReportingLedgerSnapshotUnavailableError extends Error {
 }
 
 export class ReportingConsumerStatusConflictError extends Error {
+  /**
+   * The message is diagnostic-only. The protocol handler always returns a
+   * fixed oracle-resistant conflict message to the caller.
+   */
   constructor(message = 'Reporting consumer status conflicts with the current immutable chain') {
     super(message);
     this.name = 'ReportingConsumerStatusConflictError';
@@ -378,7 +386,7 @@ export interface ReportingLedgerStore {
   putObligation(
     obligation: ReportingLedgerObligationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerObligationV1 }>;
-  getObligation(reporting_obligation_id: string): Promise<ReportingLedgerObligationV1 | null>;
+  getObligation(reporting_obligation_id: string, account_id?: string): Promise<ReportingLedgerObligationV1 | null>;
   listObligations(account_id?: string): Promise<ReportingLedgerObligationV1[]>;
   listLifecycleDueObligations(input: {
     ledgerAsOf: string;
@@ -460,14 +468,14 @@ export interface ReportingLedgerStore {
  */
 export interface ReportingConsumerStatusLedgerStore {
   listConfigurations(account_id: string): Promise<ReportingLedgerConfigurationV1[]>;
-  getObligation(reporting_obligation_id: string): Promise<ReportingLedgerObligationV1 | null>;
+  getObligation(reporting_obligation_id: string, account_id: string): Promise<ReportingLedgerObligationV1 | null>;
   /** Loads revision identity and binding for ingest validation without materializing rows. */
   getRevisionMetadata(
     reporting_revision_id: string,
     account_id: string
   ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
   /** Reads only the caller-bound snapshot needed to validate optional provenance. */
-  readSnapshotPage(
+  readSnapshotPage?(
     snapshotId: string,
     account_id: string,
     cursor: string | undefined,

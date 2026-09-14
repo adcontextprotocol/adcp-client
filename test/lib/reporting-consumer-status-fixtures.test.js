@@ -24,6 +24,10 @@ const canonicalJson = value => {
 };
 
 test('portable consumer-status vectors retain exact bytes, clocks, principals, results, and ledger state', () => {
+  const publishedBytes = fs.readFileSync(
+    path.resolve(__dirname, '../../dist/lib/compliance-fixtures/reporting-consumer-status-v1.json')
+  );
+  assert.deepEqual(publishedBytes, fixtureBytes);
   assert.equal(fixtureBytes.byteLength, manifest.files['consumer-status.json'].size_bytes);
   assert.equal(sha256(fixtureBytes), manifest.files['consumer-status.json'].sha256);
   assert.equal(fixture.protocol_version, '3.2.0-rc.2');

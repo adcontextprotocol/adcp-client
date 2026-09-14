@@ -6,6 +6,9 @@ const {
   ReportingConsumerStatusConflictError,
   SyncReportingStatusRequestV1Schema,
   createSyncReportingStatusHandler,
+  normalizeReportingConsumerStatusIdsV1,
+  reportingConsumerStatusChainKeyV1,
+  reportingConsumerStatusFingerprintV1,
 } = require('../../dist/lib/reporting/ledger/index.js');
 const { validateSyncReportingStatusEnvelope } = require('../../dist/lib/validation/sync-reporting-status-envelope.js');
 
@@ -327,7 +330,7 @@ describe('reporting consumer status validation', () => {
             reporting_status_id: entries[0].status?.reporting_status_id ?? entries[0].reporting_status_id,
             errorCode: 'RATE_LIMITED',
             recovery: 'transient',
-            retryAfter: 7,
+            retryAfterSeconds: 7,
             safeMessage: 'Retry later',
           },
         ],
@@ -343,6 +346,56 @@ describe('reporting consumer status validation', () => {
       { account: { id: 'account-1' } }
     );
     assert.equal(result.results[0].errors[0].retry_after, 7);
+  });
+
+  test('bounds custom-store error metadata before returning it on the wire', async () => {
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ entries }) => [
+          {
+            inserted: false,
+            reporting_status_id: entries[0].status?.reporting_status_id ?? entries[0].reporting_status_id,
+            errorCode: 'X'.repeat(65),
+            recovery: 'transient',
+            retryAfterSeconds: 60_000,
+            safeMessage: 'm'.repeat(8_192),
+          },
+        ],
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-bounded-store-error-0001',
+        statuses: [consumerStatus()],
+      },
+      { account: { id: 'account-1' } }
+    );
+    const error = result.results[0].errors[0];
+    assert.equal(error.code, 'VALIDATION_ERROR');
+    assert.equal(error.retry_after, undefined);
+    assert.equal(Buffer.byteLength(error.message, 'utf8'), 1024);
+  });
+
+  test('exports canonical status-chain, fingerprint, and malformed-id primitives for custom stores', () => {
+    const status = consumerStatus();
+    const equivalent = consumerStatus({
+      period: { ...status.period, start: '2026-09-01T00:00:00.000Z' },
+    });
+    assert.equal(reportingConsumerStatusChainKeyV1(status), reportingConsumerStatusChainKeyV1(equivalent));
+    assert.equal(
+      reportingConsumerStatusFingerprintV1(status),
+      reportingConsumerStatusFingerprintV1({ ...status, account_id: 'account-1', consumerId: 'consumer-1' })
+    );
+    const normalized = normalizeReportingConsumerStatusIdsV1([
+      { reporting_status_id: 'invalid', syntheticReportingStatusId: true, validationError: 'invalid' },
+      { reporting_status_id: 'invalid', syntheticReportingStatusId: true, validationError: 'invalid' },
+    ]);
+    assert.deepEqual(normalized.values, ['invalid-reporting-status-id-1', 'invalid-reporting-status-id-2']);
+    assert.deepEqual([...normalized.invalidIndexes], [0, 1]);
   });
 
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {
@@ -580,6 +633,72 @@ describe('reporting consumer status validation', () => {
       );
       assert.equal(result.results[0].result, 'recorded', JSON.stringify(result));
     }
+  });
+
+  test('passes account scope to obligation reads and treats an omitted snapshot reader as unavailable', async () => {
+    const configuration = {
+      configurationId: 'narrow-port-configuration',
+      account: { account_id: 'account-1' },
+      delivery_config_id: 'delivery_config_0001',
+      delivery_config_version: 1,
+      report_definition_id: 'report_definition_0001',
+      sourceTimezone: 'UTC',
+      requiredFinality: 'snapshot',
+      installedAt: '2026-09-01T00:00:00Z',
+      schedule: {
+        anchor: '2026-09-01T00:00:00Z',
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+      },
+    };
+    const obligationReads = [];
+    const store = {
+      getConsumerStatusBatchReplay: async () => undefined,
+      listConfigurations: async () => [configuration],
+      getObligation: async (...args) => {
+        obligationReads.push(args);
+        return null;
+      },
+      getRevisionMetadata: async () => null,
+      syncConsumerStatusBatch: async ({ entries }) =>
+        entries.map(entry => ({
+          inserted: false,
+          reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+          errorCode: 'VALIDATION_ERROR',
+          safeMessage: entry.validationError,
+        })),
+    };
+    const handler = createSyncReportingStatusHandler(store, {
+      resolveConsumerId: () => 'consumer-1',
+      now: () => new Date('2026-09-03T00:00:00Z'),
+    });
+
+    const missingObligation = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'narrow-port-obligation-0001',
+        statuses: [
+          consumerStatus({
+            consumer_status: 'revision_missing',
+            reporting_obligation_id: 'reporting-obligation-0001',
+          }),
+        ],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(missingObligation.results[0].result, 'failed');
+    assert.deepEqual(obligationReads, [['reporting-obligation-0001', 'account-1']]);
+
+    const missingSnapshotReader = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'narrow-port-snapshot-0001',
+        statuses: [consumerStatus({ seller_ledger_snapshot_id: 'seller-snapshot-0001' })],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(missingSnapshotReader.results[0].result, 'failed');
+    assert.equal(missingSnapshotReader.results[0].errors[0].code, 'VALIDATION_ERROR');
   });
 
   test('rejects configurations returned outside the authenticated account scope', async () => {

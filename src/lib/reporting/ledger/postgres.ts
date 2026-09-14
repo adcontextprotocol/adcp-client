@@ -10,7 +10,7 @@ import {
   reportingLedgerScopeClosed,
 } from './coverage';
 import { projectReportingObligationHealthV1 } from './health';
-import { canonicalReportingInstant, compareReportingInstants } from './instant';
+import { compareReportingInstants } from './instant';
 import {
   REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
@@ -37,10 +37,15 @@ import type {
   ReportingConsumerStatusBatchInputV1,
   ReportingConsumerStatusBatchResultV1,
   ReportingConsumerStatusReplayInputV1,
-  ReportingLedgerConsumerStatusInputV1,
   ReportingLedgerRevisionMetadataV1,
 } from './types';
 import { ReportingConsumerStatusConflictError } from './types';
+import {
+  normalizeReportingConsumerStatusIdsV1,
+  reportingConsumerStatusChainKeyFromIdentityV1,
+  reportingConsumerStatusChainKeyV1,
+  reportingConsumerStatusFingerprintV1,
+} from './consumer-status-identity';
 
 type QueryResultRow = Record<string, unknown>;
 interface ReportingPgResult<Row extends QueryResultRow> {
@@ -275,7 +280,6 @@ const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CONSUMER_STATUS_ID_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 
 type JsonRow<T> = QueryResultRow & { data: T };
 type StoredConsumerStatusBatchResult = {
@@ -283,7 +287,7 @@ type StoredConsumerStatusBatchResult = {
   id: string;
   errorCode?: string;
   recovery?: ErrorRecovery;
-  retryAfter?: number;
+  retryAfterSeconds?: number;
   safeMessage?: string;
   errorField?: string;
   errorKeyword?: string;
@@ -445,10 +449,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     );
   }
 
-  async getObligation(id: string): Promise<ReportingLedgerObligationV1 | null> {
+  async getObligation(id: string, account_id?: string): Promise<ReportingLedgerObligationV1 | null> {
     return this.one<ReportingLedgerObligationV1>(
-      'SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1',
-      [id]
+      `SELECT data FROM adcp_reporting_obligations
+        WHERE obligation_id = $1 AND ($2::text IS NULL OR account_id = $2)`,
+      [id, account_id ?? null]
     );
   }
 
@@ -783,7 +788,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           id: string;
           errorCode?: string;
           recovery?: ErrorRecovery;
-          retryAfter?: number;
+          retryAfterSeconds?: number;
           safeMessage?: string;
           errorField?: string;
           errorKeyword?: string;
@@ -806,7 +811,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           reporting_status_id: result.id,
           errorCode: result.errorCode ?? 'VALIDATION_ERROR',
           recovery: result.recovery,
-          retryAfter: result.retryAfter,
+          retryAfterSeconds: result.retryAfterSeconds,
           safeMessage: boundedConsumerStatusSafeMessage(result.safeMessage ?? 'Reporting consumer status was rejected'),
           ...boundedConsumerStatusErrorField(result.errorField),
           ...boundedConsumerStatusErrorKeyword(result.errorKeyword),
@@ -848,7 +853,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 reporting_status_id: result.id,
                 errorCode: result.errorCode ?? 'VALIDATION_ERROR',
                 recovery: result.recovery,
-                retryAfter: result.retryAfter,
+                retryAfterSeconds: result.retryAfterSeconds,
                 safeMessage: boundedConsumerStatusSafeMessage(
                   result.safeMessage ?? 'Reporting consumer status was rejected'
                 ),
@@ -871,12 +876,12 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           return replay;
         }
 
-        const normalizedIds = normalizedConsumerStatusIds(input.entries);
+        const normalizedIds = normalizeReportingConsumerStatusIdsV1(input.entries);
         const chainKeys = input.entries.map(entry =>
           'status' in entry
-            ? consumerStatusChainKey(entry.status)
+            ? reportingConsumerStatusChainKeyV1(entry.status)
             : entry.chainIdentity
-              ? consumerStatusChainKeyFromIdentity(entry.chainIdentity)
+              ? reportingConsumerStatusChainKeyFromIdentityV1(entry.chainIdentity)
               : null
         );
         const duplicateChains = new Set(
@@ -909,7 +914,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           errorField?: string,
           recovery: ErrorRecovery = getErrorRecovery(errorCode) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
           errorKeyword?: string,
-          retryAfter?: number
+          retryAfterSeconds?: number
         ) => {
           const boundedErrorField = boundedConsumerStatusErrorField(errorField);
           const boundedErrorKeyword = boundedConsumerStatusErrorKeyword(errorKeyword);
@@ -919,7 +924,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             reporting_status_id: statusId,
             errorCode,
             recovery,
-            retryAfter,
+            retryAfterSeconds,
             safeMessage: boundedSafeMessage,
             ...boundedErrorField,
             ...boundedErrorKeyword,
@@ -929,7 +934,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             id: statusId,
             errorCode,
             recovery,
-            retryAfter,
+            retryAfterSeconds,
             safeMessage: boundedSafeMessage,
             ...boundedErrorField,
             ...boundedErrorKeyword,
@@ -965,7 +970,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             fail(status.reporting_status_id, 'PERMISSION_DENIED', 'Reporting status scope is unavailable');
             continue;
           }
-          const fingerprint = consumerStatusFingerprint(status);
+          const fingerprint = reportingConsumerStatusFingerprintV1(status);
           const existing = await client.query<
             JsonRow<ReportingLedgerConsumerStatementV1> & {
               semantic_fingerprint: string;
@@ -1444,7 +1449,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           );
           const projectedStatusesByChain = new Map<string, ReportingLedgerConsumerStatementV1[]>();
           for (const status of consumerStatusProjection) {
-            const key = consumerStatusChainKey(status);
+            const key = reportingConsumerStatusChainKeyV1(status);
             const statuses = projectedStatusesByChain.get(key) ?? [];
             statuses.push(status);
             projectedStatusesByChain.set(key, statuses);
@@ -1453,7 +1458,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           revisions = revisions.filter(value => accepted.has(value.reporting_obligation_id));
           adjustments = adjustments.filter(value => accepted.has(value.reporting_obligation_id));
           consumerStatuses = consumerStatuses.filter(value => {
-            const key = consumerStatusChainKey(value);
+            const key = reportingConsumerStatusChainKeyV1(value);
             const matchingObligation = obligationsByConsumerStatusChain.get(key);
             if (matchingObligation) return accepted.has(matchingObligation.reporting_obligation_id);
             const leaf = currentConsumerStatus(projectedStatusesByChain.get(key) ?? []);
@@ -2108,19 +2113,8 @@ function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
 }
 
-function consumerStatusChainKey(status: ReportingLedgerConsumerStatusInputV1): string {
-  return consumerStatusChainKeyFromIdentity({
-    delivery_config_id: status.delivery_config_id,
-    delivery_config_version: status.delivery_config_version,
-    report_definition_id: status.report_definition_id,
-    periodStart: status.period.start,
-    periodEnd: status.period.end,
-    sourceTimezone: status.period.source_timezone,
-  });
-}
-
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {
-  return consumerStatusChainKeyFromIdentity({
+  return reportingConsumerStatusChainKeyFromIdentityV1({
     delivery_config_id: obligation.delivery_config_id,
     delivery_config_version: obligation.delivery_config_version,
     report_definition_id: obligation.report_definition_id,
@@ -2128,70 +2122,6 @@ function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligati
     periodEnd: obligation.period.end,
     sourceTimezone: obligation.period.sourceTimezone,
   });
-}
-
-function consumerStatusChainKeyFromIdentity(value: {
-  delivery_config_id: string;
-  delivery_config_version: number;
-  report_definition_id: string;
-  periodStart: string;
-  periodEnd: string;
-  sourceTimezone: string;
-}): string {
-  return digest({
-    delivery_config_id: value.delivery_config_id,
-    delivery_config_version: value.delivery_config_version,
-    report_definition_id: value.report_definition_id,
-    period: {
-      start: canonicalReportingInstant(value.periodStart),
-      end: canonicalReportingInstant(value.periodEnd),
-      source_timezone: value.sourceTimezone,
-    },
-  });
-}
-
-function consumerStatusFingerprint(
-  status: ReportingLedgerConsumerStatusInputV1 | ReportingLedgerConsumerStatementV1
-): string {
-  const semanticValue = Object.fromEntries(
-    Object.entries(status).filter(([key]) => !['account_id', 'consumerId', 'recorded_at'].includes(key))
-  );
-  return digest(JSON.parse(JSON.stringify(semanticValue)) as Record<string, unknown>);
-}
-
-function normalizedConsumerStatusIds(entries: ReportingConsumerStatusBatchInputV1['entries']): {
-  values: string[];
-  invalidIndexes: Set<number>;
-} {
-  const invalidIndexes = new Set<number>();
-  const reserved = new Set<string>();
-  for (const entry of entries) {
-    const value = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
-    if (
-      typeof value === 'string' &&
-      CONSUMER_STATUS_ID_PATTERN.test(value) &&
-      !('syntheticReportingStatusId' in entry && entry.syntheticReportingStatusId)
-    ) {
-      reserved.add(value);
-    }
-  }
-  const values = entries.map((entry, index) => {
-    const value = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
-    if (
-      typeof value === 'string' &&
-      CONSUMER_STATUS_ID_PATTERN.test(value) &&
-      !('syntheticReportingStatusId' in entry && entry.syntheticReportingStatusId)
-    ) {
-      return value;
-    }
-    invalidIndexes.add(index);
-    let candidate = `invalid-reporting-status-id-${index + 1}`;
-    let suffix = 1;
-    while (reserved.has(candidate)) candidate = `invalid-reporting-status-id-${index + 1}-${suffix++}`;
-    reserved.add(candidate);
-    return candidate;
-  });
-  return { values, invalidIndexes };
 }
 
 function boundedConsumerStatusErrorField(errorField?: string): { errorField?: string } {

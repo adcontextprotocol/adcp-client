@@ -6,3 +6,4 @@ export * from './postgres';
 export * from './producer';
 export * from './handler';
 export * from './status-ingest';
+export * from './consumer-status-identity';

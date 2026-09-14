@@ -23,10 +23,12 @@ import {
 } from './instant';
 import {
   REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES,
   ReportingConsumerStatusConflictError,
   ReportingLedgerSnapshotUnavailableError,
   type ReportingConsumerStatusLedgerStore,
   type ReportingConsumerStatusBatchEntryV1,
+  type ReportingConsumerStatusBatchResultV1,
   type ReportingLedgerConfigurationV1,
   type ReportingLedgerConsumerStatementV1,
 } from './types';
@@ -349,7 +351,7 @@ async function validateStatus(
     throw new ReportingStatusValidationError('missing status precedes expected_at');
   }
   if (status.reporting_obligation_id) {
-    const obligation = await store.getObligation(status.reporting_obligation_id);
+    const obligation = await store.getObligation(status.reporting_obligation_id, accountId);
     if (
       !obligation ||
       obligation.account.account_id !== accountId ||
@@ -374,6 +376,9 @@ async function validateStatus(
       throw new ReportingStatusValidationError('revision binding mismatch');
   }
   if (status.seller_ledger_snapshot_id) {
+    if (!store.readSnapshotPage) {
+      throw new ReportingStatusValidationError('snapshot provenance unavailable');
+    }
     let page;
     try {
       page = await store.readSnapshotPage(status.seller_ledger_snapshot_id, accountId, undefined, 1);
@@ -507,7 +512,7 @@ function failed(
   field?: string,
   keyword?: string,
   recovery: ErrorRecovery = getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
-  retryAfter?: number
+  retryAfterSeconds?: number
 ): SyncReportingStatusResponseV1 {
   const results = ids.map(reporting_status_id => ({
     result: 'failed' as const,
@@ -516,7 +521,7 @@ function failed(
       {
         code,
         recovery,
-        ...(retryAfter !== undefined ? { retry_after: retryAfter } : {}),
+        ...(retryAfterSeconds !== undefined ? { retry_after: retryAfterSeconds } : {}),
         message,
         ...wireValidationDiagnostic(field, message, keyword),
       },
@@ -540,19 +545,7 @@ function completed(
           result: result.inserted ? ('recorded' as const) : ('unchanged' as const),
           consumer_status: wireConsumerStatus(result.value),
         }
-      : {
-          result: 'failed' as const,
-          reporting_status_id: result.reporting_status_id,
-          errors: [
-            {
-              code: result.errorCode,
-              recovery: result.recovery ?? getErrorRecovery(result.errorCode) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
-              ...(result.retryAfter !== undefined ? { retry_after: result.retryAfter } : {}),
-              message: result.safeMessage,
-              ...wireValidationDiagnostic(result.errorField, result.safeMessage, result.errorKeyword),
-            },
-          ],
-        }
+      : completedFailure(result)
   );
   if (wireResults.length === 0) throw new TypeError('sync_reporting_status store returned no item results');
   return {
@@ -561,6 +554,56 @@ function completed(
     status: 'completed',
     results: wireResults as [ReportingConsumerStatusResultV1, ...ReportingConsumerStatusResultV1[]],
   };
+}
+
+function completedFailure(
+  result: Extract<ReportingConsumerStatusBatchResultV1, { errorCode: string }>
+): FailedReportingConsumerStatusV1 {
+  const code = boundedErrorCode(result.errorCode);
+  const message = boundedErrorMessage(result.safeMessage);
+  const retryAfterSeconds = boundedRetryAfterSeconds(result.retryAfterSeconds);
+  return {
+    result: 'failed',
+    reporting_status_id: result.reporting_status_id,
+    errors: [
+      {
+        code,
+        recovery: result.recovery ?? getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+        ...(retryAfterSeconds !== undefined ? { retry_after: retryAfterSeconds } : {}),
+        message,
+        ...wireValidationDiagnostic(result.errorField, message, result.errorKeyword),
+      },
+    ],
+  };
+}
+
+function boundedErrorCode(value: unknown): string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 64 && isWellFormedUnicodeString(value)
+    ? value
+    : 'VALIDATION_ERROR';
+}
+
+function boundedRetryAfterSeconds(value: unknown): number | undefined {
+  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 3600 ? Number(value) : undefined;
+}
+
+function boundedErrorMessage(value: unknown): string {
+  if (typeof value !== 'string') return 'Reporting consumer status was rejected';
+  const wellFormed = Buffer.from(value, 'utf8')
+    .toString('utf8')
+    .replace(/\u0000/g, '\ufffd');
+  if (Buffer.byteLength(wellFormed, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) {
+    return wellFormed || 'Reporting consumer status was rejected';
+  }
+  let bounded = '';
+  let bytes = 0;
+  for (const character of wellFormed) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) break;
+    bounded += character;
+    bytes += characterBytes;
+  }
+  return bounded || 'Reporting consumer status was rejected';
 }
 
 function statusBatchFingerprint(request: {

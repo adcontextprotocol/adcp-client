@@ -20,3 +20,6 @@ test/fixtures/oauth-setup/
 # Byte-identical to upstream so projection tests don't drift on local
 # formatting changes.
 test/lib/v2-projection-fixtures/
+
+# Portable reporting vectors are byte/hash pinned across SDK implementations.
+test/fixtures/reporting-reconciliation/

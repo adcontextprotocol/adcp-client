@@ -80,7 +80,7 @@ the request body.
 ```ts
 const statusStore: ReportingConsumerStatusLedgerStore = {
   listConfigurations: accountId => existingLedger.configurations(accountId),
-  getObligation: id => existingLedger.obligationForAuthorizedCaller(id),
+  getObligation: (id, accountId) => existingLedger.obligationForAuthorizedCaller(id, accountId),
   getRevisionMetadata: (id, accountId) => existingLedger.boundRevision(id, accountId),
   readSnapshotPage: (id, accountId, cursor, limit) =>
     existingLedger.authorizedSnapshotPage(id, accountId, cursor, limit),
@@ -88,6 +88,17 @@ const statusStore: ReportingConsumerStatusLedgerStore = {
   syncConsumerStatusBatch: input => existingLedger.compareAppendAndReplayStatusBatch(input),
 };
 ```
+
+Use `reportingConsumerStatusChainKeyV1`,
+`reportingConsumerStatusChainKeyFromIdentityV1`,
+`reportingConsumerStatusFingerprintV1`, and
+`normalizeReportingConsumerStatusIdsV1` from `@adcp/sdk/reporting/ledger` when
+implementing duplicate, exact-leaf, unchanged, and replay behavior. This keeps
+equivalent RFC 3339 spellings in one logical chain. `readSnapshotPage` is
+optional; omitting it makes seller snapshot provenance unavailable without
+blocking statuses that do not claim snapshot provenance. Store failure results
+use `retryAfterSeconds` (integer seconds from 1 through 3600); invalid hints and
+oversized custom codes are omitted or replaced before reaching the wire.
 
 `sync_reporting_status` is a partial-success batch. The server validates the
 closed request envelope, then the handler validates every status independently.
@@ -114,6 +125,12 @@ authorization failures are `correctable`; an exhausted transient read slot is
 capacity is `REPORTING_STATUS_CAPACITY_EXHAUSTED`/`terminal`. The last two are
 open-vocabulary AdCP extension codes, so clients must use their accompanying
 `recovery` value rather than a closed code switch.
+
+The language-neutral acceptance vectors ship at
+`@adcp/sdk/compliance-fixtures/reporting-consumer-status-v1.json`. They pin
+exact request bytes and SHA-256 digests, frozen clocks and principals, ordered
+results, and post-operation ledger state so non-TypeScript adapters can run the
+same contract without installing the SDK ledger as a second authority store.
 
 The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.
 
