@@ -1,0 +1,25 @@
+// Frozen AdCP 3.1.19 action vocabulary. Verified against the signed release
+// schema in test/fixtures/media-buy-actions/released-schemas.json.
+export const V3_1_ACTION_IDS = [
+  'pause',
+  'resume',
+  'cancel',
+  'extend_flight',
+  'shorten_flight',
+  'update_flight_dates',
+  'increase_budget',
+  'decrease_budget',
+  'reallocate_budget',
+  'update_targeting',
+  'update_pacing',
+  'update_frequency_caps',
+  'replace_creative',
+  'update_creative_assignments',
+  'remove_creative',
+  'add_packages',
+  'remove_packages',
+  'update_budget',
+  'update_dates',
+  'update_packages',
+  'sync_creatives',
+] as const;

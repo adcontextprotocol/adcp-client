@@ -1,3 +1,4 @@
+import type { LiveMediaBuyAction as MediaBuyAvailableAction } from '../media-buy/action-types';
 /**
  * Server/adopter helpers for enforcing the update_media_buy action surface.
  *
@@ -15,7 +16,6 @@ import {
   type MediaBuyActionContext,
   type MediaBuyActionId,
   type MediaBuyActionMode,
-  type MediaBuyAvailableAction,
   type PreflightAllowed,
   type PreflightDenied,
   type PreflightDenial,
@@ -71,8 +71,22 @@ export function assertUpdateMediaBuyAllowed(
 
   const currentlyAvailable = getAvailableActions(currentBuy, { silent: true }).actions;
 
+  if (options.allowedModes?.length) {
+    const requested = result.ok ? result.actions : result.mutations;
+    const mismatch = requested.find(({ action }) => {
+      const entry = currentlyAvailable.find(e => e.action === action);
+      return entry && !options.allowedModes!.includes(entry.mode);
+    });
+    if (mismatch) throw actionNotAllowed(mismatch.action, 'mode_mismatch', currentlyAvailable);
+  }
+
   if (!result.ok) {
-    const assessment = result.denials.find(d => d.assessment?.code)?.assessment;
+    // A hard action denial takes precedence over an amendable bound. Preserve
+    // ACTION_NOT_ALLOWED and its refresh echo for the complete request.
+    const hardDenial = result.denials.find(d => !d.assessment?.code);
+    if (hardDenial) throw actionNotAllowedFromDenied({ ...result, denials: [hardDenial] }, currentlyAvailable, options);
+    const assessment =
+      result.denials.find(d => d.assessment?.code === 'CONFLICT')?.assessment ?? result.denials[0]?.assessment;
     if (assessment?.code) {
       throw new AdcpError(assessment.code, {
         message: assessment.message,

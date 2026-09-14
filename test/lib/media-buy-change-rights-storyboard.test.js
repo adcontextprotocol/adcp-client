@@ -28,66 +28,80 @@ test('matching change-rights compliance storyboard runs through the seller resol
       buy: state,
       decide: () => ({ authorization: true, governance: true, policy: true }),
     }).available_actions;
-  const adcpServer = createAdcpServer({
-    name: 'Change rights storyboard seller',
-    version: '1.0.0',
-    adcpVersion: VERSION,
-    idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
-    resolveIdempotencyPrincipal: () => 'change-rights-buyer',
-    stateStore: new InMemoryStateStore(),
-    validation: { requests: 'strict', responses: 'strict' },
-    mediaBuy: {
-      async getMediaBuys(request) {
-        calls.push('get');
-        assert.deepEqual(request.media_buy_ids, [state.media_buy_id]);
-        return { media_buys: [{ ...state, available_actions: projection() }] };
+  const idempotency = createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) });
+  const stateStore = new InMemoryStateStore();
+  const createServer = () => {
+    const adcpServer = createAdcpServer({
+      name: 'Change rights storyboard seller',
+      version: '1.0.0',
+      adcpVersion: VERSION,
+      idempotency,
+      resolveIdempotencyPrincipal: () => 'change-rights-buyer',
+      stateStore,
+      validation: { requests: 'strict', responses: 'strict' },
+      mediaBuy: {
+        async getMediaBuys(request) {
+          calls.push('get');
+          assert.deepEqual(request.media_buy_ids, [state.media_buy_id]);
+          return { media_buys: [{ ...state, available_actions: projection() }] };
+        },
+        async controlMediaBuy(request) {
+          calls.push('control');
+          controls.push(structuredClone(request));
+          assert.equal(request.media_buy_id, state.media_buy_id);
+          if (request.revision !== state.revision)
+            return {
+              errors: [new AdcpError('CONFLICT', { message: 'Refresh the current revision.' }).toStructuredError()],
+            };
+          try {
+            assertUpdateMediaBuyAllowed({ ...state, available_actions: projection() }, request, {
+              task: 'control_media_buy',
+              now: Date.now(),
+            });
+          } catch (error) {
+            // The low-level v5 handler returns error envelopes; v6 specialisms
+            // perform this AdcpError conversion automatically.
+            if (error instanceof AdcpError) return { errors: [error.toStructuredError()] };
+            throw error;
+          }
+          if (request.paused === true) state.status = 'paused';
+          if (request.paused === false) state.status = 'active';
+          if (request.total_budget) state.total_budget = request.total_budget.amount;
+          state.revision += 1;
+          return {
+            status: 'completed',
+            media_buy_id: state.media_buy_id,
+            media_buy_status: state.status,
+            revision: state.revision,
+            available_actions: projection(),
+          };
+        },
       },
-      async controlMediaBuy(request) {
-        calls.push('control');
-        controls.push(structuredClone(request));
-        assert.equal(request.media_buy_id, state.media_buy_id);
-        if (request.revision !== state.revision)
-          throw new AdcpError('CONFLICT', { message: 'Refresh the current revision.' });
-        assertUpdateMediaBuyAllowed({ ...state, available_actions: projection() }, request, {
-          task: 'control_media_buy',
-          now: Date.now(),
-        });
-        if (request.paused === true) state.status = 'paused';
-        if (request.paused === false) state.status = 'active';
-        if (request.total_budget) state.total_budget = request.total_budget.amount;
-        state.revision += 1;
-        return {
-          status: 'completed',
-          media_buy_id: state.media_buy_id,
-          media_buy_status: state.status,
-          revision: state.revision,
-          available_actions: projection(),
-        };
+    });
+    adcpServer[ADCP_CAPABILITIES].compliance_testing = { scenarios: ['seed_creative', 'seed_media_buy'] };
+    getSdkServer(adcpServer).registerTool(
+      'comply_test_controller',
+      {
+        description: 'Seed the published compliance fixtures.',
+        inputSchema: { ...TOOL_INPUT_SHAPE, account: z.record(z.string(), z.unknown()).optional() },
       },
-    },
-  });
-  adcpServer[ADCP_CAPABILITIES].compliance_testing = { scenarios: ['seed_creative', 'seed_media_buy'] };
-  getSdkServer(adcpServer).registerTool(
-    'comply_test_controller',
-    {
-      description: 'Seed the published compliance fixtures.',
-      inputSchema: { ...TOOL_INPUT_SHAPE, account: z.record(z.string(), z.unknown()).optional() },
-    },
-    async request => {
-      calls.push(request.scenario);
-      if (request.scenario === 'seed_media_buy') {
-        state = { ...structuredClone(request.params.fixture), media_buy_id: request.params.media_buy_id };
-        state.revision = 1;
-        state.confirmed_at = '2026-01-01T00:00:00Z';
-        state.accepted_proposal.terms_digest = proposalTermsDigest(state.accepted_proposal.commercial_terms);
-        state.accepted_proposal_id = state.accepted_proposal.proposal_id;
-        state.accepted_proposal_terms_digest = state.accepted_proposal.terms_digest;
-        delete state.account;
+      async request => {
+        calls.push(request.scenario);
+        if (request.scenario === 'seed_media_buy') {
+          state = { ...structuredClone(request.params.fixture), media_buy_id: request.params.media_buy_id };
+          state.revision = 1;
+          state.confirmed_at = '2026-01-01T00:00:00Z';
+          state.accepted_proposal.terms_digest = proposalTermsDigest(state.accepted_proposal.commercial_terms);
+          state.accepted_proposal_id = state.accepted_proposal.proposal_id;
+          state.accepted_proposal_terms_digest = state.accepted_proposal.terms_digest;
+          delete state.account;
+        }
+        return toMcpResponse({ status: 'completed', success: true, simulated: { seeded: true } });
       }
-      return toMcpResponse({ status: 'completed', success: true, simulated: { seeded: true } });
-    }
-  );
-  const server = serve(() => adcpServer, {
+    );
+    return adcpServer;
+  };
+  const server = serve(createServer, {
     port: 0,
     authenticate: () => ({ principal: 'change-rights-buyer' }),
     onListening: () => {},
@@ -101,7 +115,7 @@ test('matching change-rights compliance storyboard runs through the seller resol
     const result = await runStoryboard(`http://127.0.0.1:${server.address().port}/mcp`, storyboard, {
       protocol: 'mcp',
       allow_http: true,
-      agentTools: ['comply_test_controller', 'get_media_buys', 'control_media_buy'],
+      agentTools: ['get_adcp_capabilities', 'comply_test_controller', 'get_media_buys', 'control_media_buy'],
     });
     assert.equal(result.overall_passed, true, JSON.stringify(result, null, 2));
     assert.equal(result.failed_count, 0, JSON.stringify(result, null, 2));
@@ -121,14 +135,14 @@ test('matching change-rights compliance storyboard runs through the seller resol
       const stale = unpack(
         await mcp.callTool({
           name: 'control_media_buy',
-          arguments: { ...pause, idempotency_key: 'race-stale', revision: 1 },
+          arguments: { ...pause, idempotency_key: 'change-rights-race-stale', revision: 1 },
         })
       );
-      assert.equal(stale.errors?.[0]?.code ?? stale.adcp_error?.code, 'CONFLICT');
+      assert.equal(stale.errors?.[0]?.code ?? stale.adcp_error?.code, 'CONFLICT', JSON.stringify(stale, null, 2));
       const denied = unpack(
         await mcp.callTool({
           name: 'control_media_buy',
-          arguments: { ...pause, idempotency_key: 'race-current', revision: 2 },
+          arguments: { ...pause, idempotency_key: 'change-rights-race-current', revision: 2 },
         })
       );
       assert.equal(denied.errors[0].code, 'ACTION_NOT_ALLOWED');

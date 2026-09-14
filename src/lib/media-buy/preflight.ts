@@ -1,3 +1,4 @@
+import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-types';
 // Buyer-side preflight helpers for `update_media_buy`. See RFC #4480.
 //
 // Three layers, each usable on its own:
@@ -18,11 +19,15 @@ import type {
   MediaBuyActionContext,
   MediaBuyActionId,
   MediaBuyActionMode,
-  MediaBuyAvailableAction,
   MediaBuyValidAction,
   UpdateMediaBuyRequestLike,
 } from './types';
-import { decomposeUpdateMediaBuy, type ResolvedAction, type DecomposedUpdateMediaBuyMutation } from './mutations';
+import {
+  decomposeUpdateMediaBuy,
+  hasUnmappedMutation,
+  type ResolvedAction,
+  type DecomposedUpdateMediaBuyMutation,
+} from './mutations';
 export * from './mutations';
 
 // ---------------------------------------------------------------------------
@@ -129,6 +134,13 @@ export function preflightUpdateMediaBuy(
 ): PreflightResult {
   const decomposition = decomposeUpdateMediaBuy(currentBuy, request);
   const resolved = decomposition.actions;
+  const strict = currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined;
+  if (strict && hasUnmappedMutation(request, decomposition))
+    throw new ValidationError(
+      'request',
+      request,
+      'At least one requested mutation has no supported action mapping; do not submit a partial mutation.'
+    );
 
   if (resolved.length === 0) {
     throw new ValidationError(
@@ -168,6 +180,9 @@ export function preflightUpdateMediaBuy(
     modes.push(lookup.entry.mode);
   }
 
+  if (strict && denials.length === 0 && new Set(matched.map(entry => entry.task ?? 'update_media_buy')).size > 1) {
+    for (const action of resolved) denials.push({ action: action.action, reason: 'mode_mismatch' });
+  }
   if (denials.length > 0) {
     return {
       ok: false,
@@ -243,7 +258,6 @@ export function recoveryForModeMismatch(
 // Re-export shared types so consumers can import a single module.
 export type {
   ActionNotAllowedReason,
-  MediaBuyAvailableAction,
   MediaBuyActionId,
   MediaBuyActionMode,
   MediaBuyValidAction,

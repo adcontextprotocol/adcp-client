@@ -1,4 +1,10 @@
-import { CANONICAL_ACTION_TASKS, CHANGE_CONSTRAINT_ACTIONS, CHANGE_TERM_ACTIONS } from './action-metadata.generated';
+import {
+  CANONICAL_ACTION_TASKS,
+  CHANGE_CONSTRAINT_ACTIONS,
+  CHANGE_TERM_ACTIONS,
+  LEGACY_AVAILABLE_ACTIONS,
+} from './action-metadata.generated';
+import { V3_1_ACTION_IDS } from './legacy-action-ids';
 import { validActionsForStatus } from '../server/media-buy-helpers';
 import { getRollupParent } from './available-actions';
 import type {
@@ -27,7 +33,9 @@ export function mediaBuyActionTasks(action: MediaBuyAction): readonly MediaBuyTa
 
 /** The canonical default, only usable with a known current right and validated live entry. */
 export function defaultMediaBuyActionTask(action: MediaBuyAction): MediaBuyTask | undefined {
-  return mediaBuyActionTasks(action)[0];
+  return (['control_media_buy', 'refine_proposals', 'sync_creatives'] as const).find(task =>
+    mediaBuyActionTasks(action).includes(task)
+  );
 }
 
 export function actionAllowedStatuses(term: Pick<ProposalChangeTerm, 'action' | 'allowed_statuses'>): MediaBuyStatus[] {
@@ -39,12 +47,11 @@ export function actionAllowedStatuses(term: Pick<ProposalChangeTerm, 'action' | 
       return validActionsForStatus(status).includes(term.action as 'pause' | 'resume' | 'cancel');
     }
     if (term.allowed_statuses) return true;
-    const parent = getRollupParent(term.action as MediaBuyActionId);
+    const parent =
+      getRollupParent(term.action as MediaBuyActionId) ??
+      (['update_budget_allocation', 'update_spend_target'].includes(term.action) ? 'update_budget' : 'update_packages');
     const defaults = validActionsForStatus(status);
-    return (
-      defaults.includes((parent ?? term.action) as MediaBuyActionId & (typeof defaults)[number]) ||
-      mediaBuyActionTasks(term.action).length > 0
-    );
+    return defaults.includes((term.action === 'add_packages' ? term.action : parent) as (typeof defaults)[number]);
   });
 }
 
@@ -147,7 +154,7 @@ export function changeConstraintIssues(action: MediaBuyAction, constraints: unkn
   return issues;
 }
 
-function slaValid(sla: unknown): boolean {
+export function slaValid(sla: unknown): boolean {
   return (
     sla === undefined ||
     (record(sla) &&
@@ -247,15 +254,80 @@ export function productTemplateIssues(templates: readonly ProductActionTemplate[
             term_id: 'template',
             action: template.action,
             service_mode: template.modes?.[0],
-            allowed_statuses: template.allowed_statuses as ProposalChangeTerm['allowed_statuses'],
+            allowed_statuses: undefined,
             processing_sla: template.sla,
             constraints: template.constraints,
             terms_ref: template.terms_ref,
           },
         ],
         currency
-      )
+      ).filter(issue => issue !== 'invalid or duplicate action identity')
     );
+    if (
+      ![...CHANGE_TERM_ACTIONS, ...LEGACY_AVAILABLE_ACTIONS, 'update_media_buy_frequency_cap'].includes(template.action)
+    )
+      issues.push('invalid product action');
+    if (
+      template.allowed_statuses !== undefined &&
+      (!Array.isArray(template.allowed_statuses) ||
+        !template.allowed_statuses.length ||
+        new Set(template.allowed_statuses).size !== template.allowed_statuses.length ||
+        template.allowed_statuses.some(
+          status => ![...NON_TERMINAL_ACTION_STATUSES, 'completed', 'rejected', 'canceled'].includes(status)
+        ))
+    )
+      issues.push('invalid product status scope');
   }
   return issues;
+}
+
+/** Match advisory rollups only; accepted rights always retain exact canonical identity. */
+export function findProductAction(
+  templates: readonly ProductActionTemplate[] | undefined,
+  action: MediaBuyAction
+): ProductActionTemplate | undefined {
+  return templates?.find(t => t.action === action) ?? templates?.find(t => t.action === getRollupParent(action));
+}
+
+export function legacyActionSupported(action: MediaBuyAction): boolean {
+  return (V3_1_ACTION_IDS as readonly string[]).includes(action);
+}
+
+/** Structural live-entry validation; unknown action/mode strings remain opaque. */
+export function liveActionIssues(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return ['invalid live action array'];
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (
+      !record(entry) ||
+      typeof entry.action !== 'string' ||
+      !entry.action ||
+      typeof entry.mode !== 'string' ||
+      !entry.mode ||
+      seen.has(entry.action)
+    )
+      return ['invalid or duplicate live action'];
+    seen.add(entry.action);
+    if (
+      entry.task !== undefined &&
+      !['control_media_buy', 'refine_proposals', 'sync_creatives'].includes(String(entry.task))
+    )
+      return ['invalid live task'];
+    if (!slaValid(entry.sla)) return ['invalid live SLA'];
+    if (
+      entry.change_term_id !== undefined &&
+      (typeof entry.change_term_id !== 'string' || !/^[A-Za-z0-9_.:-]+$/.test(entry.change_term_id))
+    )
+      return ['invalid live term identity'];
+    if (entry.terms_ref !== undefined && typeof entry.terms_ref !== 'string') return ['invalid opaque reference'];
+    if (
+      entry.applicable_package_ids !== undefined &&
+      (!Array.isArray(entry.applicable_package_ids) ||
+        !entry.applicable_package_ids.length ||
+        entry.applicable_package_ids.some(id => typeof id !== 'string' || !id) ||
+        new Set(entry.applicable_package_ids).size !== entry.applicable_package_ids.length)
+    )
+      return ['invalid package scope'];
+  }
+  return [];
 }

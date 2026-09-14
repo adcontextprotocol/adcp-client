@@ -186,7 +186,11 @@ export function decomposeUpdateMediaBuy(
     // the generated table instead of being hardcoded: on schema pins that
     // predate that file there is no binding and the field is left unmapped
     // exactly like any other unrecognized request key.
-    const [frequencyCapAction] = ACTIONS_BY_FIELD['frequency_cap'] ?? [];
+    const frequencyCapAction =
+      ACTIONS_BY_FIELD['frequency_cap']?.[0] ??
+      (currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined
+        ? 'update_media_buy_frequency_cap'
+        : undefined);
     if (frequencyCapAction) {
       push({
         action: frequencyCapAction,
@@ -210,6 +214,14 @@ export function decomposeUpdateMediaBuy(
 
   if (request.packages) {
     const budgetPick = resolveBudgetDirection(currentBuy, request);
+    const completeBudgetBaselines =
+      new Set(request.packages.map(pkg => pkg.package_id)).size === request.packages.length &&
+      new Set((currentBuy.packages ?? []).map(pkg => pkg.package_id)).size === (currentBuy.packages ?? []).length &&
+      request.packages.every(
+        pkg =>
+          pkg.budget === undefined ||
+          (Number.isFinite(pkg.budget) && Number.isFinite(currentPackages.get(pkg.package_id)?.budget))
+      );
     const packageEndPick = resolveFlightEndDirection(currentBuy, request, 'packages[].end_time');
 
     request.packages.forEach((pkg, index) => {
@@ -235,15 +247,22 @@ export function decomposeUpdateMediaBuy(
 
       if (pkg.budget !== undefined) {
         push({
-          ...(budgetPick.action === 'reallocate_budget' && typeof pkg.budget === 'number'
+          ...(currentBuy.accepted_proposal?.commercial_terms?.change_terms === undefined
             ? budgetPick
-            : typeof currentPkg?.budget !== 'number' || typeof pkg.budget !== 'number'
-              ? { action: 'update_budget' as const }
-              : pkg.budget > currentPkg.budget
+            : budgetPick.action === 'reallocate_budget' && completeBudgetBaselines && typeof pkg.budget === 'number'
+              ? budgetPick
+              : pkg.budget === null && Number.isFinite(currentPkg?.budget)
                 ? { action: 'increase_budget' as const, direction: 'increase' as const }
-                : pkg.budget < currentPkg.budget
-                  ? { action: 'decrease_budget' as const, direction: 'decrease' as const }
-                  : budgetPick),
+                : typeof currentPkg?.budget !== 'number' ||
+                    !Number.isFinite(currentPkg.budget) ||
+                    typeof pkg.budget !== 'number' ||
+                    !Number.isFinite(pkg.budget)
+                  ? { action: 'update_budget' as const }
+                  : pkg.budget > currentPkg.budget
+                    ? { action: 'increase_budget' as const, direction: 'increase' as const }
+                    : pkg.budget < currentPkg.budget
+                      ? { action: 'decrease_budget' as const, direction: 'decrease' as const }
+                      : budgetPick),
           field: 'packages[].budget',
           path: `packages[${index}].budget`,
           ...base,
@@ -284,7 +303,20 @@ export function decomposeUpdateMediaBuy(
 
       if (pkg.end_time !== undefined) {
         push({
-          ...packageEndPick,
+          ...(currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined &&
+          !request.start_time &&
+          !request.packages?.some(p => p.start_time !== undefined)
+            ? !Number.isFinite(Date.parse(currentPkg?.end_time ?? ''))
+              ? { action: 'update_dates' as const }
+              : {
+                  action:
+                    Date.parse(pkg.end_time) > Date.parse(currentPkg!.end_time!)
+                      ? ('extend_flight' as const)
+                      : Date.parse(pkg.end_time) < Date.parse(currentPkg!.end_time!)
+                        ? ('shorten_flight' as const)
+                        : ('update_flight_dates' as const),
+                }
+            : packageEndPick),
           field: 'packages[].end_time',
           path: `packages[${index}].end_time`,
           ...base,
@@ -386,7 +418,7 @@ export function decomposeUpdateMediaBuy(
       const field = prefix + key;
       if (field === 'packages[].targeting_overlay') continue; // decomposed above, including its cap-only branch
       if (to === undefined || mutations.some(m => m.field === field && m.package_id === package_id)) continue;
-      const actions = ACTIONS_BY_FIELD[field];
+      const actions = Object.hasOwn(ACTIONS_BY_FIELD, field) ? ACTIONS_BY_FIELD[field] : undefined;
       if (actions?.length !== 1) continue;
       const from =
         index === undefined
@@ -405,6 +437,49 @@ export function decomposeUpdateMediaBuy(
   };
   addMetadataFields(request, '');
   request.packages?.forEach((pkg, i) => addMetadataFields(pkg, 'packages[].', i, pkg.package_id));
+
+  // Canonical control fields differ from legacy update rollups. These bindings
+  // follow the merged #6750 reference seller's actionsForUpdateRequest; the
+  // canonical task allowlist is still generated from the selected bundle.
+  if (currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined) {
+    const canonicalFields: Record<string, MediaBuyActionId> = {
+      reporting_webhook: 'update_reporting_webhook',
+      budget_cap_timezone: 'update_pacing',
+      'packages[].keyword_targets_add': 'update_keywords',
+      'packages[].keyword_targets_remove': 'update_keywords',
+      'packages[].negative_keywords_add': 'update_keywords',
+      'packages[].negative_keywords_remove': 'update_keywords',
+      'packages[].catalog_ids': 'update_catalog_assignments',
+      'packages[].optimization_goals': 'update_optimization_goals',
+      'packages[].impressions': 'update_impression_goal',
+      'packages[].min_spend_target': 'update_spend_target',
+    };
+    for (const mutation of mutations)
+      if (Object.hasOwn(canonicalFields, mutation.field)) mutation.action = canonicalFields[mutation.field]!;
+    const addCanonical = (values: object, index?: number) => {
+      for (const [key, to] of Object.entries(values)) {
+        const field = index === undefined ? key : `packages[].${key}`;
+        const path = index === undefined ? key : `packages[${index}].${key}`;
+        if (to === undefined || !Object.hasOwn(canonicalFields, field) || mutations.some(m => m.path === path))
+          continue;
+        const package_id = index === undefined ? undefined : request.packages![index]!.package_id;
+        push({
+          action: canonicalFields[field]!,
+          field,
+          path,
+          scope: index === undefined ? 'buy' : 'package',
+          to,
+          ...(package_id && { package_id, package_index: index }),
+          from:
+            index === undefined
+              ? (currentBuy as unknown as Record<string, unknown>)[key]
+              : (currentPackages.get(package_id!) as Record<string, unknown> | undefined)?.[key],
+        });
+      }
+    };
+    addCanonical(request);
+    request.packages?.forEach((pkg, index) => addCanonical(pkg, index));
+  }
 
   return {
     mutations,
@@ -552,4 +627,40 @@ function resolveFlightEndDirection(
   if (shortening && !extending) return { action: 'shorten_flight', direction: 'shorten' };
   // Mixed or indeterminate - fall through to update_flight_dates.
   return { action: 'update_flight_dates', direction: 'shift' };
+}
+
+/** Fail closed on unmodeled mutation fields; envelope data does not create an action. */
+export function hasUnmappedMutation(
+  request: UpdateMediaBuyRequestLike,
+  decomposition: DecomposedUpdateMediaBuy
+): boolean {
+  const envelope = new Set([
+    'media_buy_id',
+    'account',
+    'revision',
+    'idempotency_key',
+    'adcp_version',
+    'adcp_major_version',
+    'context_id',
+    'context',
+    'governance_context',
+    'push_notification_config',
+  ]);
+  const paths = decomposition.mutations.map(m => m.path);
+  const covered = (path: string) => paths.some(p => p === path || p.startsWith(`${path}.`));
+  return (
+    Object.entries(request).some(
+      ([key, value]) =>
+        value !== undefined &&
+        key !== 'packages' &&
+        !(key === 'new_packages' && Array.isArray(value) && value.length === 0) &&
+        !envelope.has(key) &&
+        !covered(key)
+    ) ||
+    !!request.packages?.some((pkg, index) =>
+      Object.entries(pkg).some(
+        ([key, value]) => value !== undefined && key !== 'package_id' && !covered(`packages[${index}].${key}`)
+      )
+    )
+  );
 }

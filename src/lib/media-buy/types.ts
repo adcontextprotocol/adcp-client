@@ -85,7 +85,7 @@ export interface MediaBuyActionContext {
     daily_budget_cap?: number | null;
     min_spend_target?: number | null;
   }>;
-  available_actions?: MediaBuyAvailableAction[];
+  available_actions?: readonly import('./action-types').LiveMediaBuyAction[];
   valid_actions?: MediaBuyValidAction[];
 }
 

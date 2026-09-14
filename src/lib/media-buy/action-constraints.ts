@@ -18,7 +18,7 @@ const unknown = (constraint: string, path: string): ConstraintAssessment => ({
   status: 'unknown',
   constraint,
   path,
-  message: 'Insufficient current state to evaluate this bound.',
+  message: `Cannot evaluate ${constraint} at ${path}; supply the committed baseline, currency, and captured request time required by that bound.`,
 });
 const exceeded = (constraint: string, path: string): ConstraintAssessment => ({
   status: 'exceeded',
@@ -35,6 +35,11 @@ export function evaluateChangeTermConstraints(
   mutations: readonly DecomposedUpdateMediaBuyMutation[],
   options: ConstraintEvaluationOptions = {}
 ): ConstraintAssessment {
+  if (request.total_budget && mutations.some(m => m.action === term.action && m.field === 'total_budget.amount')) {
+    const currency = typeof buy.total_budget === 'object' ? buy.total_budget.currency : buy.currency;
+    if (currency === undefined) return unknown('currency', 'total_budget.currency');
+    if (request.total_budget.currency !== currency) return exceeded('currency_mismatch', 'total_budget.currency');
+  }
   if (term.constraints === undefined) return { status: 'satisfied' };
   if (changeConstraintIssues(term.action, term.constraints).length) return unknown('invalid_constraints', term.action);
   // The generated anyOf branches have a broad object type. Narrow only after
@@ -47,9 +52,29 @@ export function evaluateChangeTermConstraints(
   };
   if (c.kind === 'budget') {
     const values = relevant.filter(m => /(?:budget(?:\.amount)?|daily_budget_cap|min_spend_target)$/.test(m.field));
+    if (
+      !values.length &&
+      term.action === 'update_budget_allocation' &&
+      relevant.some(m => m.field === 'budget_allocation')
+    ) {
+      const amount = typeof buy.total_budget === 'object' ? buy.total_budget.amount : buy.total_budget;
+      values.push({
+        action: term.action,
+        field: 'budget_allocation',
+        path: 'budget_allocation',
+        scope: 'buy',
+        from: amount,
+        to: amount,
+      });
+    }
     if (!values.length) return unknown('cannot_preflight', term.action);
     const currency = typeof buy.total_budget === 'object' ? buy.total_budget.currency : buy.currency;
     for (const m of values) {
+      if (m.to === null && m.field === 'packages[].budget' && term.action === 'increase_budget') {
+        if (c.max_delta_amount || c.max_delta_percent !== undefined || c.max_result_amount)
+          return exceeded('unbounded_result', m.path);
+        continue;
+      }
       if (!finite(m.to) || m.to < 0) {
         recordUnknown('result_amount', m.path);
         continue;
@@ -135,17 +160,18 @@ export function evaluateChangeTermConstraints(
         return exceeded('max_result_count', 'packages');
     }
   } else if (c.kind === 'effective_timing') {
+    const path = relevant[0]?.path ?? (term.action === 'cancel' ? 'canceled' : 'paused');
     if (c.minimum_notice !== undefined) {
-      if (elapsedDuration(c.minimum_notice) === undefined) recordUnknown('minimum_notice', term.action);
-      else return exceeded('minimum_notice', term.action);
+      if (elapsedDuration(c.minimum_notice) === undefined) recordUnknown('minimum_notice', path);
+      else return exceeded('minimum_notice', path);
     }
     if ((c.earliest_effective_at !== undefined || c.latest_effective_at !== undefined) && !finite(options.now))
-      recordUnknown('request_time', term.action);
+      recordUnknown('request_time', path);
     else if (finite(options.now)) {
       if (c.earliest_effective_at !== undefined && options.now < Date.parse(c.earliest_effective_at))
-        return exceeded('earliest_effective_at', term.action);
+        return exceeded('earliest_effective_at', path);
       if (c.latest_effective_at !== undefined && options.now > Date.parse(c.latest_effective_at))
-        return exceeded('latest_effective_at', term.action);
+        return exceeded('latest_effective_at', path);
     }
   }
   return unresolved ?? { status: 'satisfied' };

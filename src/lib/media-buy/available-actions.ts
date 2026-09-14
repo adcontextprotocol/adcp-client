@@ -1,3 +1,4 @@
+import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-types';
 // Compat shim between the legacy `valid_actions[]` flat shape and the
 // 3.1 `available_actions[]` structured shape (RFC #4480).
 //
@@ -6,7 +7,7 @@
 // authoritative source and surfaces a deprecation hint when only the
 // legacy field is populated.
 
-import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyAvailableAction, MediaBuyValidAction } from './types';
+import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyValidAction } from './types';
 
 /**
  * Source the normalized `available_actions[]` came from. Callers branch on

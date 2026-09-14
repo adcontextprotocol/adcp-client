@@ -66,6 +66,8 @@ export interface LiveMediaBuyAction {
   mode: MediaBuyActionMode;
   task?: MediaBuyTask;
   sla?: SLAWindow;
+  /** rc.3 exact package scope. Omission means all relevant packages. */
+  applicable_package_ids?: readonly string[];
   change_term_id?: string;
   /** Opaque in 3.1. Equality is checked only with an explicitly declared 3.2 alias projection. */
   terms_ref?: string;

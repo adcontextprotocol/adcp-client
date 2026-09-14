@@ -71,8 +71,9 @@ cannot be satisfied by an immediate mutation.
 
 `MediaBuyTask` is the narrow union `update_media_buy | control_media_buy |
 refine_proposals | sync_creatives`. `nonDefaultRoute` carries the non-default task;
-absence denotes the established `update_media_buy` default. Modern executable
-entries require a compatible seller-emitted canonical task. Task alternatives come
+absence denotes the established `update_media_buy` default. Task-discriminated
+entries require a compatible seller-emitted canonical task. A legacy entry that
+omits `task` uses `update_media_buy`, including task-less 3.2 response/echo shapes. Task alternatives come
 from the pinned canonical action metadata. A mode does not choose a route:
 `seller_managed` can use control or refinement when the action supports that task,
 and follows ordinary submitted/working/completed task handling. There is no new
@@ -82,11 +83,19 @@ The existing `preflightUpdateMediaBuy` gains portable checks when a current
 accepted snapshot with explicit change terms is supplied. Its old `valid_actions`
 compatibility path remains available. Use `preflightMediaBuyActions` for strict
 new adoption: all decomposed actions must pass before sending the whole mutation.
-Package budget increases and decreases cannot hide behind a net total change.
+When package totals change, each affected package requires its own increase or
+decrease right. A known net-zero transfer uses `reallocate_budget`; an unknown
+baseline cannot establish reallocation. Budget bounds apply to each affected
+budget or cap, matching the protocol reference seller, and never authorize a
+currency change. Mixed requests must share one executable task; unmapped mutation
+fields fail closed. These helpers assess patches and do not validate a full wire
+request: callers must retain schema validation and the required revision and
+idempotency envelope at dispatch.
 
 A stale request revision returns a local `CONFLICT` diagnostic. On a server
 `ACTION_NOT_ALLOWED` race, use `refreshMediaBuyActions(buy, error.details)` to
-replace the action set, including an empty set. This does not change the buy's
+replace the action set, including an empty set. Absent optional echoes leave the
+snapshot unchanged; malformed echoes throw. Echoes are copied deeply. This does not change the buy's
 revision or accepted proposal. Re-read current state after a conflict, reassess,
 and follow the existing lifecycle coordinator's retry rules; never automatically
 mint a new idempotency key after an ambiguous mutation.
@@ -106,8 +115,15 @@ when the 3.2 producer deliberately emits both fields as aliases; equality then
 becomes mandatory. Without that declaration, an independent opaque `terms_ref`
 remains opaque. A proposal term's own `terms_ref` is a contract-document reference
 and may always differ from its `term_id`. No helper fetches that reference.
-The rc.3 shared-frequency-cap action is supported without copying unrelated
-schema-adoption changes into this feature.
+The rc.3 shared-frequency-cap action and `applicable_package_ids` are supported
+without copying unrelated schema-adoption changes. Package scope requires every
+requested package to belong to the emitted set; it never authorizes a buy-wide
+mutation. Without the requested packages, assessment remains unknown.
+
+`update_name` is a noncommercial metadata action and cannot be a change term.
+Its explicit current structured entry provides `authority: 'live_metadata'`
+without a `term`; commercial actions return `authority: 'accepted_term'`.
+Legacy flat hints never establish this metadata authority.
 
 ## Seller builder
 
@@ -152,13 +168,22 @@ mode, drop committed maxima, expand status scope, or broaden typed bounds.
 Materialization validates term/action uniqueness, status/mode/SLA shape, compatible
 constraint kinds and currencies, consistent bounds, and every product template.
 The original accepted data is preserved; callback inputs and output terms are
-copies. `request` and `now` optionally enforce portable request bounds during
-seller resolution. Terminal statuses project an empty array.
+copies. Optional `request` returns separate `request_assessments`; it does not
+filter the full `available_actions` projection that is returned to clients. `now`
+evaluates current effective-time gates. Terminal statuses project an empty array.
+The optional seller `metadata.update_name` decision explicitly enables naming
+changes under the same three gates, without fabricating a commercial term.
+`decide` may provide an rc.3 `applicable_package_ids` narrowing; the seller must
+supply all affected product declarations for that scope.
 
 `wireVersion: '3.1'` deliberately projects supported rights to opaque `terms_ref`
 and maps `seller_managed` to the legacy `requires_approval` spelling. Current 3.2
 output carries `change_term_id`; `emitTermsRefAlias: true` adds an equal legacy
-alias. Neither projection adds a right absent from accepted terms.
+alias. Commercial rights always originate in accepted terms. Rights that cannot be
+represented safely by the legacy vocabulary or package scope are omitted with a
+diagnostic. The default 3.2 output is the canonical MediaBuy action shape for
+`get_media_buys` and `control_media_buy`, not the narrower legacy update response
+or `ACTION_NOT_ALLOWED` echo schema.
 
 ## Python parity and compliance
 

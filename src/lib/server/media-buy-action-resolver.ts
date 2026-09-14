@@ -13,9 +13,10 @@ import {
   productTemplateIssues,
   slaWithin,
   elapsedDuration,
+  findProductAction,
+  legacyActionSupported,
 } from '../media-buy/action-contracts';
 import { assessActionAvailability, type ActionAvailability } from '../media-buy/action-assessment';
-import { evaluateChangeTermConstraints } from '../media-buy/action-constraints';
 import { decomposeUpdateMediaBuy } from '../media-buy/mutations';
 import type { SLAWindow, UpdateMediaBuyRequestLike } from '../media-buy/types';
 
@@ -30,6 +31,8 @@ export interface SellerActionDecision {
   task?: MediaBuyTask;
   /** Optional tighter elapsed maxima; cannot discard a committed maximum. */
   sla?: SLAWindow;
+  /** rc.3 package scope is an explicit seller narrowing, never inferred from a buyer request. */
+  applicable_package_ids?: readonly string[];
 }
 export interface SellerActionResolutionOptions {
   /** Trusted current snapshot from the seller store after account and revision checks. */
@@ -41,12 +44,16 @@ export interface SellerActionResolutionOptions {
   wireVersion?: '3.2' | '3.1';
   /** Emit a deliberate equal compatibility alias alongside the 3.2 identity. */
   emitTermsRefAlias?: boolean;
+  /** Separately assess this request without replacing the full live projection. */
   request?: UpdateMediaBuyRequestLike;
+  /** Noncommercial metadata authority is explicit, never fabricated as a proposal term. */
+  metadata?: { update_name?: SellerActionDecision };
   now?: number;
 }
 export interface SellerActionResolution {
   available_actions: LiveMediaBuyAction[];
   unavailable: ActionAvailability[];
+  request_assessments?: ActionAvailability[];
 }
 
 /**
@@ -76,7 +83,7 @@ export const mediaBuyActionResolver = {
     if (issues.length) throw new TypeError(issues.join('; '));
     const materialized = structuredClone([...input.acceptedTerms]);
     for (const term of materialized) {
-      const templates = input.products.map(product => product.allowed_actions?.find(t => t.action === term.action));
+      const templates = input.products.map(product => findProductAction(product.allowed_actions, term.action));
       // Explicit acceptance permits copying advisory data into the binding
       // envelope. Different ceilings require an explicitly selected common bound.
       const constraints = templates.find(t => t?.constraints)?.constraints;
@@ -91,7 +98,7 @@ export const mediaBuyActionResolver = {
       const reference = templates[0]?.terms_ref;
       if (reference && templates.every(t => t?.terms_ref === reference)) term.terms_ref ??= reference;
       for (const product of input.products) {
-        const template = product.allowed_actions?.find(t => t.action === term.action);
+        const template = findProductAction(product.allowed_actions, term.action);
         if (!template || !template.modes.includes(term.service_mode) || !slaWithin(template.sla, term.processing_sla)) {
           issues.push('Accepted terms exceed product template.');
           continue;
@@ -107,15 +114,15 @@ export const mediaBuyActionResolver = {
     return materialized;
   },
   resolve(input: SellerActionResolutionOptions): SellerActionResolution {
-    const terms = input.buy.accepted_proposal?.commercial_terms?.change_terms;
-    if (terms === undefined) return { available_actions: [], unavailable: [] };
+    const terms = input.buy.accepted_proposal?.commercial_terms?.change_terms ?? [];
     const currency = typeof input.buy.total_budget === 'object' ? input.buy.total_budget.currency : input.buy.currency;
     const issues = changeTermIssues(terms, currency);
     for (const product of input.products ?? [])
       issues.push(...productTemplateIssues(product.allowed_actions ?? [], currency));
     if (issues.length) throw new TypeError(issues.join('; '));
     const available_actions: LiveMediaBuyAction[] = [],
-      unavailable: ActionAvailability[] = [];
+      unavailable: ActionAvailability[] = [],
+      request_assessments: ActionAvailability[] = [];
     for (const original of terms) {
       // Callbacks receive copies so they cannot widen the accepted snapshot.
       const term = structuredClone(original);
@@ -143,7 +150,7 @@ export const mediaBuyActionResolver = {
       // information is not a positive declaration when the caller supplies products.
       let productBlocked = false;
       for (const product of input.products ?? []) {
-        const template = product.allowed_actions?.find(t => t.action === term.action);
+        const template = findProductAction(product.allowed_actions, term.action);
         if (
           !template ||
           !template.modes.includes(term.service_mode) ||
@@ -152,24 +159,7 @@ export const mediaBuyActionResolver = {
           productBlocked = true;
           break;
         }
-        if (template.constraints && !constraintsWithin(template.constraints, term.constraints)) {
-          if (!input.request) {
-            productBlocked = true;
-            break;
-          }
-          const result = evaluateChangeTermConstraints(
-            { ...term, constraints: template.constraints },
-            input.buy,
-            input.request,
-            decomposeUpdateMediaBuy(input.buy as Parameters<typeof decomposeUpdateMediaBuy>[0], input.request)
-              .mutations,
-            { now: input.now }
-          );
-          if (result.status !== 'satisfied') {
-            productBlocked = true;
-            break;
-          }
-        }
+        if (template.constraints && !constraintsWithin(template.constraints, term.constraints)) productBlocked = true;
       }
       if (productBlocked) {
         unavailable.push({
@@ -186,9 +176,28 @@ export const mediaBuyActionResolver = {
         mode: term.service_mode,
         task: decision.task ?? defaultMediaBuyActionTask(term.action),
         change_term_id: term.term_id,
+        ...(decision.applicable_package_ids && { applicable_package_ids: [...decision.applicable_package_ids] }),
         ...(term.processing_sla && { sla: structuredClone(term.processing_sla) }),
         ...(decision.sla && { sla: structuredClone(decision.sla) }),
       };
+      if (
+        decision.applicable_package_ids !== undefined &&
+        (!decision.applicable_package_ids.length ||
+          new Set(decision.applicable_package_ids).size !== decision.applicable_package_ids.length ||
+          decision.applicable_package_ids.some(
+            id => typeof id !== 'string' || !id || !input.buy.packages?.some(p => p.package_id === id)
+          ))
+      ) {
+        blocked('Invalid or unknown package scope.', true);
+        continue;
+      }
+      if (
+        input.wireVersion === '3.1' &&
+        (!legacyActionSupported(term.action) || decision.applicable_package_ids !== undefined)
+      ) {
+        blocked('This right cannot be represented safely in the requested legacy projection.', true);
+        continue;
+      }
       // Evaluate with a seller-resolved copy of conditions; the accepted record
       // and emitted term remain unchanged. No arbitrary condition is executed.
       const evaluatedTerm = { ...term };
@@ -198,13 +207,23 @@ export const mediaBuyActionResolver = {
         accepted_proposal: { ...input.buy.accepted_proposal, commercial_terms: { change_terms: [evaluatedTerm] } },
         available_actions: [entry],
       };
+      if (
+        input.request &&
+        decomposeUpdateMediaBuy(input.buy as Parameters<typeof decomposeUpdateMediaBuy>[0], input.request).actions.some(
+          a => a.action === term.action
+        )
+      )
+        request_assessments.push(
+          assessActionAvailability(evaluatedBuy, term.action, { request: input.request, now: input.now })
+        );
       // A projection can advertise a bounded right before a particular request.
       // When a request is supplied, the exact same portable preflight is enforced.
       const constraint = evaluatedTerm.constraints as Record<string, unknown> | undefined;
       const hasTimingGate = constraint?.kind === 'effective_timing' || constraint?.minimum_notice !== undefined;
-      if (!input.request && !hasTimingGate) delete evaluatedTerm.constraints;
+      if (!hasTimingGate) delete evaluatedTerm.constraints;
+      evaluatedBuy.available_actions = [{ ...entry, applicable_package_ids: undefined }];
       const result = assessActionAvailability(evaluatedBuy, term.action, {
-        request: input.request ?? (hasTimingGate ? {} : undefined),
+        request: hasTimingGate ? {} : undefined,
         now: input.now,
       });
       if (result.status !== 'available_now') {
@@ -222,7 +241,53 @@ export const mediaBuyActionResolver = {
         available_actions.push(legacy);
       } else available_actions.push({ ...entry, ...(input.emitTermsRefAlias && { terms_ref: term.term_id }) });
     }
-    return { available_actions, unavailable };
+    const metadata = input.metadata?.update_name;
+    if (metadata) {
+      const entry: LiveMediaBuyAction = {
+        action: 'update_name',
+        mode: 'self_serve',
+        task: metadata.task ?? 'control_media_buy',
+        ...(metadata.sla && { sla: structuredClone(metadata.sla) }),
+      };
+      const result = assessActionAvailability({ ...input.buy, available_actions: [entry] }, 'update_name');
+      if (
+        metadata.authorization === true &&
+        metadata.governance === true &&
+        metadata.policy === true &&
+        metadata.applicable_package_ids === undefined &&
+        (input.products ?? []).every(p => {
+          const template = findProductAction(p.allowed_actions, 'update_name');
+          return (
+            template?.modes.includes('self_serve') &&
+            (!template.allowed_statuses || template.allowed_statuses.includes(input.buy.status as never)) &&
+            slaWithin(template.sla, entry.sla)
+          );
+        }) &&
+        result.status === 'available_now'
+      ) {
+        if (input.wireVersion !== '3.1') available_actions.push(entry);
+        else
+          unavailable.push({
+            status: 'currently_unavailable',
+            action: 'update_name',
+            reason: 'not_supported_on_buy',
+            certainty: 'blocked',
+            message: 'Naming is not in the 3.1.19 action vocabulary.',
+          });
+      } else
+        unavailable.push(
+          result.status === 'currently_unavailable'
+            ? result
+            : {
+                status: 'currently_unavailable',
+                action: 'update_name',
+                reason: 'condition_unresolved',
+                certainty: 'unknown',
+                message: 'Explicit seller metadata gates must all admit this action.',
+              }
+        );
+    }
+    return { available_actions, unavailable, ...(input.request && { request_assessments }) };
   },
 };
 
@@ -252,8 +317,8 @@ function constraintsWithin(ceiling: unknown, candidate: unknown): boolean {
       if (sameData(a[key], b[key])) return true;
       if (b[key] === undefined) return false;
       const minimum = key.startsWith('min_') || key === 'minimum_notice' || key.startsWith('earliest_');
-      let left = a[key],
-        right = b[key];
+      let left: unknown = a[key],
+        right: unknown = b[key];
       if (key.endsWith('_amount')) {
         const x = left as { currency: string; amount: number },
           y = right as { currency: string; amount: number };

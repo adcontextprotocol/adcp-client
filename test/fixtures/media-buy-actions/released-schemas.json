@@ -1,0 +1,1169 @@
+[
+  {
+    "version": "3.1.19",
+    "source": "https://adcontextprotocol.org/protocol/3.1.19.tgz",
+    "schemas": [
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "/schemas/3.1.19/core/media-buy-available-action.json",
+        "title": "Media Buy Available Action",
+        "description": "An action currently available on a media buy, resolved against the buy's current status, negotiated terms, account tier, and any buy-level overrides. Authoritative per-buy capability \u2014 buyer SDKs MUST read this rather than re-deriving from the product's `allowed_actions[]`, because divergence from the product template is expected (negotiated terms and IO addenda live on the deal, not the product SKU). The containing `available_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value (this is a contract-level invariant \u2014 JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately). Predicate evaluators consuming dotted paths like `available_actions.extend_flight.sla.response_max` MUST index by `action` rather than by array position. The `mode` and `sla` values are advisory at the moment of emission; sellers MAY resolve to a different mode by the time the mutation arrives (state can change), in which case the request is rejected with `ACTION_NOT_ALLOWED` (`reason: mode_mismatch`).",
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "/schemas/3.1.19/enums/media-buy-valid-action.json",
+            "description": "The action identifier."
+          },
+          "mode": {
+            "$ref": "/schemas/3.1.19/enums/media-buy-action-mode.json",
+            "description": "The single mode that applies right now on this buy for this action. Singular because the buy has a concrete state, exactly one mode applies. Buyer SDKs branch on this to decide whether to expect a synchronous response, conditional handling, or an asynchronous approval callback."
+          },
+          "sla": {
+            "$ref": "/schemas/3.1.19/core/sla-window.json",
+            "description": "Optional SLA commitment for this action on this buy. Absence means no commitment, not zero commitment."
+          },
+          "terms_ref": {
+            "type": "string",
+            "description": "Optional pointer into buy-terms negotiation (forward-references the buy-terms namespace landing via separate RFC). Schema accepts any string for now and will tighten to a structured reference when the buy-terms RFC ships."
+          }
+        },
+        "required": ["action", "mode"],
+        "additionalProperties": false
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "/schemas/3.1.19/enums/media-buy-valid-action.json",
+        "title": "Media Buy Valid Action",
+        "description": "Actions the buyer can perform on a media buy. Used as the action identifier in both the legacy flat `valid_actions[]` field (string array) and the structured `available_actions[]` field on buy responses, and in `allowed_actions[]` on Product. The coarse values (`update_budget`, `update_dates`, `update_packages`, `sync_creatives`) predate the finer-grained vocabulary and are retained for backwards compatibility \u2014 see `x-deprecated-enum-values`. Sellers SHOULD declare the finer-grained values where their platform distinguishes them; the coarse values roll up to the finer set per `enumMetadata[<value>].rollup`. See action-to-field mapping table in docs/media-buy/task-reference/update_media_buy.mdx for the normative binding between each action and the fields it covers on update_media_buy.",
+        "type": "string",
+        "x-deprecated-enum-values": ["update_budget", "update_dates", "update_packages", "sync_creatives"],
+        "x-deprecated-enum-values-doc": "Coarse legacy values retained for backwards compatibility with 3.x sellers. Each rolls up to one or more finer-grained values published in 3.1 (see `enumMetadata[<value>].rollup`). Removed in 4.0.",
+        "enum": [
+          "pause",
+          "resume",
+          "cancel",
+          "extend_flight",
+          "shorten_flight",
+          "update_flight_dates",
+          "increase_budget",
+          "decrease_budget",
+          "reallocate_budget",
+          "update_targeting",
+          "update_pacing",
+          "update_frequency_caps",
+          "replace_creative",
+          "update_creative_assignments",
+          "remove_creative",
+          "add_packages",
+          "remove_packages",
+          "update_budget",
+          "update_dates",
+          "update_packages",
+          "sync_creatives"
+        ],
+        "enumDescriptions": {
+          "pause": "Pause the entire media buy. Maps to `paused: true` on update_media_buy.",
+          "resume": "Resume a paused media buy. Maps to `paused: false` on update_media_buy.",
+          "cancel": "Cancel the media buy. Irreversible. Maps to `canceled: true` on update_media_buy.",
+          "extend_flight": "Push the buy's `end_time` later. Start time unchanged.",
+          "shorten_flight": "Pull the buy's `end_time` earlier. Start time unchanged.",
+          "update_flight_dates": "Shift `start_time` and/or `end_time`. Distinct from extend/shorten because shifting a start date is operationally different from extending an end date and approval paths typically differ.",
+          "increase_budget": "Raise budget on one or more packages. Maps to higher values on `packages[].budget`.",
+          "decrease_budget": "Lower budget on one or more packages. Maps to lower values on `packages[].budget`. Sellers typically bound this by already-spent; constraint metadata covers bounds in a follow-up RFC.",
+          "reallocate_budget": "Redistribute budget across packages on `packages[].budget` without changing the sum.",
+          "update_targeting": "Update targeting overlays on existing packages.",
+          "update_pacing": "Update pacing on existing packages.",
+          "update_frequency_caps": "Update frequency capping rules. Distinct from targeting because frequency is renegotiated mid-flight on a different cadence (especially for CTV/video buys).",
+          "replace_creative": "Swap a creative for another without changing assignment logic. Distinct AM workflow from changing the assignment set.",
+          "update_creative_assignments": "Change which creatives are assigned to which packages.",
+          "remove_creative": "Remove a creative from the buy. Often the most time-sensitive action when a creative misbehaves; sellers SHOULD support self_serve removal where possible even when add/swap require approval.",
+          "add_packages": "Add new packages to an existing media buy via `new_packages` on update_media_buy.",
+          "remove_packages": "Remove packages from a media buy.",
+          "update_budget": "Coarse legacy action covering any budget change. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `increase_budget`/`decrease_budget`/`reallocate_budget`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary.",
+          "update_dates": "Coarse legacy action covering any flight-date change. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `extend_flight`/`shorten_flight`/`update_flight_dates`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary.",
+          "update_packages": "Coarse legacy action covering any package update. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `update_targeting`/`update_pacing`/`update_frequency_caps`/`reallocate_budget`/`remove_packages`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary.",
+          "sync_creatives": "Coarse legacy action covering any creative-related change. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `replace_creative`/`update_creative_assignments`/`remove_creative`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary."
+        },
+        "enumMetadata": {
+          "$comment": "Structured per-action metadata. Each entry carries `update_fields` (the `update_media_buy` request fields this action covers, as dotted paths rooted at the request body) and optional `rollup` for legacy coarse values that are superseded by finer-grained vocabulary. SDKs MUST consume this block to dispatch update_media_buy requests rather than parsing the field-mapping table in the update_media_buy task-reference doc; the doc is the human-readable mirror of this normative data. Deprecated values are marked at the top-level `x-deprecated-enum-values` (repo convention); SDKs and codegen MAY hide deprecated values from caller-facing surfaces when any value in the entry's `rollup` array is present in the same `available_actions[]` or `valid_actions[]` payload.",
+          "pause": {
+            "update_fields": ["paused"]
+          },
+          "resume": {
+            "update_fields": ["paused"]
+          },
+          "cancel": {
+            "update_fields": ["canceled", "cancellation_reason"]
+          },
+          "extend_flight": {
+            "update_fields": ["end_time", "packages[].end_time"]
+          },
+          "shorten_flight": {
+            "update_fields": ["end_time", "packages[].end_time"]
+          },
+          "update_flight_dates": {
+            "update_fields": ["start_time", "end_time", "packages[].start_time", "packages[].end_time"]
+          },
+          "increase_budget": {
+            "update_fields": ["packages[].budget"]
+          },
+          "decrease_budget": {
+            "update_fields": ["packages[].budget"]
+          },
+          "reallocate_budget": {
+            "update_fields": ["packages[].budget"]
+          },
+          "update_targeting": {
+            "update_fields": [
+              "packages[].targeting_overlay",
+              "packages[].keyword_targets_add",
+              "packages[].keyword_targets_remove",
+              "packages[].negative_keywords_add",
+              "packages[].negative_keywords_remove"
+            ]
+          },
+          "update_pacing": {
+            "update_fields": ["packages[].pacing"]
+          },
+          "update_frequency_caps": {
+            "update_fields": ["packages[].targeting_overlay.frequency_cap"]
+          },
+          "replace_creative": {
+            "update_fields": ["packages[].creatives"]
+          },
+          "update_creative_assignments": {
+            "update_fields": ["packages[].creative_assignments"]
+          },
+          "remove_creative": {
+            "update_fields": ["packages[].creatives", "packages[].creative_assignments"]
+          },
+          "add_packages": {
+            "update_fields": ["new_packages"]
+          },
+          "remove_packages": {
+            "update_fields": ["packages[].canceled"]
+          },
+          "update_budget": {
+            "update_fields": ["packages[].budget"],
+            "rollup": ["increase_budget", "decrease_budget", "reallocate_budget"]
+          },
+          "update_dates": {
+            "update_fields": ["start_time", "end_time", "packages[].start_time", "packages[].end_time"],
+            "rollup": ["extend_flight", "shorten_flight", "update_flight_dates"]
+          },
+          "update_packages": {
+            "update_fields": ["packages[]"],
+            "rollup": [
+              "update_targeting",
+              "update_pacing",
+              "update_frequency_caps",
+              "reallocate_budget",
+              "remove_packages"
+            ]
+          },
+          "sync_creatives": {
+            "update_fields": ["packages[].creatives", "packages[].creative_assignments"],
+            "rollup": ["replace_creative", "update_creative_assignments", "remove_creative"]
+          }
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "/schemas/3.1.19/enums/media-buy-action-mode.json",
+        "title": "Media Buy Action Mode",
+        "description": "How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or an asynchronous human approval. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.",
+        "type": "string",
+        "x-extensible": true,
+        "enum": ["self_serve", "conditional_self_serve", "requires_approval"],
+        "enumDescriptions": {
+          "self_serve": "Seller honors the request synchronously without approval or conditional checks. Buyer SDK can dispatch the update_media_buy call and expect an immediate result.",
+          "conditional_self_serve": "Seller auto-approves within declared tolerances and escalates outside them. Covers programmatic guaranteed flows on platforms like FreeWheel, Magnite, and GAM where small mutations clear automatically but large ones queue for human review. Constraint metadata defining the tolerances is out of scope for v1 and the natural home is #4425's `requires` predicate grammar; until #4425 lands, tolerances are declared out-of-band and buyers cannot statically predict which mutations will auto-approve from this surface alone.",
+          "requires_approval": "Human-in-the-loop, asynchronous, no proposal artifact. Buyer SDK should expect a pending-status poll or webhook callback when the seller's operator approves or rejects."
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "/schemas/3.1.19/core/sla-window.json",
+        "title": "SLA Window",
+        "description": "Service-level commitment a seller declares for a given action. Optional throughout: absence means no commitment, not zero commitment \u2014 buyers querying SLA fields via #4425's `requires` predicate grammar MUST compose with `present` to avoid silently matching sellers who never declared one. Durations are ISO 8601 duration strings (e.g., `PT4H`, `PT24H`, `P1D`). Predicate evaluators that compare durations MUST normalize before comparison; `P1D` and `PT24H` are equal.",
+        "type": "object",
+        "properties": {
+          "response_max": {
+            "type": "string",
+            "description": "Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue ack for requires_approval). ISO 8601 duration.",
+            "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+            "examples": ["PT5M", "PT4H", "P1D"]
+          },
+          "completion_max": {
+            "type": "string",
+            "description": "Maximum time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, approval resolved). ISO 8601 duration.",
+            "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+            "examples": ["PT1H", "PT24H", "P2D"]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  {
+    "version": "3.2.0-beta.8",
+    "source": "https://adcontextprotocol.org/protocol/3.2.0-beta.8.tgz",
+    "schemas": [
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/core/canonical-media-buy-action.json",
+        "title": "Canonical Media Buy Action",
+        "description": "A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent.",
+        "type": "object",
+        "discriminator": {
+          "propertyName": "task"
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "task": {
+                "type": "string",
+                "const": "control_media_buy"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "pause",
+                  "resume",
+                  "cancel",
+                  "update_name",
+                  "increase_budget",
+                  "decrease_budget",
+                  "reallocate_budget",
+                  "update_budget_allocation",
+                  "update_targeting",
+                  "update_pacing",
+                  "update_bidding",
+                  "update_frequency_caps",
+                  "update_catalog_assignments",
+                  "update_keywords",
+                  "update_optimization_goals",
+                  "update_impression_goal",
+                  "update_spend_target",
+                  "update_reporting_webhook",
+                  "remove_packages"
+                ]
+              },
+              "mode": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/enums/canonical-media-buy-action-mode.json"
+              },
+              "sla": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/core/sla-window.json"
+              },
+              "terms_ref": {
+                "type": "string"
+              }
+            },
+            "required": ["task", "action", "mode"],
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "task": {
+                "type": "string",
+                "const": "refine_proposals"
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "cancel",
+                  "extend_flight",
+                  "shorten_flight",
+                  "update_flight_dates",
+                  "increase_budget",
+                  "decrease_budget",
+                  "reallocate_budget",
+                  "update_budget_allocation",
+                  "update_targeting",
+                  "update_pacing",
+                  "update_bidding",
+                  "update_frequency_caps",
+                  "add_packages",
+                  "remove_packages"
+                ]
+              },
+              "mode": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/enums/canonical-media-buy-action-mode.json"
+              },
+              "sla": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/core/sla-window.json"
+              },
+              "terms_ref": {
+                "type": "string"
+              }
+            },
+            "required": ["task", "action", "mode"],
+            "additionalProperties": false
+          },
+          {
+            "properties": {
+              "task": {
+                "type": "string",
+                "const": "sync_creatives"
+              },
+              "action": {
+                "type": "string",
+                "enum": ["replace_creative", "update_creative_assignments", "remove_creative"]
+              },
+              "mode": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/enums/canonical-media-buy-action-mode.json"
+              },
+              "sla": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/core/sla-window.json"
+              },
+              "terms_ref": {
+                "type": "string"
+              }
+            },
+            "required": ["task", "action", "mode"],
+            "additionalProperties": false
+          }
+        ]
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/enums/canonical-media-buy-action-mode.json",
+        "title": "Canonical Media Buy Action Mode",
+        "description": "How a seller honors a routed compact-lifecycle action.",
+        "type": "string",
+        "enum": ["self_serve", "conditional_self_serve", "requires_approval"],
+        "enumDescriptions": {
+          "self_serve": "The declared task completes synchronously without approval.",
+          "conditional_self_serve": "The declared task completes synchronously inside seller tolerances and may become asynchronous outside them.",
+          "requires_approval": "The declared task uses the standard submitted, working, and input-required lifecycle before terminal completion."
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-beta.8/core/sla-window.json",
+        "title": "SLA Window",
+        "description": "Service-level commitment a seller declares for a given action. Optional throughout: absence means no commitment, not zero commitment \u2014 buyers querying SLA fields via #4425's `requires` predicate grammar MUST compose with `present` to avoid silently matching sellers who never declared one. Durations are ISO 8601 duration strings (e.g., `PT4H`, `PT24H`, `P1D`). Predicate evaluators that compare durations MUST normalize before comparison; `P1D` and `PT24H` are equal.",
+        "type": "object",
+        "properties": {
+          "response_max": {
+            "type": "string",
+            "description": "Maximum time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue ack for requires_approval). ISO 8601 duration.",
+            "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+            "examples": ["PT5M", "PT4H", "P1D"]
+          },
+          "completion_max": {
+            "type": "string",
+            "description": "Maximum time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, approval resolved). ISO 8601 duration.",
+            "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+            "examples": ["PT1H", "PT24H", "P2D"]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  {
+    "version": "3.2.0-rc.3",
+    "source": "https://adcontextprotocol.org/protocol/3.2.0-rc.3.tgz",
+    "schemas": [
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/canonical-media-buy-action.json",
+        "title": "Canonical Media Buy Action",
+        "description": "A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent.",
+        "x-adcp-validation": {
+          "verifier_constraints": {
+            "change_term_link": "When change_term_id is present, it resolves to the accepted proposal change term governing this action.",
+            "legacy_alias_agreement": "When both change_term_id and deprecated terms_ref are emitted as proposal-term links, their values are identical."
+          }
+        },
+        "type": "object",
+        "discriminator": {
+          "propertyName": "task"
+        },
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/canonical-media-buy-action-fields.json"
+              }
+            ],
+            "required": ["task"],
+            "properties": {
+              "task": {
+                "const": "control_media_buy"
+              },
+              "action": {
+                "enum": [
+                  "pause",
+                  "resume",
+                  "cancel",
+                  "update_name",
+                  "increase_budget",
+                  "decrease_budget",
+                  "reallocate_budget",
+                  "update_budget_allocation",
+                  "update_targeting",
+                  "update_pacing",
+                  "update_bidding",
+                  "update_frequency_caps",
+                  "update_media_buy_frequency_cap",
+                  "update_catalog_assignments",
+                  "update_keywords",
+                  "update_optimization_goals",
+                  "update_impression_goal",
+                  "update_spend_target",
+                  "update_reporting_webhook",
+                  "remove_packages"
+                ]
+              }
+            }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/canonical-media-buy-action-fields.json"
+              }
+            ],
+            "required": ["task"],
+            "properties": {
+              "task": {
+                "const": "refine_proposals"
+              },
+              "action": {
+                "enum": [
+                  "cancel",
+                  "extend_flight",
+                  "shorten_flight",
+                  "update_flight_dates",
+                  "increase_budget",
+                  "decrease_budget",
+                  "reallocate_budget",
+                  "update_budget_allocation",
+                  "update_targeting",
+                  "update_pacing",
+                  "update_bidding",
+                  "update_frequency_caps",
+                  "update_media_buy_frequency_cap",
+                  "add_packages",
+                  "remove_packages"
+                ]
+              }
+            }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/canonical-media-buy-action-fields.json"
+              }
+            ],
+            "required": ["task"],
+            "properties": {
+              "task": {
+                "const": "sync_creatives"
+              },
+              "action": {
+                "enum": ["replace_creative", "update_creative_assignments", "remove_creative"]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/canonical-media-buy-action-fields.json",
+        "title": "Canonical Media Buy Action Fields",
+        "description": "Shared closed field set for task-discriminated canonical MediaBuy actions.",
+        "type": "object",
+        "properties": {
+          "task": {
+            "type": "string",
+            "enum": ["control_media_buy", "refine_proposals", "sync_creatives"]
+          },
+          "action": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/canonical-media-buy-action-mode.json"
+          },
+          "sla": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/sla-window.json"
+          },
+          "change_term_id": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/media-buy-change-term-id.json"
+          },
+          "terms_ref": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/media-buy-legacy-terms-ref.json"
+          },
+          "applicable_package_ids": {
+            "type": "array",
+            "description": "Exact eligible packages for a package-scoped action; omission means all relevant packages.",
+            "items": {
+              "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/applicable-package-id.json"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": ["task", "action", "mode"],
+        "additionalProperties": false
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/canonical-media-buy-action-mode.json",
+        "title": "Canonical Media Buy Action Mode",
+        "description": "How a seller honors a routed compact-lifecycle action.",
+        "type": "string",
+        "enum": ["self_serve", "conditional_self_serve", "seller_managed", "requires_approval"],
+        "enumDescriptions": {
+          "self_serve": "The declared task completes synchronously without approval.",
+          "conditional_self_serve": "The declared task completes synchronously inside seller tolerances and may become asynchronous outside them.",
+          "seller_managed": "The seller processes the action through the standard async lifecycle. The internal use of people, models, queues, or other controls is intentionally opaque.",
+          "requires_approval": "Legacy 3.x mode indicating an approval-dependent async path. New proposal-bound terms SHOULD use seller_managed so they do not expose an internal implementation."
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/sla-window.json",
+        "title": "SLA Window",
+        "description": "Service-level commitment a seller declares for a given action. Optional throughout: absence means no commitment, not zero commitment \u2014 buyers querying SLA fields via #4425's `requires` predicate grammar MUST compose with `present` to avoid silently matching sellers who never declared one. Durations are ISO 8601 duration strings (e.g., `PT4H`, `PT24H`, `P1D`). Predicate evaluators that compare durations MUST normalize before comparison; `P1D` and `PT24H` are equal.",
+        "type": "object",
+        "properties": {
+          "response_max": {
+            "type": "string",
+            "description": "Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.",
+            "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+            "examples": ["PT5M", "PT4H", "P1D"]
+          },
+          "completion_max": {
+            "type": "string",
+            "description": "Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.",
+            "pattern": "^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$",
+            "examples": ["PT1H", "PT24H", "P2D"]
+          }
+        },
+        "additionalProperties": false
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/media-buy-change-term-id.json",
+        "title": "Media Buy Change Term ID",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_.:-]+$",
+        "x-entity": "media_buy_change_term",
+        "description": "The accepted proposal change_terms[].term_id from which this current-state action projection was derived."
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/media-buy-legacy-terms-ref.json",
+        "title": "Media Buy Terms Reference",
+        "type": "string",
+        "deprecated": true,
+        "x-deprecated-in": "3.2.0",
+        "x-removed-in": "4.0.0",
+        "description": "Deprecated 3.1 opaque commercial-terms pointer. A 3.2 compatibility projection MAY echo change_term_id here for older buyers, but new buyers MUST prefer change_term_id and MUST NOT assume an arbitrary 3.1 value identifies an accepted change term."
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/applicable-package-id.json",
+        "title": "Applicable Package ID",
+        "description": "A package identifier to which a package-scoped media-buy action currently applies.",
+        "type": "string",
+        "minLength": 1,
+        "x-entity": "package"
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/media-buy/change-term.json",
+        "title": "Media Buy Change Term",
+        "description": "A proposal-bound buyer change right. It binds to the resulting media buy and account, not personally to the caller, and may be exercised by any caller admitted by both seller account authorization and applicable signed governance delegation.",
+        "x-adcp-validation": {
+          "verifier_constraints": {
+            "allowed_statuses": "Every value is a non-terminal MediaBuy status. The current buy projection omits the action outside these statuses without extinguishing the negotiated right.",
+            "constraint_action_compatibility": {
+              "budget": [
+                "increase_budget",
+                "decrease_budget",
+                "reallocate_budget",
+                "update_budget_allocation",
+                "update_spend_target"
+              ],
+              "flight": ["extend_flight", "shorten_flight", "update_flight_dates"],
+              "package_count": ["add_packages", "remove_packages"],
+              "effective_timing": ["pause", "resume", "cancel"],
+              "on_violation": "reject_proposal"
+            },
+            "constraint_currency": "Every monetary constraint currency equals the commercial terms purchase currency.",
+            "constraint_consistency": "Minimum result does not exceed maximum result; earliest timestamp does not exceed latest timestamp."
+          }
+        },
+        "type": "object",
+        "properties": {
+          "term_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "x-entity": "media_buy_change_term"
+          },
+          "action": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/canonical-media-buy-action.json"
+          },
+          "service_mode": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/canonical-media-buy-action-mode.json"
+          },
+          "allowed_statuses": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["pending_creatives", "pending_start", "active", "paused"]
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Non-terminal MediaBuy statuses in which this negotiated right may be exercised. When absent, the right applies in every non-terminal status where the canonical action itself is meaningful. This field describes contractual lifecycle scope; available_actions[] remains authoritative for the current instant."
+          },
+          "processing_sla": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/sla-window.json",
+            "description": "Binding elapsed-time acknowledgement and completion commitment. Sellers account for weekends and non-working periods when declaring the maximum."
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$"
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "Opaque stable condition identifiers defined by terms_ref or bilateral commercial documentation. Implementations compare identifiers; they MUST NOT execute or interpret them as instructions."
+          },
+          "constraints": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/media-buy/change-term-constraints.json",
+            "description": "Portable bounds that buyer and seller SDKs can preflight. Omission means no machine-readable bound was promised; opaque conditions remain unevaluated."
+          },
+          "terms_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Stable contract reference. Resolving it cannot expand the typed right and MUST use the caller's normal authenticated contract-document path, never ambient seller credentials."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Display-only summary; it cannot grant authority, add an action, or override typed fields."
+          },
+          "ext": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/ext.json"
+          }
+        },
+        "required": ["term_id", "action", "service_mode"],
+        "additionalProperties": false
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/canonical-media-buy-action.json",
+        "title": "Canonical Media Buy Action Name",
+        "description": "Fine-grained MediaBuy action vocabulary for compact product and lifecycle surfaces. Deprecated coarse 3.x actions are absent.",
+        "type": "string",
+        "enum": [
+          "pause",
+          "resume",
+          "cancel",
+          "extend_flight",
+          "shorten_flight",
+          "update_flight_dates",
+          "increase_budget",
+          "decrease_budget",
+          "reallocate_budget",
+          "update_budget_allocation",
+          "update_targeting",
+          "update_pacing",
+          "update_bidding",
+          "update_frequency_caps",
+          "update_media_buy_frequency_cap",
+          "update_catalog_assignments",
+          "update_keywords",
+          "update_optimization_goals",
+          "update_impression_goal",
+          "update_spend_target",
+          "update_reporting_webhook",
+          "replace_creative",
+          "update_creative_assignments",
+          "remove_creative",
+          "add_packages",
+          "remove_packages"
+        ]
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/media-buy/change-term-constraints.json",
+        "title": "Media Buy Change Term Constraints",
+        "description": "Optional machine-readable bounds on a proposal-bound change right. These constraints narrow the action named by the containing change term; they never grant an additional action or expand the accepted commercial envelope. Sellers omit this object when no portable bound is available, and buyers then treat any opaque conditions as unevaluated rather than assuming the change will be accepted.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "title": "Budget change constraints",
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "budget"
+              },
+              "max_delta_amount": {
+                "$ref": "#/definitions/money",
+                "description": "Maximum absolute amount by which the affected budget may change in the direction named by the action."
+              },
+              "max_delta_percent": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Maximum percentage change relative to the current committed value. Values above 100 are valid for increases greater than the current value."
+              },
+              "min_result_amount": {
+                "$ref": "#/definitions/money",
+                "description": "Minimum resulting committed value after the change."
+              },
+              "max_result_amount": {
+                "$ref": "#/definitions/money",
+                "description": "Maximum resulting committed value after the change."
+              }
+            },
+            "required": ["kind"],
+            "anyOf": [
+              {
+                "required": ["max_delta_amount"]
+              },
+              {
+                "required": ["max_delta_percent"]
+              },
+              {
+                "required": ["min_result_amount"]
+              },
+              {
+                "required": ["max_result_amount"]
+              }
+            ],
+            "additionalProperties": false
+          },
+          {
+            "title": "Flight change constraints",
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "flight"
+              },
+              "max_change": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/duration.json",
+                "description": "Maximum extension, shortening, or shift in the direction named by the action."
+              },
+              "earliest_result": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Earliest resulting start or end timestamp accepted for this action."
+              },
+              "latest_result": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Latest resulting start or end timestamp accepted for this action."
+              },
+              "minimum_notice": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/duration.json",
+                "description": "Minimum elapsed notice before the requested flight change may take effect."
+              }
+            },
+            "required": ["kind"],
+            "anyOf": [
+              {
+                "required": ["max_change"]
+              },
+              {
+                "required": ["earliest_result"]
+              },
+              {
+                "required": ["latest_result"]
+              },
+              {
+                "required": ["minimum_notice"]
+              }
+            ],
+            "additionalProperties": false
+          },
+          {
+            "title": "Package count constraints",
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "package_count"
+              },
+              "max_additions": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Maximum packages that may be added by one exercise of the right."
+              },
+              "max_removals": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Maximum packages that may be removed by one exercise of the right."
+              },
+              "max_result_count": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Maximum active package count after the change."
+              }
+            },
+            "required": ["kind"],
+            "anyOf": [
+              {
+                "required": ["max_additions"]
+              },
+              {
+                "required": ["max_removals"]
+              },
+              {
+                "required": ["max_result_count"]
+              }
+            ],
+            "additionalProperties": false
+          },
+          {
+            "title": "Effective timing constraints",
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "effective_timing"
+              },
+              "minimum_notice": {
+                "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/duration.json",
+                "description": "Minimum elapsed notice before pause, resume, cancellation, or another operational action may take effect."
+              },
+              "earliest_effective_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "latest_effective_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": ["kind"],
+            "anyOf": [
+              {
+                "required": ["minimum_notice"]
+              },
+              {
+                "required": ["earliest_effective_at"]
+              },
+              {
+                "required": ["latest_effective_at"]
+              }
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "definitions": {
+          "money": {
+            "type": "object",
+            "properties": {
+              "amount": {
+                "type": "number",
+                "minimum": 0
+              },
+              "currency": {
+                "type": "string",
+                "pattern": "^[A-Z]{3}$"
+              }
+            },
+            "required": ["amount", "currency"],
+            "additionalProperties": false
+          }
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/duration.json",
+        "title": "Duration",
+        "description": "A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 \u2014 the window spans the full campaign flight.",
+        "type": "object",
+        "properties": {
+          "interval": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of time units. Must be 1 when unit is 'campaign'."
+          },
+          "unit": {
+            "type": "string",
+            "enum": ["seconds", "minutes", "hours", "days", "campaign"],
+            "description": "Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight."
+          }
+        },
+        "required": ["interval", "unit"],
+        "additionalProperties": false
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/ext.json",
+        "title": "Extension Object",
+        "description": "Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.",
+        "type": "object",
+        "additionalProperties": true
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/product-allowed-action.json",
+        "title": "Product Allowed Action",
+        "description": "An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only \u2014 the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.",
+        "x-adcp-validation": {
+          "verifier_constraints": {
+            "constraint_action_compatibility": "The constraints.kind is compatible with action under change-term-constraints.json. Product constraints are advisory upper bounds and cannot create a proposal-bound right."
+          }
+        },
+        "type": "object",
+        "properties": {
+          "action": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/media-buy-available-action-id.json",
+            "description": "The action identifier. Accepts every legacy valid_actions value plus structured-only actions such as update_media_buy_frequency_cap."
+          },
+          "modes": {
+            "type": "array",
+            "description": "Modes available for this action on this product. A product may declare multiple modes (for example `self_serve` within tolerances, escalating to `requires_approval` outside) \u2014 the buy-side `available_actions[<action>].mode` resolves to the singular mode in effect at mutation time. SDKs that see multiple modes MUST NOT assume which one will fire; they must read the resolved `mode` on the buy.",
+            "items": {
+              "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/media-buy-action-mode.json"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "allowed_statuses": {
+            "type": "array",
+            "description": "Media buy statuses in which this action is permitted. When absent, the action is permitted in all non-terminal statuses (`pending_creatives`, `pending_start`, `active`, `paused`).",
+            "items": {
+              "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/media-buy-status.json"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "sla": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/sla-window.json",
+            "description": "Optional SLA commitment for this action on this product. Absence means no commitment."
+          },
+          "constraints": {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/media-buy/change-term-constraints.json",
+            "description": "Optional advisory machine-readable bounds buyers can use during product selection. The proposal must restate any binding bounds in commercial_terms.change_terms[].constraints."
+          },
+          "terms_ref": {
+            "type": "string",
+            "description": "Optional advisory pointer to published commercial terms governing this product action. It is not a proposal change-term identity and never grants a binding change right; a proposal materializes binding rights under commercial_terms.change_terms[].term_id."
+          }
+        },
+        "required": ["action", "modes"],
+        "additionalProperties": false
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/core/media-buy-available-action-id.json",
+        "title": "Media Buy Available Action ID",
+        "description": "An action identifier for the structured available_actions surface. It contains every legacy valid_actions value plus structured-only actions introduced after that deprecated flat surface.",
+        "anyOf": [
+          {
+            "$ref": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/media-buy-valid-action.json"
+          },
+          {
+            "type": "string",
+            "const": "update_media_buy_frequency_cap"
+          }
+        ],
+        "enumMetadata": {
+          "update_media_buy_frequency_cap": {
+            "update_fields": ["frequency_cap"]
+          }
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/media-buy-valid-action.json",
+        "title": "Media Buy Valid Action",
+        "description": "Actions the buyer can perform on a media buy. Used as the action identifier in both the legacy flat `valid_actions[]` field (string array) and the structured `available_actions[]` field on buy responses, and in `allowed_actions[]` on Product. The coarse values (`update_budget`, `update_dates`, `update_packages`, `sync_creatives`) predate the finer-grained vocabulary and are retained for backwards compatibility \u2014 see `x-deprecated-enum-values`. Sellers SHOULD declare the finer-grained values where their platform distinguishes them; the coarse values roll up to the finer set per `enumMetadata[<value>].rollup`. See action-to-field mapping table in docs/media-buy/task-reference/update_media_buy.mdx for the normative binding between each action and the fields it covers on update_media_buy.",
+        "type": "string",
+        "x-deprecated-enum-values": ["update_budget", "update_dates", "update_packages", "sync_creatives"],
+        "x-deprecated-enum-values-doc": "Coarse legacy values retained for backwards compatibility with 3.x sellers. Each rolls up to one or more finer-grained values published in 3.1 (see `enumMetadata[<value>].rollup`). Removed in 4.0.",
+        "enum": [
+          "pause",
+          "resume",
+          "cancel",
+          "update_name",
+          "extend_flight",
+          "shorten_flight",
+          "update_flight_dates",
+          "increase_budget",
+          "decrease_budget",
+          "reallocate_budget",
+          "update_budget_allocation",
+          "update_targeting",
+          "update_pacing",
+          "update_bidding",
+          "update_frequency_caps",
+          "replace_creative",
+          "update_creative_assignments",
+          "remove_creative",
+          "add_packages",
+          "remove_packages",
+          "update_budget",
+          "update_dates",
+          "update_packages",
+          "sync_creatives"
+        ],
+        "enumDescriptions": {
+          "pause": "Pause the entire media buy. Maps to `paused: true` on update_media_buy.",
+          "resume": "Resume a paused media buy. Maps to `paused: false` on update_media_buy.",
+          "cancel": "Cancel the media buy. Irreversible. Maps to `canceled: true` on update_media_buy.",
+          "update_name": "Replace the human-readable media-buy name without changing accepted commercial terms. Maps to `name` on update_media_buy or control_media_buy.",
+          "extend_flight": "Push the buy's `end_time` later. Start time unchanged.",
+          "shorten_flight": "Pull the buy's `end_time` earlier. Start time unchanged.",
+          "update_flight_dates": "Shift `start_time` and/or `end_time`. Distinct from extend/shorten because shifting a start date is operationally different from extending an end date and approval paths typically differ.",
+          "increase_budget": "Raise the media-buy total budget, raise one or more package caps, or remove a seller-optimized package cap. Maps to a higher `total_budget.amount`, higher values on `packages[].budget`, or `packages[].budget: null` (which relaxes the ceiling).",
+          "decrease_budget": "Lower the media-buy total budget or one or more package caps. Maps to a lower `total_budget.amount` or lower values on `packages[].budget`. Sellers typically bound this by already-spent.",
+          "reallocate_budget": "Redistribute budget across packages on `packages[].budget` without changing the sum.",
+          "update_budget_allocation": "Change fixed versus seller-optimized allocation mode, cross-package optimization goals, or package minimum-spend targets. Maps to `budget_allocation` and `packages[].min_spend_target`, including null to clear a target. Automatic seller allocation within an already-authorized seller-optimized buy is delivery behavior, not this action.",
+          "update_targeting": "Update targeting overlays on existing packages.",
+          "update_pacing": "Update aggregate media-buy pacing or pacing on existing packages.",
+          "update_bidding": "Replace or clear the media-buy bidding default or package-authored bidding overrides. Maps to `bidding` and `packages[].bidding`; the seller validates the resulting effective policies atomically before mutation.",
+          "update_frequency_caps": "Update package targeting-overlay frequency caps.",
+          "replace_creative": "Swap a creative for another without changing assignment logic. Distinct AM workflow from changing the assignment set.",
+          "update_creative_assignments": "Change which creatives are assigned to which packages.",
+          "remove_creative": "Remove a creative from the buy. Often the most time-sensitive action when a creative misbehaves; sellers SHOULD support self_serve removal where possible even when add/swap require approval.",
+          "add_packages": "Add new packages to an existing media buy via `new_packages` on update_media_buy.",
+          "remove_packages": "Remove packages from a media buy.",
+          "update_budget": "Coarse legacy action covering any budget change. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `increase_budget`/`decrease_budget`/`reallocate_budget`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary.",
+          "update_dates": "Coarse legacy action covering any flight-date change. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `extend_flight`/`shorten_flight`/`update_flight_dates`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary.",
+          "update_packages": "Coarse legacy action covering any package update. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `update_targeting`/`update_pacing`/`update_frequency_caps`/`reallocate_budget`/`remove_packages`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary.",
+          "sync_creatives": "Coarse legacy action covering any creative-related change. Retained for backwards compatibility with 3.x sellers that emit this rather than the finer `replace_creative`/`update_creative_assignments`/`remove_creative`. Removed in 4.0. Sellers SHOULD migrate to the finer vocabulary."
+        },
+        "enumMetadata": {
+          "$comment": "Structured per-action metadata. Each entry carries `update_fields` (the `update_media_buy` request fields this action covers, as dotted paths rooted at the request body) and optional `rollup` for legacy coarse values that are superseded by finer-grained vocabulary. SDKs MUST consume this block to dispatch update_media_buy requests rather than parsing the field-mapping table in the update_media_buy task-reference doc; the doc is the human-readable mirror of this normative data. Deprecated values are marked at the top-level `x-deprecated-enum-values` (repo convention); SDKs and codegen MAY hide deprecated values from caller-facing surfaces when any value in the entry's `rollup` array is present in the same `available_actions[]` or `valid_actions[]` payload. Structured-only actions that are absent from this deprecated flat enum, such as update_media_buy_frequency_cap, carry the same enumMetadata shape in core/media-buy-available-action-id.json; SDKs MUST merge both blocks.",
+          "pause": {
+            "update_fields": ["paused"]
+          },
+          "resume": {
+            "update_fields": ["paused"]
+          },
+          "cancel": {
+            "update_fields": ["canceled", "cancellation_reason"]
+          },
+          "update_name": {
+            "update_fields": ["name"]
+          },
+          "extend_flight": {
+            "update_fields": ["end_time", "packages[].end_time"]
+          },
+          "shorten_flight": {
+            "update_fields": ["end_time", "packages[].end_time"]
+          },
+          "update_flight_dates": {
+            "update_fields": ["start_time", "end_time", "packages[].start_time", "packages[].end_time"]
+          },
+          "increase_budget": {
+            "update_fields": ["total_budget", "packages[].budget"]
+          },
+          "decrease_budget": {
+            "update_fields": ["total_budget", "packages[].budget"]
+          },
+          "reallocate_budget": {
+            "update_fields": ["packages[].budget"]
+          },
+          "update_budget_allocation": {
+            "update_fields": ["budget_allocation", "packages[].min_spend_target"]
+          },
+          "update_targeting": {
+            "update_fields": [
+              "packages[].targeting_overlay",
+              "packages[].keyword_targets_add",
+              "packages[].keyword_targets_remove",
+              "packages[].negative_keywords_add",
+              "packages[].negative_keywords_remove"
+            ]
+          },
+          "update_pacing": {
+            "update_fields": ["pacing", "packages[].pacing"]
+          },
+          "update_bidding": {
+            "update_fields": ["bidding", "packages[].bidding"]
+          },
+          "update_frequency_caps": {
+            "update_fields": ["packages[].targeting_overlay.frequency_cap"]
+          },
+          "replace_creative": {
+            "update_fields": ["packages[].creatives"]
+          },
+          "update_creative_assignments": {
+            "update_fields": ["packages[].creative_assignments"]
+          },
+          "remove_creative": {
+            "update_fields": ["packages[].creatives", "packages[].creative_assignments"]
+          },
+          "add_packages": {
+            "update_fields": ["new_packages"]
+          },
+          "remove_packages": {
+            "update_fields": ["packages[].canceled"]
+          },
+          "update_budget": {
+            "update_fields": ["total_budget", "budget_allocation", "packages[].budget", "packages[].min_spend_target"],
+            "rollup": ["increase_budget", "decrease_budget", "reallocate_budget", "update_budget_allocation"]
+          },
+          "update_dates": {
+            "update_fields": ["start_time", "end_time", "packages[].start_time", "packages[].end_time"],
+            "rollup": ["extend_flight", "shorten_flight", "update_flight_dates"]
+          },
+          "update_packages": {
+            "update_fields": ["packages[]"],
+            "rollup": [
+              "update_targeting",
+              "update_pacing",
+              "update_bidding",
+              "update_frequency_caps",
+              "reallocate_budget",
+              "remove_packages"
+            ]
+          },
+          "sync_creatives": {
+            "update_fields": ["packages[].creatives", "packages[].creative_assignments"],
+            "rollup": ["replace_creative", "update_creative_assignments", "remove_creative"]
+          }
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/media-buy-action-mode.json",
+        "title": "Media Buy Action Mode",
+        "description": "How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or seller-managed asynchronous processing. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.",
+        "type": "string",
+        "x-extensible": true,
+        "enum": ["self_serve", "conditional_self_serve", "seller_managed", "requires_approval"],
+        "enumDescriptions": {
+          "self_serve": "Seller honors the request synchronously without approval or conditional checks. Buyer SDKs dispatch the task declared on the available action; legacy entries without task metadata use update_media_buy.",
+          "conditional_self_serve": "Seller completes the action automatically within declared tolerances and uses seller-managed processing outside them. Constraint metadata defining the tolerances is out of scope for v1; buyers cannot statically predict which path will apply unless negotiated terms define it.",
+          "seller_managed": "Asynchronous seller-managed processing. Buyer SDKs use the standard submitted, working, and input-required lifecycle and do not infer whether a person, model, queue, or other internal control is involved.",
+          "requires_approval": "Legacy 3.x mode indicating an approval-dependent async path. New declarations SHOULD use seller_managed so the protocol describes externally meaningful processing without exposing internal workflow."
+        }
+      },
+      {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$id": "https://adcontextprotocol.org/schemas/3.2.0-rc.3/enums/media-buy-status.json",
+        "title": "Media Buy Status",
+        "description": "Status of a media buy.",
+        "type": "string",
+        "enum": ["pending_creatives", "pending_start", "active", "paused", "completed", "rejected", "canceled"],
+        "enumDescriptions": {
+          "pending_creatives": "**Buyer-side action required.** The media buy is approved by the seller and has no creatives assigned \u2014 the buyer must attach creatives via `sync_creatives` before the buy can serve. Not to be confused with a publisher-side or governance-side approval queue: the seller has already accepted the buy; only the buyer's creative submission is missing. Naming convention: `pending_X` names the lifecycle phase that is next required (here, `creatives`), not a state of waiting on seller/operator approval \u2014 consistent with `pending_start` (waiting for the flight date to begin).",
+          "pending_start": "Media buy is ready to serve and waiting for its flight date to begin.",
+          "active": "Media buy is currently running",
+          "paused": "Media buy is temporarily paused",
+          "completed": "Media buy has finished running",
+          "rejected": "Media buy was declined by the seller after creation",
+          "canceled": "Media buy was terminated before natural completion. Check cancellation.canceled_by to determine whether the buyer or seller initiated."
+        }
+      }
+    ]
+  }
+]

@@ -55,6 +55,8 @@ test('public task union is narrow, results discriminate, and generated wire obje
       source,
       `
 import { assessMediaBuyAction, preflightMediaBuyActions, type MediaBuyTask, type ActionAvailability, type ChangeTermConstraints } from '@adcp/sdk/media-buy/actions';
+import { mediaBuyActionResolver, assertUpdateMediaBuyAllowed } from '@adcp/sdk/server';
+import { preflightUpdateMediaBuy } from '@adcp/sdk';
 import type { MediaBuy, CanonicalProduct, CanonicalProposal } from '../src/lib/types/core.generated.js';
 const control: MediaBuyTask = 'control_media_buy';
 // @ts-expect-error arbitrary AdCP tasks cannot route a MediaBuy action
@@ -73,6 +75,10 @@ if (result.availability.status === 'available_now') {
   result.availability.reason;
   result.availability.compat?.reason;
 }
+const projection = mediaBuyActionResolver.resolve({ buy, decide: () => ({ authorization: true, governance: true, policy: true }) });
+const projectedBuy = { ...buy, available_actions: projection.available_actions };
+preflightUpdateMediaBuy(projectedBuy, { paused: true });
+assertUpdateMediaBuyAllowed(projectedBuy, { paused: true });
 const checked = preflightMediaBuyActions(buy, { paused: true }, { task: control });
 if (checked.ok) checked.assessments.forEach(item => item.mode);
 `
