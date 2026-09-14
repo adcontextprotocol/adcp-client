@@ -92,6 +92,7 @@ test('canonical content_mismatch constraints survive TypeScript -> Zod generatio
       `
 import { readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import { compile } from 'json-schema-to-typescript';
 import { generate } from 'ts-to-zod';
 import { __test__ } from '../../scripts/generate-zod-from-ts';
@@ -119,6 +120,12 @@ async function main() {
   writeFileSync(new URL('./generated.ts', import.meta.url), refined);
   const { ReportingConsumerStatusSchema: schema, SyncReportingStatusRequestSchema: request, SyncReportingStatusResponseSchema: response } = await import('./generated');
   const cases = JSON.parse(readFileSync(new URL('./cases.json', import.meta.url), 'utf8'));
+  // JS consumers can widen the discriminant through the public composition
+  // method. Unknown names must reject without looking up Object.prototype.
+  const widened = schema.safeExtend({ consumer_status: z.string() });
+  for (const consumer_status of ['toString', 'constructor', '__proto__', 'bogus']) {
+    assert.equal(widened.safeParse({ ...cases[0].value, consumer_status }).success, false);
+  }
   const outcomes = cases.map(entry => {
     const parsed = schema.safeParse(entry.value);
     return {

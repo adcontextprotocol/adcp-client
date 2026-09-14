@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T14:47:49.756Z
+// Generated at: 2026-09-14T15:12:42.507Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6711,7 +6711,7 @@ export const ReportingConsumerStatusSchema = (() => {
           }
       }
       const rules: Record<string, { required: string[]; forbidden: string[] }> = {"received":{"required":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256"],"forbidden":["failure_code"]},"obligation_missing":{"required":[],"forbidden":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","failure_code"]},"revision_missing":{"required":["reporting_obligation_id"],"forbidden":["reporting_revision_id","observed_revision_content_sha256","failure_code"]},"unreadable":{"required":["reporting_obligation_id","reporting_revision_id","failure_code"],"forbidden":["observed_revision_content_sha256"]}};
-      const rule = rules[value.consumer_status];
+      const rule = Object.hasOwn(rules, value.consumer_status) ? rules[value.consumer_status] : undefined;
       if (!rule) {
           ctx.addIssue({ code: "custom", path: ["consumer_status"], message: "Unsupported consumer status" });
       } else {

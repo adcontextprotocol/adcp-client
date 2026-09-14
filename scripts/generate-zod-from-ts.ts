@@ -2053,7 +2053,7 @@ function postProcessReportingConsumerStatusConstraints(
           }
       }
       const rules: Record<string, { required: string[]; forbidden: string[] }> = ${JSON.stringify(rules)};
-      const rule = rules[value.consumer_status];
+      const rule = Object.hasOwn(rules, value.consumer_status) ? rules[value.consumer_status] : undefined;
       if (!rule) {
           ctx.addIssue({ code: "custom", path: ["consumer_status"], message: "Unsupported consumer status" });
       } else {
