@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 
 import {
+  ADCP_VERSION,
   AgentClient,
   type CapabilityEvidenceScope,
   type CapabilityEvidenceSnapshot,
@@ -127,7 +128,7 @@ export function createExistingPlatformIntegration(store: ExistingStore): Existin
       auth_token: process.env['ADCP_AUTH_TOKEN'],
     },
     {
-      adcpVersion: '3.2.0-rc.2',
+      adcpVersion: ADCP_VERSION,
       webhookRegistrationStore: store,
       handlers: {
         onTaskStatusChange: async (_response, metadata) => {
@@ -210,7 +211,7 @@ export async function runExistingPlatformSmoke(): Promise<void> {
   try {
     const agent = AgentClient.fromMCPClient(mcpClient, {
       agentId: 'existing-platform-smoke',
-      adcpVersion: '3.2.0-rc.2',
+      adcpVersion: ADCP_VERSION,
       validation: { requests: 'off', responses: 'off' },
       validateFeatures: false,
     });
@@ -220,8 +221,8 @@ export async function runExistingPlatformSmoke(): Promise<void> {
     const capabilities: CapabilityEvidenceSnapshot['capabilities'] = {
       version: 'v3',
       majorVersions: [3],
-      supportedVersions: ['3.2.0-rc.2'],
-      servedVersion: '3.2.0-rc.2',
+      supportedVersions: [ADCP_VERSION],
+      servedVersion: ADCP_VERSION,
       protocols: ['media_buy'],
       features: {
         inlineCreativeManagement: false,
