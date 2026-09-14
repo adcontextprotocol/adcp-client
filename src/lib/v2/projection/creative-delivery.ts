@@ -95,12 +95,13 @@ export type CanonicalPlacement = Omit<CanonicalCreativeResponse<Placement>, 'for
 export type CanonicalProduct = Omit<
   CanonicalCreativeResponse<Product>,
   'format_ids' | 'format_options' | 'placements'
-> & {
-  product_id: string;
-  format_ids?: never;
-  format_options: NonEmptyCanonicalFormatDeclarations;
-  placements?: CanonicalPlacement[];
-};
+> &
+  import('../../supply-path/products').ProductSupplyPathAnnotation & {
+    product_id: string;
+    format_ids?: never;
+    format_options: NonEmptyCanonicalFormatDeclarations;
+    placements?: CanonicalPlacement[];
+  };
 type CanonicalGetProductsField = Exclude<NonNullable<GetProductsRequest['fields']>[number], 'format_ids'>;
 /** Primary product discovery request cannot ask the SDK to expose legacy format IDs. */
 export type CanonicalGetProductsRequest = Omit<GetProductsRequest, 'fields'> & {

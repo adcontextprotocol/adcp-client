@@ -28,3 +28,6 @@ test/fixtures/reporting-reconciliation/
 # scripts/generate-media-buy-update-fields.ts). Byte-identical to the upstream
 # protocol bundle; see test/fixtures/media-buy-update-fields/README.md.
 test/fixtures/media-buy-update-fields/
+
+# Canonical supply-path verdict vectors, byte-identical to the upstream corpus.
+test/fixtures/supply-path/vectors.json

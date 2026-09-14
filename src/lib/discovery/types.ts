@@ -104,6 +104,33 @@ export type CompactPublisherPropertySelector =
   | { selection_type: 'all'; publisher_domains: string[] }
   | { selection_type: 'by_tag'; publisher_domains: string[]; property_tags: string[] };
 
+/** Authorization-scoped omission grants all collections in this publisher namespace. */
+export interface AuthorizationCollectionSelector {
+  publisher_domain: string;
+  collection_ids?: string[];
+}
+/** Products always select concrete collection IDs; omission is not a product wildcard. */
+export interface ProductCollectionSelector extends AuthorizationCollectionSelector {
+  collection_ids: [string, ...string[]];
+}
+/** Carriage entries can carry host property IDs, catalog identifiers, or both. */
+export type CollectionDistribution = { publisher_domain: string } & (
+  | {
+      property_ids: [string, ...string[]];
+      identifiers?: [{ type: string; value: string }, ...Array<{ type: string; value: string }>];
+    }
+  | {
+      property_ids?: [string, ...string[]];
+      identifiers: [{ type: string; value: string }, ...Array<{ type: string; value: string }>];
+    }
+);
+export interface DiscoveryCollection {
+  collection_id: string;
+  name: string;
+  kind?: string;
+  distribution?: CollectionDistribution[];
+}
+
 /**
  * Entry in `adagents.json` `authorized_agents[]`. The schema requires
  * every entry to carry `authorization_type` plus the matching selector
@@ -117,6 +144,8 @@ export type CompactPublisherPropertySelector =
 export interface AuthorizedAgent {
   url: string;
   authorized_for: string;
+  collections?: AuthorizationCollectionSelector[];
+  delegation_type?: string;
   /** Discriminator. Required by the schema; absent in pre-schema-3 files. */
   authorization_type?: AuthorizationType;
   /** Selector for `authorization_type: 'property_ids'`. */
@@ -194,6 +223,7 @@ export interface AdAgentsJson {
   authoritative_location?: string;
   authorized_agents?: AuthorizedAgent[];
   properties?: Property[];
+  collections?: DiscoveryCollection[];
   /**
    * Publisher-published format catalog (AdCP 3.1). Each entry declares
    * a v2 `ProductFormatDeclaration` (or v1 named-format ref) the
