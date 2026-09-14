@@ -19,7 +19,22 @@ const {
   memoryBackend,
   proposalTermsDigest,
 } = require('../../dist/lib/index.js');
+const { ADCP_VERSION } = require('../../dist/lib/version.js');
 const { normalizeGetProductsResponse } = require('../../dist/lib/utils/pricing-adapter.js');
+
+// The SDK's own default pin, plus a synthetic release one step beyond it.
+// Negotiation fail-closed tests are about the *relationship* between what a
+// seller advertises and what the buyer is pinned to, so deriving the "newer"
+// side keeps them meaningful across pin bumps instead of silently inverting
+// into "seller advertises the same version" the next time the pin moves.
+const SDK_PIN = ADCP_VERSION;
+const ONE_BEYOND_SDK_PIN = (() => {
+  const prerelease = /^(\d+\.\d+\.\d+-[0-9A-Za-z-]+\.)(\d+)$/.exec(SDK_PIN);
+  if (prerelease) return `${prerelease[1]}${Number(prerelease[2]) + 1}`;
+  const stable = /^(\d+)\.(\d+)\.(\d+)$/.exec(SDK_PIN);
+  if (stable) return `${stable[1]}.${Number(stable[2]) + 1}.0`;
+  throw new Error(`Cannot derive a newer release than the SDK pin ${SDK_PIN}`);
+})();
 const {
   DEFERRED_SETTLEMENT_ACK,
   DeferredSettlementOwnershipError,
@@ -43,7 +58,7 @@ const AGENT = {
   protocol: 'mcp',
 };
 
-function capabilities({ version = '3.2.0-rc.3', tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
+function capabilities({ version = SDK_PIN, tools, discoveredTools, replayTtlSeconds = 3600 } = {}) {
   if (version === '2.5') {
     return {
       version: 'v2',
@@ -3741,8 +3756,8 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('does not select a newer prerelease than the compact buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.1', '3.2.0-rc.3'];
-    const agent = clientWithCaps(caps, '3.2.0-rc.3');
+    caps.supportedVersions = ['3.1', ONE_BEYOND_SDK_PIN];
+    const agent = clientWithCaps(caps, SDK_PIN);
     const calls = [];
     agent.getProducts = async () => {
       calls.push('get_products');
@@ -3758,12 +3773,12 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
   test('fails closed when every valid advertised version is newer than the buyer pin', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.supportedVersions = ['3.2.0-rc.3'];
-    const agent = clientWithCaps(caps, '3.2.0-rc.3');
+    caps.supportedVersions = [ONE_BEYOND_SDK_PIN];
+    const agent = clientWithCaps(caps, SDK_PIN);
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /advertises only AdCP versions newer than the client pin 3\.2\.0-rc\.2/
+      new RegExp(`advertises only AdCP versions newer than the client pin ${SDK_PIN.replace(/\./g, '\\.')}`)
     );
   });
 
@@ -3793,19 +3808,21 @@ describe('MediaBuyLifecycleCoordinator negotiation matrix', () => {
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.3, which is newer than the client pin 3\.2\.0-rc\.2/
+      new RegExp(`served AdCP 3\\.3, which is newer than the client pin ${SDK_PIN.replace(/\./g, '\\.')}`)
     );
   });
 
   test('fails closed when an exact newer prerelease is served despite an older advertised fallback', async () => {
     const caps = capabilities({ tools: COMPACT_TOOLS });
-    caps.servedVersion = '3.2.0-rc.4';
-    caps.supportedVersions = ['3.2.0-rc.4', '3.2.0-rc.3'];
-    const agent = clientWithCaps(caps, '3.2.0-rc.3');
+    caps.servedVersion = ONE_BEYOND_SDK_PIN;
+    caps.supportedVersions = [ONE_BEYOND_SDK_PIN, SDK_PIN];
+    const agent = clientWithCaps(caps, SDK_PIN);
 
     await assert.rejects(
       agent.negotiateMediaBuyLifecycle(),
-      /served AdCP 3\.2\.0-rc\.4, which is newer than the client pin 3\.2\.0-rc\.3/
+      new RegExp(
+        `served AdCP ${ONE_BEYOND_SDK_PIN.replace(/\./g, '\\.')}, which is newer than the client pin ${SDK_PIN.replace(/\./g, '\\.')}`
+      )
     );
   });
 

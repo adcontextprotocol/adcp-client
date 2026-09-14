@@ -175,6 +175,11 @@ export { assertUpdateMediaBuyAllowed } from './media-buy-actions';
 export type { AssertUpdateMediaBuyAllowedOptions } from './media-buy-actions';
 
 export { createMediaBuyStore, DEFAULT_MEDIA_BUY_STORE_COLLECTION } from './media-buy-store';
+// Request-only Targeting Input projection (AdCP 3.2, DR-0020). Re-exported on
+// the server subpath because sellers are the side that has to resolve a clear
+// command into strict effective targeting before persisting or echoing it.
+export { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from '../media-buy/targeting-input';
+export type { ResolvedTargetingInput, TargetingInputFor } from '../media-buy/targeting-input';
 export type {
   MediaBuyStore,
   CreateMediaBuyStoreOptions,

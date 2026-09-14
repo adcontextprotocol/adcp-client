@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-rc.3
-// Generated at: 2026-09-14T14:16:05.638Z
+// Generated at: 2026-09-14T15:25:53.002Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -5857,9 +5857,9 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
     placement_selection?: PlacementSelection | null;
     collection_selection?: TargetingCollectionSelection | null;
     age_restriction?: AgeRestriction | null;
-    device_platform?: DevicePlatform | null;
+    device_platform?: [DevicePlatform, ...DevicePlatform[]] | null;
     device_platform_exclude?: DevicePlatformExclude | null;
-    device_type?: DeviceType | null;
+    device_type?: [DeviceType, ...DeviceType[]] | null;
     device_type_exclude?: DeviceTypeExclude | null;
     browser?: Browser | null;
     browser_exclude?: BrowserExclude | null;

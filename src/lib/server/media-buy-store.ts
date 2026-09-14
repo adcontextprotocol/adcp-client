@@ -32,7 +32,8 @@
  * ```
  */
 
-import type { TargetingOverlay } from '../types/core.generated';
+import { applyTargetingInput, resolveTargetingInput } from '../media-buy/targeting-input';
+import type { TargetingOverlay, TargetingOverlayInput } from '../types/core.generated';
 import type { AdcpStateStore } from './state-store';
 import { scopedStore } from './state-store';
 
@@ -58,7 +59,12 @@ export interface CreateMediaBuyInputForStore {
   packages?: Array<{
     package_id?: string;
     buyer_ref?: string;
-    targeting_overlay?: TargetingOverlay;
+    /**
+     * Request-shaped Targeting Input: individual dimensions may be `null` to
+     * suppress a configured-product or product default (AdCP 3.2, DR-0020).
+     * The store resolves those clear commands away before persisting.
+     */
+    targeting_overlay?: TargetingOverlayInput | null;
   }>;
 }
 
@@ -78,12 +84,17 @@ export interface CreateMediaBuyResultForStore {
 export interface UpdateMediaBuyInputForStore {
   packages?: Array<{
     package_id?: string;
-    targeting_overlay?: TargetingOverlay | null;
+    /**
+     * Request-shaped Targeting Input patch. `undefined` (or absent) leaves the
+     * stored overlay unchanged, `null` clears it entirely, and an object
+     * merges per dimension where a `null` dimension clears just that one.
+     */
+    targeting_overlay?: TargetingOverlayInput | null;
   }>;
   new_packages?: Array<{
     package_id?: string;
     buyer_ref?: string;
-    targeting_overlay?: TargetingOverlay;
+    targeting_overlay?: TargetingOverlayInput | null;
   }>;
 }
 
@@ -123,6 +134,10 @@ export interface MediaBuyStore {
    * - field omitted from the patch → keep prior value
    * - field present with a non-null value → replace
    * - field present and `null` → clear (drop the field)
+   *
+   * A patch that clears the last surviving dimension drops the package's
+   * tracked overlay entirely, so `backfill` stops echoing one — a cleared
+   * dimension is absent from effective readback rather than present as `null`.
    *
    * `new_packages` from the patch are persisted as fresh entries when
    * they declare `targeting_overlay`. Entries that omit it are
@@ -187,10 +202,14 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
         const packageId = respPkg?.package_id;
         if (!packageId) continue;
 
-        persistedPackages.push({
-          package_id: packageId,
-          targeting_overlay: respPkg?.targeting_overlay ?? reqPkg.targeting_overlay,
-        });
+        // The seller's echo is already the strict effective overlay. Falling
+        // back to the request means falling back to a *Targeting Input*, so
+        // resolve its clear commands away first: persisting `null` would put a
+        // command into durable state, and `backfill` would then echo it into a
+        // get_media_buys response whose schema forbids null.
+        const persistedOverlay = respPkg?.targeting_overlay ?? resolveTargetingInput(reqPkg.targeting_overlay);
+        if (!persistedOverlay) continue;
+        persistedPackages.push({ package_id: packageId, targeting_overlay: persistedOverlay });
       }
 
       if (persistedPackages.length === 0) return;
@@ -217,18 +236,19 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
         // parse, omitted fields are absent from the object entirely.
         if (!('targeting_overlay' in pkg)) continue;
         const incoming = pkg.targeting_overlay;
-        if (incoming === null) {
-          byId.delete(packageId);
-          continue;
-        }
         if (incoming === undefined) continue;
-        const priorOverlay = byId.get(packageId);
-        byId.set(packageId, mergeOverlay(priorOverlay, incoming));
+        const merged = applyTargetingInput(byId.get(packageId), incoming);
+        if (merged) byId.set(packageId, merged);
+        else byId.delete(packageId);
       }
 
       for (const pkg of patch.new_packages ?? []) {
         if (!pkg?.targeting_overlay || !pkg.package_id) continue;
-        byId.set(pkg.package_id, pkg.targeting_overlay);
+        // A brand-new package has no prior state to patch, so a `null`
+        // dimension suppresses a product default rather than clearing stored
+        // targeting. Either way it must not reach durable state.
+        const resolved = resolveTargetingInput(pkg.targeting_overlay);
+        if (resolved) byId.set(pkg.package_id, resolved);
       }
 
       await writeRecord(accountId, {
@@ -257,26 +277,4 @@ export function createMediaBuyStore(options: CreateMediaBuyStoreOptions): MediaB
       return result;
     },
   };
-}
-
-/**
- * Per-key merge of an incoming `TargetingOverlay` patch against the prior
- * persisted overlay. Each key the patch sets to `null` is dropped; each
- * key the patch sets to a value replaces the prior; keys absent from the
- * patch are preserved.
- *
- * The merge is one level deep — `property_list` / `collection_list` are
- * reference objects keyed by `list_id`, so a "partial" property-list
- * update is meaningless and a top-level replace is the right semantics.
- */
-function mergeOverlay(prior: TargetingOverlay | undefined, patch: TargetingOverlay): TargetingOverlay {
-  const merged: Record<string, unknown> = { ...(prior ?? {}) };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null) {
-      delete merged[key];
-    } else if (value !== undefined) {
-      merged[key] = value;
-    }
-  }
-  return merged as TargetingOverlay;
 }

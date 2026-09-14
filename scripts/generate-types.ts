@@ -3430,6 +3430,94 @@ const JSTS_NUMBERED_SEMANTIC_RENAMES: Array<{ numbered: string; semantic: string
   { numbered: 'TaskStatus2', semantic: 'GetProductsRejectedStatus' },
 ];
 
+/**
+ * Extract the 4-space-indented property declarations of one generated
+ * `export type <name> = ... & { ... };` block, keyed by property name.
+ *
+ * Returns `undefined` when the type is absent, which is the normal case on
+ * schema pins that predate it.
+ */
+function generatedObjectTypeProperties(
+  typeDefinitions: string,
+  typeName: string
+): { start: number; end: number; properties: Map<string, { type: string; declaration: string }> } | undefined {
+  const pattern = new RegExp(`export type ${typeName} = [^{]*\\{([\\s\\S]*?)\\n  \\};`, 'm');
+  const match = pattern.exec(typeDefinitions);
+  if (!match) return undefined;
+  const body = match[1]!;
+  const properties = new Map<string, { type: string; declaration: string }>();
+  const propertyPattern = /\n    (\w+)\?: ([^;]+);/g;
+  let property;
+  while ((property = propertyPattern.exec(body)) !== null) {
+    properties.set(property[1]!, { type: property[2]!.trim(), declaration: property[0]! });
+  }
+  return { start: match.index + match[0].indexOf(body), end: match.index + match[0].length, properties };
+}
+
+/** Item type of `[T, ...T[]]` or `T[]` when `T` is a single identifier. */
+function soleArrayItemTypeName(type: string): string | undefined {
+  const normalized = type.replace(/\s+/g, ' ').trim();
+  const tuple = /^\[(\w+), \.\.\.\1\[\]\]$/.exec(normalized);
+  if (tuple) return tuple[1];
+  const array = /^(\w+)\[\]$/.exec(normalized);
+  return array?.[1];
+}
+
+/**
+ * Restore array cardinality on request-only Targeting Input dimensions that
+ * json-schema-to-typescript collapsed to their item type.
+ *
+ * `core/targeting-input.json` reaches each dimension through a JSON-pointer
+ * `$ref` into `core/targeting.json#/properties/<dimension>` (AdCP 3.2,
+ * DR-0020). For a dimension whose array has no `title` of its own, jsts can
+ * name the resulting type after the items' canonical `$ref` — so
+ * `device_platform` and `device_type` end up declared as the scalar
+ * `DevicePlatform` / `DeviceType` enums instead of the arrays the wire
+ * carries. Left uncorrected, an adopter clearing or replacing those
+ * dimensions gets a type error on correct code and no error on a payload the
+ * seller must reject.
+ *
+ * The two schemas declare an identical property set, so the invariant is
+ * exact: `TargetingOverlayInput` is `TargetingOverlay` plus `| null` on each
+ * dimension. This only rewrites the narrow case that provably lost
+ * cardinality — the Input side is a bare identifier that is precisely the item
+ * type of the Overlay side's array — so a dimension that legitimately differs,
+ * or that is already a correct array alias, is left untouched. Per-property
+ * JSDoc is preserved because only the type annotation is replaced.
+ */
+export function alignTargetingInputArrayCardinality(typeDefinitions: string): string {
+  const overlay = generatedObjectTypeProperties(typeDefinitions, 'TargetingOverlay');
+  const input = generatedObjectTypeProperties(typeDefinitions, 'TargetingOverlayInput');
+  if (!overlay || !input) return typeDefinitions;
+
+  const corrections: string[] = [];
+  let result = typeDefinitions;
+  for (const [name, inputProperty] of input.properties) {
+    const overlayProperty = overlay.properties.get(name);
+    if (!overlayProperty) continue;
+    const itemType = soleArrayItemTypeName(overlayProperty.type);
+    if (!itemType) continue;
+    const nullStripped = inputProperty.type.replace(/\s*\|\s*null$/, '').trim();
+    if (nullStripped !== itemType) continue;
+    const repaired = inputProperty.declaration.replace(
+      `${name}?: ${inputProperty.type};`,
+      `${name}?: ${overlayProperty.type} | null;`
+    );
+    result =
+      result.slice(0, input.start) +
+      result.slice(input.start, input.end).replace(inputProperty.declaration, repaired) +
+      result.slice(input.end);
+    corrections.push(`${name}: ${nullStripped} -> ${overlayProperty.type}`);
+  }
+
+  if (corrections.length > 0) {
+    console.log(
+      `🎯 Restored ${corrections.length} TargetingOverlayInput array dimension(s): ${corrections.join(', ')}`
+    );
+  }
+  return result;
+}
+
 export function renameKnownNumberedSemanticTypes(typeDefinitions: string): string {
   const exportedTypes = collectExportedTypeNames(typeDefinitions);
   let result = typeDefinitions;
@@ -4428,6 +4516,9 @@ async function generateTypes() {
   toolTypes = widenMediaBuyFeaturesIndexSignature(toolTypes);
   toolTypes = simplifyForecastRange(toolTypes);
   toolTypes = simplifyPriceBreakdown(toolTypes);
+  // Runs before the core-import rewrite so the repaired declaration still sees
+  // both Targeting types spelled out in this unit.
+  toolTypes = alignTargetingInputArrayCardinality(toolTypes);
   // This set is deliberately limited to canonical enums plus the handful of
   // shared core contracts above. Import all of them: numbered-type cleanup can
   // introduce a canonical reference after lexical reference scanning, and
@@ -4462,23 +4553,25 @@ async function generateTypes() {
   // residual jsts under-resolution artifacts (*Asset1, AssetVariant1, CreativeAsset1) —
   // see applyKnownJstsAliases for the rationale. Finally, restore the asset_type
   // discriminator on Individual*Asset slot aliases that jsts collapses (#1498).
-  const processedCoreTypes = relaxArrayCardinalityTypes(
-    normalizeTransformerParamJsonValueTypes(
-      relaxZodCompatibilityArrayTypes(
-        hardenTrustedMatchGeneratedTypes(
-          applyIndividualAssetDiscriminators(
-            addBackwardCompatTypeAliases(
-              simplifyForecastRange(
-                simplifyPriceBreakdown(
-                  widenMediaBuyFeaturesIndexSignature(
-                    widenPostalAreaSupportIndexSignature(
-                      widenReportedOutcomeErrorIndexSignature(
-                        fixTypedIndexSignatures(
-                          removeResidualInlineIndexSignatureArms(
-                            applyKnownJstsAliases(
-                              namePostalAreaCountryBranch(
-                                renameKnownNumberedSemanticTypes(
-                                  removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+  const processedCoreTypes = alignTargetingInputArrayCardinality(
+    relaxArrayCardinalityTypes(
+      normalizeTransformerParamJsonValueTypes(
+        relaxZodCompatibilityArrayTypes(
+          hardenTrustedMatchGeneratedTypes(
+            applyIndividualAssetDiscriminators(
+              addBackwardCompatTypeAliases(
+                simplifyForecastRange(
+                  simplifyPriceBreakdown(
+                    widenMediaBuyFeaturesIndexSignature(
+                      widenPostalAreaSupportIndexSignature(
+                        widenReportedOutcomeErrorIndexSignature(
+                          fixTypedIndexSignatures(
+                            removeResidualInlineIndexSignatureArms(
+                              applyKnownJstsAliases(
+                                namePostalAreaCountryBranch(
+                                  renameKnownNumberedSemanticTypes(
+                                    removeNumberedTypeDuplicates(removeIndexSignatureTypes(coreTypes))
+                                  )
                                 )
                               )
                             )
@@ -4492,9 +4585,9 @@ async function generateTypes() {
             )
           )
         )
-      )
-    ),
-    { maxItemsOnly: true }
+      ),
+      { maxItemsOnly: true }
+    )
   );
   const coreChanged = writeFileIfChanged(coreTypesPath, processedCoreTypes);
 

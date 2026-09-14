@@ -29,7 +29,13 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // and one migration guide. Byte budgets remain unchanged.
 // The standalone proposal verifier adds twelve helper module artifacts and
 // one buyer guide; byte budgets remain unchanged.
-const MAX_PACKED_FILE_COUNT = 6_029;
+// AdCP 3.2.0-rc.3 publishes sixteen new source schemas — the scoped and
+// media-buy frequency-cap families plus `core/media-buy-available-action-id.json`
+// and the shared frequency-cap duration/control/mutable-field enums — and two
+// new compliance storyboards. With their bundled and compact-projection copies
+// that is +26 published files. The request-only Targeting Input helpers add one
+// module (CJS + ESM + both declaration flavours), for +4 more.
+const MAX_PACKED_FILE_COUNT = 6_059;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

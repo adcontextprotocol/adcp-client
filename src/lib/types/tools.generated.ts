@@ -10209,9 +10209,9 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
     placement_selection?: PlacementSelection | null;
     collection_selection?: TargetingCollectionSelection | null;
     age_restriction?: AgeRestriction | null;
-    device_platform?: DevicePlatform | null;
+    device_platform?: [DevicePlatform, ...DevicePlatform[]] | null;
     device_platform_exclude?: DevicePlatformExclude | null;
-    device_type?: DeviceType | null;
+    device_type?: [DeviceType, ...DeviceType[]] | null;
     device_type_exclude?: DeviceTypeExclude | null;
     browser?: Browser | null;
     browser_exclude?: BrowserExclude | null;

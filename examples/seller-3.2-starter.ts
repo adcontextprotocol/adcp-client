@@ -1,7 +1,7 @@
 // prettier-ignore
 import { AdcpError, createAdcpServerFromPlatform, createIdempotencyStore, createInMemoryTaskRegistry,
-  definePlatform, memoryBackend, proposalTermsDigest, serve, verifyApiKey, type BuyProductsPayload,
-  type GetMediaBuysPayload, type ListProductsPayload } from '@adcp/sdk/server';
+  definePlatform, memoryBackend, proposalTermsDigest, resolveTargetingInput, serve, verifyApiKey,
+  type BuyProductsPayload, type GetMediaBuysPayload, type ListProductsPayload } from '@adcp/sdk/server';
 const TOKEN = process.env.ADCP_AUTH_TOKEN;
 if (!TOKEN) throw new Error('Set ADCP_AUTH_TOKEN before starting the seller');
 const ACCOUNT_ID = process.env.ADCP_ACCOUNT_ID;
@@ -80,7 +80,12 @@ const platform = definePlatform({
           for (const field of ['measurement_terms', 'performance_standards'] as const) {
             if (purchase[field] !== undefined && !sameTerms(purchase[field], published[field])) throw new AdcpError('TERMS_REJECTED', { message: `${field} must match the published product terms` });
           }
-          return { ...purchase, pricing, ...published, start_time: resolvedStart, end_time: req.end_time };
+          // `purchase.targeting_overlay` is a request-only Targeting Input, so a
+          // dimension may be `null` to suppress a product default. The accepted
+          // proposal is a strict snapshot that must not carry clear commands.
+          const targetingOverlay = resolveTargetingInput(purchase.targeting_overlay);
+          return { ...purchase, pricing, ...published, start_time: resolvedStart, end_time: req.end_time,
+            ...(targetingOverlay ? { targeting_overlay: targetingOverlay } : { targeting_overlay: undefined }) };
         }),
         ...(req.total_budget && { total_budget: req.total_budget }),
         ...(req.invoice_recipient && { invoice_recipient: req.invoice_recipient }),
