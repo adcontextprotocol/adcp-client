@@ -1,3 +1,10 @@
+export { detectReportingContentMismatch } from './content-mismatch';
+export type {
+  ReportingConsumedRevisionV1,
+  ReportingContentMismatchV1,
+  ReportingContractFactsV1,
+  ReportingMismatchCodeV1,
+} from './content-mismatch';
 export {
   ReportingReconciliationError,
   buildReportingReceipt,
@@ -26,6 +33,8 @@ export type {
   ReportingLedger,
   ReportingLedgerLimits,
   ReportingObservation,
+  ReportingConsumerStatusPlanV1,
+  ReportingEscalationV1,
   ReportingReconciliationClient,
   ReportingReconciliationResult,
 } from './reconciliation';

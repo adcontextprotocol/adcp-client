@@ -1,0 +1,36 @@
+---
+'@adcp/sdk': minor
+---
+
+Add the AdCP 3.2.0-rc.3 buyer-side consumer-status loop to `reconcileReporting`.
+
+**`content_mismatch` detection.** `detectReportingContentMismatch` decides the closed
+`mismatch_code` from the obligation, the pinned report definition, and the revision alone —
+`scope_media_buy_missing`, `coverage_short`, `metric_missing`, `schema_nonconformant`,
+`currency_mismatch`, `period_mismatch`. It is deliberately incapable of firing on a delivered value
+the buyer merely disagrees with: that is a measurement dispute for `measurement_terms` /
+`makegood_policy`, and routing one through this operational channel would put a commercial argument
+somewhere the seller can neither resolve nor ignore. Precedence follows the spec on the one pair it
+pins (`metric_missing` before `schema_nonconformant`) and is otherwise most-structural-first and
+stable, so the code does not flap between reads of the same bytes.
+
+**Posting against the deadline.** `ReportingReconciliationResult.consumerStatuses` plans a status for
+every expected period with its `expected_at` + `automated_recovery_window_seconds` deadline and an
+`overdue` flag. When the client supplies the new optional `syncReportingStatus`, overdue statuses are
+posted — the rc.3 duty is that clock, not scope close, and a buyer still retrying posts
+`revision_missing` and supersedes later rather than staying silent. `postedConsumerStatuses` reports
+what the seller actually recorded, so a per-item failure in the partial-success batch is never
+counted as posted. Without the client method the reconciler still plans everything and reports it,
+so existing adopters are unaffected.
+
+**Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
+deadline with no current status; a failed read leaves it `undefined` rather than failing
+reconciliation, because it is visibility rather than evidence. `escalations` flattens seller issues
+with `openedAt` / `issueState` / `externalRef` and the advertised `operationsContact`, plus
+`requiresHumanContact` for the `contact_*` family, so an SDK user can page someone without
+re-reading the capability document. `operationsContact` is inert display metadata — never
+dereference it.
+
+`ExpectedReportingPeriod` gains optional `committedMetrics` and `metricUnits`. Omitting either
+disables its check rather than guessing: a buyer that never recorded the metric list must not claim
+a promised metric is absent.

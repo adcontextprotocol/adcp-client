@@ -12,6 +12,11 @@ import type {
   SyncReportingReceiptsResponse,
 } from '../types/tools.generated';
 import { generateIdempotencyKey } from '../utils/idempotency';
+import {
+  detectReportingContentMismatch,
+  type ReportingContractFactsV1,
+  type ReportingMismatchCodeV1,
+} from './content-mismatch';
 import { isReportingControlTotals, isReportingReceiptEvidence, isReportingVerificationEvidence } from './evidence';
 import {
   createReportingManifestInspector,
@@ -80,6 +85,20 @@ export interface ReportingReconciliationClient {
     params: SyncReportingReceiptsRequest,
     options?: { signal?: AbortSignal }
   ): Promise<SyncReportingReceiptsResponse>;
+  /**
+   * rc.3 consumer-status loop. Optional so existing adopters keep working:
+   * when it is absent the reconciler still *plans* every status and reports it
+   * on the result, it just cannot post. Supply it only against a seller that
+   * advertises `consumer_status_task`.
+   */
+  syncReportingStatus?(
+    params: {
+      account?: GetReportingStatusRequest['account'];
+      idempotency_key: string;
+      statuses: Array<Record<string, unknown>>;
+    },
+    options?: { signal?: AbortSignal }
+  ): Promise<{ status?: string; results?: unknown[] }>;
 }
 
 export interface ReportingLedger {
@@ -119,6 +138,17 @@ interface ExpectedReportingPeriodBase {
   schemaSha256: string;
   schemaDialect: 'https://json-schema.org/draft/2020-12/schema';
   schemaRefPolicy: 'local_fragment_only';
+  /**
+   * `metrics[].name` from the pinned report definition. Supplying it enables
+   * the `metric_missing` arm of `content_mismatch`; omitting it means the buyer
+   * never claims a promised metric is absent, which is the safe default.
+   */
+  committedMetrics?: readonly string[];
+  /**
+   * Units the pinned report definition fixed, keyed by metric/control-total
+   * name. Enables the `currency_mismatch` arm. Omit to skip that check.
+   */
+  metricUnits?: Readonly<Record<string, string>>;
   /** Consumer-pinned finality rule, required whenever an official revision is accepted. */
   officialFinality?: {
     policyId: string;
@@ -188,12 +218,88 @@ export interface ObligationReconciliation {
   reasons: string[];
 }
 
+/**
+ * One consumer status the buyer owes for an expected period, with the deadline
+ * that makes it owed.
+ *
+ * rc.3 moves the buyer's duty off "before you close the scope" and onto a
+ * clock: a current status is owed by `expected_at` plus the seller's advertised
+ * `automated_recovery_window_seconds`. A buyer still retrying at that point
+ * posts `revision_missing` or `unreadable` and supersedes it later rather than
+ * staying silent, because silence is what the seller counts in
+ * `obligation_counts.consumer_status_pending`.
+ */
+export interface ReportingConsumerStatusPlanV1 {
+  deliveryConfigId: string;
+  deliveryConfigVersion: number;
+  reportDefinitionId: string;
+  period: { start: string; end: string; source_timezone: string };
+  reportingObligationId?: string;
+  reportingRevisionId?: string;
+  observedRevisionContentSha256?: string;
+  consumerStatus: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable' | 'content_mismatch';
+  mismatchCode?: ReportingMismatchCodeV1;
+  failureCode?:
+    | 'access_denied'
+    | 'resource_not_found'
+    | 'integrity_mismatch'
+    | 'reader_incompatible'
+    | 'transport_failed';
+  /** `expected_at` + `automated_recovery_window_seconds`, when the seller published one. */
+  deadline?: string;
+  /** True once the deadline has passed — the status is owed now, not at scope close. */
+  overdue: boolean;
+  /** Why this status, in adopter-readable terms. Never a measurement claim. */
+  reason: string;
+}
+
+/**
+ * A seller-reported issue the buyer may need to put in front of a human,
+ * carried with the escalation destination so an SDK user can page someone
+ * without re-reading the capability document.
+ */
+export interface ReportingEscalationV1 {
+  reportingObligationId: string;
+  issueId: string;
+  code: string;
+  severity: string;
+  responsibleParty: string;
+  recommendedAction: string;
+  /** Fixed at first emission; age the issue from this, not from the read. */
+  openedAt?: string;
+  issueState?: string;
+  /** Inert correlation text. Never dereference or resolve it. */
+  externalRef?: string;
+  reportingStatusId?: string;
+  /**
+   * Seller's advertised human escalation path. Display metadata only: agents
+   * MUST NOT fetch the URL, send protocol traffic to it, or treat either value
+   * as a credential.
+   */
+  operationsContact?: { url?: string; email?: string };
+  /** True when `recommended_action` is in the `contact_*` family. */
+  requiresHumanContact: boolean;
+}
+
 export interface ReportingReconciliationResult {
   definitive: boolean;
   ledger: ReportingLedger;
   obligations: ObligationReconciliation[];
   missingExpectedPeriods: ExpectedReportingPeriod[];
   submittedReceipts: ReportingReceipt[];
+  /** Every status the buyer owes for the reconciled scope, overdue flagged. */
+  consumerStatuses: ReportingConsumerStatusPlanV1[];
+  /** The subset actually posted through `syncReportingStatus` this run. */
+  postedConsumerStatuses: ReportingConsumerStatusPlanV1[];
+  /**
+   * The seller's own count of obligations past the buyer's posting deadline
+   * with no current status from this caller. Surfaced verbatim; it is a
+   * visibility count over the buyer's silence and never a health input.
+   * `undefined` when the seller does not advertise `consumer_status_task`.
+   */
+  consumerStatusPending?: number;
+  /** Seller-reported issues, with escalation destination attached. */
+  escalations: ReportingEscalationV1[];
   totalsByRevision: Array<{
     reportingRevisionId: string;
     rowCount: number;
@@ -1117,6 +1223,168 @@ function countMismatch(declared: number | undefined, observed: number, required:
   return declared === undefined ? required : declared !== observed;
 }
 
+/**
+ * Decide the status the buyer owes for every expected period, and whether the
+ * posting deadline has passed.
+ *
+ * Ordering mirrors how much the buyer actually knows: an absent obligation is
+ * `obligation_missing` (valid without any seller-issued id), an obligation with
+ * no qualifying revision is `revision_missing`, and a revision the buyer read
+ * is `received` unless it contradicts a frozen contract fact, in which case it
+ * is `content_mismatch` with the code naming that fact.
+ *
+ * `unreadable` is deliberately absent: it means the buyer could not consume
+ * named bytes, which only the caller's own reader can report. Adopters add it
+ * from their read outcome; the ledger alone cannot infer it.
+ */
+function planReportingConsumerStatuses(
+  ledger: ReportingLedger,
+  expectedPeriods: readonly ExpectedReportingPeriod[],
+  missingExpectedPeriods: readonly ExpectedReportingPeriod[],
+  now: Date
+): ReportingConsumerStatusPlanV1[] {
+  const missing = new Set(missingExpectedPeriods);
+  return expectedPeriods.map(expected => {
+    const period = {
+      start: expected.periodStart,
+      end: expected.periodEnd,
+      source_timezone: 'UTC',
+    };
+    const base = {
+      deliveryConfigId: expected.deliveryConfigId,
+      deliveryConfigVersion: expected.deliveryConfigVersion,
+      reportDefinitionId: expected.reportDefinitionId,
+      period,
+    };
+
+    if (missing.has(expected)) {
+      // Valid with no seller-issued obligation or revision id: the buyer
+      // derived this period independently from the accepted generation.
+      return {
+        ...base,
+        consumerStatus: 'obligation_missing' as const,
+        overdue: true,
+        reason: 'the independently expected period is absent from the seller ledger',
+      };
+    }
+
+    const obligation = ledger.obligations.find(candidate => expectedPeriodMatches(expected, candidate, ledger));
+    if (!obligation) {
+      return {
+        ...base,
+        consumerStatus: 'obligation_missing' as const,
+        overdue: true,
+        reason: 'no obligation in the ledger matches this expected period',
+      };
+    }
+
+    const deadline = reportingConsumerStatusDeadline(obligation);
+    const overdue = deadline === undefined || now.getTime() >= Date.parse(deadline);
+    const selected = selectCurrent(obligation, ledger, expected);
+    const revision = selected.revision;
+
+    if (!revision) {
+      return {
+        ...base,
+        reportingObligationId: obligation.reporting_obligation_id,
+        consumerStatus: 'revision_missing' as const,
+        ...(deadline ? { deadline } : {}),
+        overdue,
+        reason: 'the obligation exists but no required revision was available',
+      };
+    }
+
+    const mismatch = detectReportingContentMismatch(contractFactsFor(obligation, expected), revision);
+    if (mismatch) {
+      return {
+        ...base,
+        reportingObligationId: obligation.reporting_obligation_id,
+        reportingRevisionId: revision.reporting_revision_id,
+        observedRevisionContentSha256: revision.revision_content_sha256,
+        consumerStatus: 'content_mismatch' as const,
+        mismatchCode: mismatch.mismatchCode,
+        ...(deadline ? { deadline } : {}),
+        overdue,
+        reason: mismatch.detail,
+      };
+    }
+
+    return {
+      ...base,
+      reportingObligationId: obligation.reporting_obligation_id,
+      reportingRevisionId: revision.reporting_revision_id,
+      observedRevisionContentSha256: revision.revision_content_sha256,
+      consumerStatus: 'received' as const,
+      ...(deadline ? { deadline } : {}),
+      overdue,
+      reason: 'the exact revision content was consumed and honors every frozen contract fact',
+    };
+  });
+}
+
+/** Facts the accepted generation froze, drawn from the obligation plus the buyer's own pins. */
+function contractFactsFor(
+  obligation: ManagedReportingObligation,
+  expected: ExpectedReportingPeriod
+): ReportingContractFactsV1 {
+  return {
+    ...(Array.isArray(obligation.media_buy_ids) ? { mediaBuyIds: obligation.media_buy_ids } : {}),
+    ...(obligation.coverage?.covered_package_ids ? { coveredPackageIds: obligation.coverage.covered_package_ids } : {}),
+    coverageRequirement: expected.coverageRequirement,
+    period: { start: expected.periodStart, end: expected.periodEnd },
+    ...(expected.committedMetrics ? { committedMetrics: expected.committedMetrics } : {}),
+    ...(expected.metricUnits ? { metricUnits: expected.metricUnits } : {}),
+    schemaUri: expected.schemaUri,
+    schemaSha256: expected.schemaSha256,
+  };
+}
+
+/**
+ * `expected_at` + `automated_recovery_window_seconds`, the rc.3 posting
+ * deadline. Returns `undefined` when the seller published no recovery window,
+ * in which case the caller treats the status as owed immediately rather than
+ * inventing a grace period the seller never advertised.
+ */
+function reportingConsumerStatusDeadline(obligation: ManagedReportingObligation): string | undefined {
+  const expectedAt = Date.parse(String(obligation.expected_at));
+  if (!Number.isFinite(expectedAt)) return undefined;
+  const windowSeconds = (obligation as { automated_recovery_window_seconds?: unknown })
+    .automated_recovery_window_seconds;
+  if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds)) return undefined;
+  return new Date(expectedAt + windowSeconds * 1_000).toISOString();
+}
+
+/**
+ * Flatten seller-reported issues into a page-a-human shape, carrying the rc.3
+ * lifecycle fields and the advertised escalation destination.
+ */
+function collectReportingEscalations(ledger: ReportingLedger): ReportingEscalationV1[] {
+  const operationsContact = (
+    ledger.scope as { reporting_delivery?: { operations_contact?: { url?: string; email?: string } } }
+  ).reporting_delivery?.operations_contact;
+  const escalations: ReportingEscalationV1[] = [];
+  for (const obligation of ledger.obligations) {
+    for (const issue of (obligation as { issues?: Array<Record<string, unknown>> }).issues ?? []) {
+      const recommendedAction = String(issue.recommended_action ?? '');
+      escalations.push({
+        reportingObligationId: obligation.reporting_obligation_id,
+        issueId: String(issue.issue_id ?? ''),
+        code: String(issue.code ?? ''),
+        severity: String(issue.severity ?? ''),
+        responsibleParty: String(issue.responsible_party ?? ''),
+        recommendedAction,
+        ...(typeof issue.opened_at === 'string' ? { openedAt: issue.opened_at } : {}),
+        ...(typeof issue.issue_state === 'string' ? { issueState: issue.issue_state } : {}),
+        ...(typeof issue.external_ref === 'string' ? { externalRef: issue.external_ref } : {}),
+        ...(typeof issue.reporting_status_id === 'string' ? { reportingStatusId: issue.reporting_status_id } : {}),
+        ...(operationsContact ? { operationsContact } : {}),
+        requiresHumanContact: recommendedAction.startsWith('contact_'),
+      });
+    }
+  }
+  return escalations;
+}
+
 function expectedPeriodMatches(
   expected: ExpectedReportingPeriod,
   obligation: ManagedReportingObligation,
@@ -1248,6 +1516,8 @@ export function evaluateReportingLedger(
   const missingExpectedPeriods = (expectedPeriods ?? []).filter(
     expected => !ledger.obligations.some(obligation => expectedPeriodMatches(expected, obligation, ledger))
   );
+  const consumerStatuses = planReportingConsumerStatuses(ledger, expectedPeriods ?? [], missingExpectedPeriods, now);
+  const escalations = collectReportingEscalations(ledger);
   const scopeDefinitive = ledger.scope.scope_closed && ledger.scope.coverage_complete;
   return {
     definitive:
@@ -1258,6 +1528,9 @@ export function evaluateReportingLedger(
     ledger,
     obligations: obligationResults,
     missingExpectedPeriods,
+    consumerStatuses,
+    postedConsumerStatuses: [],
+    escalations,
     totalsByRevision: [...uniqueRevisions.values()].map(item => ({
       reportingRevisionId: item.reporting_revision_id,
       rowCount: item.row_count,
@@ -1528,8 +1801,98 @@ export async function reconcileReporting<TCredential = unknown>(
     );
   }
 
+  const evaluated = evaluateReportingLedger(ledger, options.expectedPeriods, options.now);
+
+  // rc.3 buyer duty: a current status is owed by `expected_at` plus the
+  // seller's advertised recovery window — not merely before the scope closes.
+  // Only overdue statuses are posted; posting early would churn the chain for
+  // periods the buyer may still resolve on its own.
+  const owed = evaluated.consumerStatuses.filter(plan => plan.overdue);
+  const postedConsumerStatuses: ReportingConsumerStatusPlanV1[] = [];
+  if (owed.length > 0 && options.client.syncReportingStatus) {
+    const deadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
+    for (const plan of owed) {
+      const idempotencyKey = generateIdempotencyKey();
+      const response = await callBeforeDeadline(
+        signal =>
+          options.client.syncReportingStatus!(
+            {
+              ...(options.request.account ? { account: options.request.account } : {}),
+              idempotency_key: idempotencyKey,
+              statuses: [wireConsumerStatus(plan, idempotencyKey)],
+            },
+            { signal }
+          ),
+        deadline,
+        'CONSUMER_STATUS_WRITE_FAILED',
+        'sync_reporting_status exceeded the reporting request deadline'
+      );
+      const results = Array.isArray(response.results) ? response.results : [];
+      const result = results[0] as { result?: string } | undefined;
+      if (response.status !== 'completed' || results.length !== 1 || !result) {
+        throw new ReportingReconciliationError(
+          'CONSUMER_STATUS_WRITE_FAILED',
+          'seller did not return one result for the submitted consumer status'
+        );
+      }
+      // Partial-success batch: each status is independent, and a failed one
+      // must not be reported as posted.
+      if (['recorded', 'unchanged'].includes(result.result ?? '')) postedConsumerStatuses.push(plan);
+    }
+  }
+
+  const consumerStatusPending = await readReportingConsumerStatusPending(options);
+
   return {
-    ...evaluateReportingLedger(ledger, options.expectedPeriods, options.now),
+    ...evaluated,
     submittedReceipts: newReceipts,
+    postedConsumerStatuses,
+    ...(consumerStatusPending !== undefined ? { consumerStatusPending } : {}),
   };
+}
+
+/** Project a planned status onto the `sync_reporting_status` wire shape. */
+function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1, idempotencyKey: string): Record<string, unknown> {
+  return {
+    // Deterministic in the batch key so an exact retry reuses the same ID and
+    // is idempotent rather than forking the chain.
+    reporting_status_id: `adcp-sdk.${createHash('sha256')
+      .update(canonical([idempotencyKey, plan.deliveryConfigId, plan.deliveryConfigVersion, plan.period]))
+      .digest('hex')
+      .slice(0, 32)}`,
+    delivery_config_id: plan.deliveryConfigId,
+    delivery_config_version: plan.deliveryConfigVersion,
+    report_definition_id: plan.reportDefinitionId,
+    period: plan.period,
+    consumer_status: plan.consumerStatus,
+    status_as_of: new Date().toISOString(),
+    ...(plan.reportingObligationId ? { reporting_obligation_id: plan.reportingObligationId } : {}),
+    ...(plan.reportingRevisionId ? { reporting_revision_id: plan.reportingRevisionId } : {}),
+    ...(plan.observedRevisionContentSha256
+      ? { observed_revision_content_sha256: plan.observedRevisionContentSha256 }
+      : {}),
+    ...(plan.mismatchCode ? { mismatch_code: plan.mismatchCode } : {}),
+    ...(plan.failureCode ? { failure_code: plan.failureCode } : {}),
+  };
+}
+
+/**
+ * Read the seller's own `obligation_counts.consumer_status_pending`.
+ *
+ * It lives on the summary view while reconciliation reads periods, so this is
+ * a separate call. A seller that does not advertise `consumer_status_task`
+ * omits the field, and a failed read must not fail reconciliation — the count
+ * is visibility, not evidence.
+ */
+async function readReportingConsumerStatusPending<TCredential>(
+  options: ReconcileReportingOptions<TCredential>
+): Promise<number | undefined> {
+  try {
+    const summary = await options.client.getReportingStatus({ ...options.request, view: 'summary' });
+    const counts = (summary as { obligation_counts?: { consumer_status_pending?: unknown } }).obligation_counts;
+    const pending = counts?.consumer_status_pending;
+    return typeof pending === 'number' && Number.isInteger(pending) && pending >= 0 ? pending : undefined;
+  } catch {
+    return undefined;
+  }
 }
