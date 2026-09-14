@@ -562,16 +562,21 @@ function completedFailure(
   const code = boundedErrorCode(result.errorCode);
   const message = boundedErrorMessage(result.safeMessage);
   const retryAfterSeconds = boundedRetryAfterSeconds(result.retryAfterSeconds);
+  const recovery = boundedRecovery(result.recovery) ?? getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY;
+  const errorField = boundedErrorField(result.errorField);
+  const errorKeyword = boundedErrorKeyword(result.errorKeyword);
   return {
     result: 'failed',
-    reporting_status_id: result.reporting_status_id,
+    reporting_status_id: statusId.safeParse(result.reporting_status_id).success
+      ? result.reporting_status_id
+      : INVALID_REPORTING_STATUS_ID,
     errors: [
       {
         code,
-        recovery: result.recovery ?? getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+        recovery,
         ...(retryAfterSeconds !== undefined ? { retry_after: retryAfterSeconds } : {}),
         message,
-        ...wireValidationDiagnostic(result.errorField, message, result.errorKeyword),
+        ...wireValidationDiagnostic(errorField, message, errorKeyword),
       },
     ],
   };
@@ -585,6 +590,23 @@ function boundedErrorCode(value: unknown): string {
 
 function boundedRetryAfterSeconds(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 3600 ? Number(value) : undefined;
+}
+
+function boundedRecovery(value: unknown): ErrorRecovery | undefined {
+  return value === 'transient' || value === 'correctable' || value === 'terminal' ? value : undefined;
+}
+
+function boundedErrorField(value: unknown): string | undefined {
+  return typeof value === 'string' &&
+    !value.includes('\u0000') &&
+    isWellFormedUnicodeString(value) &&
+    Buffer.byteLength(value, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
+    ? value
+    : undefined;
+}
+
+function boundedErrorKeyword(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value) ? value : undefined;
 }
 
 function boundedErrorMessage(value: unknown): string {

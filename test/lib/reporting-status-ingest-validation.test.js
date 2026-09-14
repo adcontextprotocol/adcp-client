@@ -358,9 +358,11 @@ describe('reporting consumer status validation', () => {
             inserted: false,
             reporting_status_id: entries[0].status?.reporting_status_id ?? entries[0].reporting_status_id,
             errorCode: 'X'.repeat(65),
-            recovery: 'transient',
+            recovery: 'not-a-recovery',
             retryAfterSeconds: 60_000,
             safeMessage: 'm'.repeat(8_192),
+            errorField: {},
+            errorKeyword: {},
           },
         ],
       },
@@ -376,7 +378,10 @@ describe('reporting consumer status validation', () => {
     );
     const error = result.results[0].errors[0];
     assert.equal(error.code, 'VALIDATION_ERROR');
+    assert.equal(error.recovery, 'correctable');
     assert.equal(error.retry_after, undefined);
+    assert.equal(error.field, undefined);
+    assert.equal(error.issues, undefined);
     assert.equal(Buffer.byteLength(error.message, 'utf8'), 1024);
   });
 
