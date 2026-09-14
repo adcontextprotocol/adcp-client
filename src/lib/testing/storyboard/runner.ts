@@ -4734,7 +4734,9 @@ async function executeStep(
   // dispatching so an out-of-scope adapter is never invoked accidentally.
   if (step.requires_contract && !new Set(options.contracts ?? []).has(step.requires_contract)) {
     const detail = `Test-kit contract "${step.requires_contract}" is not configured on this runner.`;
-    const reason: RunnerDetailedSkipReason = 'missing_test_kit_contract';
+    const reason =
+      step.requires_contract === PARALLEL_DISPATCH_CONTRACT ? 'not_applicable' : 'missing_test_kit_contract';
+    const canonicalReason = reason === 'not_applicable' ? reason : DETAILED_SKIP_TO_CANONICAL[reason];
     return {
       step_id: step.id,
       phase_id: phaseId,
@@ -4743,7 +4745,7 @@ async function executeStep(
       passed: true,
       skipped: true,
       skip_reason: reason,
-      skip: buildSkip(DETAILED_SKIP_TO_CANONICAL[reason], detail),
+      skip: buildSkip(canonicalReason, detail),
       duration_ms: 0,
       validations: [],
       context,
