@@ -1,0 +1,7 @@
+---
+'@adcp/sdk': patch
+---
+
+Accept the pinned AdCP 3.2 proposal-refinement frequency-cap, outcome-target,
+and acceptance-context fields in buyer preflight, including remove-only shared
+frequency-cap revisions, and expose their exact schema-derived public types.

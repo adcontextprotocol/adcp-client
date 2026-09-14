@@ -631,6 +631,59 @@ test('criteria validation uses the closed 3.2 top-level vocabulary', () => {
   }
 });
 
+test('builder accepts every schema-backed proposal discovery criterion', () => {
+  const cases = [
+    {
+      field: 'media_buy_frequency_cap',
+      value: {
+        max_impressions: 3,
+        per: 'individuals',
+        window: { interval: 1, unit: 'days' },
+      },
+    },
+    {
+      field: 'required_media_buy_support',
+      value: { frequency_cap: true },
+    },
+    {
+      field: 'outcome_target',
+      value: { goal: { kind: 'metric', metric: 'impressions' }, volume: 1_000_000 },
+    },
+    {
+      field: 'acceptance_context',
+      value: { advertiser_roles: ['direct'] },
+    },
+  ];
+
+  for (const { field, value } of cases) {
+    const built = buildRefineProposalsRequest({
+      refinements: [
+        {
+          proposal_id: 'source-1',
+          action: 'revise',
+          criteria: { [field]: value },
+        },
+      ],
+    });
+
+    assert.deepEqual(built.refinements[0].criteria[field], value, field);
+  }
+});
+
+test('remove_media_buy_frequency_cap is valid as the only revision', () => {
+  const built = buildRefineProposalsRequest({
+    refinements: [
+      {
+        proposal_id: 'source-1',
+        action: 'revise',
+        remove_media_buy_frequency_cap: true,
+      },
+    ],
+  });
+
+  assert.equal(built.refinements[0].remove_media_buy_frequency_cap, true);
+});
+
 test('compact submitted responses validate without completed-field access', () => {
   const submitted = {
     adcp_version: '3.2',

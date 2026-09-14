@@ -1,8 +1,12 @@
 /** Public AdCP proposal-negotiation types (introduced by the 3.2 contract). */
 
 import type {
+  AcceptanceContext,
   CanonicalDeliveryForecast,
   CanonicalProposal as GeneratedCanonicalProposal,
+  MediaBuyFrequencyCap,
+  OutcomeTarget,
+  ProductMediaBuySupportRequirements,
   ProductPurchase as GeneratedProductPurchase,
 } from '../types/core.generated';
 
@@ -72,7 +76,11 @@ export interface ProposalDiscoveryCriteria {
   product_ids?: string[];
   offer_filters?: Record<string, unknown>;
   targeting_overlay?: Record<string, unknown>;
+  media_buy_frequency_cap?: MediaBuyFrequencyCap;
   required_overlay_support?: Record<string, unknown>;
+  required_media_buy_support?: ProductMediaBuySupportRequirements;
+  outcome_target?: OutcomeTarget;
+  acceptance_context?: AcceptanceContext;
   catalog?: ProposalDiscoveryCatalogCriteria;
   policy_ids?: string[];
   ext?: Record<string, unknown>;
@@ -112,6 +120,7 @@ export interface ReviseProposalRefinement {
   alternatives?: { count: number };
   ask?: string;
   criteria?: ProposalDiscoveryCriteria;
+  remove_media_buy_frequency_cap?: true;
 }
 
 export interface FinalizeProposalRefinement {

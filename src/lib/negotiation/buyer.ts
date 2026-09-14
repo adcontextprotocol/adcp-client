@@ -172,7 +172,8 @@ export function validateRefineProposalsRequest(
         refinement.product_changes != null ||
         refinement.alternatives != null ||
         refinement.ask != null ||
-        refinement.criteria != null;
+        refinement.criteria != null ||
+        refinement.remove_media_buy_frequency_cap === true;
       if (!hasRevision) {
         throw new ProposalRefinementValidationError(
           'revise requires a constraint, product change, alternative request, ask, criteria, or cancellation',
@@ -405,6 +406,7 @@ const REVISE_KEYS = new Set([
   'alternatives',
   'ask',
   'criteria',
+  'remove_media_buy_frequency_cap',
 ]);
 const CONSTRAINT_KEYS = new Set(['total_budget', 'cpm', 'impressions', 'flight']);
 const BUDGET_KEYS = new Set(['min', 'max', 'currency']);
@@ -416,7 +418,11 @@ const CRITERIA_KEYS = new Set([
   'product_ids',
   'offer_filters',
   'targeting_overlay',
+  'media_buy_frequency_cap',
   'required_overlay_support',
+  'required_media_buy_support',
+  'outcome_target',
+  'acceptance_context',
   'catalog',
   'policy_ids',
   'ext',
