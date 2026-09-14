@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   assertReportingConsumerMismatchEscalation,
   assertSupportedReportingAuthoritativeParty,
+  reportingConsumerStatusCapabilityV1,
   projectReportingConsumerStatusMismatchV1,
   UnsupportedReportingFeatureError,
 } = require('../../dist/lib/reporting/ledger/index.js');
@@ -370,6 +371,52 @@ describe('rc.3 consumer-mismatch escalation', () => {
     );
     assert.equal(late.issue.openedAt, '2026-03-09T02:00:00.000Z');
     assert.equal(late.issue.recommendedAction, 'contact_seller');
+  });
+});
+
+describe('rc.3 escalation capability advertisement', () => {
+  test('projects the wire fields from the same option the handler enforces', () => {
+    assert.deepEqual(
+      reportingConsumerStatusCapabilityV1({
+        escalationSeconds: 86_400,
+        operationsContact: { url: 'https://ops.seller.example/reporting', email: 'ops@seller.example' },
+      }),
+      {
+        consumer_mismatch_escalation_seconds: 86_400,
+        operations_contact: { url: 'https://ops.seller.example/reporting', email: 'ops@seller.example' },
+      }
+    );
+  });
+
+  test('omits an absent contact field rather than emitting undefined', () => {
+    assert.deepEqual(
+      reportingConsumerStatusCapabilityV1({
+        escalationSeconds: 0,
+        operationsContact: { email: 'ops@seller.example' },
+      }),
+      {
+        consumer_mismatch_escalation_seconds: 0,
+        operations_contact: { email: 'ops@seller.example' },
+      }
+    );
+  });
+
+  test('advertises nothing when no commitment is made', () => {
+    // Absence means the seller publishes no escalation clock; it never means an
+    // unbounded one, so this must not synthesize a default.
+    assert.deepEqual(reportingConsumerStatusCapabilityV1(undefined), {});
+  });
+
+  test('refuses to advertise a commitment the handler would not honor', () => {
+    // Same validation as the handler, so the document and the reads cannot drift.
+    assert.throws(
+      () => reportingConsumerStatusCapabilityV1({ escalationSeconds: -1, operationsContact: { email: 'o@e.example' } }),
+      TypeError
+    );
+    assert.throws(
+      () => reportingConsumerStatusCapabilityV1({ escalationSeconds: 3600, operationsContact: {} }),
+      TypeError
+    );
   });
 });
 

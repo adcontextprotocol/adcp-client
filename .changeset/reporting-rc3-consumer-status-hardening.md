@@ -72,3 +72,7 @@ wrong-shaped argument instead of silently passing, treats an explicit `null` as 
 than absence, and reports buyer-supplied values as bounded structured details.
 `consumerMismatchEscalation` is validated at wiring time — `NaN` silently disabled escalation and a
 negative window escalated everything.
+
+`reportingConsumerStatusCapabilityV1(escalation)` projects the same option into the capability
+document's `consumer_mismatch_escalation_seconds` + `operations_contact`, so the advertised window
+and the window the reads enforce come from one value and cannot drift.

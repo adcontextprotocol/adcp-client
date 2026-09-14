@@ -4,6 +4,7 @@ import { canonicalJsonV1 } from '../source';
 import { compareReportingInstants, compareReportingInstantToOffset } from './instant';
 import type {
   ReportingConsumerMismatchEscalationV1,
+  ReportingOperationsContactV1,
   ReportingLedgerConsumerMismatchIssueV1,
   ReportingHealthV1,
   ReportingLedgerConsumerStatementV1,
@@ -147,6 +148,45 @@ export function assertReportingConsumerMismatchEscalation(
     );
   }
   return escalation;
+}
+
+/**
+ * Project an escalation commitment into the wire fields of the seller's
+ * `media_buy.reporting_delivery` capability block.
+ *
+ * The point is a single source of truth. The read handler decides escalation
+ * from `consumerMismatchEscalation`, and the capability document tells buyers
+ * what to expect; if an adopter hand-writes the document separately, the two
+ * drift silently and buyers age issues against a window the seller does not
+ * actually honor. Spread the result into the capability block built from the
+ * same option value:
+ *
+ * ```ts
+ * const escalation = { escalationSeconds: 86_400, operationsContact: { email: 'ops@seller.example' } };
+ * const reportingDelivery = {
+ *   reliable_reporting_version: '1.0',
+ *   consumer_status_task: 'sync_reporting_status',
+ *   ...reportingConsumerStatusCapabilityV1(escalation),
+ * };
+ * const getReportingStatus = createReportingStatusHandler(store, { resolveConsumerId, consumerMismatchEscalation: escalation });
+ * ```
+ *
+ * Returns an empty object when no commitment is advertised — absence means the
+ * seller publishes no escalation clock, never an unbounded one.
+ */
+export function reportingConsumerStatusCapabilityV1(escalation: ReportingConsumerMismatchEscalationV1 | undefined): {
+  consumer_mismatch_escalation_seconds?: number;
+  operations_contact?: ReportingOperationsContactV1;
+} {
+  const validated = assertReportingConsumerMismatchEscalation(escalation);
+  if (!validated) return {};
+  return {
+    consumer_mismatch_escalation_seconds: validated.escalationSeconds,
+    operations_contact: {
+      ...(validated.operationsContact.url ? { url: validated.operationsContact.url } : {}),
+      ...(validated.operationsContact.email ? { email: validated.operationsContact.email } : {}),
+    },
+  };
 }
 
 /**

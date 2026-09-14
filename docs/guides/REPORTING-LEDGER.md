@@ -191,6 +191,33 @@ const getReportingStatus = createReportingStatusHandler(store, {
 });
 ```
 
+Advertise the same commitment in the capability document from that one value,
+so the reads and the document cannot drift:
+
+```ts
+const escalation = {
+  escalationSeconds: 86_400,
+  operationsContact: { email: 'reporting-ops@seller.example' },
+};
+
+const reportingDelivery = {
+  reliable_reporting_version: '1.0',
+  consumer_status_task: 'sync_reporting_status',
+  ...reportingConsumerStatusCapabilityV1(escalation), // consumer_mismatch_escalation_seconds + operations_contact
+};
+
+const getReportingStatus = createReportingStatusHandler(store, {
+  resolveConsumerId,
+  consumerMismatchEscalation: escalation,
+});
+```
+
+Both entry points run the same validation, so a window with no destination — or
+a `NaN` / negative one — fails at wiring time rather than silently never firing.
+If you also apply the `health` query filter in a custom store, pass
+`consumerMismatchEscalation` there too; the bundled `PostgresReportingLedgerStore`
+takes it as a constructor option for exactly that reason.
+
 Past `opened_at` plus that window an open mismatch is emitted at
 `action_required` with a `contact_*` action naming the diagnosed responsible
 party. `wait_for_retry` and `repair_access` are automation hints and neither
