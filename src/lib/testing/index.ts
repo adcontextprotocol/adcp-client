@@ -255,6 +255,8 @@ export {
   // Parser (single-file load for spec evolution)
   parseStoryboard,
   loadStoryboardFile,
+  normalizeValidationOnlyTasks,
+  VALIDATION_ONLY_TASK,
   applyFixtureBindingsToRequest,
   buildFixtureResolutionSpecs,
   FixtureBindingRegistry,

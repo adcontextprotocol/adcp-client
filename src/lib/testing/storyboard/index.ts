@@ -128,7 +128,7 @@ export {
 } from './runner';
 
 // Parser (single-file load for spec evolution / targeted testing)
-export { parseStoryboard, loadStoryboardFile } from './loader';
+export { parseStoryboard, loadStoryboardFile, normalizeValidationOnlyTasks, VALIDATION_ONLY_TASK } from './loader';
 
 // AdCP 3.2 fixture-handle resolution
 export {

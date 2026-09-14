@@ -3,6 +3,7 @@ const { describe, test } = require('node:test');
 
 const {
   ReportingConsumerStatusV1Schema,
+  ReportingConsumerStatusConflictError,
   SyncReportingStatusRequestV1Schema,
   createSyncReportingStatusHandler,
 } = require('../../dist/lib/reporting/ledger/index.js');
@@ -42,6 +43,7 @@ describe('reporting consumer status validation', () => {
     assert.equal(validateSyncReportingStatusEnvelope(envelope(1)).valid, true);
     assert.equal(validateSyncReportingStatusEnvelope(envelope(100)).valid, true);
     assert.equal(validateSyncReportingStatusEnvelope(envelope(101)).valid, false);
+    assert.equal(validateSyncReportingStatusEnvelope(envelope(1), '3.0.25').valid, false);
   });
 
   test('whole-request validation applies the consumer-only status refinements', () => {
@@ -86,7 +88,14 @@ describe('reporting consumer status validation', () => {
       { account: { id: 'account-1' } }
     );
     assert.equal(result.results[0].result, 'failed');
-    assert.equal(result.results[0].errors[0].field, '/statuses/0/recorded_at');
+    assert.equal(result.results[0].errors[0].field, 'statuses[0].recorded_at');
+    assert.deepEqual(result.results[0].errors[0].issues, [
+      {
+        pointer: '/statuses/0/recorded_at',
+        message: 'Reporting consumer status request is invalid',
+        keyword: 'validation',
+      },
+    ]);
   });
 
   test('omits an oversized malformed-property pointer from stored and returned diagnostics', async () => {
@@ -122,6 +131,86 @@ describe('reporting consumer status validation', () => {
     assert.equal(storedField, undefined);
     assert.equal(result.results[0].result, 'failed');
     assert.equal(result.results[0].errors[0].field, undefined);
+    assert.equal(result.results[0].errors[0].issues, undefined);
+  });
+
+  test('rejects prototype-named properties that Zod cannot copy through safely', async () => {
+    let storedEntry;
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ entries }) => {
+          [storedEntry] = entries;
+          return [
+            {
+              inserted: false,
+              reporting_status_id: entries[0].reporting_status_id,
+              errorCode: 'VALIDATION_ERROR',
+              safeMessage: entries[0].validationError,
+              errorField: entries[0].validationField,
+            },
+          ];
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const rawStatus = consumerStatus();
+    Object.defineProperty(rawStatus, '__proto__', { value: {}, enumerable: true });
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-prototype-key-0001',
+        statuses: [rawStatus],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(storedEntry.validationField, '/statuses/0/__proto__');
+    assert.equal(result.results[0].errors[0].field, 'statuses[0].__proto__');
+  });
+
+  test('bounds request bytes before parsing, hashing, or invoking the store', async () => {
+    let storeCalled = false;
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => {
+          storeCalled = true;
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-byte-bound-0001',
+        statuses: [consumerStatus({ ext: { 'example.invalid': 'x'.repeat(8 * 1024 * 1024) } })],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(storeCalled, false);
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
+  });
+
+  test('does not expose custom-store conflict messages', async () => {
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => {
+          throw new ReportingConsumerStatusConflictError('postgres://secret@internal.example/reporting');
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-safe-conflict-0001',
+        statuses: [consumerStatus()],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(result.results[0].errors[0].message, 'Reporting status idempotency conflict');
+    assert.doesNotMatch(JSON.stringify(result), /secret|internal\.example/);
   });
 
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {
@@ -357,6 +446,67 @@ describe('reporting consumer status validation', () => {
       { account: { id: 'account-1' } }
     );
     assert.equal(synchronized, true);
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
+  });
+
+  test('rejects snapshot provenance returned for another account', async () => {
+    const configuration = {
+      configurationId: 'snapshot-account-configuration',
+      account: { account_id: 'account-1' },
+      delivery_config_id: 'delivery_config_0001',
+      delivery_config_version: 1,
+      report_definition_id: 'report_definition_0001',
+      sourceTimezone: 'UTC',
+      requiredFinality: 'snapshot',
+      installedAt: '2026-09-01T00:00:00Z',
+      schedule: {
+        anchor: '2026-09-01T00:00:00Z',
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+      },
+    };
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [configuration],
+        readSnapshotPage: async () => ({
+          snapshot: {
+            query: {
+              account_id: 'account-2',
+              consumer_id: 'consumer-1',
+              view: 'periods',
+              period: { start: '2026-09-01T00:00:00Z', end: '2026-09-02T00:00:00Z' },
+            },
+            ledgerAsOf: '2026-09-03T00:00:00Z',
+            configurations: [configuration],
+            obligations: [],
+            revisions: [],
+          },
+        }),
+        syncConsumerStatusBatch: async ({ entries }) =>
+          entries.map(entry => ({
+            inserted: false,
+            reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+            errorCode: 'VALIDATION_ERROR',
+            safeMessage: entry.validationError,
+          })),
+      },
+      { resolveConsumerId: () => 'consumer-1', now: () => new Date('2026-09-03T00:00:00Z') }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-foreign-snapshot-0001',
+        statuses: [
+          consumerStatus({
+            seller_ledger_snapshot_id: 'snapshot-foreign-account',
+            seller_ledger_as_of: '2026-09-03T00:00:00Z',
+          }),
+        ],
+      },
+      { account: { id: 'account-1' } }
+    );
     assert.equal(result.results[0].result, 'failed');
     assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
   });

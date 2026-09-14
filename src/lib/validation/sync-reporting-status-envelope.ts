@@ -13,8 +13,25 @@ export function validateSyncReportingStatusEnvelope(
   payload: unknown,
   version: Parameters<typeof validateRequest>[2] = ADCP_VERSION
 ): ReturnType<typeof validateRequest> {
+  const validateEnvelope = (value: unknown): ReturnType<typeof validateRequest> => {
+    const outcome = validateRequest('sync_reporting_status', value, version);
+    return outcome.variant === 'skipped'
+      ? {
+          valid: false,
+          variant: 'request',
+          issues: [
+            {
+              pointer: '/',
+              message: `sync_reporting_status is unavailable for AdCP ${version}`,
+              keyword: 'schema_unavailable',
+              schemaPath: '',
+            },
+          ],
+        }
+      : outcome;
+  };
   if (!isPlainObject(payload) || !Array.isArray(payload.statuses)) {
-    return validateRequest('sync_reporting_status', payload, version);
+    return validateEnvelope(payload);
   }
 
   // Preserve 0..100 exactly and cap larger arrays at 101, which is sufficient
@@ -34,7 +51,7 @@ export function validateSyncReportingStatusEnvelope(
     status_as_of: '2000-01-02T00:00:00Z',
   }));
 
-  return validateRequest('sync_reporting_status', { ...payload, statuses }, version);
+  return validateEnvelope({ ...payload, statuses });
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

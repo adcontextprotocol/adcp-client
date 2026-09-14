@@ -184,10 +184,21 @@ export interface ReportingLedgerConsumerStatementV1 {
 
 export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerStatementV1, 'recorded_at'>;
 
+/** Durable diagnostic pointers are bounded independently of caller payload size. */
+export const REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES = 1024;
+/** A single durable consumer statement may occupy at most 64 KiB. */
+export const REPORTING_CONSUMER_STATUS_MAX_BYTES = 64 * 1024;
+/** The complete request is bounded before validation or canonical hashing. */
+export const REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES = 8 * 1024 * 1024;
+/** Replay metadata is bounded per immutable batch row. */
+export const REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES = 64 * 1024;
+
 export type ReportingConsumerStatusBatchEntryV1 =
   | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string; validationField?: string }
   | {
       reporting_status_id: string;
+      /** True when the handler synthesized the ID because the caller supplied no valid wire ID. */
+      syntheticReportingStatusId?: boolean;
       validationError: string;
       validationField?: string;
       chainIdentity?: {

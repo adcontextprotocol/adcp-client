@@ -776,12 +776,12 @@ describe('createAdcpServer', () => {
       );
     });
 
-    it('keeps the reporting status envelope closed in strict mode', async () => {
+    it('keeps the reporting status envelope closed when general request validation is off', async () => {
       let calls = 0;
       const server = createAdcpServer({
         name: 'Test',
         version: '1.0.0',
-        validation: { requests: 'strict' },
+        validation: { requests: 'off' },
         idempotency: 'disabled',
         resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {

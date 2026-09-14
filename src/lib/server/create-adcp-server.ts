@@ -717,7 +717,7 @@ export interface AdcpToolMap {
     response: GetReportingStatusResponse;
   };
   sync_reporting_status: {
-    params: z.input<typeof SyncReportingStatusRequestSchema>;
+    params: Omit<z.input<typeof SyncReportingStatusRequestSchema>, 'statuses'> & { statuses: unknown[] };
     result: ServerPayload<SyncReportingStatusResponse>;
     response: SyncReportingStatusResponse;
   };
@@ -6405,7 +6405,11 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             }
           }
         }
-        if (callRequestValidationMode !== 'off') {
+        // This envelope validation is the load-bearing batch-size bound for
+        // custom handlers, so it remains strict even when general AJV is off.
+        const effectiveFrameworkRequestValidationMode =
+          toolName === 'sync_reporting_status' ? 'strict' : callRequestValidationMode;
+        if (effectiveFrameworkRequestValidationMode !== 'off') {
           const outcome = validateFrameworkPayload(
             toolName,
             'request',
@@ -6447,7 +6451,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
                 ? outcome.issues.filter(i => !(i.keyword === 'required' && i.pointer === '/idempotency_key'))
                 : outcome.issues;
             if (issues.length > 0) {
-              if (callRequestValidationMode === 'strict') {
+              if (effectiveFrameworkRequestValidationMode === 'strict') {
                 // Thread `exposeSchemaPath` the same way response-side does
                 // so request-side schemaPath also ships in dev and stays
                 // gated in production. Prior to this, request-side silently

@@ -508,7 +508,7 @@ test('rejects an ambiguous direct-Core scope when a managed materialization refe
     delete item.accepted_receipt_count;
     return item;
   };
-  raw.periods.push(directCore('analytics'), directCore('billing_export'));
+  raw.periods.push(directCore('analytics'));
   raw.pagination.total_count = raw.periods.length + raw.revisions.length + raw.materializations.length;
 
   await assert.rejects(

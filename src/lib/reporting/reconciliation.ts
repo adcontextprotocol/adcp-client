@@ -793,6 +793,7 @@ function assertReportingLedgerGraph(
     if (
       revision.account_id !== accountId ||
       directCoreScopeCount > 1 ||
+      (referenced && directCoreScopeCount > 0) ||
       (!referenced && !directlyScopedCoreRevision) ||
       !isReportingControlTotals(revision.control_totals)
     ) {

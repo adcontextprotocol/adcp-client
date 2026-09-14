@@ -1391,4 +1391,43 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(migrated.rows[0].chain_key, 'legacy:fixture-legacy-status-0001');
     assert.equal(migrated.rows[0].semantic_fingerprint, 'legacy:fixture-legacy-status-0001');
   });
+
+  test('bounds immutable replay metadata while preserving exact retry results', async () => {
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: context => context.consumer,
+      now: () => new Date(Date.parse(obligation.period.end) + 86_400_000),
+    });
+    const context = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-bounded-replay',
+    };
+    const statuses = Array.from({ length: 100 }, (_, index) => ({
+      reporting_status_id: `fixture-malformed-status-${String(index).padStart(3, '0')}`,
+      delivery_config_id: obligation.delivery_config_id,
+      delivery_config_version: obligation.delivery_config_version,
+      report_definition_id: obligation.report_definition_id,
+      period: {
+        start: obligation.period.start,
+        end: obligation.period.end,
+        source_timezone: obligation.period.sourceTimezone,
+      },
+      consumer_status: 'obligation_missing',
+      status_as_of: new Date(Date.parse(obligation.period.end) + 86_400_000).toISOString(),
+      [`unknown_${index}_${'x'.repeat(900)}`]: true,
+    }));
+    const payload = {
+      account: request.account,
+      idempotency_key: 'fixture-status-bounded-replay-0001',
+      statuses,
+    };
+    const first = await sync(payload, context);
+    const stored = await pool.query(
+      `SELECT results FROM adcp_reporting_consumer_status_batches
+       WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+      [request.account.account_id, context.consumer, payload.idempotency_key]
+    );
+    assert.equal(stored.rowCount, 1);
+    assert.ok(Buffer.byteLength(JSON.stringify(stored.rows[0].results), 'utf8') <= 64 * 1024);
+    assert.deepEqual(await sync(payload, context), first);
+  });
 });

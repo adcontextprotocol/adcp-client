@@ -73,7 +73,7 @@ const TOOL_GOTCHAS: Record<string, string[]> = {
     'Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).',
   ],
   sync_reporting_status: [
-    'A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. Results map one-for-one to submitted statuses in request order.',
+    'A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. For a schema-valid envelope, results map one-for-one to submitted statuses in request order.',
     '`recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.',
   ],
 };

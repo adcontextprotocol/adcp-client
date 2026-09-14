@@ -9,7 +9,12 @@ import {
 } from './coverage';
 import { projectReportingObligationHealthV1 } from './health';
 import { canonicalReportingInstant, compareReportingInstants } from './instant';
-import { ReportingLedgerSnapshotUnavailableError } from './types';
+import {
+  REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_MAX_BYTES,
+  ReportingLedgerSnapshotUnavailableError,
+} from './types';
 import type {
   ReportingLedgerConfigurationV1,
   ReportingLedgerAdjustmentV1,
@@ -264,8 +269,6 @@ const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
 const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
 const MAX_CONSUMER_STATUS_BATCHES = 10_000;
 const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
-const MAX_CONSUMER_STATUS_BYTES = 64 * 1024;
-const MAX_CONSUMER_STATUS_ERROR_FIELD_BYTES = 1024;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -865,7 +868,14 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         );
         const duplicateStatusIds = new Set(
           input.entries
-            .map(value => ('status' in value ? value.status.reporting_status_id : value.reporting_status_id))
+            .map(value =>
+              'status' in value || !value.syntheticReportingStatusId
+                ? 'status' in value
+                  ? value.status.reporting_status_id
+                  : value.reporting_status_id
+                : undefined
+            )
+            .filter((value): value is string => value !== undefined)
             .filter((value, index, values) => values.indexOf(value) !== index || values.lastIndexOf(value) !== index)
         );
         const capacity = await client.query<QueryResultRow & { batches: string; statuses: string }>(
@@ -881,7 +891,20 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const results: ReportingConsumerStatusBatchResultV1[] = [];
         const storedResults: StoredResult[] = [];
         const fail = (statusId: string, errorCode: string, safeMessage: string, errorField?: string) => {
-          const boundedErrorField = boundedConsumerStatusErrorField(errorField);
+          let boundedErrorField = boundedConsumerStatusErrorField(errorField);
+          const storedCandidate = {
+            kind: 'failed' as const,
+            id: statusId,
+            errorCode,
+            safeMessage,
+            ...boundedErrorField,
+          };
+          if (
+            storedResultsJsonBytes([...storedResults, storedCandidate]) >
+            REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES
+          ) {
+            boundedErrorField = {};
+          }
           results.push({
             inserted: false,
             reporting_status_id: statusId,
@@ -942,7 +965,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation, entry.validationField);
             continue;
           }
-          if (Buffer.byteLength(JSON.stringify(status), 'utf8') > MAX_CONSUMER_STATUS_BYTES) {
+          if (Buffer.byteLength(JSON.stringify(status), 'utf8') > REPORTING_CONSUMER_STATUS_MAX_BYTES) {
             fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status exceeds 64 KiB');
             continue;
           }
@@ -2093,9 +2116,13 @@ function consumerStatusFingerprint(
 }
 
 function boundedConsumerStatusErrorField(errorField?: string): { errorField?: string } {
-  return errorField && Buffer.byteLength(errorField, 'utf8') <= MAX_CONSUMER_STATUS_ERROR_FIELD_BYTES
+  return errorField && Buffer.byteLength(errorField, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
     ? { errorField }
     : {};
+}
+
+function storedResultsJsonBytes(results: unknown[]): number {
+  return Buffer.byteLength(JSON.stringify(results), 'utf8');
 }
 
 function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): string {

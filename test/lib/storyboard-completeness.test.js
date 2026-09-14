@@ -13,6 +13,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
+const { VALIDATION_ONLY_TASK, normalizeValidationOnlyTasks } = require('../../dist/lib/testing/index.js');
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
 const { hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TASK_TO_METHOD } = require('../../dist/lib/testing/storyboard/task-map.js');
@@ -27,7 +28,7 @@ const storyboards = allStoryboards.filter(sb => Array.isArray(sb.phases) && sb.p
 
 // Tasks that are part of the test harness — not protocol tools
 const HARNESS_TASKS = new Set([
-  '__validation_only__',
+  VALIDATION_ONLY_TASK,
   'comply_test_controller',
   // Synthetic tasks dispatched by the storyboard runner — no corresponding
   // AdCP tool or response schema. Raw HTTP probes and flag-accumulator steps.
@@ -221,6 +222,11 @@ describe('task execution coverage', () => {
 });
 
 describe('validation-only storyboard steps', () => {
+  it('exports the normalization contract from the public testing entrypoint', () => {
+    assert.equal(VALIDATION_ONLY_TASK, '__validation_only__');
+    assert.equal(typeof normalizeValidationOnlyTasks, 'function');
+  });
+
   it('reports a validation-only step as an unsupported runner coverage gap without dispatching', async () => {
     let dispatches = 0;
     const profile = { name: 'Test', tools: [] };

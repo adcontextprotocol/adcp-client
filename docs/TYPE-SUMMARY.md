@@ -1359,7 +1359,7 @@ _Response (success branch):_
 ```
 
 _Watch out:_
-- A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. Results map one-for-one to submitted statuses in request order.
+- A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. For a schema-valid envelope, results map one-for-one to submitted statuses in request order.
 - `recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.
 
 #### `sync_reporting_receipts`
