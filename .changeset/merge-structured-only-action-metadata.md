@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Merge structured-only media-buy action metadata into the generated `update_media_buy` field dispatch table. `scripts/generate-media-buy-update-fields.ts` now reads `enumMetadata` from both `enums/media-buy-valid-action.json` and `core/media-buy-available-action-id.json` (AdCP 3.2, adcontextprotocol/adcp#7449), so `UPDATE_FIELDS_BY_ACTION` / `ACTIONS_BY_FIELD` pick up `update_media_buy_frequency_cap -> ["frequency_cap"]` as soon as the schema pin ships that file, while `update_frequency_caps -> ["packages[].targeting_overlay.frequency_cap"]` is unchanged. Shared keys must agree (legacy block wins; a conflict aborts generation) and caches that predate the id schema still regenerate a legacy-only table.
