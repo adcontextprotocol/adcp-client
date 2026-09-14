@@ -8346,6 +8346,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
       ...(capConfig.account.defaultBilling && { default_billing: capConfig.account.defaultBilling }),
       required_for_products: capConfig.account.requiredForProducts ?? false,
       sandbox: capConfig.account.sandbox ?? false,
+      ...(capConfig.account.changeFeed !== undefined && { change_feed: capConfig.account.changeFeed }),
     };
   }
 

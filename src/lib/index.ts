@@ -2285,3 +2285,8 @@ export type {
   RateLimitTripStructuredResult,
   RateLimitTripTaskOptions,
 } from './testing/index';
+export * from './client/account-change-cursor';
+export * from './client/account-changes';
+export * from './client/account-change-subscription';
+export * from './notifications/account-change-recorded';
+export type { AccountChangeFeedCapabilities } from './utils/capabilities';
