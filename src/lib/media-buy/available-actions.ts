@@ -6,7 +6,7 @@
 // authoritative source and surfaces a deprecation hint when only the
 // legacy field is populated.
 
-import type { MediaBuyActionContext, MediaBuyAvailableAction, MediaBuyValidAction } from './types';
+import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyAvailableAction, MediaBuyValidAction } from './types';
 
 /**
  * Source the normalized `available_actions[]` came from. Callers branch on
@@ -94,7 +94,7 @@ export function getAvailableActions(
  */
 export function findAvailableAction(
   buy: MediaBuyActionContext,
-  action: MediaBuyValidAction,
+  action: MediaBuyActionId,
   options: { silent?: boolean } = {}
 ): { entry: MediaBuyAvailableAction; result: AvailableActionsResult } | undefined {
   const result = getAvailableActions(buy, options);
@@ -112,7 +112,7 @@ export function findAvailableAction(
 // Inverse of `enumMetadata[<legacy>].rollup`: given a fine-grained action,
 // the legacy coarse action that subsumes it. Built from the schema's
 // rollup mapping but inverted here for O(1) child -> parent lookup.
-const ROLLUP_PARENT_OF: Partial<Record<MediaBuyValidAction, MediaBuyValidAction>> = {
+const ROLLUP_PARENT_OF: Partial<Record<MediaBuyActionId, MediaBuyValidAction>> = {
   increase_budget: 'update_budget',
   decrease_budget: 'update_budget',
   reallocate_budget: 'update_budget',
@@ -133,6 +133,6 @@ const ROLLUP_PARENT_OF: Partial<Record<MediaBuyValidAction, MediaBuyValidAction>
  * coarse vocabulary themselves (e.g. UI rendering that wants to group
  * fine-grained actions under their coarse parent).
  */
-export function getRollupParent(action: MediaBuyValidAction): MediaBuyValidAction | undefined {
+export function getRollupParent(action: MediaBuyActionId): MediaBuyValidAction | undefined {
   return ROLLUP_PARENT_OF[action];
 }

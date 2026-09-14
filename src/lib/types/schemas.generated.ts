@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T03:05:58.042Z
+// Generated at: 2026-09-14T10:31:50.046Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -911,6 +911,25 @@ export const CancellationPolicySchema = z.object({
             amount: z.number().min(0).optional()
         }).passthrough()])
 }).passthrough();
+
+export const MediaBuyChangeTermIDSchema = z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$"));
+
+export const MediaBuyTermsReferenceSchema = z.string();
+
+export const SLAWindowSchema = z.object({
+    response_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional(),
+    completion_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional()
+}).passthrough();
+
+export const BudgetChangeConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
+
+export const FlightChangeConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
+
+export const PackageCountConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
+
+export const EffectiveTimingConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
+
+export const MediaBuyChangeTermConstraintsSchema = z.union([BudgetChangeConstraintsSchema, FlightChangeConstraintsSchema, PackageCountConstraintsSchema, EffectiveTimingConstraintsSchema]);
 
 export const AdCPAudienceSyncSchema = z.object({
     pattern: z.literal("sync_audiences")
@@ -3182,6 +3201,15 @@ export const OutcomeMeasurementSchema = z.object({
 
 export const BrandReference1Schema = BrandReferenceSchema;
 
+export const ProductAllowedActionSchema = z.object({
+    action: MediaBuyValidActionSchema,
+    modes: z.array(MediaBuyActionModeSchema),
+    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
+    sla: SLAWindowSchema.optional(),
+    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
+    terms_ref: z.string().optional()
+}).passthrough();
+
 export const CreativePolicySchema = z.object({
     co_branding: CoBrandingRequirementSchema,
     landing_page: LandingPageRequirementSchema,
@@ -3254,14 +3282,6 @@ export const RevenueSharePricingOptionSchema = z.object({}).passthrough().merge(
     currency: z.string().regex(new RegExp("^[A-Z]{3}$")),
     commission_basis_description: z.string().min(1).max(1000)
 }).passthrough());
-
-export const BudgetChangeConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const FlightChangeConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const PackageCountConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
-
-export const EffectiveTimingConstraintsSchema = z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]);
 
 export const DemographicReportingCapabilitySchema = z.object({}).passthrough().merge(z.object({
     age: z.object({}).passthrough().optional(),
@@ -3522,13 +3542,6 @@ export const TimeBasedPricingOptionSchema = z.object({
     price_breakdown: PriceBreakdownSchema.optional(),
     eligible_adjustments: z.array(PriceAdjustmentKindSchema).optional()
 }).passthrough();
-
-export const SLAWindowSchema = z.object({
-    response_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional(),
-    completion_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional()
-}).passthrough();
-
-export const MediaBuyChangeTermConstraintsSchema = z.union([BudgetChangeConstraintsSchema, FlightChangeConstraintsSchema, PackageCountConstraintsSchema, EffectiveTimingConstraintsSchema]);
 
 export const GeographicBreakdownSupportSchema = z.object({
     country: z.boolean().optional(),
@@ -4143,9 +4156,14 @@ export const CommitmentSubmittedSchema = z.object({
     replayed: z.literal(true).optional()
 }).passthrough();
 
-export const MediaBuyChangeTermIDSchema = z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$"));
-
-export const MediaBuyTermsReferenceSchema = z.string();
+export const CanonicalMediaBuyActionFieldsSchema = z.object({
+    task: z.union([z.literal("control_media_buy"), z.literal("refine_proposals"), z.literal("sync_creatives")]),
+    action: z.string(),
+    mode: CanonicalMediaBuyActionModeSchema,
+    sla: SLAWindowSchema.optional(),
+    change_term_id: MediaBuyChangeTermIDSchema.optional(),
+    terms_ref: MediaBuyTermsReferenceSchema.optional()
+}).passthrough();
 
 export const WarningSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
     code: WarningCodeSchema,
@@ -4357,16 +4375,23 @@ export const CanonicalDOOHScreenResolutionSchema = z.object({
     height: z.number()
 }).passthrough();
 
-export const CanonicalMediaBuyActionFieldsSchema = z.object({
-    task: z.union([z.literal("control_media_buy"), z.literal("refine_proposals"), z.literal("sync_creatives")]),
-    action: z.string(),
-    mode: CanonicalMediaBuyActionModeSchema,
-    sla: SLAWindowSchema.optional(),
-    change_term_id: MediaBuyChangeTermIDSchema.optional(),
-    terms_ref: MediaBuyTermsReferenceSchema.optional()
-}).passthrough();
-
 export const CanonicalMediaBuyActionSchema = CanonicalMediaBuyActionFieldsSchema;
+
+export const ControlAppliedSchema = z.object({
+    status: z.literal("completed"),
+    media_buy_id: z.string().min(1),
+    revision: z.int().min(1),
+    media_buy_status: MediaBuyStatusSchema.optional(),
+    implementation_date: z.iso.datetime().optional().nullable(),
+    affected_package_ids: z.array(z.string()).optional(),
+    available_actions: z.array(CanonicalMediaBuyActionSchema).optional(),
+    warnings: z.array(WarningSchema.and(z.object({
+        code: z.literal("inventory_shortfall_forecast").optional()
+    }).passthrough())).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional(),
+    replayed: z.literal(true).optional()
+}).passthrough();
 
 export const CreateMediaBuyAsyncSubmittedSchema = CreateMediaBuySubmittedSchema;
 
@@ -8445,15 +8470,6 @@ export const GeographicPlaceRequirementSchema = z.object({
     systems: z.record(z.string(), CatalogRequirementSchema)
 }).passthrough();
 
-export const ProductAllowedActionSchema = z.object({
-    action: MediaBuyValidActionSchema,
-    modes: z.array(MediaBuyActionModeSchema),
-    allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
-    sla: SLAWindowSchema.optional(),
-    constraints: MediaBuyChangeTermConstraintsSchema.optional(),
-    terms_ref: z.string().optional()
-}).passthrough();
-
 export const ReportingCapabilitiesSchema = z.object({
     available_reporting_frequencies: z.array(ReportingFrequencySchema),
     expected_delay_minutes: z.number().int().gte(0),
@@ -8788,21 +8804,7 @@ export const AcceptProposalRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ControlAppliedSchema = z.object({
-    status: z.literal("completed"),
-    media_buy_id: z.string().min(1),
-    revision: z.int().min(1),
-    media_buy_status: MediaBuyStatusSchema.optional(),
-    implementation_date: z.iso.datetime().optional().nullable(),
-    affected_package_ids: z.array(z.string()).optional(),
-    available_actions: z.array(CanonicalMediaBuyActionSchema).optional(),
-    warnings: z.array(WarningSchema.and(z.object({
-        code: z.literal("inventory_shortfall_forecast").optional()
-    }).passthrough())).optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional(),
-    replayed: z.literal(true).optional()
-}).passthrough();
+export const ControlMediaBuyResponseSchema = z.union([ControlAppliedSchema, ControlErrorSchema, ControlSubmittedSchema]);
 
 export const ListCreativeFormatsRequestSchema = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
@@ -12553,8 +12555,6 @@ export const InstallmentSchema = z.object({
     }).passthrough().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
-
-export const ControlMediaBuyResponseSchema = z.union([ControlAppliedSchema, ControlErrorSchema, ControlSubmittedSchema]);
 
 export const GetSignalsResponseSchema = z.object({
     context_id: z.string().optional(),

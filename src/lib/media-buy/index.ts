@@ -5,6 +5,7 @@ export type {
   ActionNotAllowedReason,
   LegacyCoarseAction,
   MediaBuyActionContext,
+  MediaBuyActionId,
   MediaBuyActionMode,
   MediaBuyAvailableAction,
   MediaBuyValidAction,
@@ -76,8 +77,16 @@ export {
   recoveryForModeMismatch,
 } from './preflight';
 
-export type { UpdateFieldEntry } from './update-fields.generated';
-export { ACTIONS_BY_FIELD, UPDATE_FIELDS_BY_ACTION } from './update-fields.generated';
+export type {
+  MediaBuyUpdateFieldAction,
+  StructuredOnlyMediaBuyAction,
+  UpdateFieldEntry,
+} from './update-fields.generated';
+export {
+  ACTIONS_BY_FIELD,
+  STRUCTURED_ONLY_MEDIA_BUY_ACTIONS,
+  UPDATE_FIELDS_BY_ACTION,
+} from './update-fields.generated';
 
 export * from './compatibility';
 export * from './established-proposal-store';

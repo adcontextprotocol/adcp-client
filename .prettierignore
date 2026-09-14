@@ -23,3 +23,8 @@ test/lib/v2-projection-fixtures/
 
 # Portable reporting vectors are byte/hash pinned across SDK implementations.
 test/fixtures/reporting-reconciliation/
+
+# Vendored AdCP media-buy action schemas (enumMetadata sources for
+# scripts/generate-media-buy-update-fields.ts). Byte-identical to the upstream
+# protocol bundle; see test/fixtures/media-buy-update-fields/README.md.
+test/fixtures/media-buy-update-fields/

@@ -25,6 +25,8 @@ const {
   getRollupParent,
   preflightUpdateMediaBuy,
   recoveryForModeMismatch,
+  ACTIONS_BY_FIELD,
+  STRUCTURED_ONLY_MEDIA_BUY_ACTIONS,
   __resetValidActionsWarningForTests,
 } = require('../../dist/lib/media-buy');
 const { ValidationError } = require('../../dist/lib/errors');
@@ -445,5 +447,79 @@ describe('recoveryForModeMismatch', () => {
   test('returns undefined when attempted action not in available list', () => {
     const r = recoveryForModeMismatch('pause', [{ action: 'cancel', mode: 'requires_approval' }]);
     assert.strictEqual(r, undefined);
+  });
+});
+
+// AdCP 3.2 (adcontextprotocol/adcp#7449): the MediaBuy-level `frequency_cap`
+// request field maps to the structured-only action
+// `update_media_buy_frequency_cap`, whose binding the generator reads from
+// core/media-buy-available-action-id.json. On schema pins that predate that
+// file the field has no binding and must be ignored like any unrecognized key.
+describe('MediaBuy-level frequency_cap (structured-only action, #2887)', () => {
+  const FREQUENCY_CAP_ACTION = 'update_media_buy_frequency_cap';
+  const pinHasBinding = Array.isArray(ACTIONS_BY_FIELD.frequency_cap);
+  const skipWithout = pinHasBinding ? false : 'pinned schema cache predates core/media-buy-available-action-id.json';
+  const skipWith = pinHasBinding ? 'pinned schema cache ships core/media-buy-available-action-id.json' : false;
+
+  test('binding presence matches the structured-only action list', () => {
+    assert.strictEqual(STRUCTURED_ONLY_MEDIA_BUY_ACTIONS.includes(FREQUENCY_CAP_ACTION), pinHasBinding);
+  });
+
+  test('setting the shared cap decomposes to update_media_buy_frequency_cap', { skip: skipWithout }, () => {
+    const buy = buyWith([{ action: FREQUENCY_CAP_ACTION, mode: 'self_serve' }]);
+    const cap = { max_impressions: 5, per: 'user', duration: { unit: 'day', value: 1 } };
+    const decomposed = decomposeUpdateMediaBuy(buy, { frequency_cap: cap });
+    assert.deepStrictEqual(decomposed.mutations, [
+      { action: FREQUENCY_CAP_ACTION, field: 'frequency_cap', path: 'frequency_cap', scope: 'buy', to: cap },
+    ]);
+    assert.deepStrictEqual(
+      decomposed.actions.map(a => a.action),
+      [FREQUENCY_CAP_ACTION]
+    );
+  });
+
+  test('clearing the shared cap (null) still maps to the same action', { skip: skipWithout }, () => {
+    const buy = buyWith([{ action: FREQUENCY_CAP_ACTION, mode: 'self_serve' }]);
+    const result = getActionForMutation(buy, { frequency_cap: null });
+    assert.deepStrictEqual(
+      result.map(a => a.action),
+      [FREQUENCY_CAP_ACTION]
+    );
+  });
+
+  test('preflight passes when available_actions[] advertises the action', { skip: skipWithout }, () => {
+    const buy = buyWith([{ action: FREQUENCY_CAP_ACTION, mode: 'requires_approval' }]);
+    const result = preflightUpdateMediaBuy(buy, { frequency_cap: { max_impressions: 3, per: 'user' } });
+    assert.strictEqual(result.ok, true);
+    assert.deepStrictEqual(result.modes, ['requires_approval']);
+    assert.strictEqual(result.requiresAsyncFlow, true);
+  });
+
+  test('preflight denies when only the package-level cap action is advertised', { skip: skipWithout }, () => {
+    const buy = buyWith([{ action: 'update_frequency_caps', mode: 'self_serve' }]);
+    const result = preflightUpdateMediaBuy(buy, { frequency_cap: { max_impressions: 3, per: 'user' } });
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(
+      result.denials.map(d => d.action),
+      [FREQUENCY_CAP_ACTION]
+    );
+  });
+
+  test('shared cap and package cap resolve to two distinct actions', { skip: skipWithout }, () => {
+    const buy = buyWith([
+      { action: FREQUENCY_CAP_ACTION, mode: 'self_serve' },
+      { action: 'update_frequency_caps', mode: 'self_serve' },
+    ]);
+    const result = getActionForMutation(buy, {
+      frequency_cap: { max_impressions: 3, per: 'user' },
+      packages: [{ package_id: 'pkg_1', targeting_overlay: { frequency_cap: { count: 3 } } }],
+    });
+    assert.deepStrictEqual(result.map(a => a.action).sort(), [FREQUENCY_CAP_ACTION, 'update_frequency_caps'].sort());
+  });
+
+  test('without a binding the field is ignored and a cap-only request is a no-op', { skip: skipWith }, () => {
+    const buy = buyWith([{ action: 'update_frequency_caps', mode: 'self_serve' }]);
+    assert.deepStrictEqual(getActionForMutation(buy, { frequency_cap: { max_impressions: 3, per: 'user' } }), []);
+    assert.throws(() => preflightUpdateMediaBuy(buy, { frequency_cap: null }), ValidationError);
   });
 });
