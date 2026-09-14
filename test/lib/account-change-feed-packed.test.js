@@ -35,6 +35,9 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
       sdk.parseAccountChangeNotification
     );
     assert.equal(requirePacked('@adcp/sdk/client').streamAccountChanges, sdk.streamAccountChanges);
+    for (const name of ['AccountChangeDrainError', 'AccountChangeCursorError', 'AccountChangeSubscriptionError']) {
+      assert.equal(typeof sdk[name], 'function');
+    }
     let calls = 0;
     const now = '2026-08-24T11:58:04Z';
     const server = createAdcpServer({
@@ -42,6 +45,18 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
       version: '1.0.0',
       stateStore: new sdk.InMemoryStateStore(),
       exposeToolSchemas: true,
+      capabilities: {
+        account: {
+          changeFeed: {
+            supported: true,
+            read_task: 'list_account_changes',
+            registration_task: 'sync_accounts',
+            event_type: 'account.change_recorded',
+            retention_days: 90,
+            resource_types: ['creative'],
+          },
+        },
+      },
       validation: { requests: 'off', responses: 'off' },
       accounts: {
         listAccountChanges: async request => {
@@ -87,6 +102,7 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
         validateFeatures: false,
         validation: { requests: 'strict', responses: 'strict' },
       });
+      assert.equal((await agent.getCapabilities()).account.changeFeed.supported, true);
       const empty = await agent.listAccountChanges({
         account: { account_id: 'acc_luma_shared' },
         starting_position: 'latest',
@@ -101,6 +117,8 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
           .streamAccountChanges(agent, {
             account: { account_id: 'acc_luma_shared' },
             cursor: sdk.restoreAccountChangeCursor('expired'),
+            resourceTypes: ['creative'],
+            maxResults: 100,
           })
           .next(),
         sdk.AccountChangeCursorExpiredError
@@ -117,7 +135,7 @@ test('packed account feed MCP schema, runtime semantics and cursor types', { tim
     writeFileSync(
       path.join(temp, 'consumer.ts'),
       `
-import { streamAccountChanges, restoreAccountChangeCursor, parseAccountChangeNotification, buildAccountChangeSubscriptionRequest, type AgentClient, type DurableAccountChangeCursor, type AdvisoryThroughCursor, type AccountChangeRecordedWebhook, type AccountChangeFailure, type AccountChangePage, type AccountChangeSourceCoverage } from '@adcp/sdk';
+import { streamAccountChanges, restoreAccountChangeCursor, parseAccountChangeNotification, buildAccountChangeSubscriptionRequest, type AgentClient, type DurableAccountChangeCursor, type AdvisoryThroughCursor, type AccountChangeRecordedWebhook, type AccountChangeFailure, type AccountChangePage, type AccountChangeSourceCoverage, AccountChangeCursorError, AccountChangeDrainError, AccountChangeSubscriptionError } from '@adcp/sdk';
 declare const client: AgentClient;
 declare const advisory: AdvisoryThroughCursor;
 // @ts-expect-error Advisory targets are not durable checkpoint identities.

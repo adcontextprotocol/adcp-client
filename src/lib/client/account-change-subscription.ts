@@ -1,4 +1,4 @@
-import { ADCPError } from '../errors';
+import { ADCPError, ConfigurationError } from '../errors';
 import type { SyncAccountsRequest } from '../types';
 import type { MutatingRequestInput } from '../utils/idempotency';
 import { getSchemaValidatorByRef } from '../validation/schema-loader';
@@ -32,7 +32,7 @@ export function buildAccountChangeSubscriptionRequest(options: {
   if (!Array.isArray(options.currentConfigs)) throw new AccountChangeSubscriptionError('currentConfigs');
   const configs = structuredClone([...options.currentConfigs]);
   const validator = getSchemaValidatorByRef('core/notification-config.json');
-  if (!validator) throw new Error('Bundled notification config schema is unavailable.');
+  if (!validator) throw new ConfigurationError('Bundled notification config schema is unavailable.', 'schemas');
   const seen = new Set<string>();
   for (const [index, config] of configs.entries()) {
     const subscriberId = config?.subscriber_id;
@@ -42,8 +42,26 @@ export function buildAccountChangeSubscriptionRequest(options: {
     seen.add(subscriberId);
   }
   const subscriber = structuredClone(options.subscriber);
+  if (
+    !subscriber ||
+    typeof subscriber !== 'object' ||
+    (subscriber.event_types !== undefined && !Array.isArray(subscriber.event_types))
+  ) {
+    throw new AccountChangeSubscriptionError('subscriber');
+  }
+  // Omitted optional fields are not deletion requests. Ignore explicit
+  // undefined from typed form/config builders before merging existing secrets.
+  for (const key of Object.keys(subscriber) as (keyof AccountChangeSubscriber)[]) {
+    if (subscriber[key] === undefined) delete subscriber[key];
+  }
   const index = configs.findIndex(config => config.subscriber_id === subscriber.subscriber_id);
   const previous = index === -1 ? undefined : configs[index];
+  if (previous && previous.url !== subscriber.url) {
+    // Readback may redact credentials: absence cannot prove that an endpoint
+    // change would not redirect an existing secret. Rotation is a separate
+    // seller-runtime operation, outside this additive registration builder.
+    throw new AccountChangeSubscriptionError('subscriber.url');
+  }
   const merged: AccountNotificationConfig = {
     ...previous,
     ...subscriber,

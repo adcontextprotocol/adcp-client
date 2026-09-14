@@ -1,3 +1,5 @@
+import { ADCPError } from '../errors';
+
 declare const cursorBrand: unique symbol;
 
 /** A webhook wake-up target. Never a durable checkpoint or a request cursor. */
@@ -14,6 +16,13 @@ export interface DurableAccountChangeCursor {
   readonly [cursorBrand]: 'checkpoint';
 }
 
+export class AccountChangeCursorError extends ADCPError {
+  readonly code = 'account_change_cursor_invalid';
+  constructor() {
+    super('Restore a non-empty persisted checkpoint of at most 4096 characters; advisory targets cannot be installed.');
+  }
+}
+
 /**
  * Restore a previously acknowledged cursor from adopter storage. The caller
  * must select the same seller, authenticated principal, account and filters.
@@ -21,7 +30,7 @@ export interface DurableAccountChangeCursor {
  */
 export function restoreAccountChangeCursor(value: string): DurableAccountChangeCursor {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4096) {
-    throw new TypeError('A persisted account change cursor must contain 1–4096 characters.');
+    throw new AccountChangeCursorError();
   }
   return Object.freeze({ kind: 'checkpoint', value }) as DurableAccountChangeCursor;
 }

@@ -24,31 +24,13 @@ const opts = {
   timeout: 180000,
 };
 
-test('merged #6811 published training storyboard passes every required phase', opts, async () => {
-  const storyboard = loadStoryboardFile(storyboardFile);
-  assert.equal(storyboard.id, 'media_buy_seller/account_change_feed');
-  const result = await runStoryboard(endpoint, storyboard, {
-    protocol: 'mcp',
-    auth: token ? { type: 'bearer', token } : undefined,
-    adcpVersion: sdk.ADCP_VERSION,
-    wireAdcpVersion,
-    transport: { allowPrivateIp: true },
-    webhook_receiver: { mode: 'loopback_mock' },
-    sandbox: true,
-  });
-  const failures = result.phases.flatMap(phase => phase.steps).filter(step => !step.passed || step.skipped);
-  assert.equal(result.overall_passed, true, JSON.stringify(failures, null, 2));
-  assert.equal(failures.length, 0, JSON.stringify(failures, null, 2));
-});
-
-test('SDK bootstrap, wake-up parsing, authoritative repair and expiry use the training scenario', opts, async () => {
+async function connectTrainingAgent() {
   const client = new Client({ name: 'account-feed-adopter-integration', version: '1.0.0' });
   await client.connect(
     new StreamableHTTPClientTransport(new URL(endpoint), {
       requestInit: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
     })
   );
-  const receiver = await createWebhookReceiver();
   const agent = sdk.AgentClient.fromMCPClient(client, {
     agentName: 'training-seller',
     adcpVersion: sdk.ADCP_VERSION,
@@ -56,6 +38,77 @@ test('SDK bootstrap, wake-up parsing, authoritative repair and expiry use the tr
     validateFeatures: false,
     validation: { requests: 'strict', responses: 'strict' },
   });
+  return { client, agent };
+}
+
+async function removeSubscriber(agent, subscriberId) {
+  const account = { account_id: 'acc_luma_shared' };
+  const listed = await agent.listAccounts({ account });
+  assert.equal(listed.success, true);
+  const configs = listed.data.accounts.find(row => row.account_id === account.account_id)?.notification_configs;
+  if (configs?.some(config => config.subscriber_id === subscriberId)) {
+    const result = await agent.syncAccounts({
+      accounts: [{ account, notification_configs: configs.filter(config => config.subscriber_id !== subscriberId) }],
+    });
+    assert.equal(result.success, true);
+  }
+}
+
+test('merged #6811 published training storyboard passes every required phase', opts, async () => {
+  // The generic runner resets named UUIDs at phase boundaries. This scenario
+  // deliberately refers to one creative across phases; instantiate its named
+  // fixtures once, keeping all published requests and assertions intact.
+  const ids = new Map();
+  const storyboard = JSON.parse(JSON.stringify(loadStoryboardFile(storyboardFile)), (_key, value) => {
+    if (typeof value !== 'string' || !value.startsWith('$generate:uuid_v4#')) return value;
+    if (!ids.has(value)) ids.set(value, randomUUID());
+    return ids.get(value);
+  });
+  assert.equal(storyboard.id, 'media_buy_seller/account_change_feed');
+  let result;
+  try {
+    result = await runStoryboard(endpoint, storyboard, {
+      protocol: 'mcp',
+      auth: token ? { type: 'bearer', token } : undefined,
+      adcpVersion: sdk.ADCP_VERSION,
+      wireAdcpVersion,
+      transport: { allowPrivateIp: true },
+      webhook_receiver: { mode: 'loopback_mock' },
+      contracts: ['webhook_receiver_runner'],
+      sandbox: true,
+    });
+  } finally {
+    const { client, agent } = await connectTrainingAgent();
+    try {
+      await removeSubscriber(agent, 'account-change-runner');
+    } finally {
+      await client.close();
+    }
+  }
+  const failures = result.phases.flatMap(phase => phase.steps).filter(step => !step.passed || step.skipped);
+  assert.equal(
+    result.overall_passed,
+    true,
+    JSON.stringify(
+      failures.map(({ step_id, error, validations, skipped }) => ({ step_id, error, validations, skipped })),
+      null,
+      2
+    )
+  );
+  assert.equal(
+    failures.length,
+    0,
+    JSON.stringify(
+      failures.map(({ step_id, error, validations, skipped }) => ({ step_id, error, validations, skipped })),
+      null,
+      2
+    )
+  );
+});
+
+test('SDK bootstrap, wake-up parsing, authoritative repair and expiry use the training scenario', opts, async () => {
+  const { client, agent } = await connectTrainingAgent();
+  const receiver = await createWebhookReceiver();
   const account = { account_id: 'acc_luma_shared' };
   const subscriberId = `sdk-${randomUUID()}`;
   const resourceTypes = ['creative'];
@@ -116,7 +169,7 @@ test('SDK bootstrap, wake-up parsing, authoritative repair and expiry use the tr
     const seed = structuredClone(steps.find(step => step.id === 'seed_connected_creative').sample_request);
     const creativeId = randomUUID();
     seed.params.creative_id = creativeId;
-    seed.adcp_version = wireAdcpVersion ?? sdk.ADCP_VERSION.replace(/^(\d+\.\d+)\.\d+/, '$1');
+    seed.adcp_version = wireAdcpVersion ?? sdk.toReleasePrecisionWire(sdk.ADCP_VERSION);
     const seeded = await client.callTool({ name: 'comply_test_controller', arguments: seed });
     assert.equal(seeded.structuredContent.success, true, JSON.stringify(seeded));
     const delivered = await receiver.wait(
@@ -163,7 +216,11 @@ test('SDK bootstrap, wake-up parsing, authoritative repair and expiry use the tr
     await drain();
     assert.deepEqual(rebuilds, ['initial', 'cursor_expired']);
   } finally {
-    await client.close();
-    await receiver.close();
+    try {
+      await removeSubscriber(agent, subscriberId);
+    } finally {
+      await client.close();
+      await receiver.close();
+    }
   }
 });

@@ -1,9 +1,14 @@
-import { ADCPError } from '../errors';
+import { ADCPError, ConfigurationError } from '../errors';
 import type { AgentClient } from '../core/AgentClient';
 import type { ListAccountChangesRequest, ListAccountChangesResponse } from '../types';
 import type { TaskResult, TaskOptions } from '../core/ConversationTypes';
 import { getSchemaValidatorByRef } from '../validation/schema-loader';
-import { restoreAccountChangeCursor, type DurableAccountChangeCursor } from './account-change-cursor';
+import {
+  restoreAccountChangeCursor,
+  AccountChangeCursorError,
+  type DurableAccountChangeCursor,
+} from './account-change-cursor';
+import { assertAccountChangeJsonSize } from './account-change-json';
 
 export type AccountChangePage = Extract<ListAccountChangesResponse, { status: 'completed' }>;
 export type AccountChangeFailure = Extract<ListAccountChangesResponse, { status: 'failed' }>;
@@ -78,8 +83,20 @@ export async function* streamAccountChanges(
   client: Pick<AgentClient, 'listAccountChanges'>,
   options: StreamAccountChangesOptions
 ): AsyncGenerator<AccountChangeDrainPage, void, void> {
+  if (options.resourceTypes?.length === 0) {
+    throw new ConfigurationError(
+      'Omit resourceTypes for an unfiltered feed; an explicit filter must be nonempty.',
+      'resourceTypes'
+    );
+  }
+  if (
+    options.maxResults !== undefined &&
+    (!Number.isInteger(options.maxResults) || options.maxResults < 1 || options.maxResults > 100)
+  ) {
+    throw new ConfigurationError('maxResults must be an integer between 1 and 100.', 'maxResults');
+  }
   const account = structuredClone(options.account);
-  const resourceTypes = options.resourceTypes ? [...options.resourceTypes] : undefined;
+  const resourceTypes = options.resourceTypes ? [...new Set(options.resourceTypes)].sort() : undefined;
   const request: ListAccountChangesRequest = {
     account,
     ...(resourceTypes && { resource_types: resourceTypes }),
@@ -89,8 +106,8 @@ export async function* streamAccountChanges(
   const taskOptions = options.taskOptions;
   let cursor: string | undefined;
   if (options.cursor !== undefined) {
-    if (options.cursor.kind !== 'checkpoint') {
-      throw new AccountChangeDrainError('account_change_page_invalid', 'An acknowledged checkpoint is required.');
+    if (options.cursor?.kind !== 'checkpoint') {
+      throw new AccountChangeCursorError();
     }
     cursor = restoreAccountChangeCursor(options.cursor.value).value;
   }
@@ -104,7 +121,11 @@ export async function* streamAccountChanges(
     );
     if (!result.success) {
       if (result.adcpError?.code === 'CURSOR_EXPIRED') throw new AccountChangeCursorExpiredError(result);
-      throw new AccountChangeDrainError('account_change_read_failed', result.error, result);
+      throw new AccountChangeDrainError(
+        'account_change_read_failed',
+        'Account change read failed. Inspect result for diagnostics.',
+        result
+      );
     }
     if (result.status !== 'completed') {
       throw new AccountChangeDrainError(
@@ -113,9 +134,22 @@ export async function* streamAccountChanges(
         result
       );
     }
-    const page = structuredClone(result.data);
+    let page: ListAccountChangesResponse;
+    try {
+      // Up to 100 records of 64 KiB plus bounded page metadata. Check before
+      // cloning to avoid multiplying a malformed response's memory footprint.
+      assertAccountChangeJsonSize(result.data, 7 * 1024 * 1024);
+      page = structuredClone(result.data);
+    } catch {
+      throw new AccountChangeDrainError(
+        'account_change_page_invalid',
+        'Account change page exceeds JSON bounds.',
+        result
+      );
+    }
     const validator = getSchemaValidatorByRef('account/list-account-changes-response.json');
-    if (!validator || !validator(page)) {
+    if (!validator) throw new ConfigurationError('Bundled account change response schema is unavailable.', 'schemas');
+    if (!validator(page)) {
       throw new AccountChangeDrainError('account_change_page_invalid', 'Invalid account change feed response.', result);
     }
     if (page.status === 'failed') {
@@ -127,6 +161,15 @@ export async function* streamAccountChanges(
       );
     }
     for (const change of page.changes) {
+      try {
+        assertAccountChangeJsonSize(change, 64 * 1024);
+      } catch {
+        throw new AccountChangeDrainError(
+          'account_change_page_invalid',
+          'Account change record exceeds 64 KiB.',
+          result
+        );
+      }
       if (
         change.resource.account_id !== account.account_id ||
         (change.resource.type === 'account' && change.resource.resource_id !== change.resource.account_id) ||
@@ -151,10 +194,10 @@ export async function* streamAccountChanges(
 
   const rebuild = async (error?: AccountChangeCursorExpiredError) => {
     const latest = await read({ starting_position: 'latest' });
-    if (latest.has_more || latest.changes.length !== 0) {
+    if (latest.has_more) {
       throw new AccountChangeDrainError(
         'account_change_page_invalid',
-        'Latest must return an empty ingestion-tail checkpoint.'
+        'Latest must return the ingestion-tail checkpoint.'
       );
     }
     await bootstrap!({

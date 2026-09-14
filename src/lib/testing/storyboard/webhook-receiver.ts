@@ -136,6 +136,14 @@ export interface CapturedWebhookChallenge {
 
 /** Match predicate applied when waiting for a webhook. */
 export interface WebhookFilter {
+  /** Millisecond observation boundary captured before the triggering request. */
+  received_at_or_after?: number;
+  /** Exact registered path, including query, relative to the receiver base. */
+  path?: string;
+  /** Internal observation guard: previously observed account/change identities. */
+  exclude_account_changes?: ReadonlySet<string>;
+  /** Body paths that must exist with a non-null value (published wildcard selector). */
+  present?: readonly string[];
   /** Restrict matches to this step id's URL. */
   step_id?: string;
   /** Restrict matches to this operation id. */
@@ -561,8 +569,17 @@ function parseBody(raw: string, contentType: string | undefined): Pick<CapturedW
 // ────────────────────────────────────────────────────────────
 
 function matchesFilter(webhook: CapturedWebhook, filter: WebhookFilter): boolean {
+  if (filter.received_at_or_after !== undefined && webhook.received_at < filter.received_at_or_after) return false;
+  if (filter.path !== undefined && webhook.path !== filter.path) return false;
   if (filter.step_id && webhook.step_id !== filter.step_id) return false;
   if (filter.operation_id && webhook.operation_id !== filter.operation_id) return false;
+  if (
+    filter.exclude_account_changes?.has(
+      JSON.stringify([resolveDottedPath(webhook.body, 'account_id'), resolveDottedPath(webhook.body, 'change_id')])
+    )
+  )
+    return false;
+  if (filter.present?.some(key => resolveDottedPath(webhook.body, key) == null)) return false;
   if (filter.body && Object.keys(filter.body).length > 0) {
     if (webhook.body === undefined) return false;
     for (const [path, expected] of Object.entries(filter.body)) {

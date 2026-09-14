@@ -4,6 +4,7 @@ The account change feed is an optional AdCP 3.2 capability. Existing generated
 `listAccountChanges()` methods, request/response types and notification enums
 remain the raw wire API. The SDK now adds `streamAccountChanges()`,
 `parseAccountChangeNotification()` and `buildAccountChangeSubscriptionRequest()`
+(with `normalizeAccountChangeNotification` as an alias of the parser)
 on `@adcp/sdk` and `@adcp/sdk/client`; the parser is also available from
 `@adcp/sdk/webhooks`.
 
@@ -39,7 +40,12 @@ const result = await agent.syncAccounts(buildAccountChangeSubscriptionRequest({
 empty. The builder produces a settings-only account update, merges by
 `subscriber_id`, retains other subscribers and adds `account.change_recorded`
 without dropping that subscriber's other event selections. It rejects duplicate
-subscriber IDs. It does not provision accounts or set `delete_missing`.
+subscriber IDs and rejects endpoint changes for an existing subscriber
+(`field: subscriber.url`), because readback may hide credentials. Rotate
+endpoints through the seller's authenticated subscription management flow. Set `active: true` explicitly to reactivate an
+inactive subscription. This builder adds event selections; remove unwanted selections
+from the current subscriber entry before building, or use the raw settings API
+for removal. It does not provision accounts or set `delete_missing`.
 
 The wire update replaces the account's subscriber set. Serialize the
 read/modify/write operation with other writers in your runtime; this builder
@@ -83,8 +89,11 @@ for await (const page of streamAccountChanges(agent, {
 ```
 
 `partition` must identify the seller, authenticated principal, resolved account
-and normalized resource filter set. Keep it fixed across continuation calls.
-Changing a filter or account requires a separate checkpoint/bootstrap; reusing
+and normalized resource filter set. The guarded API requires an `account_id`;
+resolve natural account references with `listAccounts()` first. Keep it fixed across continuation calls.
+The stream sorts and deduplicates resource filters. Omit `resourceTypes` for an
+unfiltered feed; an empty array or `maxResults` outside 1–100 is a
+`ConfigurationError`. Changing a filter or account requires a separate checkpoint/bootstrap; reusing
 an old cursor under a changed filter can skip history and the seller rejects it.
 Do not infer shared access from equal buyer-visible account IDs.
 
@@ -117,7 +126,9 @@ sequence: new `latest` checkpoint → authoritative snapshot rebuild → drain �
 acknowledge. Rebuild can remove data no longer authorized. The helper reboots
 at most once per invocation; repeated expiry is surfaced instead of looping.
 If rebuilding fails, no replacement checkpoint is offered. Other failures,
-including `INVALID_REQUEST` for filter/account mismatch, never silently restart.
+including `INVALID_REQUEST` for filter/account mismatch, never silently restart. Correct the scope or seller error before retrying. If
+you deliberately abandon a checkpoint, rebuild all snapshots with a new
+`latest` position; never skip an incompatible page.
 
 Without a bootstrap hook, or on repeated expiry, catch
 `AccountChangeCursorExpiredError` (`code: 'CURSOR_EXPIRED'`,
@@ -130,7 +141,10 @@ own their own bootstrap state machine.
 `account_change_page_invalid`, `account_change_checkpoint_unacknowledged`,
 `account_change_checkpoint_closed` and
 `account_change_checkpoint_commit_in_progress`. Read errors retain `result`.
-Hook exceptions propagate unchanged. Public type aliases `AccountChangePage`,
+`AccountChangeCursorError` (`account_change_cursor_invalid`) identifies invalid
+stored cursor bytes or an advisory cursor supplied to the guarded stream. A
+missing bundled schema throws `ConfigurationError`, distinct from seller data
+errors. Hook exceptions propagate unchanged. Public type aliases `AccountChangePage`,
 `AccountChangeFailure` and `AccountChangeSourceCoverage` derive from the existing
 wire types.
 
@@ -153,7 +167,10 @@ await scheduleDrain(partition);
 ```
 
 The parser accepts JSON strings, UTF-8 bytes or parsed objects and validates the
-published schema. It checks `notification_id === change_id`, the expected
+published schema. The default body limit is 64 KiB, adjustable via the third
+argument `{ maxBytes }`; cyclic, non-JSON and excessively nested objects are
+rejected before cloning. Feed records remain limited to the protocol's 64 KiB.
+It checks `notification_id === change_id`, the expected
 account/subscriber and any nested account identity. When a matching record or
 prior notification is supplied, it also checks resource type/ID/parents, action,
 recorded time and logical identity. The same retry key requires the same fire
@@ -165,6 +182,11 @@ Deduplicate delivery retries by authenticated sender, account, subscriber and
 The parser does not store deduplication state. Unknown resource types and action
 names remain generic invalidations; choose an authoritative snapshot repair or
 an explicit unsupported-coverage policy instead of silently discarding them.
+Treat resource IDs, parent IDs, summaries, reasons, actor labels, paths and
+extensions as untrusted data: never interpolate them into system instructions,
+execute them or use them as authorization evidence. Raw error `result` values
+are also untrusted diagnostics.
+
 Malformed deliveries throw `AccountChangeNotificationError`, whose `code` is
 `account_change_body_malformed`, `account_change_schema_invalid` or
 `account_change_identity_mismatch`, with a `field` and no reflected payload.
@@ -198,3 +220,45 @@ Run it against a local/test training deployment with account-change capability
 enabled; hosted production intentionally disables this process-local feed until
 it has durable storage. See the test's environment options for endpoint and
 webhook receiver configuration.
+
+For a reproducible integration (Docker with Node 22), use the [companion training
+seller fix](https://github.com/adcontextprotocol/adcp/pull/7516). Install that checkout's dependencies and run the
+SDK's launcher, which mounts the upstream router and its session persistence:
+
+```bash
+git clone https://github.com/adcontextprotocol/adcp.git .context/account-feed/upstream
+git -C .context/account-feed/upstream checkout 1c70359cd
+npm --prefix .context/account-feed/upstream ci --ignore-scripts
+docker run --rm --network host \
+  -v "$PWD:$PWD" -w "$PWD" node:22-bookworm-slim \
+  node --import "$PWD/.context/account-feed/upstream/node_modules/tsx/dist/loader.mjs" \
+  test/helpers/account-feed-training-server.mjs
+```
+
+In a second terminal after `npm run build:lib`, use the endpoint and supported
+wire version printed by the launcher:
+
+```bash
+ADCP_ACCOUNT_FEED_TRAINING_URL=http://127.0.0.1:4787/api/training-agent/sales/mcp \
+ADCP_ACCOUNT_FEED_TRAINING_TOKEN=account-feed-local-test-token \
+ADCP_ACCOUNT_FEED_WIRE_VERSION=3.2-rc.1 \
+node --test test/e2e/account-change-feed-training.test.js
+```
+
+The training seller's supported wire checkpoint can lag its repository's
+published schema version. The test validates against the SDK's pinned published
+schema and storyboard bundle; the wire override selects a release that the
+seller actually serves. The rc.2 and rc.3 account-feed storyboard is identical.
+
+The runner understands the published flat account-change webhook selectors and
+requires distinct logical changes for successive observations on the registered
+subscriber URL, after the triggering request began. The test materializes named
+fixture UUIDs once across phases; all published response assertions remain
+enabled. The launcher contains no seller handlers or replacement response data.
+
+The companion fix updates the shared creative snapshot before exposing its
+status-change record and webhook, so the subsequent authoritative
+`list_creatives` repair sees the recorded status. It also declares the existing
+creative library needed by the scenario's applicability check. Those training
+seller changes belong upstream; they do not introduce buyer durable storage or
+a persistent subscription runtime into the SDK.

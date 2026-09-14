@@ -305,14 +305,14 @@ test('snapshot failure and malformed pages expose no durable checkpoint', async 
     );
   await assert.rejects(
     streamAccountChanges(reader([]), { account, cursor: parse(webhook(), identity).throughCursor }).next(),
-    { code: 'account_change_page_invalid' }
+    { code: 'account_change_cursor_invalid' }
   );
 });
 
 test('registration merges subscriber identity without dropping sibling subscribers or event selections', () => {
   const existing = [
     { subscriber_id: 'audit', url: 'https://audit.example/hooks', event_types: ['creative.purged'], active: false },
-    { subscriber_id: 'buyer-primary', url: 'https://buyer.example/old', event_types: ['creative.status_changed'] },
+    { subscriber_id: 'buyer-primary', url: 'https://buyer.example/hooks', event_types: ['creative.status_changed'] },
   ];
   const original = structuredClone(existing);
   const request = buildAccountChangeSubscriptionRequest({
@@ -368,4 +368,183 @@ test('normalized capabilities retain the existing change-feed declaration withou
   assert.deepEqual(parseCapabilitiesResponse({ account: { change_feed: { supported: false } } }).account.changeFeed, {
     supported: false,
   });
+});
+
+test('bounded JSON and diagnostic fields do not reflect seller-controlled dictionary keys', async () => {
+  const secret = 'secret-key\nforged-log-line';
+  const input = webhook({ resource: { type: 'creative', resource_id: 'cr_8421', parent_ids: { [secret]: 42 } } });
+  assert.throws(
+    () => parse(input, identity),
+    error => {
+      assert.ok(error instanceof AccountChangeNotificationError);
+      assert.equal(error.field, 'resource.parent_ids');
+      assert.ok(!JSON.stringify(error).includes('secret-key'));
+      assert.ok(!error.message.includes('forged-log-line'));
+      return true;
+    }
+  );
+  const large = webhook({ ext: { vendor: 'x'.repeat(70 * 1024) } });
+  assert.throws(() => parse(large, identity), { code: 'account_change_body_malformed' });
+  assert.equal(parse(large, identity, { maxBytes: 100 * 1024 }).changeId, large.change_id);
+  const cyclic = webhook();
+  cyclic.resource.cycle = cyclic;
+  assert.throws(() => parse(cyclic, identity), { code: 'account_change_body_malformed' });
+  await assert.rejects(
+    streamAccountChanges(reader([success(page('c1', [change({ ext: { vendor: 'x'.repeat(64 * 1024) } })]))]), {
+      account,
+    }).next(),
+    { code: 'account_change_page_invalid' }
+  );
+  const failure = { ...expired(), error: 'WRONGPASS user:password', adcpError: { code: 'SERVICE_UNAVAILABLE' } };
+  await assert.rejects(streamAccountChanges(reader([failure]), { account }).next(), error => {
+    assert.ok(!error.message.includes('password'));
+    assert.equal(error.result, failure);
+    return true;
+  });
+});
+
+test('equivalent timestamp encodings retain identity without losing fractional precision', () => {
+  const previous = parse(webhook(), identity);
+  assert.equal(
+    parse(webhook({ recorded_at: '2026-08-24T12:58:04.000+01:00', fired_at: '2026-08-24T11:58:05.0Z' }), {
+      ...identity,
+      previous,
+      change: change(),
+    }).changeId,
+    previous.changeId
+  );
+  assert.throws(() => parse(webhook({ recorded_at: '2026-08-24T11:58:04.0001Z' }), { ...identity, previous }), {
+    code: 'account_change_identity_mismatch',
+  });
+});
+
+test('registration refuses to carry old credentials to a new endpoint', () => {
+  assert.throws(
+    () =>
+      buildAccountChangeSubscriptionRequest({
+        account,
+        currentConfigs: [
+          {
+            subscriber_id: 'primary',
+            url: 'https://old.example/hook',
+            event_types: ['account.change_recorded'],
+            authentication: { schemes: ['HMAC-SHA256'], credentials: 'old-endpoint-secret-at-least-32-bytes' },
+          },
+        ],
+        subscriber: { subscriber_id: 'primary', url: 'https://new.example/hook' },
+      }),
+    { code: 'account_change_subscription_invalid', field: 'subscriber.url' }
+  );
+});
+
+test('payload failure, coverage, task options and nonempty latest responses retain their contracts', async () => {
+  const failure = success({
+    status: 'failed',
+    adcp_error: { code: 'CURSOR_EXPIRED', message: 'expired', recovery: 'correctable' },
+    errors: [{ code: 'CURSOR_EXPIRED', message: 'expired', recovery: 'correctable' }],
+  });
+  await assert.rejects(
+    streamAccountChanges(reader([failure]), { account }).next(),
+    error => error instanceof AccountChangeCursorExpiredError && error.result === failure
+  );
+  const taskOptions = { timeout: 10000 };
+  const coverage = [
+    {
+      kind: 'connected_platform',
+      source_id: 'c1',
+      resource_types: ['creative'],
+      status: 'delayed',
+      last_successful_sync_at: timestamp,
+      stale_after_seconds: 300,
+    },
+  ];
+  const responses = [success(page('c0', [change()])), success({ ...page('c1'), source_coverage: coverage })];
+  const client = {
+    async listAccountChanges(request, handler, options) {
+      assert.equal(handler, undefined);
+      assert.equal(options, taskOptions);
+      assert.deepEqual(request.resource_types, ['creative', 'media_buy']);
+      return responses.shift();
+    },
+  };
+  for await (const item of streamAccountChanges(client, {
+    account,
+    resourceTypes: ['media_buy', 'creative', 'creative'],
+    taskOptions,
+    bootstrap: async () => {},
+  })) {
+    assert.deepEqual(item.source_coverage, coverage);
+    await item.acknowledge(async cursor => assert.equal(cursor.value, 'c1'));
+  }
+});
+
+test('array iterator overrides, extra properties, accessors and sparse lengths cannot bypass JSON bounds', () => {
+  const values = ['x'.repeat(70 * 1024)];
+  values[Symbol.iterator] = function* () {};
+  const extra = [];
+  extra.hiddenPayload = 'x'.repeat(70 * 1024);
+  const accessor = [];
+  Object.defineProperty(accessor, '0', {
+    get() {
+      assert.fail('must not invoke accessor');
+    },
+    enumerable: true,
+  });
+  for (const array of [values, extra, accessor, new Array(1_000_000)]) {
+    assert.throws(() => parse(webhook({ ext: { vendor: array } }), identity), {
+      code: 'account_change_body_malformed',
+    });
+  }
+});
+
+test('repeated expiry surfaces after one rebootstrap and invalid restored bytes have a dedicated error', async () => {
+  let rebuilds = 0;
+  await assert.rejects(
+    streamAccountChanges(reader([expired(), success(page('fresh')), expired()]), {
+      account,
+      cursor: restore('expired'),
+      bootstrap: async () => {
+        rebuilds++;
+      },
+    }).next(),
+    AccountChangeCursorExpiredError
+  );
+  assert.equal(rebuilds, 1);
+  for (const value of ['', 'x'.repeat(4097), null, parse(webhook(), identity).throughCursor]) {
+    assert.throws(() => restore(value), { code: 'account_change_cursor_invalid' });
+  }
+});
+
+test('omitted optional registration fields preserve credentials and invalid drain options fail before reads', async () => {
+  const authentication = { schemes: ['HMAC-SHA256'], credentials: 'existing-secret-at-least-32-bytes' };
+  const request = buildAccountChangeSubscriptionRequest({
+    account,
+    currentConfigs: [
+      {
+        subscriber_id: 'primary',
+        url: 'https://buyer.example/hook',
+        event_types: ['account.change_recorded'],
+        authentication,
+      },
+    ],
+    subscriber: { subscriber_id: 'primary', url: 'https://buyer.example/hook', authentication: undefined },
+  });
+  assert.deepEqual(request.accounts[0].notification_configs[0].authentication, authentication);
+  for (const options of [{ resourceTypes: [] }, { maxResults: 0 }, { maxResults: 101 }, { maxResults: 1.5 }]) {
+    await assert.rejects(streamAccountChanges(reader([]), { account, ...options }).next(), sdk.ConfigurationError);
+  }
+});
+
+test('redacted readback does not authorize moving an existing subscriber endpoint', () => {
+  assert.throws(
+    () =>
+      buildAccountChangeSubscriptionRequest({
+        account,
+        currentConfigs: [
+          { subscriber_id: 'primary', url: 'https://old.example/hook', event_types: ['account.change_recorded'] },
+        ],
+        subscriber: { subscriber_id: 'primary', url: 'https://new.example/hook' },
+      }),
+    { code: 'account_change_subscription_invalid', field: 'subscriber.url' }
+  );
 });
