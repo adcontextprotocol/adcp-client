@@ -254,19 +254,47 @@ describe('rc.3 buyer posting deadline and chain identity', () => {
     // capabilities, not on the obligation, so the ledger cannot supply it. If a
     // missing pin defaulted to overdue, every reconcile would post a status for
     // every period immediately — the opposite of posting by the deadline.
-    const plan = planFor(expectedPeriod(), new Date('2030-01-01T00:00:00Z'));
+    const plan = planFor(expectedPeriod({ deliverySlaSeconds: 3600 }), new Date('2030-01-01T00:00:00Z'));
     assert.equal(plan.consumerStatus, 'obligation_missing');
     assert.equal(plan.deadline, undefined);
     assert.equal(plan.overdue, false, 'no pin means no auto-post, not an immediate one');
   });
 
-  test('a pinned recovery window produces the deadline and flips overdue across it', () => {
-    const expected = expectedPeriod({ automatedRecoveryWindowSeconds: 3600 });
-    const before = planFor(expected, new Date('2026-09-02T00:30:00Z'));
-    const after = planFor(expected, new Date('2026-09-02T01:30:00Z'));
+  test('an unpinned delivery SLA marks nothing overdue, because expected_at is underivable', () => {
+    // obligation_missing exists precisely when there is no obligation to read
+    // expected_at from, and `expected_period` makes the statement valid only at
+    // or after expected_at. Without the SLA pin the buyer cannot date it, and a
+    // guess would be rejected by a conformant seller.
+    const plan = planFor(expectedPeriod({ automatedRecoveryWindowSeconds: 3600 }), new Date('2030-01-01T00:00:00Z'));
+    assert.equal(plan.deadline, undefined);
+    assert.equal(plan.overdue, false);
+  });
 
-    assert.equal(before.deadline, '2026-09-02T01:00:00.000Z', 'period end + the recovery window');
+  test('a pinned recovery window produces the deadline and flips overdue across it', () => {
+    const expected = expectedPeriod({ deliverySlaSeconds: 1800, automatedRecoveryWindowSeconds: 3600 });
+    const before = planFor(expected, new Date('2026-09-02T01:00:00Z'));
+    const after = planFor(expected, new Date('2026-09-02T02:00:00Z'));
+
+    // period end + delivery_sla + recovery window, not period end + window:
+    // expected_at is the period end plus the SLA, and the recovery window runs
+    // from expected_at.
+    assert.equal(before.deadline, '2026-09-02T01:30:00.000Z');
     assert.equal(before.overdue, false);
     assert.equal(after.overdue, true);
+  });
+
+  test('obligation_missing is dated at expected_at, not the period end', () => {
+    // status-ingest rejects a missing-status statement dated before expected_at
+    // with 'missing status precedes expected_at', so dating it from the period
+    // end makes every missing period fail silently at the seller.
+    const plan = planFor(
+      expectedPeriod({ deliverySlaSeconds: 1800, automatedRecoveryWindowSeconds: 3600 }),
+      new Date('2026-09-03T00:00:00Z')
+    );
+    assert.equal(plan.statusAsOf, '2026-09-02T00:30:00.000Z');
+    assert.ok(
+      Date.parse(plan.statusAsOf) >= Date.parse(PERIOD_END),
+      'status_as_of is at or after expected_at, which is at or after the period end'
+    );
   });
 });

@@ -8,7 +8,7 @@ Add the AdCP 3.2.0-rc.3 buyer-side consumer-status loop to `reconcileReporting`.
 `mismatch_code` — `scope_media_buy_missing`, `coverage_short`, `metric_missing`,
 `schema_nonconformant`, `currency_mismatch`, `period_mismatch`.
 
-Four of the six are **row-level** predicates that obligation and revision *metadata* cannot decide,
+Four of the six are **row-level** predicates that obligation and revision _metadata_ cannot decide,
 and they stay silent unless the caller passes `ReportingRowEvidenceV1` describing what it actually
 read. `scope_media_buy_missing` in particular cannot be decided from `media_buy_ids`, which
 `reporting-revision.json` defines as the denominator "inherited from the obligation, including buys
@@ -24,20 +24,45 @@ somewhere the seller can neither resolve nor ignore. Precedence follows the spec
 pins (`metric_missing` before `schema_nonconformant`) and is otherwise most-structural-first and
 stable, so the code does not flap between reads of the same bytes.
 
+**`received` is earned, not echoed.** `observed_revision_content_sha256` is defined as the binding
+digest _"independently recomputed from the exact consumed Core revision binding"_. The reconciler
+now pages `reporting_rows` for the exact revision through a new optional
+`ReportingReconciliationClient.getMediaBuyDelivery`, concatenates them in cursor order, and
+recomputes SHA-256 of RFC 8785 JCS over `{reporting_revision_id,row_count,control_totals,reporting_rows}`
+itself. A read that fails, returns no exact-revision binding, or does not hash to the digest the
+seller published becomes `unreadable` with the matching `failure_code` rather than a `received`
+— and a digest that did not verify is never attached to anything. `content_mismatch` requires the
+same recomputed binding, so it too only fires on bytes the buyer actually read. Without the client
+method nothing is attested and nothing is posted for those two statuses
+(`suppressed: 'consumption_unavailable'`): attesting a consumption that did not happen is the one
+outcome worse than silence. `status_as_of` is the buyer's own consumption instant, floored by the
+superseded leaf's `status_as_of` so a chain never moves backwards.
+
 **Posting against the deadline.** `ReportingReconciliationResult.consumerStatuses` plans a status for
 every expected period with its `expected_at` + `automated_recovery_window_seconds` deadline and an
-`overdue` flag. That window is advertised on the delivery **capabilities**, not on the obligation, so
-it comes from a new optional `ExpectedReportingPeriod.automatedRecoveryWindowSeconds` pin; without it
-nothing is marked overdue and nothing is auto-posted, because posting on a guessed clock would churn
-the status chain. Each planned statement also carries the seller-published
-`current_consumer_status_id` as `supersedes_reporting_status_id`, and its `reporting_status_id` is
-derived from the statement's own content so an exact retry reuses the ID instead of forking the
-chain. When the client supplies the new optional `syncReportingStatus`, overdue statuses are
-posted — the rc.3 duty is that clock, not scope close, and a buyer still retrying posts
-`revision_missing` and supersedes later rather than staying silent. `postedConsumerStatuses` reports
-what the seller actually recorded, so a per-item failure in the partial-success batch is never
-counted as posted. Without the client method the reconciler still plans everything and reports it,
-so existing adopters are unaffected.
+`overdue` flag. `expected_at` comes from the obligation when there is one, and otherwise from
+`period.end` plus a new optional `ExpectedReportingPeriod.deliverySlaSeconds` pin — `obligation_missing`
+exists precisely when no obligation is there to read it from, and `expected_period` makes that
+statement valid only at or after `expected_at`, so dating it from the period end has a conformant
+seller reject every one. The recovery window is advertised on the delivery **capabilities**, not on
+the obligation, so it comes from `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. Missing
+either pin marks nothing overdue and posts nothing, because posting on a guessed clock would churn
+the status chain.
+
+**Saying nothing when there is nothing to say.** Each plan names the caller's current leaf in
+`supersedes_reporting_status_id` — resolved from the caller's own append-only history, now loaded
+onto `ReportingLedger.consumerStatuses`, so the chain is named even before any obligation exists.
+When that leaf already carries the same claim, the plan comes back `suppressed: 'unchanged'` and is
+not posted: `immutability` allows a new ID only for changed status, and re-posting would supersede a
+statement with its own duplicate on every reconcile, which `retention_and_limits` calls pathological
+churn. A leaf the seller names but does not disclose suppresses the post too, rather than guessing.
+
+When the client supplies the new optional `syncReportingStatus`, overdue, unsuppressed, attested
+statuses are posted — the rc.3 duty is that clock, not scope close. `postedConsumerStatuses` reports
+what the seller actually recorded, and the new `failedConsumerStatuses` carries item-local
+rejections with the errors the seller returned, so a partial-success batch never loses one silently.
+Without the client method the reconciler still plans everything and reports it, so existing adopters
+are unaffected.
 
 **Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
 deadline with no current status; a failed read leaves it `undefined` rather than failing
