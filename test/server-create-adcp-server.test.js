@@ -791,14 +791,28 @@ describe('createAdcpServer', () => {
           },
         },
       });
-      const response = await callToolRaw(server, 'sync_reporting_status', {
+      const base = {
         account: { account_id: 'account-reporting-status' },
         idempotency_key: 'reporting-status-closed-envelope-0001',
         statuses: [{ reporting_status_id: 'reporting-status-valid-0001' }],
-        unexpected: true,
-      });
-      assert.equal(response.isError, true);
-      assert.equal(response.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      };
+      const invalidEnvelopes = [
+        { ...base, unexpected: true },
+        { ...base, context: 42 },
+        { ...base, ext: 42 },
+        {
+          ...base,
+          account: {
+            brand: { domain: 'buyer.example', brand_kit_override: { colors: { accent: '#123456' } } },
+            operator: 'operator.example',
+          },
+        },
+      ];
+      for (const request of invalidEnvelopes) {
+        const response = await callToolRaw(server, 'sync_reporting_status', request);
+        assert.equal(response.isError, true);
+        assert.equal(response.structuredContent.adcp_error.code, 'VALIDATION_ERROR');
+      }
       assert.equal(calls, 0);
     });
 

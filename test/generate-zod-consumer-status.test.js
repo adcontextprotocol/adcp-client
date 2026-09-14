@@ -90,6 +90,18 @@ const cases = [
   },
   { id: 'valid-request', schema: 'request', value: request(validStatuses[0]), expected: true },
   {
+    id: 'request-received-missing-evidence',
+    schema: 'request',
+    value: request(
+      status('received', {
+        reporting_obligation_id: undefined,
+        reporting_revision_id: undefined,
+        observed_revision_content_sha256: undefined,
+      })
+    ),
+    expected: false,
+  },
+  {
     id: 'caller-recorded-at',
     schema: 'request',
     value: request(status('received', { recorded_at: '2026-03-09T05:00:01Z' })),
@@ -118,6 +130,19 @@ const cases = [
     id: 'recorded-missing-recorded-at',
     schema: 'response',
     value: response({ result: 'recorded', consumer_status: validStatuses[0] }),
+    expected: false,
+  },
+  {
+    id: 'response-received-missing-evidence',
+    schema: 'response',
+    value: response({
+      result: 'recorded',
+      consumer_status: status('received', {
+        reporting_obligation_id: undefined,
+        reporting_revision_id: undefined,
+        observed_revision_content_sha256: undefined,
+      }),
+    }),
     expected: false,
   },
   {
@@ -173,10 +198,15 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema, SyncReportingStatusResponseSchema } from ${JSON.stringify(GENERATED)};
 const schemas = { status: ReportingConsumerStatusSchema, request: SyncReportingStatusRequestSchema, response: SyncReportingStatusResponseSchema };
 const cases = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf8'));
+const issueCases = new Set(['received-missing-evidence', 'request-received-missing-evidence', 'response-received-missing-evidence']);
 writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({
   direct: cases.map(entry => schemas[entry.schema].safeParse(entry.value).success),
   extended: cases.map(entry => schemas[entry.schema].extend({}).safeParse(entry.value).success),
   safeExtended: cases.map(entry => schemas[entry.schema].safeExtend({}).safeParse(entry.value).success),
+  issueCounts: Object.fromEntries(cases.filter(entry => issueCases.has(entry.id)).map(entry => {
+    const parsed = schemas[entry.schema].safeParse(entry.value);
+    return [entry.id, parsed.success ? 0 : parsed.error.issues.length];
+  })),
 }));
 `
   );
@@ -196,4 +226,9 @@ test('generated consumer-status schemas preserve published rc.2 wire constraints
   assert.deepEqual(generated.direct, expected, 'public Zod exports match the published JSON Schemas');
   assert.deepEqual(generated.extended, expected, 'extend preserves the public schema refinements');
   assert.deepEqual(generated.safeExtended, expected, 'safeExtend preserves the public schema refinements');
+  assert.deepEqual(generated.issueCounts, {
+    'received-missing-evidence': 3,
+    'request-received-missing-evidence': 3,
+    'response-received-missing-evidence': 4,
+  });
 });

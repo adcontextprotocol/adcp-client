@@ -13,7 +13,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
-const { runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
 const { hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TASK_TO_METHOD } = require('../../dist/lib/testing/storyboard/task-map.js');
 const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas.js');
@@ -221,7 +221,7 @@ describe('task execution coverage', () => {
 });
 
 describe('validation-only storyboard steps', () => {
-  it('normalizes and skips a validation-only step without dispatching a protocol tool', async () => {
+  it('reports a validation-only step as an unsupported runner coverage gap without dispatching', async () => {
     let dispatches = 0;
     const profile = { name: 'Test', tools: [] };
     const storyboard = {
@@ -255,7 +255,21 @@ describe('validation-only storyboard steps', () => {
     });
     assert.equal(result.task, '__validation_only__');
     assert.equal(result.skipped, true);
-    assert.equal(result.skip_reason, 'not_applicable');
+    assert.equal(result.skip_reason, 'missing_tool');
+    assert.equal(dispatches, 0);
+
+    const fullResult = await runStoryboard('https://seller.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _profile: profile,
+      _client: {
+        getAgentInfo: async () => profile,
+        callTool: async () => {
+          dispatches += 1;
+        },
+      },
+    });
+    assert.equal(fullResult.overall_passed, false);
+    assert.equal(fullResult.phases[0].steps[0].skip_reason, 'missing_tool');
     assert.equal(dispatches, 0);
   });
 });

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 
-import { AccountReferenceSchema, ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
+import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
 import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReportingStatusResponse } from '../../types';
 import { MAX_JSON_DEPTH } from '../../utils/json-depth';
 import { canonicalJsonSha256 } from '../../utils/jcs';
+import { validateSyncReportingStatusEnvelope } from '../../validation/sync-reporting-status-envelope';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
 import {
   reportingLedgerConfigurationMatchesScope,
@@ -135,22 +136,6 @@ export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSche
 
 // Validate the envelope independently so one malformed status does not reject
 // valid siblings. Each status is checked against the published schema below.
-const SyncReportingStatusEnvelopeV1Schema = z
-  .object({
-    account: AccountReferenceSchema,
-    idempotency_key: z
-      .string()
-      .min(16)
-      .max(255)
-      .regex(/^[A-Za-z0-9_.:-]+$/),
-    statuses: z.array(z.unknown()).min(1).max(100),
-    adcp_version: z.string().optional(),
-    adcp_major_version: z.number().int().optional(),
-    context: z.unknown().optional(),
-    ext: z.unknown().optional(),
-  })
-  .strict();
-
 export type ReportingConsumerStatusV1 = ReportingConsumerStatus;
 export type SyncReportingStatusRequestV1 = SyncReportingStatusRequest;
 export type RecordedReportingConsumerStatusV1 = {
@@ -193,8 +178,8 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         'Reporting consumer status request is invalid'
       );
     }
-    const parsed = SyncReportingStatusEnvelopeV1Schema.safeParse(requestInput);
-    if (!parsed.success) {
+    const envelope = validateSyncReportingStatusEnvelope(requestInput);
+    if (!envelope.valid) {
       const rawStatuses = isRecord(requestInput) && Array.isArray(requestInput.statuses) ? requestInput.statuses : [];
       const ids =
         rawStatuses.length > 0 && rawStatuses.length <= 100
@@ -205,13 +190,13 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
           : ['invalid-reporting-status-id'];
       return failed(ids, 'VALIDATION_ERROR', 'Reporting consumer status request is invalid');
     }
-    const request = parsed.data;
+    const request = requestInput;
     const parsedStatuses = request.statuses.map(value => ReportingConsumerStatusV1Schema.safeParse(value));
     const statusIds = parsedStatuses.map((value, index) =>
       value.success ? value.data.reporting_status_id : reportingStatusId(request.statuses[index])
     );
     const accountId = resolvedAccountId(context);
-    if (typeof request.account.account_id === 'string' && accountId !== request.account.account_id) {
+    if ('account_id' in request.account && accountId !== request.account.account_id) {
       return failed(statusIds, 'PERMISSION_DENIED', 'Reporting consumer status account is unavailable');
     }
     const consumerId = await options.resolveConsumerId(context);

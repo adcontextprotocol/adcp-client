@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T02:19:42.971Z
+// Generated at: 2026-09-14T02:42:31.520Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -9397,10 +9397,6 @@ export const SyncReportingStatusRequestSchema = (() => {
       }
       if (value.statuses.length < 1) ctx.addIssue({ code: "custom", path: ["statuses"], message: "Array must contain at least 1 element(s)" });
       value.statuses.forEach((status, index) => {
-          const checked = ReportingConsumerStatusSchema.safeParse(status);
-          if (!checked.success) {
-              for (const issue of checked.error.issues) ctx.addIssue({ code: "custom", path: ["statuses", index, ...issue.path], message: issue.message });
-          }
           if ((status as Record<string, unknown>).recorded_at !== undefined) {
               ctx.addIssue({ code: "custom", path: ["statuses", index, "recorded_at"], message: "recorded_at is response-only" });
           }
@@ -15497,10 +15493,6 @@ export const SyncReportingStatusResponseSchema = z.object({
               return;
           }
           const status = entry.consumer_status as Record<string, unknown>;
-          const checked = ReportingConsumerStatusSchema.safeParse(status);
-          if (!checked.success) {
-              for (const issue of checked.error.issues) ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", ...issue.path], message: issue.message });
-          }
           if (status.recorded_at === undefined) {
               ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", "recorded_at"], message: "recorded_at is required" });
           }

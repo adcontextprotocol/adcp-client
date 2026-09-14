@@ -190,6 +190,7 @@ const IDEMPOTENCY_CLAIM_RENEW_INTERVAL_MS = 60_000;
 import { isMutatingTask, requestUsesIdempotency, IDEMPOTENCY_KEY_PATTERN, MUTATING_TASKS } from '../utils/idempotency';
 import { STATUS_FREE_SYNC_RESPONSE_TOOLS } from '../utils/envelope-status-compat';
 import { validateRequest, validateResponse, formatIssues, type ValidationIssue } from '../validation/schema-validator';
+import { validateSyncReportingStatusEnvelope } from '../validation/sync-reporting-status-envelope';
 import { buildAdcpValidationErrorPayload } from '../validation/schema-errors';
 import { hashPayload, IdempotencyClaimOwnershipError, type IdempotencyStore } from './idempotency';
 import {
@@ -1083,6 +1084,11 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
   getMediaBuyDelivery?: DomainHandler<'get_media_buy_delivery', TAccount>;
   getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
+  /**
+   * Partial-success batch handler. Custom handlers must validate each status
+   * with ReportingConsumerStatusV1Schema; the framework validates only the
+   * published request envelope so one malformed sibling cannot reject all.
+   */
   syncReportingStatus?: DomainHandler<'sync_reporting_status', TAccount>;
   syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;
   providePerformanceFeedback?: DomainHandler<'provide_performance_feedback', TAccount>;
@@ -2989,22 +2995,6 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
 // `sync_reporting_status` is intentionally a partial-success batch. Validate
 // the official envelope at the framework boundary, while leaving each status
 // item to the registered handler so one malformed sibling cannot reject all.
-const SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA = z
-  .object({
-    account: AccountReferenceSchema,
-    idempotency_key: z
-      .string()
-      .min(16)
-      .max(255)
-      .regex(/^[A-Za-z0-9_.:-]+$/),
-    statuses: z.array(z.unknown()).min(1).max(100),
-    adcp_version: z.string().optional(),
-    adcp_major_version: z.number().int().optional(),
-    context: z.unknown().optional(),
-    ext: z.unknown().optional(),
-  })
-  .strict();
-
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
   return cachedToolInputShapes;
@@ -3031,33 +3021,7 @@ function validateFrameworkPayload(
   proposalCapabilities?: ProposalRefinementCapabilities
 ) {
   if (toolName === 'sync_reporting_status' && direction === 'request') {
-    const parsed = SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA.safeParse(payload);
-    return parsed.success
-      ? {
-          valid: true as const,
-          issues: [] as ValidationIssue[],
-          schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-          variant: undefined,
-        }
-      : {
-          valid: false as const,
-          issues: parsed.error.issues.map(issue => {
-            const pointer = `/${issue.path.map(value => String(value).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`;
-            const missingIdempotencyKey =
-              pointer === '/idempotency_key' &&
-              issue.code === 'invalid_type' &&
-              (!isPlainObject(payload) || payload.idempotency_key === undefined);
-            return {
-              pointer,
-              message: issue.message,
-              keyword: missingIdempotencyKey ? 'required' : issue.code,
-              schemaPath: '#/local/envelope-validation',
-              schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-            };
-          }),
-          schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
-          variant: undefined,
-        };
+    return validateSyncReportingStatusEnvelope(payload, version);
   }
   if (toolName !== 'refine_proposals') {
     return direction === 'request'
