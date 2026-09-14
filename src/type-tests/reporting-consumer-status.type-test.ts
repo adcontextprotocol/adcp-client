@@ -1,7 +1,9 @@
 import type {
+  SyncReportingStatusHandlerV1,
   SyncReportingStatusRequestV1,
   SyncReportingStatusResponseV1,
 } from '../lib/reporting/ledger/status-ingest';
+import type { MediaBuyHandlers } from '../lib/server/create-adcp-server';
 
 type Completed = Extract<SyncReportingStatusResponseV1, { status: 'completed' }>;
 type Recorded = Extract<Completed['results'][number], { result: 'recorded' | 'unchanged' }>;
@@ -15,6 +17,12 @@ type _RecordedAtIsRequired = Assert<IsRequired<Recorded['consumer_status'], 'rec
 type _FailedErrorsAreNonempty = Assert<Failed['errors'] extends [unknown, ...unknown[]] ? true : false>;
 type _SubmittedStatusOmitsRecordedAt = Assert<
   'recorded_at' extends keyof SyncReportingStatusRequestV1['statuses'][number] ? false : true
+>;
+type SyncReportingStatusServerSlot = NonNullable<MediaBuyHandlers['syncReportingStatus']>;
+type _SdkHandlerFitsServerSlot = Assert<
+  SyncReportingStatusHandlerV1<Parameters<SyncReportingStatusServerSlot>[1]> extends SyncReportingStatusServerSlot
+    ? true
+    : false
 >;
 
 declare const recorded: Recorded;

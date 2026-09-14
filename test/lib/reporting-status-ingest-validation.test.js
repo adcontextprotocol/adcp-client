@@ -75,6 +75,7 @@ describe('reporting consumer status validation', () => {
             errorCode: 'VALIDATION_ERROR',
             safeMessage: entry.validationError,
             errorField: entry.validationField,
+            errorKeyword: entry.validationKeyword,
           })),
       },
       { resolveConsumerId: () => 'consumer-1' }
@@ -93,9 +94,10 @@ describe('reporting consumer status validation', () => {
       {
         pointer: '/statuses/0/recorded_at',
         message: 'Reporting consumer status request is invalid',
-        keyword: 'validation',
+        keyword: 'allOf',
       },
     ]);
+    assert.equal(result.results[0].errors[0].recovery, 'correctable');
   });
 
   test('omits an oversized malformed-property pointer from stored and returned diagnostics', async () => {
@@ -132,6 +134,42 @@ describe('reporting consumer status validation', () => {
     assert.equal(result.results[0].result, 'failed');
     assert.equal(result.results[0].errors[0].field, undefined);
     assert.equal(result.results[0].errors[0].issues, undefined);
+  });
+
+  test('omits database-unsafe malformed-property pointers without failing valid siblings', async () => {
+    for (const unsafeProperty of ['unsafe\u0000key', `unsafe${String.fromCharCode(0xd800)}key`]) {
+      let storedField = 'not-called';
+      const handler = createSyncReportingStatusHandler(
+        {
+          getConsumerStatusBatchReplay: async () => undefined,
+          listConfigurations: async () => [],
+          syncConsumerStatusBatch: async ({ entries }) => {
+            storedField = entries[0].validationField;
+            return entries.map(entry => ({
+              inserted: false,
+              reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+              errorCode: 'VALIDATION_ERROR',
+              safeMessage: entry.validationError,
+              errorField: entry.validationField,
+              errorKeyword: entry.validationKeyword,
+            }));
+          },
+        },
+        { resolveConsumerId: () => 'consumer-1' }
+      );
+      const result = await handler(
+        {
+          account: { account_id: 'account-1' },
+          idempotency_key: 'reporting-status-unsafe-pointer-0001',
+          statuses: [{ ...consumerStatus(), [unsafeProperty]: true }],
+        },
+        { account: { id: 'account-1' } }
+      );
+      assert.equal(storedField, undefined);
+      assert.equal(result.results[0].result, 'failed');
+      assert.equal(result.results[0].errors[0].field, undefined);
+      assert.equal(result.results[0].errors[0].issues, undefined);
+    }
   });
 
   test('rejects prototype-named properties that Zod cannot copy through safely', async () => {

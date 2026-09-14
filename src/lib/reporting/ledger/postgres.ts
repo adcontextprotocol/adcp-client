@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
+import { getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { canonicalJsonV1 } from '../source';
 import {
   evaluateReportingLedgerCoverageV1,
@@ -12,6 +13,7 @@ import { canonicalReportingInstant, compareReportingInstants } from './instant';
 import {
   REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_MAX_BYTES,
   ReportingLedgerSnapshotUnavailableError,
 } from './types';
@@ -278,8 +280,10 @@ type StoredConsumerStatusBatchResult = {
   kind: 'recorded' | 'unchanged' | 'failed';
   id: string;
   errorCode?: string;
+  recovery?: ErrorRecovery;
   safeMessage?: string;
   errorField?: string;
+  errorKeyword?: string;
 };
 
 export interface PostgresReportingLedgerStoreOptions {
@@ -775,8 +779,10 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           kind: 'recorded' | 'unchanged' | 'failed';
           id: string;
           errorCode?: string;
+          recovery?: ErrorRecovery;
           safeMessage?: string;
           errorField?: string;
+          errorKeyword?: string;
         }>;
       }
     >(
@@ -795,8 +801,10 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           inserted: false,
           reporting_status_id: result.id,
           errorCode: result.errorCode ?? 'VALIDATION_ERROR',
-          safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+          recovery: result.recovery,
+          safeMessage: boundedConsumerStatusSafeMessage(result.safeMessage ?? 'Reporting consumer status was rejected'),
           ...boundedConsumerStatusErrorField(result.errorField),
+          ...boundedConsumerStatusErrorKeyword(result.errorKeyword),
         });
         continue;
       }
@@ -834,8 +842,12 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 inserted: false,
                 reporting_status_id: result.id,
                 errorCode: result.errorCode ?? 'VALIDATION_ERROR',
-                safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+                recovery: result.recovery,
+                safeMessage: boundedConsumerStatusSafeMessage(
+                  result.safeMessage ?? 'Reporting consumer status was rejected'
+                ),
                 ...boundedConsumerStatusErrorField(result.errorField),
+                ...boundedConsumerStatusErrorKeyword(result.errorKeyword),
               });
               continue;
             }
@@ -890,21 +902,34 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         let remainingStatements = MAX_CONSUMER_STATUS_STATEMENTS - Number(capacity.rows[0]?.statuses ?? 0);
         const results: ReportingConsumerStatusBatchResultV1[] = [];
         const storedResults: StoredConsumerStatusBatchResult[] = [];
-        const fail = (statusId: string, errorCode: string, safeMessage: string, errorField?: string) => {
+        const fail = (
+          statusId: string,
+          errorCode: string,
+          safeMessage: string,
+          errorField?: string,
+          recovery: ErrorRecovery = getErrorRecovery(errorCode) ?? 'terminal',
+          errorKeyword?: string
+        ) => {
           const boundedErrorField = boundedConsumerStatusErrorField(errorField);
+          const boundedErrorKeyword = boundedConsumerStatusErrorKeyword(errorKeyword);
+          const boundedSafeMessage = boundedConsumerStatusSafeMessage(safeMessage);
           results.push({
             inserted: false,
             reporting_status_id: statusId,
             errorCode,
-            safeMessage,
+            recovery,
+            safeMessage: boundedSafeMessage,
             ...boundedErrorField,
+            ...boundedErrorKeyword,
           });
           storedResults.push({
             kind: 'failed',
             id: statusId,
             errorCode,
-            safeMessage,
+            recovery,
+            safeMessage: boundedSafeMessage,
             ...boundedErrorField,
+            ...boundedErrorKeyword,
           });
         };
         for (const [index, entry] of input.entries.entries()) {
@@ -914,7 +939,14 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             continue;
           }
           if (!('status' in entry)) {
-            fail(statusId, 'VALIDATION_ERROR', entry.validationError, entry.validationField);
+            fail(
+              statusId,
+              'VALIDATION_ERROR',
+              entry.validationError,
+              entry.validationField,
+              'correctable',
+              entry.validationKeyword
+            );
             continue;
           }
           const status = entry.status;
@@ -949,15 +981,34 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           }
           const prevalidation = entry.validationError;
           if (prevalidation) {
-            fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation, entry.validationField);
+            fail(
+              status.reporting_status_id,
+              'VALIDATION_ERROR',
+              prevalidation,
+              entry.validationField,
+              'correctable',
+              entry.validationKeyword
+            );
             continue;
           }
           if (Buffer.byteLength(JSON.stringify(status), 'utf8') > REPORTING_CONSUMER_STATUS_MAX_BYTES) {
-            fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status exceeds 64 KiB');
+            fail(
+              status.reporting_status_id,
+              'REPORTING_STATUS_TOO_LARGE',
+              'Reporting consumer status exceeds 64 KiB',
+              undefined,
+              'terminal'
+            );
             continue;
           }
           if (batchCapacityExhausted || remainingStatements <= 0) {
-            fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status capacity is exhausted');
+            fail(
+              status.reporting_status_id,
+              'RATE_LIMITED',
+              'Reporting consumer status capacity is exhausted',
+              undefined,
+              'transient'
+            );
             continue;
           }
           const chainKey = chainKeys[index]!;
@@ -2104,9 +2155,48 @@ function consumerStatusFingerprint(
 }
 
 function boundedConsumerStatusErrorField(errorField?: string): { errorField?: string } {
-  return errorField && Buffer.byteLength(errorField, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
+  return errorField &&
+    !errorField.includes('\u0000') &&
+    !hasUnpairedSurrogate(errorField) &&
+    Buffer.byteLength(errorField, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
     ? { errorField }
     : {};
+}
+
+function boundedConsumerStatusErrorKeyword(errorKeyword?: string): { errorKeyword?: string } {
+  return errorKeyword && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(errorKeyword) ? { errorKeyword } : {};
+}
+
+function boundedConsumerStatusSafeMessage(safeMessage: string): string {
+  const wellFormed = Buffer.from(safeMessage, 'utf8')
+    .toString('utf8')
+    .replace(/\u0000/g, '\ufffd');
+  if (Buffer.byteLength(wellFormed, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) {
+    return wellFormed || 'Reporting consumer status was rejected';
+  }
+  let bounded = '';
+  let bytes = 0;
+  for (const character of wellFormed) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) break;
+    bounded += character;
+    bytes += characterBytes;
+  }
+  return bounded || 'Reporting consumer status was rejected';
+}
+
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const low = index + 1 < value.length ? value.charCodeAt(index + 1) : undefined;
+      if (low === undefined || low < 0xdc00 || low > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function storedResultsJsonBytes(results: unknown[]): number {
@@ -2124,6 +2214,16 @@ function boundStoredConsumerStatusResults(
     if (stored?.errorField !== undefined) {
       delete stored.errorField;
       if (result && !('value' in result)) delete result.errorField;
+      if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
+    }
+  }
+  const fallback = 'Reporting consumer status was rejected';
+  for (let index = storedResults.length - 1; index >= 0; index -= 1) {
+    const stored = storedResults[index];
+    const result = results[index];
+    if (stored?.kind === 'failed' && stored.safeMessage !== fallback) {
+      stored.safeMessage = fallback;
+      if (result && !('value' in result)) result.safeMessage = fallback;
       if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
     }
   }

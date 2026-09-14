@@ -261,7 +261,6 @@ import type {
   GetMediaBuysRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
   GetReportingStatusRequestSchema,
-  SyncReportingStatusRequestSchema,
   SyncReportingReceiptsRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
   GetTaskStatusRequestSchema,
@@ -345,6 +344,7 @@ import type {
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
   GetReportingStatusResponse,
+  SyncReportingStatusRequest,
   SyncReportingStatusResponse,
   SyncReportingReceiptsResponse,
   GetTaskStatusResponse,
@@ -717,7 +717,7 @@ export interface AdcpToolMap {
     response: GetReportingStatusResponse;
   };
   sync_reporting_status: {
-    params: Omit<z.input<typeof SyncReportingStatusRequestSchema>, 'statuses'> & { statuses: unknown[] };
+    params: Omit<SyncReportingStatusRequest, 'statuses'> & { statuses: unknown[] };
     result: ServerPayload<SyncReportingStatusResponse>;
     response: SyncReportingStatusResponse;
   };
@@ -1088,8 +1088,10 @@ export interface MediaBuyHandlers<TAccount = unknown> {
    * Partial-success batch handler. Custom handlers must validate each status
    * with ReportingConsumerStatusV1Schema from @adcp/sdk/reporting/ledger; the
    * framework validates only the published request envelope so one malformed
-   * sibling cannot reject all. They must also reject every duplicate ID and
-   * every entry in a duplicate logical status chain at batch scope.
+   * sibling cannot reject all. The framework also enforces the SDK's 8 MiB,
+   * 10,000-node, and maximum-depth request bounds before dispatch. Custom
+   * handlers must also reject every duplicate ID and every entry in a
+   * duplicate logical status chain at batch scope.
    */
   syncReportingStatus?: DomainHandler<'sync_reporting_status', TAccount>;
   syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;

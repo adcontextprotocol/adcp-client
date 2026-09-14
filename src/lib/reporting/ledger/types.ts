@@ -1,5 +1,6 @@
 import type { GetReportingStatusResponse, ReportingAdjustment, ReportingRevision } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
+import type { ErrorRecovery } from '../../types/error-codes';
 import type {
   ReportingSourceExecutorV1,
   ReportingSourceOfferingV1,
@@ -186,6 +187,8 @@ export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerS
 
 /** Durable diagnostic pointers are bounded independently of caller payload size. */
 export const REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES = 1024;
+/** Durable replay messages are sanitized and bounded independently of custom stores. */
+export const REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES = 1024;
 /** A single durable consumer statement may occupy at most 64 KiB. */
 export const REPORTING_CONSUMER_STATUS_MAX_BYTES = 64 * 1024;
 /** The complete request is bounded before validation or canonical hashing. */
@@ -194,13 +197,19 @@ export const REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES = 8 * 1024 * 1024;
 export const REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES = 64 * 1024;
 
 export type ReportingConsumerStatusBatchEntryV1 =
-  | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string; validationField?: string }
+  | {
+      status: ReportingLedgerConsumerStatusInputV1;
+      validationError?: string;
+      validationField?: string;
+      validationKeyword?: string;
+    }
   | {
       reporting_status_id: string;
       /** True when the handler synthesized the ID because the caller supplied no valid wire ID. */
       syntheticReportingStatusId?: boolean;
       validationError: string;
       validationField?: string;
+      validationKeyword?: string;
       chainIdentity?: {
         delivery_config_id: string;
         delivery_config_version: number;
@@ -229,7 +238,15 @@ export type ReportingConsumerStatusReplayInputV1 = Pick<
 
 export type ReportingConsumerStatusBatchResultV1 =
   | { inserted: boolean; value: ReportingLedgerConsumerStatementV1 }
-  | { inserted: false; reporting_status_id: string; errorCode: string; safeMessage: string; errorField?: string };
+  | {
+      inserted: false;
+      reporting_status_id: string;
+      errorCode: string;
+      recovery?: ErrorRecovery;
+      safeMessage: string;
+      errorField?: string;
+      errorKeyword?: string;
+    };
 
 export interface ReportingLedgerIssueV1 {
   issueId: string;

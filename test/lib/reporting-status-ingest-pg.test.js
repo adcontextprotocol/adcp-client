@@ -1330,7 +1330,8 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
         mixed.results.map(value => value.result),
         ['unchanged', 'failed']
       );
-      assert.equal(mixed.results[1].errors[0].code, 'RESOURCE_EXHAUSTED');
+      assert.equal(mixed.results[1].errors[0].code, 'RATE_LIMITED');
+      assert.equal(mixed.results[1].errors[0].recovery, 'transient');
       const leaves = await pool.query(
         `SELECT consumer_status_id FROM adcp_reporting_consumer_statuses
           WHERE account_id = $1 AND consumer_id = $2 AND is_current`,
@@ -1429,5 +1430,39 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(stored.rowCount, 1);
     assert.ok(Buffer.byteLength(JSON.stringify(stored.rows[0].results), 'utf8') <= 64 * 1024);
     assert.deepEqual(await sync(payload, context), first);
+  });
+
+  test('sanitizes custom-store diagnostics before durable replay', async () => {
+    const input = {
+      account_id: request.account.account_id,
+      consumerId: 'fixture-consumer-custom-diagnostic',
+      idempotencyKey: 'fixture-custom-diagnostic-0001',
+      requestFingerprint: 'fixture-custom-diagnostic-fingerprint',
+      entries: [
+        {
+          reporting_status_id: 'fixture-custom-diagnostic-status',
+          validationError: `unsafe\u0000${String.fromCharCode(0xd800)}${'x'.repeat(2_000)}`,
+          validationField: `/statuses/0/unsafe\u0000${String.fromCharCode(0xd800)}`,
+          validationKeyword: 'unsafe keyword',
+        },
+      ],
+      replayOriginalResults: true,
+    };
+    const first = await reference.store.syncConsumerStatusBatch(input);
+    assert.equal(first[0].inserted, false);
+    assert.ok(Buffer.byteLength(first[0].safeMessage, 'utf8') <= 1_024);
+    assert.equal(first[0].safeMessage.includes('\u0000'), false);
+    assert.equal(first[0].safeMessage.includes(String.fromCharCode(0xd800)), false);
+    assert.equal(first[0].errorField, undefined);
+    assert.equal(first[0].errorKeyword, undefined);
+    assert.deepEqual(
+      await reference.store.getConsumerStatusBatchReplay({
+        account_id: input.account_id,
+        consumerId: input.consumerId,
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint: input.requestFingerprint,
+      }),
+      first
+    );
   });
 });
