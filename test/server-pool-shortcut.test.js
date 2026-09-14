@@ -164,6 +164,7 @@ describe('createAdcpServerFromPlatform — pool shortcut', () => {
       },
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
       },
       sales: {

@@ -688,6 +688,40 @@ describe('createAdcpServerFromPlatform — sandbox-authority gate (accountRef.sa
     assertPermissionDenied(result);
   });
 
+  it('does NOT admit on accountRef.sandbox when the buyer named an account the resolver refused (#1647)', async () => {
+    // Fail-closed resolvers make "unresolved" reachable on demand: a caller
+    // just names an account their credential cannot reach. Without scoping
+    // the wire-claim fallback to refs that name no account, `{ account_id:
+    // '<victim>', sandbox: true }` would admit the controller with no
+    // framework account authority attached — and the auto-seed adapters
+    // fall back to the buyer-supplied id for their storage namespace.
+    const server = buildServer(async ref => {
+      if (ref == null) {
+        return { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } };
+      }
+      return ref.account_id === 'principal_sb'
+        ? { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } }
+        : null;
+    });
+
+    const result = await callForceCreative(server, {
+      account: { account_id: 'victim_workspace', sandbox: true },
+    });
+
+    assertPermissionDenied(result);
+  });
+
+  it('still admits on accountRef.sandbox when the ref names no account', async () => {
+    const server = buildServer(async ref =>
+      ref == null ? { id: 'principal_sb', mode: 'sandbox', ctx_metadata: {}, authInfo: { kind: 'api_key' } } : null
+    );
+
+    const result = await callForceCreative(server, { account: { sandbox: true } });
+
+    assert.notStrictEqual(result.isError, true);
+    assert.strictEqual(result.structuredContent.success, true);
+  });
+
   it('does NOT admit on accountRef.sandbox when the resolver names a live account', async () => {
     // The wire flag is a fallback for the *unresolved* path. Once the
     // resolver names the account, the resolver wins and the buyer's wire

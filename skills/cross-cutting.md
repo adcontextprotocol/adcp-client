@@ -65,7 +65,7 @@ The hello adapters use simple in-memory `accounts.resolution: 'lookup'` against 
 
 - `createOAuthPassthroughResolver` — buyer-OAuth-passes-through (Shape B)
 - `createRosterAccountStore` — pre-loaded roster (Shape C)
-- `createDerivedAccountStore` — single-tenant `'derived'` mode (Shape D)
+- `createDerivedAccountStore` — `'derived'` mode (Shape D): an upstream-managed account-id namespace (or a credential bound to one account). Buyers discover ids via `list_accounts`; the factory verifies buyer-supplied `account_id` against the caller's reachable set
 - `createTenantStore` — multi-tenant, with a built-in isolation gate on the account-sync tools and a **required** `refAccess` choice for `resolve`
 
 `createTenantStore` is the right default for any adopter handling more than one advertiser. It refuses inline `{account_id}` references unless your store explicitly lists them — that's a hard security gate, not a soft warning.

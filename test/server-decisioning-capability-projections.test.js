@@ -534,6 +534,8 @@ describe('Capability projections — declarative capability blocks on Decisionin
     // Either signal alone projects to require_operator_auth: true.
     const platform = basePlatform({ requireOperatorAuth: true });
     platform.accounts.resolution = 'derived';
+    // 'derived' (upstream-managed account-id namespace) requires list_accounts — #1647.
+    platform.accounts.list = async () => ({ items: [] });
     const server = createAdcpServerFromPlatform(platform, {
       name: 'h',
       version: '0.0.1',
@@ -541,6 +543,33 @@ describe('Capability projections — declarative capability blocks on Decisionin
     });
     const result = await dispatchCapabilities(server);
     assert.strictEqual(result.structuredContent?.account?.require_operator_auth, true);
+  });
+
+  it('accounts.resolution: derived projects account.require_operator_auth (account-id namespace, #1647)', async () => {
+    const platform = basePlatform();
+    platform.accounts.resolution = 'derived';
+    platform.accounts.list = async () => ({ items: [] });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    assert.strictEqual(result.structuredContent?.account?.require_operator_auth, true);
+  });
+
+  it('omitted accounts.resolution still does NOT project the account block', async () => {
+    // Defaulting to 'explicit' for dispatch must not silently start
+    // advertising an operator-auth account model for adopters who never
+    // declared a mode.
+    const platform = basePlatform();
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'h',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+    const result = await dispatchCapabilities(server);
+    assert.notStrictEqual(result.structuredContent?.account?.require_operator_auth, true);
   });
 
   it('accounts.resolution: implicit does NOT project account block (sync_accounts is the correct tool)', async () => {

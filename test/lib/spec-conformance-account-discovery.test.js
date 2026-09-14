@@ -222,3 +222,73 @@ describe('account-discovery gate routes synthetic result to core track (#1624 re
     assert.equal(failedSteps.length, 1, 'one failed step from the synthetic gate');
   });
 });
+
+describe('checkAccountDiscoveryGate — account-id namespaces (#1647 / adcp#5062)', () => {
+  const accountIdNamespaceProfile = (tools, extra = {}) =>
+    profile({
+      specialisms: ['sales-guaranteed'],
+      tools: ['get_adcp_capabilities', ...tools],
+      raw_capabilities: { account: { require_operator_auth: true } },
+      ...extra,
+    });
+
+  test('sync_accounts alone still passes for an account-id namespace (deliberate: the spec MUST is conditional)', () => {
+    // adcp#5062 makes list_accounts a MUST only when a credential can reach
+    // more than one account, and a SHOULD with an out-of-band escape for
+    // credential-bound singletons. Neither condition is observable from a
+    // static capability read, and require_operator_auth: true also covers
+    // seller-defined namespaces that hand out ids out-of-band — so this gate
+    // must not fail them. The stricter rule is enforced where it is knowable:
+    // createAdcpServerFromPlatform requires accounts.list for a declared
+    // resolution: 'derived'.
+    assert.equal(
+      checkAccountDiscoveryGate(accountIdNamespaceProfile(['sync_accounts']), 'https://agent.example/mcp'),
+      null
+    );
+  });
+
+  test('list_accounts satisfies discovery for an account-id namespace', () => {
+    assert.equal(
+      checkAccountDiscoveryGate(accountIdNamespaceProfile(['list_accounts']), 'https://agent.example/mcp'),
+      null
+    );
+  });
+
+  test('an account-id namespace advertising neither tool gets list_accounts-specific remediation', () => {
+    const result = checkAccountDiscoveryGate(accountIdNamespaceProfile([]), 'https://agent.example/mcp');
+    assert.ok(result, 'gate should fire — neither discovery tool is advertised');
+    const step = result.phases[0].steps[0];
+    assert.match(step.error, /require_operator_auth/);
+    assert.match(step.error, /account_id/);
+  });
+
+  test('buyer-declared sellers advertising neither tool get the generic message', () => {
+    const result = checkAccountDiscoveryGate(
+      profile({
+        specialisms: ['sales-guaranteed'],
+        tools: ['get_adcp_capabilities'],
+        raw_capabilities: { account: { require_operator_auth: false } },
+      }),
+      'https://agent.example/mcp'
+    );
+    assert.ok(result);
+    assert.doesNotMatch(result.phases[0].steps[0].error, /require_operator_auth: true/);
+  });
+
+  test('unreadable capabilities never change the verdict', () => {
+    for (const raw of [undefined, null, 'nope', {}, { account: null }]) {
+      assert.equal(
+        checkAccountDiscoveryGate(
+          profile({
+            specialisms: ['sales-guaranteed'],
+            tools: ['get_adcp_capabilities', 'sync_accounts'],
+            raw_capabilities: raw,
+          }),
+          'https://agent.example/mcp'
+        ),
+        null,
+        `raw_capabilities=${JSON.stringify(raw)} must not newly fail the gate`
+      );
+    }
+  });
+});

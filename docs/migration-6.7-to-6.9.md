@@ -53,7 +53,9 @@ additive and can be applied incrementally.
 > `migration-6.6-to-6.7.md` — `accounts.resolution: 'derived'` now
 > refuses inline `account_id` references with `INVALID_REQUEST` (the
 > runtime change shipped in 6.7 via #1475 and the migration doc was
-> backfilled in 6.9 via #1492).
+> backfilled in 6.9 via #1492). **Reversed in SDK 14** (adcp-client#1647):
+> `'derived'` now accepts `{ account_id }` and refuses the natural key —
+> see [13 → 14 § derived account resolution](./migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).
 
 ## What you get for free (additive headlines)
 
@@ -67,7 +69,7 @@ after bumping. Recipes for the load-bearing ones are below.
 | Buyer-agent registry | Authenticator-stamped `extra` flows into `BuyerAgentRegistry.resolveByCredential`'s second arg |
 | Method composition | Variadic `composeMethod(inner, ...hooks)` overload |
 | Comply controller | `ComplyControllerConfig.force` extended with `create_media_buy_arm` + `task_completion` slots; new `queryUpstreamTraffic` adapter alongside `seed`/`force`/`simulate`/`sandboxGate` (closes the structured-config / dispatcher gap) |
-| Account stores | `createDerivedAccountStore` (Shape D — single-tenant, auth-derived); `RosterAccountStoreOptions.resolveWithoutRef` for ref-less tools |
+| Account stores | `createDerivedAccountStore` (Shape D — single-tenant, auth-derived; SDK 14 reworks it into an upstream-managed account-id namespace); `RosterAccountStoreOptions.resolveWithoutRef` for ref-less tools |
 | Conformance | `ConformanceClient` outbound-WebSocket Socket Mode primitive (dev/staging only) |
 | New worked references | 5 new hello adapters: `hello_seller_adapter_non_guaranteed`, `hello_creative_adapter_ad_server`, `hello_si_adapter_brand`, plus mock-servers for `sales-non-guaranteed`, `creative-ad-server`, `sponsored-intelligence`. Multi-tenant adapter passes strict-tsc gate. |
 | SI v6 | `SponsoredIntelligencePlatform` shape (protocol-keyed dispatch, auto-hydrated session) |
@@ -359,7 +361,11 @@ agents (rare; public format catalogs).
 
 Framework-side refusal of buyer-supplied `account_id` is the same
 behaviour `'implicit'` adopters get — see `migration-6.6-to-6.7.md`
-recipe **#10b**.
+recipe **#10b**. **SDK 14 reverses this for `'derived'`**: the mode is an
+upstream-managed account-id namespace, `account_id` is accepted (and
+verified), the natural key is refused, and the factory gained
+`listAccounts` / `lookupAccount` plus a required `list_accounts`. See
+[13 → 14 § derived account resolution](./migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).
 
 ### 9. `RosterAccountStoreOptions.resolveWithoutRef` for ref-less tools
 
@@ -547,8 +553,9 @@ landing:
       6.6→6.7 audit; the throw still fires inside `createAdcpServer`
       construction. See `migration-6.6-to-6.7.md` recipe **#16**.
 - [ ] `grep -rn "resolution: 'derived'" src/` — leftover from 6.6→6.7
-      audit; the framework now refuses inline `account_id`. See
-      `migration-6.6-to-6.7.md` recipe **#10b**.
+      audit; in 6.7–13.x the framework refuses inline `account_id`. See
+      `migration-6.6-to-6.7.md` recipe **#10b** — and note SDK 14 reverses
+      it (`docs/migration-13-to-14.md`).
 - [ ] `npm test` — pre-existing pass rate maintained.
 - [ ] `npm run compliance:fork-matrix` — 23/23 against the seven
       hello adapters + multi-tenant.

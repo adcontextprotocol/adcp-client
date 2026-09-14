@@ -26,7 +26,10 @@ function buildPlatform({ proposalManager, sales, capabilities = {} }) {
       ...capabilities,
     },
     accounts: {
-      resolution: 'derived',
+      // Seller-owned namespace: this fixture accepts both AccountReference
+      // arms, including the natural-key request at line ~284. (It declared
+      // 'derived' before #1647 inverted that mode to account-id-only.)
+      resolution: 'explicit',
       resolve: async () => ({ id: 'acct_1', metadata: {} }),
     },
     sales,

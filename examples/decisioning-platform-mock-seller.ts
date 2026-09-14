@@ -93,9 +93,11 @@ const DEFAULT_CONFIG: MockSellerConfig = {
 
 function makeAccounts(): AccountStore<MockSellerMeta> {
   return {
-    // Multi-tenant: MockSeller accepts buyer-supplied account_id refs.
-    // Single-tenant adopters declare resolution: 'derived' instead and
-    // ignore `ref`. See SKILL § "Account resolution".
+    // Seller-owned account-id namespace: MockSeller issues the ids and
+    // accepts buyer-supplied refs. Adopters fronting an upstream platform
+    // that owns the roster (or bound to one account per credential)
+    // declare resolution: 'derived' and use createDerivedAccountStore.
+    // See SKILL § "Account resolution".
     resolution: 'explicit',
     resolve: async (ref: AccountReference) => {
       const id = 'account_id' in ref ? ref.account_id : 'mock_acc_1';

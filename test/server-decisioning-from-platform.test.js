@@ -4068,6 +4068,7 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async () => ({
           id: 'singleton',
           name: 'Acme',
@@ -4118,6 +4119,7 @@ describe('CreativeBuilderPlatform + AudiencePlatform wiring', () => {
       },
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async () => ({
           id: 'singleton',
           name: 'Acme',
@@ -5832,6 +5834,7 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
     const platform = buildPlatform({
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async ref => {
           resolveCalledWithRef = ref;
           return { id: 'singleton', name: 'Acme', status: 'active', metadata: {}, authInfo: { kind: 'api_key' } };
@@ -5875,6 +5878,7 @@ describe('SalesPlatform optional methods (v1.0 gap-fill for rc.1)', () => {
     const platform = buildPlatform({
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async () => ({
           id: 'singleton',
           name: 'Acme',
@@ -7276,6 +7280,7 @@ describe('SalesPlatform retail-media tools (M2)', () => {
     const platform = buildPlatform({
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async () => ({
           id: 'acc_1',
           name: 'Acme',
@@ -7619,6 +7624,7 @@ describe('Observability hooks (DecisioningObservabilityHooks)', () => {
     const platform = buildPlatform({
       accounts: {
         resolution: 'derived',
+        list: async () => ({ items: [] }),
         resolve: async () => ({
           id: 'singleton',
           name: 'X',

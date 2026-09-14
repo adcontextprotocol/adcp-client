@@ -94,6 +94,8 @@ export { normalizePostalAreaSupport, normalizeTargetingCapabilities } from './ca
 // Account model
 export type {
   Account,
+  AccountResolutionMode,
+  CanonicalAccountResolutionMode,
   AuthPrincipal,
   AccountStore,
   AccountFilter,
@@ -121,7 +123,13 @@ export type {
   ResolvedAuthInfo,
 } from './account';
 
-export { AccountNotFoundError, refAccountId } from './account';
+export {
+  AccountNotFoundError,
+  isAccountResolutionMode,
+  normalizeAccountResolution,
+  refAccountId,
+  refHasNaturalKey,
+} from './account';
 
 // Multi-tenant AccountStore builder. Bakes in the two-path resolution
 // (operator-routed + auth-derived) and the per-entry tenant-isolation gate

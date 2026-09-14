@@ -777,7 +777,13 @@ export {
 
 export { createRosterAccountStore, type RosterAccountStoreOptions } from '../adapters/roster-account-store';
 
-export { createDerivedAccountStore, type DerivedAccountStoreOptions } from '../adapters/derived-account-store';
+export {
+  createDerivedAccountStore,
+  type DerivedAccountStoreOptions,
+  type DerivedAccountStoreBaseOptions,
+  type DerivedSingletonAccountStoreOptions,
+  type DerivedRosterAccountStoreOptions,
+} from '../adapters/derived-account-store';
 
 // ---------------------------------------------------------------------------
 // Socket Mode — outbound WebSocket bridge for adopter dev environments

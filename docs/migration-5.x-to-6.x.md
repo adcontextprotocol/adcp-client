@@ -322,7 +322,11 @@ before starting scoped writers.
   (acquire_rights), `req.creative` (provide_performance_feedback).
 - **`accounts.resolve()` is mandatory.** Even single-tenant agents must
   declare `resolution: 'derived'` and return a synthetic singleton. The
-  framework calls `resolve()` on every request.
+  framework calls `resolve()` on every request. (**SDK 14 note:**
+  `'derived'` is now an upstream-managed account-id namespace — it also
+  requires `list_accounts` and a resolver that verifies the buyer-supplied
+  `account_id`. See
+  [13 → 14 § derived account resolution](./migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).)
 - **`mergeSeam: 'strict'` from day 1.** The default is `'warn'` for
   back-compat, but `'strict'` is what you want during migration — it
   surfaces collisions as `PlatformConfigError` at construction time

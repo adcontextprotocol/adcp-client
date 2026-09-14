@@ -434,9 +434,11 @@ import { definePlatform, refAccountId, AccountNotFoundError } from '@adcp/sdk/se
 const platform = definePlatform({
   capabilities: { specialisms: ['sales-non-guaranteed'] as const, /* ... */ },
   accounts: {
-    // 'explicit' (default), 'implicit' (sync_accounts-first), or 'derived' (single-tenant).
-    // 'implicit' adopters: framework refuses inline {account_id} references with INVALID_REQUEST
-    // *before* reaching your resolver (post-6.7).
+    // 'explicit' (default), 'implicit' (sync_accounts-first), or 'derived'
+    // (upstream-managed account-id namespace, discovered via list_accounts).
+    // The framework enforces each mode's durable reference shape *before*
+    // reaching your resolver: 'implicit' refuses inline {account_id};
+    // 'derived' refuses the {brand, operator} natural key.
     resolution: 'explicit',
     resolve: async (ref, ctx) => {
       const id = refAccountId(ref);
@@ -463,7 +465,7 @@ Three resolution modes:
 
 - **`'explicit'`** (default) — buyer passes `{account_id}` inline on every request. Snap, Meta, GAM-style sellers. The framework calls `resolve(ref, ctx)` with the inline ref.
 - **`'implicit'`** — buyer must call `sync_accounts` first; subsequent requests resolve from the auth-principal linkage your `upsert` populated. LinkedIn-shaped sellers. The framework refuses inline `{account_id}` references with `INVALID_REQUEST` (post-6.7 — pre-6.7 the docstring claimed this but nothing checked it). Use [`InMemoryImplicitAccountStore`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/adapters/implicit-account-store.ts) for the reference shape.
-- **`'derived'`** — single-tenant agents where the auth principal alone identifies the tenant. Self-hosted broadcasters, retail-media operators in proxy mode. `resolve(undefined, ctx)` returns the singleton.
+- **`'derived'`** — an upstream-managed account-id namespace: you front a platform that owns the roster (Meta / Snap ad accounts, AudioStack workspaces, a retail-media proxy), or the credential is bound to a single account. Buyers discover ids via `list_accounts` and pass `{account_id}`; the framework refuses the `{brand, operator}` arm, `accounts.list` is required, and `resolve` must verify the buyer-supplied id against what the caller's credential can reach. Use [`createDerivedAccountStore`](https://github.com/adcontextprotocol/adcp-client/blob/main/src/lib/adapters/derived-account-store.ts), which does both. `resolve(undefined, ctx)` auto-selects when exactly one account is reachable. **Changed in SDK 14** — see the [migration guide](../migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).
 
 **Stateless BYOK provider adapters.** For single-account API-key or
 bearer-token BYOK, the provider credential can be the AdCP request credential
@@ -474,8 +476,9 @@ derives the account from request auth, and uses the same request-local token
 for upstream provider calls. No SDK-managed OAuth flow, refresh-token store,
 provider-token store, or callback route is required when the caller owns the
 provider credential lifecycle. If the provider credential can see multiple
-upstream accounts, use an explicit account roster pattern such as
-`createOAuthPassthroughResolver` instead of `'derived'`. Handlers with a
+upstream accounts, stay in `'derived'` and supply `listAccounts` so buyers
+can discover and name one, or use `createOAuthPassthroughResolver` under
+`'explicit'` when you own the id namespace. Handlers with a
 resolved account should read the active token from
 `ctx.account.authInfo?.token`; refresh hooks update `account.authInfo`.
 Handlers without a resolved account can read the request token from

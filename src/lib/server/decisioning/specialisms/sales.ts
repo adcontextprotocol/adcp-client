@@ -43,9 +43,9 @@
  * `ctx.account` may be `undefined` when `accounts.resolution === 'explicit'`.
  * Three safe patterns:
  *
- * 1. **`'derived'` resolution** — `accounts.resolve(undefined)` returns a
- *    singleton; `ctx.account` is always set. Best for single-tenant
- *    deployers.
+ * 1. **`'derived'` resolution** — `accounts.resolve(undefined)` returns the
+ *    credential's single reachable account; `ctx.account` is set whenever
+ *    the credential is bound to exactly one upstream account.
  * 2. **Don't implement the method** — the framework returns
  *    `UNSUPPORTED_FEATURE`; buyers using the merge-seam custom handler or
  *    external creative agents still receive a response.

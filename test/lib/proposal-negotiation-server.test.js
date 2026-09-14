@@ -103,6 +103,7 @@ describe('refine_proposals server integration', () => {
         capabilities: { specialisms: [], supported_versions: ['3.2-rc.2'] },
         accounts: {
           resolution: 'derived',
+          list: async () => ({ items: [] }),
           resolve: async () => ({ id: 'account-1', metadata: {} }),
         },
       },

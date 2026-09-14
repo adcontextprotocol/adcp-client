@@ -8,11 +8,11 @@ How sellers implement the three `AccountStore.resolution` modes — `'explicit'`
 
 ## Quick reference
 
-| Mode | Buyer sends | Seller resolves via |
-|---|---|---|
-| `'explicit'` (default) | `ext.account_ref` on every request | `ref.account_id` or `ref.brand`/`ref.operator` |
-| `'implicit'` | Nothing (no `ext.account_ref`) — but must call `sync_accounts` first | `ctx.authInfo` credential key |
-| `'derived'` | Nothing | Single-tenant singleton; no per-request resolution needed |
+| Mode | Roster owner | Onboarding / discovery | Durable wire reference |
+|---|---|---|---|
+| `'explicit'` (default) | You (the seller) | ids issued out-of-band, or an optional `list_accounts` | `{ account_id }` or the `{ brand, operator }` natural key |
+| `'implicit'` | Buyer-declared | `sync_accounts` (required) | `{ brand, operator }` — inline `account_id` is refused |
+| `'derived'` | An upstream platform you front, or the credential itself | `list_accounts` (**required**) | `{ account_id }` — the `{ brand, operator }` arm is refused |
 
 Declare the mode on `AccountStore`:
 
@@ -23,6 +23,23 @@ accounts: {
   upsert: async (refs, ctx) => { ... }, // required for 'implicit'
 }
 ```
+
+**Each mode has exactly one spelling.** `'derived'` keeps its name even
+though [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062)
+calls the shape an *upstream-managed account-id namespace*: `resolution` is
+SDK-local configuration, never a wire value, so a second spelling would buy
+nothing on the wire while silently defeating adopter code written as
+`resolution === 'derived'` and inviting divergence from the Python SDK.
+`'account-id-namespace'` is rejected for the extra reason that it doesn't
+discriminate — under #5062 both `'explicit'` and `'derived'` are account-id
+namespaces. An unrecognized value is a `PlatformConfigError` at
+construction, not a silent fallback.
+
+> **Breaking change in SDK 14 (adcp-client#1647).** `'derived'` used to mean
+> "single-tenant; no `account_id` on the wire", and the framework refused
+> inline `account_id` for it. That was inverted — see
+> [`'derived'` (upstream-managed account-id namespace)](#derived-upstream-managed-account-id-namespace)
+> and the [13 → 14 migration guide](../migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).
 
 ---
 
@@ -181,18 +198,42 @@ accountStore.size;                              // number of stored linkages
 
 ---
 
-## `'derived'` (single-tenant)
+## `'derived'` (upstream-managed account-id namespace)
 
-Return a fixed singleton regardless of `ref`. For the canonical Shape D
-pattern (auth principal IS the tenant — audiostack, flashtalking,
-single-namespace retail-media), use `createDerivedAccountStore`:
+Pick `'derived'` when the account roster is **not yours to provision**: you
+front an upstream platform that owns it (Meta / Snap business accounts,
+AudioStack workspaces, a retail-media proxy), or the buyer's credential is
+bound to exactly one account on your side. Roster size is an operational
+property of the upstream — N=1 and N=many share one wire contract.
+
+The contract:
+
+1. The buyer calls **`list_accounts`** to discover what its credential can
+   reach. This is required for the mode, not optional polish —
+   `createAdcpServerFromPlatform` throws `PlatformConfigError` when neither
+   `accounts.list` nor `opts.accounts.listAccounts` is wired. A credential
+   bound to one account returns one row, so buyer SDKs can auto-select it.
+2. The buyer sends **`account: { account_id }`** on every account-scoped
+   call. The framework refuses the `{ brand, operator }` arm for this mode
+   with `AdcpError('INVALID_REQUEST', { field: 'account.brand' })` and a
+   `list_accounts` suggestion — a natural key is not a durable reference into
+   someone else's roster.
+3. Your `resolve` **verifies** that id against what the *caller's credential*
+   can reach, and returns `null` on a miss (framework → `ACCOUNT_NOT_FOUND`).
+   `createDerivedAccountStore` does this for you. As a backstop the framework
+   also refuses a resolved account whose `id` isn't the one the buyer named —
+   that catches a resolver that ignores `ref`, but it can't tell whether your
+   lookup was credential-scoped, so it is not a substitute for step 3.
 
 ```ts
 import { createDerivedAccountStore } from '@adcp/sdk/server';
 
+// One account per credential (AudioStack, flashtalking, single-namespace
+// retail-media). The factory publishes the one-row list_accounts, verifies
+// buyer-supplied ids against it, and auto-selects it on ref-less tools.
 const accounts = createDerivedAccountStore<MyMeta>({
-  toAccount: ctx => ({
-    id: 'tenant_singleton',
+  toAccount: async ctx => ({
+    id: await upstream.workspaceId(ctx?.authInfo), // the id buyers send back
     name: 'My Platform',
     status: 'active',
     ctx_metadata: {},
@@ -200,24 +241,122 @@ const accounts = createDerivedAccountStore<MyMeta>({
 });
 ```
 
-The factory sets `resolution: 'derived'`, still throws legacy-compatible
-`AdcpError('AUTH_REQUIRED')` when `ctx.authInfo.credential` is absent
-(skip with `skipAuthCheck: true` for genuinely unauthenticated agents),
-and ignores any buyer-supplied `account_id` (single-tenant by definition).
-New hand-rolled stores can throw `AuthMissingError` when they intentionally
-emit the AdCP 3.1 missing-request-credential code. Hand-rolled equivalent:
+```ts
+// Many accounts per credential (Meta / Snap shaped). `listAccounts` is the
+// tenant-isolation boundary: scope it by the caller's credential.
+const accounts = createDerivedAccountStore<{ upstreamId: string }>({
+  listAccounts: async ctx => {
+    const rows = await meta.adAccountsFor(ctx?.authInfo);
+    return rows.map(r => ({
+      id: r.account_id,
+      name: r.name,
+      status: 'active',
+      ctx_metadata: { upstreamId: r.id },
+    }));
+  },
+  // Optional point lookup for large rosters — MUST filter by the caller too.
+  lookupAccount: (id, ctx) => meta.adAccountForCaller(id, ctx?.authInfo),
+});
+```
+
+For a runnable example see `examples/decisioning-platform-derived-accounts.ts`.
+
+The factory also throws legacy-compatible `AdcpError('AUTH_REQUIRED')` when
+`ctx.authInfo` carries no credential (skip with `skipAuthCheck: true` for
+genuinely unauthenticated agents). New hand-rolled stores can throw
+`AuthMissingError` when they intentionally emit the AdCP 3.1
+missing-request-credential code.
+
+Hand-rolled equivalent — you own both obligations, the `list` and the check:
 
 ```ts
+import { refAccountId } from '@adcp/sdk/server';
+
 accounts: {
   resolution: 'derived',
-  resolve: async () => ({
-    id: 'tenant_singleton',
-    name: 'My Platform',
-    status: 'active',
-    ctx_metadata: {},
-  }),
+  resolve: async (ref, ctx) => {
+    const reachable = await upstream.accountsFor(ctx?.authInfo); // credential-scoped
+    const id = refAccountId(ref);
+    // Fail closed. Never "we only have one account, so serve it anyway".
+    // (The framework also refuses a resolved account whose id isn't the one
+    // the buyer named — but own the check; it's your tenant boundary.)
+    if (id !== undefined) return reachable.find(a => a.id === id) ?? null;
+    // Ref-less tools: auto-select only when there is exactly one.
+    return reachable.length === 1 ? reachable[0] : null;
+  },
+  // The framework does not filter or page for you: honor req.account /
+  // req.status / req.sandbox and req.pagination in your own query.
+  list: async (req, ctx) => ({ items: await upstream.accountsFor(ctx?.authInfo) }),
 }
 ```
+
+### Ignoring `ref` is a tenant-isolation bug
+
+A resolver that returns a fixed account regardless of `ref` was the
+pre-SDK-14 Shape D pattern. Keep writing it and the first time your
+deployment serves two accounts, caller A's `{ account_id: 'B' }` request runs
+against account A's data — no error, no log. Verify the ref, or let
+`createDerivedAccountStore` verify it.
+
+### Writes are verified too
+
+`sync_accounts` and `sync_governance` carry their account reference *inside*
+the batch, so they never went through `accounts.resolve`. For `'derived'`
+platforms the framework now resolves every entry's `account_id` against what
+the caller's credential can reach before any write runs — an unreachable id
+fails the `sync_accounts` operation with `ACCOUNT_NOT_FOUND` (the response
+row schema requires `brand` + `operator`, which we don't have for an account
+we refused to resolve) and fails the individual `sync_governance` row.
+
+### `sync_accounts` in derived mode
+
+Not forbidden, but narrowed to what [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062)
+allows:
+
+- **Natural-key provisioning entries** (`{ brand, operator, billing }` at the
+  entry root, or a settings-update entry keyed by the natural key) are failed
+  per-row by the framework with `UNSUPPORTED_PROVISIONING` before reaching
+  `accounts.upsert`. There is nothing to provision in a namespace you don't
+  own.
+- **Settings-update entries** keyed by `account: { account_id }` pass
+  through, after the reachability check above. Wire `accounts.upsert` if your
+  upstream exposes account-settings writes; leave it unimplemented and buyers
+  calling `sync_accounts` get the framework's unimplemented-tool path, as
+  before.
+- A natural-key *reference* (`account: { brand, operator }`) is refused
+  per-row with `INVALID_REQUEST` — the ref shape is wrong for the namespace,
+  which is a different fault from the provisioning mode being unsupported.
+- An entry carrying **two** references (root `account_id` plus a nested
+  `account`, or an `account` mixing `account_id` with `brand`/`operator`) is
+  refused with `INVALID_REQUEST`, never disambiguated by precedence. The
+  schema's per-entry `oneOf` forbids those shapes, but validation is
+  relaxable and accepting on one reference while writing against another is
+  a bypass.
+- **Response rows still require `brand` + `operator`** per
+  `sync-accounts-response.json`, so a settings-update row echoes them from
+  your own account record. If your upstream accounts have no brand/operator
+  you can express, don't wire `upsert` — see
+  [adcontextprotocol/adcp#7517](https://github.com/adcontextprotocol/adcp/issues/7517).
+
+### Capability projection
+
+A declared `resolution: 'derived'` projects `account.require_operator_auth:
+true` on `get_adcp_capabilities` — the capability bit for account-id
+namespaces, same as declared `'explicit'`. Conformance runners read it and
+grade `sync_accounts` storyboard steps as `not_applicable` rather than
+`missing_tool`. Override with `capabilities.requireOperatorAuth` if your
+deployment's auth model differs.
+
+Emitting the account block also emits `account.supported_billing`, which
+defaults to `['agent']`. Declare `capabilities.supportedBillings` explicitly
+— an upstream-managed namespace usually bills the operator, and the default
+will route buyers into agent-billed flows.
+
+### If you have no namespace to discover
+
+An agent that hands out account ids out-of-band and has nothing to enumerate
+is a **seller-defined** account-id namespace: declare `'explicit'`. That mode
+accepts `{ account_id }` (and the natural key) with no discovery obligation.
 
 ### Stateless BYOK provider auth
 
@@ -236,9 +375,10 @@ with the caller-presented provider credential, derives the singleton account
 from that request auth, and uses the same request-local token for upstream API
 calls. No SDK-managed OAuth flow, refresh-token store, provider-token store,
 or callback route is required when the caller owns the provider credential
-lifecycle. If the provider credential can see multiple upstream accounts, use
-an explicit account roster pattern such as `createOAuthPassthroughResolver`
-instead of `'derived'`.
+lifecycle. If the provider credential can see multiple upstream accounts,
+stay in `'derived'` but supply `listAccounts` instead of `toAccount` so the
+buyer can discover and name one — or use `createOAuthPassthroughResolver`
+under `'explicit'` if you also own the id namespace.
 
 Handlers with a resolved account should read the active token from
 `ctx.account.authInfo?.token`; refresh hooks update `account.authInfo`.
@@ -260,18 +400,8 @@ two credentials: one credential to authorize the caller to the AdCP agent and
 another credential to authorize the upstream provider tenant. That dual-auth
 proxy shape is optional; it is not the baseline BYOK model.
 
-No `upsert` needed. The framework returns `UNSUPPORTED_FEATURE` to any
-buyer that calls `sync_accounts`.
-
-**Inline `account_id` refusal.** Since adcp-client#1468, the framework
-refuses inline `{ account_id }` references for `'derived'` platforms with
-`AdcpError('INVALID_REQUEST', { field: 'account.account_id' })` *before*
-reaching `accounts.resolve` — same shape as `'implicit'`'s refusal (#1364),
-with a single-tenant message instead of the `sync_accounts`-first guidance.
-Hand-rolled `'derived'` stores get this for free; the
-`createDerivedAccountStore` factory's defensive ignore is a belt + braces
-fallback. The brand+operator union arm is still permitted (route through
-your resolver verbatim).
+No `upsert` needed — see [`sync_accounts` in derived mode](#sync_accounts-in-derived-mode)
+for what the framework does with each entry shape when you do wire one.
 
 ---
 

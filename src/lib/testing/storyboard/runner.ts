@@ -4816,8 +4816,8 @@ async function executeStep(
     };
   }
 
-  // Account-mode capability gate: when the seller declared explicit mode
-  // (require_operator_auth: true) and does not advertise sync_accounts,
+  // Account-mode capability gate: when the seller declared an account-id
+  // namespace (require_operator_auth: true) and does not advertise sync_accounts,
   // sync_accounts does not apply — grade not_applicable rather than
   // missing_tool so adopters can distinguish "your capability declaration
   // says this path isn't yours" from "you forgot to implement a required
@@ -4837,7 +4837,7 @@ async function executeStep(
       const syncAccountsAdvertised = options.agentTools?.includes('sync_accounts') === true;
       if (requireOperatorAuth === true && !syncAccountsAdvertised) {
         const detail =
-          `Agent declared explicit account mode (require_operator_auth: true); ` +
+          `Agent declared an account-id namespace (require_operator_auth: true); ` +
           `sync_accounts is not applicable — list_accounts is the correct tool for this account shape.`;
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
         return {

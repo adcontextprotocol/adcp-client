@@ -2153,9 +2153,13 @@ export {
   // Roster-backed AccountStore — Shape C factory for publisher-curated explicit platforms
   createRosterAccountStore,
   type RosterAccountStoreOptions,
-  // Derived AccountStore — Shape D factory for single-tenant `resolution: 'derived'` agents
+  // Derived AccountStore — Shape D factory for `resolution: 'derived'` agents
+  // fronting an upstream-managed account namespace
   createDerivedAccountStore,
   type DerivedAccountStoreOptions,
+  type DerivedAccountStoreBaseOptions,
+  type DerivedSingletonAccountStoreOptions,
+  type DerivedRosterAccountStoreOptions,
 } from './adapters';
 
 // ====== BACKWARD COMPATIBILITY & ENVIRONMENT LOADING ======

@@ -27,7 +27,12 @@ The framework owns wire mapping, account resolution, idempotency, signing, async
 Minimal copy-paste-runnable example. Single tenant, one product, sync `create_media_buy`. Substitute your real lookups inside the bodies.
 
 ```ts
-import { AdcpError, createAdcpServerFromPlatform, type SalesPlatform, type AccountStore } from '@adcp/sdk/server';
+import {
+  AdcpError,
+  createAdcpServerFromPlatform,
+  createDerivedAccountStore,
+  type SalesPlatform,
+} from '@adcp/sdk/server';
 
 // Don't annotate `platform: DecisioningPlatform` — let TS infer the
 // `specialisms: ['sales-non-guaranteed']` literal so RequiredPlatformsFor
@@ -41,18 +46,18 @@ const platform = {
     config: {},
   },
 
-  // Single-tenant: one synthetic account; framework still routes everything
-  // through resolve(). See § "accounts.resolve() is mandatory".
-  accounts: {
-    resolution: 'derived',
-    resolve: async () => ({
+  // One account per credential; framework still routes everything through
+  // resolve(). The factory verifies buyer-supplied account_ids and publishes
+  // the one-row list_accounts that 'derived' requires. See
+  // § "accounts.resolve() is mandatory".
+  accounts: createDerivedAccountStore({
+    toAccount: () => ({
       id: 'tenant_singleton',
       name: 'My Ad Network',
       status: 'active',
-      metadata: {},
-      authInfo: { kind: 'api_key' },
+      ctx_metadata: {},
     }),
-  } satisfies AccountStore,
+  }),
 
   sales: {
     getProducts: async (req, ctx) => ({
@@ -416,9 +421,11 @@ Coercion rules (per-entry):
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | `'explicit'` (default) | Multi-tenant; buyer passes `account_id` on every request (Snap, Meta, GAM via Network/Company id).                                                                   | `ref = { account_id }` (or `{ brand, operator }`) on every call. |
 | `'implicit'`           | Buyer pre-syncs accounts via `sync_accounts`; subsequent calls resolved by `ctx.authInfo` lookup against pre-synced linkage (LinkedIn, some retail-media operators). | `ref` may be undefined; use `ctx.authInfo.clientId` to look up.  |
-| `'derived'`            | Single-tenant; one logical advertiser per agent process. Auth principal alone identifies the tenant.                                                                 | `ref` typically undefined; return the singleton regardless.      |
+| `'derived'`            | Account-id namespace discovered through `list_accounts` — an upstream platform owns the roster (Meta / Snap / AudioStack), or your credential is bound to a single account. `accounts.list` is required. | `ref = { account_id }` after discovery, or undefined on ref-less tools. Verify the id against what the caller's credential can reach; the framework refuses `{ brand, operator }` for this mode. |
 
-**If you have one tenant, declare `resolution: 'derived'`.** The default is `'explicit'`. A single-tenant agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`, `tasks_get` without explicit account) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too.
+**If one credential reaches one account, declare `resolution: 'derived'`.** The default is `'explicit'`. An agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`, `tasks_get` without explicit account) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too. In `'derived'` mode the framework auto-selects the one account the credential reaches.
+
+**`'derived'` changed in SDK 14 (adcp-client#1647 / upstream adcp#5062).** It used to mean "single-tenant; `account_id` is meaningless on the wire" and the framework refused inline `account_id`. Corrected: `'derived'` is an upstream-managed account-id namespace — buyers discover ids with `list_accounts` and send `{ account_id }`; the `{ brand, operator }` arm is refused; `accounts.list` is mandatory (`createAdcpServerFromPlatform` throws `PlatformConfigError` without it); and `accounts.resolve` must verify a buyer-supplied id against the caller's reachable set. Use `createDerivedAccountStore`, which does the verification and wires `list` for you.
 
 ```ts
 // Multi-tenant
@@ -452,20 +459,36 @@ Throwing `AccountNotFoundError` only from `resolve()` — never from specialism 
 
 ### `accounts.resolve()` is mandatory — even for "no tenant" agents
 
-The framework calls `accounts.resolve()` on every request before dispatching to a specialism method. Single-tenant agents that historically skipped account resolution (no per-buyer scoping; the agent serves one logical advertiser) MUST still implement `resolve()` — declare `resolution: 'derived'` and return a single synthetic `Account` regardless of the input ref:
+The framework calls `accounts.resolve()` on every request before dispatching to a specialism method. Agents that historically skipped account resolution (no per-buyer scoping; one logical advertiser per credential) MUST still implement `resolve()`. Declare `resolution: 'derived'` and let the Shape D factory build the store — it verifies buyer-supplied ids, auto-selects the singleton on ref-less tools, and publishes the one-row `list_accounts` the mode requires:
+
+```ts
+import { createDerivedAccountStore } from '@adcp/sdk/server';
+
+accounts: AccountStore<MyMeta> = createDerivedAccountStore<MyMeta>({
+  toAccount: () => ({
+    id: 'singleton', // the id buyers read from list_accounts and send back
+    name: 'My Agent',
+    status: 'active',
+    ctx_metadata: {
+      /* whatever your handlers want to read off ctx.account.ctx_metadata */
+    },
+  }),
+});
+```
+
+Hand-rolling it is fine too, but then you own both obligations — `list` and the id check:
 
 ```ts
 accounts: AccountStore<MyMeta> = {
-  resolution: 'derived', // single-tenant; auth principal alone identifies the tenant
-  resolve: async () => ({
-    id: 'singleton',
-    name: 'My Agent',
-    status: 'active',
-    metadata: {
-      /* whatever your handlers want to read off ctx.account.ctx_metadata */
-    },
-    authInfo: { kind: 'api_key' },
-  }),
+  resolution: 'derived',
+  resolve: async (ref, _ctx) => {
+    const account = { id: 'singleton', name: 'My Agent', status: 'active' as const, ctx_metadata: {} };
+    const id = refAccountId(ref);
+    // Fail closed: a buyer-supplied id that isn't ours resolves to
+    // ACCOUNT_NOT_FOUND, never to "the account we happen to have".
+    return id !== undefined && id !== account.id ? null : account;
+  },
+  list: async () => ({ items: [{ id: 'singleton', name: 'My Agent', status: 'active', ctx_metadata: {} }] }),
 };
 ```
 
