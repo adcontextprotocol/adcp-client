@@ -89,7 +89,7 @@ import {
 } from './probes';
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
-import { resolveDeclaredTestKit, selectProbeTask, validateTestKit } from './test-kit';
+import { resolveDeclaredTestKit, validateTestKit } from './test-kit';
 import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
@@ -189,6 +189,7 @@ import {
   routedAgentOptions,
   hasAnyRequiredTool,
   normalizeAgentToolNames,
+  resolveTaskName,
   RoutingError,
   type AgentRoutingContext,
 } from './agent-routing';
@@ -7870,29 +7871,6 @@ function shouldSkipPhaseBeforeRun(phase: StoryboardPhase, options: StoryboardRun
 function phaseUsesRuntimeContext(phase: StoryboardPhase): boolean {
   const expr = phase.skip_if?.trim();
   return expr ? phaseConditionUsesContext(expr) : false;
-}
-
-/**
- * Resolve a `$test_kit.<path>` task reference against the runtime options.
- * Falls back to `step.task_default`. Returns undefined when neither yields a string.
- */
-function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): string | undefined {
-  if (!step.task.startsWith('$test_kit.')) return step.task;
-  const path = step.task.slice('$test_kit.'.length).split('.');
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic test-kit shape
-  let value: any = options.test_kit;
-  for (const segment of path) {
-    if (value == null || typeof value !== 'object') {
-      value = undefined;
-      break;
-    }
-    value = (value as Record<string, unknown>)[segment];
-  }
-  const configured = typeof value === 'string' && value.length > 0 ? value : step.task_default;
-  if (step.task === '$test_kit.auth.probe_task') {
-    return selectProbeTask(configured, options.agentTools);
-  }
-  return configured;
 }
 
 /**

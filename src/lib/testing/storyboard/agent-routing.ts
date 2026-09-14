@@ -41,6 +41,7 @@
  * for implementation details.
  */
 import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from './oauth-metadata-graph';
+import { selectProbeTask } from './test-kit';
 import type { TestClient } from '../client';
 import { getOrCreateClient, getOrDiscoverProfile } from '../client';
 import type { AgentProfile } from '../types';
@@ -61,6 +62,29 @@ export function normalizeAgentToolNames(tools: unknown): string[] | undefined {
     return [];
   });
   return names.length > 0 ? names : undefined;
+}
+
+/**
+ * Resolve a `$test_kit.<path>` task reference against the runtime options.
+ * Falls back to `step.task_default`. Returns undefined when neither yields a string.
+ */
+export function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): string | undefined {
+  if (!step.task.startsWith('$test_kit.')) return step.task;
+  const path = step.task.slice('$test_kit.'.length).split('.');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic test-kit shape
+  let value: any = options.test_kit;
+  for (const segment of path) {
+    if (value == null || typeof value !== 'object') {
+      value = undefined;
+      break;
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  const configured = typeof value === 'string' && value.length > 0 ? value : step.task_default;
+  if (step.task === '$test_kit.auth.probe_task') {
+    return selectProbeTask(configured, options.agentTools);
+  }
+  return configured;
 }
 
 // `compliance_testing` is on the wire as a top-level capability block, NOT
@@ -288,7 +312,7 @@ export async function buildRoutingContext(
   }
 
   const protocolIndex = buildProtocolIndex(profiles);
-  detectMultiClaimConflicts(storyboard, protocolIndex);
+  detectMultiClaimConflicts(storyboard, protocolIndex, options);
 
   return { clients, profiles, protocolIndex, agentMap, discoveryFailures };
 }
@@ -311,7 +335,7 @@ export function buildRoutingContextFromProfiles(
     agentMap[key] = entry.url;
   }
   const protocolIndex = buildProtocolIndex(profiles);
-  detectMultiClaimConflicts(storyboard, protocolIndex);
+  detectMultiClaimConflicts(storyboard, protocolIndex, options);
   // Empty client map — callers that only test routing shouldn't dispatch.
   return { clients: new Map(), profiles, protocolIndex, agentMap, discoveryFailures: [] };
 }
@@ -348,21 +372,26 @@ function buildProtocolIndex(profiles: Map<string, AgentProfile>): Map<AdcpProtoc
  * same protocol) — surfacing it before the first non-discovery network
  * call gives a much better error than a half-run storyboard.
  */
-function detectMultiClaimConflicts(storyboard: Storyboard, protocolIndex: Map<AdcpProtocol, string[]>): void {
+function detectMultiClaimConflicts(
+  storyboard: Storyboard,
+  protocolIndex: Map<AdcpProtocol, string[]>,
+  options: StoryboardRunOptions
+): void {
   const conflicts: Array<{ task: string; protocol: AdcpProtocol; agents: string[]; stepIds: string[] }> = [];
   for (const phase of storyboard.phases ?? []) {
     for (const step of phase.steps ?? []) {
       if (step.agent !== undefined) continue;
-      const protocol = primaryProtocolFor(step.task);
+      const task = resolveTaskName(step, { ...options, agentTools: undefined }) ?? step.task;
+      const protocol = primaryProtocolFor(task);
       if (!protocol) continue;
       const candidates = protocolIndex.get(protocol);
       if (!candidates || candidates.length < 2) continue;
-      const existing = conflicts.find(c => c.task === step.task && c.protocol === protocol);
+      const existing = conflicts.find(c => c.task === task && c.protocol === protocol);
       if (existing) {
         existing.stepIds.push(step.id);
       } else {
         conflicts.push({
-          task: step.task,
+          task,
           protocol,
           agents: candidates,
           stepIds: [step.id],

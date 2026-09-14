@@ -15,12 +15,14 @@ const { routedAgentOptions } = require('../../dist/lib/testing/storyboard/agent-
 // No union/profile injection stands in for options.agents.
 async function startAgent(tools, capabilities = {}, rejectTools = false) {
   const calls = [];
+  const authorization = [];
   const connections = [];
   const server = http.createServer(async (req, res) => {
     const mcp = new McpServer({ name: 'routing-contract-test', version: '1.0.0' });
     for (const name of new Set(['get_adcp_capabilities', ...tools])) {
       mcp.registerTool(name, {}, async () => {
         calls.push(name);
+        authorization.push(req.headers.authorization);
         if (rejectTools && name !== 'get_adcp_capabilities') {
           return { isError: true, content: [{ type: 'text', text: 'Deterministic agent rejection' }] };
         }
@@ -48,6 +50,7 @@ async function startAgent(tools, capabilities = {}, rejectTools = false) {
   return {
     url: `http://127.0.0.1:${server.address().port}/mcp`,
     calls,
+    authorization,
     close: async () => {
       await Promise.all(connections.map(s => s.close()));
       server.closeAllConnections();
@@ -74,7 +77,7 @@ function sets(result) {
   };
 }
 
-async function run(topology, sb, options = {}) {
+async function run(topology, sb, options = {}, entryOptions = {}) {
   const entries = await Promise.all(
     Object.entries(topology).map(async ([key, [tools, caps, reject]]) => [key, await startAgent(tools, caps, reject)])
   );
@@ -84,9 +87,13 @@ async function run(topology, sb, options = {}) {
       strictResponseSchemaValidation: false,
       invariants: [],
       ...options,
-      agents: Object.fromEntries(entries.map(([key, a]) => [key, { url: a.url }])),
+      agents: Object.fromEntries(entries.map(([key, a]) => [key, { url: a.url, ...entryOptions[key] }])),
     });
-    return { result, calls: Object.fromEntries(entries.map(([key, a]) => [key, a.calls])) };
+    return {
+      result,
+      calls: Object.fromEntries(entries.map(([key, a]) => [key, a.calls])),
+      authorization: Object.fromEntries(entries.map(([key, a]) => [key, a.authorization])),
+    };
   } finally {
     await closeConnections();
     await Promise.all(Object.values(agents).map(a => a.close()));
@@ -365,6 +372,50 @@ for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
       assert.deepEqual(calls, { a: ['get_adcp_capabilities', 'get_adcp_capabilities'], b: ['get_adcp_capabilities'] });
     });
 
+    test('actual wire credentials stay on their selected route including auth overrides', async () => {
+      const { result, authorization } = await run(
+        { a: [[], {}], b: [[], {}] },
+        storyboard([
+          { id: 'a', task: 'get_adcp_capabilities', agent: 'a' },
+          { id: 'b', task: 'get_adcp_capabilities', agent: 'b' },
+          { id: 'anonymous_a', task: 'get_adcp_capabilities', agent: 'a', auth: 'none' },
+          { id: 'anonymous_b', task: 'get_adcp_capabilities', agent: 'b', auth: 'none' },
+        ]),
+        { adcpVersion, allow_http: true, auth: { type: 'bearer', token: 'test-run-default' } },
+        {
+          a: { auth: { type: 'bearer', token: 'test-route-a' } },
+          b: { auth: { type: 'bearer', token: 'test-route-b' } },
+        }
+      );
+      assert.deepEqual(sets(result), {
+        selected: ['a', 'b', 'anonymous_a', 'anonymous_b'],
+        skipped: [],
+        failed: [],
+      });
+      assert.deepEqual(authorization, {
+        a: ['Bearer test-route-a', 'Bearer test-route-a', undefined],
+        b: ['Bearer test-route-b', 'Bearer test-route-b', undefined],
+      });
+    });
+
+    test('dynamic ambiguity fails before any earlier non-discovery call', async () => {
+      const { result, calls } = await run(
+        {
+          a: [['get_signals'], { supported_protocols: ['signals'] }],
+          b: [['get_signals'], { supported_protocols: ['signals'] }],
+        },
+        storyboard([
+          { id: 'earlier', task: 'get_adcp_capabilities', agent: 'a' },
+          { id: 'ambiguous', task: '$test_kit.routing.task', task_default: 'get_signals' },
+        ]),
+        { adcpVersion }
+      );
+      assert.equal(result.failed_count, 1);
+      assert.equal(result.skipped_count, 0);
+      assert.match(result.phases[0].steps[0].error, /Routing conflict/);
+      assert.deepEqual(calls, { a: ['get_adcp_capabilities'], b: ['get_adcp_capabilities'] });
+    });
+
     test('dynamic task names route by their resolved canonical protocol', async () => {
       const { result, calls } = await run(
         {
@@ -475,29 +526,31 @@ test('mixed MCP/A2A routes record and validate the selected transport', async ()
   app.use('/.well-known/agent-card.json', a2a.agentCardHandler);
   app.use('/a2a', a2a.jsonRpcHandler);
   try {
-    const result = await runStoryboard(
-      '',
-      storyboard([
-        { id: 'mcp', task: 'get_adcp_capabilities', agent: 'a' },
-        { id: 'a2a', task: 'get_adcp_capabilities', agent: 'b' },
-        { id: 'a2a_auth_probe', task: 'get_adcp_capabilities', agent: 'b', auth: 'none' },
-      ]),
-      {
-        protocol: 'mcp',
-        strictResponseSchemaValidation: false,
-        invariants: [],
-        agents: { a: { url: a.url }, b: { url, transport: 'a2a' } },
-      }
-    );
-    assert.deepEqual(sets(result), { selected: ['mcp', 'a2a', 'a2a_auth_probe'], skipped: [], failed: [] });
-    assert.deepEqual(
-      result.phases[0].steps.map(s => [s.request.transport, s.response_record.transport]),
-      [
-        ['mcp', 'mcp'],
-        ['a2a', 'a2a'],
-        ['a2a', 'a2a'],
-      ]
-    );
+    for (const protocol of ['mcp', 'a2a']) {
+      const result = await runStoryboard(
+        '',
+        storyboard([
+          { id: 'mcp', task: 'get_adcp_capabilities', agent: 'a' },
+          { id: 'a2a', task: 'get_adcp_capabilities', agent: 'b' },
+          { id: 'a2a_auth_probe', task: 'get_adcp_capabilities', agent: 'b', auth: 'none' },
+        ]),
+        {
+          protocol,
+          strictResponseSchemaValidation: false,
+          invariants: [],
+          agents: { a: { url: a.url, transport: 'mcp' }, b: { url, transport: 'a2a' } },
+        }
+      );
+      assert.deepEqual(sets(result), { selected: ['mcp', 'a2a', 'a2a_auth_probe'], skipped: [], failed: [] });
+      assert.deepEqual(
+        result.phases[0].steps.map(s => [s.request.transport, s.response_record.transport]),
+        [
+          ['mcp', 'mcp'],
+          ['a2a', 'a2a'],
+          ['a2a', 'a2a'],
+        ]
+      );
+    }
   } finally {
     await closeConnections();
     await a.close();
