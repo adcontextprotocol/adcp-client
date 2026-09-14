@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [main, 13.x]
   pull_request:
-    branches: [main]
+    branches: [main, 13.x]
 
 permissions:
   contents: read
@@ -40,6 +40,71 @@ jobs:
 
       - name: Lint GitHub Actions workflows
         run: npm run lint:workflows
+
+      # These exact event/path expectations are deliberately 13.x-local. Adapt
+      # them when forward-merging or adding workflow_dispatch/path filters.
+      - name: Verify stable maintenance workflow coverage
+        run: |
+          node - <<'NODE'
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const { parse } = require('yaml');
+
+          const readWorkflow = name =>
+            parse(fs.readFileSync(`.github/workflows/${name}.yml`, 'utf8'));
+          const expectedBranches = ['13.x', 'main'];
+          const assertEvents = (workflow, expected, name) => {
+            assert.deepEqual(
+              Object.keys(workflow.on ?? {}).sort(),
+              [...expected].sort(),
+              `${name} must expose only its intended events`
+            );
+          };
+          const assertBranches = (workflow, event, name) => {
+            const trigger = workflow.on?.[event];
+            assert.deepEqual(
+              Object.keys(trigger ?? {}).sort(),
+              ['branches'],
+              `${name} ${event} must not add path or ignore filters`
+            );
+            assert.deepEqual(
+              [...(trigger?.branches ?? [])].sort(),
+              expectedBranches,
+              `${name} ${event} branches must be exactly main and 13.x`
+            );
+          };
+
+          const ci = readWorkflow('ci');
+          assertEvents(ci, ['push', 'pull_request'], 'ci.yml');
+          assertBranches(ci, 'push', 'ci.yml');
+          assertBranches(ci, 'pull_request', 'ci.yml');
+
+          const changesetCheck = readWorkflow('changeset-check');
+          assertEvents(changesetCheck, ['pull_request'], 'changeset-check.yml');
+          assertBranches(changesetCheck, 'pull_request', 'changeset-check.yml');
+
+          const codeql = readWorkflow('codeql');
+          assertEvents(codeql, ['push', 'pull_request', 'schedule'], 'codeql.yml');
+          assertBranches(codeql, 'push', 'codeql.yml');
+          assertBranches(codeql, 'pull_request', 'codeql.yml');
+
+          const interop = readWorkflow('interop-python');
+          assertEvents(
+            interop,
+            ['pull_request', 'workflow_dispatch', 'workflow_call'],
+            'interop-python.yml'
+          );
+          assertBranches(interop, 'pull_request', 'interop-python.yml');
+          assert.equal(
+            interop.on?.push,
+            undefined,
+            'interop-python.yml must rely on release.yml for push events'
+          );
+
+          const release = readWorkflow('release');
+          assertEvents(release, ['push'], 'release.yml');
+          assertBranches(release, 'push', 'release.yml');
+          NODE
 
       - name: Sync schemas from AdCP
         run: npm run sync-schemas:all
