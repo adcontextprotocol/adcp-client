@@ -52,11 +52,13 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.sup
   ] as const) {
     if (instant === undefined) continue;
     if (instant.length > 64) {
+      if (path[0] === 'period') periodInstantsValid = false;
       context.addIssue({
         code: 'custom',
         path: [...path],
         message: 'Reporting instants must not exceed 64 characters',
       });
+      continue;
     }
     try {
       canonicalReportingInstant(instant);

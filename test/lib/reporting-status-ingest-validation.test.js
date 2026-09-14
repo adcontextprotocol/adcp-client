@@ -352,6 +352,29 @@ describe('reporting consumer status validation', () => {
     );
   });
 
+  test('rejects oversized period instants before canonicalization or comparison', () => {
+    const result = ReportingConsumerStatusV1Schema.safeParse(
+      consumerStatus({
+        period: {
+          start: `2026-09-01T00:00:00.${'0'.repeat(65_536)}Z`,
+          end: '2026-09-01T00:00:00Z',
+          source_timezone: 'UTC',
+        },
+      })
+    );
+
+    assert.equal(result.success, false);
+    assert.deepEqual(
+      result.error.issues.map(issue => ({ path: issue.path, message: issue.message })),
+      [
+        {
+          path: ['period', 'start'],
+          message: 'Reporting instants must not exceed 64 characters',
+        },
+      ]
+    );
+  });
+
   test('keeps the nested period closed and half-open', () => {
     const extra = consumerStatus();
     extra.period.extra = 'not-on-the-wire';
