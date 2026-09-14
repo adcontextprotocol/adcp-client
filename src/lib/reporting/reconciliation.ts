@@ -768,16 +768,30 @@ function assertReportingLedgerGraph(
   const materializedObligations = new Set(
     [...materializations.values()].map(materialization => materialization.reporting_obligation_id)
   );
+  const directCoreScopeCounts = new Map<string, number>();
+  for (const obligation of obligations.values()) {
+    if (
+      !isDirectCoreObligation(obligation) ||
+      !Array.isArray(obligation.media_buy_ids) ||
+      materializedObligations.has(obligation.reporting_obligation_id)
+    ) {
+      continue;
+    }
+    const scopeKey = reportingRevisionScopeKey(obligation);
+    directCoreScopeCounts.set(scopeKey, (directCoreScopeCounts.get(scopeKey) ?? 0) + 1);
+  }
   for (const revision of revisions.values()) {
-    const directlyScopedCoreRevision = [...obligations.values()].some(
-      obligation =>
-        isDirectCoreObligation(obligation) &&
-        !materializedObligations.has(obligation.reporting_obligation_id) &&
-        revisionMatchesObligationScope(revision, obligation)
-    );
+    const referenced = referencedRevisions.has(revision.reporting_revision_id);
+    // A Core revision has no feed_purpose identity. Exactly one direct-Core
+    // obligation may therefore own a given revision scope; ambiguous scopes
+    // fail closed instead of associating the same revision with two feeds.
+    const directlyScopedCoreRevision =
+      !referenced &&
+      Array.isArray(revision.media_buy_ids) &&
+      directCoreScopeCounts.get(reportingRevisionScopeKey(revision)) === 1;
     if (
       revision.account_id !== accountId ||
-      (!referencedRevisions.has(revision.reporting_revision_id) && !directlyScopedCoreRevision) ||
+      (!referenced && !directlyScopedCoreRevision) ||
       !isReportingControlTotals(revision.control_totals)
     ) {
       fail();
@@ -817,6 +831,16 @@ function revisionMatchesObligationScope(
     sameStringSet(revision.media_buy_ids, obligation.media_buy_ids) &&
     same(revision.period, obligation.period)
   );
+}
+
+function reportingRevisionScopeKey(value: ManagedReportingRevision | ManagedReportingObligation): string {
+  return canonical({
+    account_id: value.account_id,
+    report_definition_id: value.report_definition_id,
+    reporting_profile: value.reporting_profile,
+    media_buy_ids: [...value.media_buy_ids].sort(),
+    period: value.period,
+  });
 }
 
 function assertDirectReportingLedgerGraph(ledger: ReportingLedger): void {
@@ -859,15 +883,20 @@ function selectCurrent(
   const receipts = ledger.receipts.filter(item => item.reporting_obligation_id === obligation.reporting_obligation_id);
   const successfulAttempts = attempts.filter(item => item.status === 'available' || item.status === 'delivered');
   const acceptedReceipts = receipts.filter(item => item.status === 'accepted');
+  const closedHealthy = obligation.health === 'healthy' || obligation.health === 'complete';
+  const materializationCountsRequired = closedHealthy && obligation.destination_ref !== undefined;
+  const receiptCountsRequired = closedHealthy && obligation.reconciliation_mode === 'consumer_receipt';
   if (obligation.account_id !== ledger.accountId) reasons.push('OBLIGATION_ACCOUNT_MISMATCH');
   if (
     candidates.length !== obligation.revision_count ||
-    (typeof obligation.materialization_count === 'number' && attempts.length !== obligation.materialization_count) ||
-    (typeof obligation.successful_materialization_count === 'number' &&
-      successfulAttempts.length !== obligation.successful_materialization_count) ||
-    (typeof obligation.receipt_count === 'number' && receipts.length !== obligation.receipt_count) ||
-    (typeof obligation.accepted_receipt_count === 'number' &&
-      acceptedReceipts.length !== obligation.accepted_receipt_count)
+    countMismatch(obligation.materialization_count, attempts.length, materializationCountsRequired) ||
+    countMismatch(
+      obligation.successful_materialization_count,
+      successfulAttempts.length,
+      materializationCountsRequired
+    ) ||
+    countMismatch(obligation.receipt_count, receipts.length, receiptCountsRequired) ||
+    countMismatch(obligation.accepted_receipt_count, acceptedReceipts.length, receiptCountsRequired)
   ) {
     reasons.push('ASSOCIATED_HISTORY_INCOMPLETE');
   }
@@ -1081,6 +1110,10 @@ function selectCurrent(
     }
   }
   return { revision, materialization, reasons };
+}
+
+function countMismatch(declared: number | undefined, observed: number, required: boolean): boolean {
+  return declared === undefined ? required : declared !== observed;
 }
 
 function expectedPeriodMatches(

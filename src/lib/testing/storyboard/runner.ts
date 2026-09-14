@@ -3447,24 +3447,7 @@ async function executeStoryboardPass(
       }
 
       if (step.task === VALIDATION_ONLY_TASK) {
-        const detail =
-          'Validation-only agent output requires an orchestrator output adapter and is not dispatched as an AdCP tool.';
-        const result: StoryboardStepResult = {
-          storyboard_id: storyboard.id,
-          step_id: step.id,
-          phase_id: phase.id,
-          title: step.title,
-          task: step.task,
-          passed: true,
-          skipped: true,
-          skip_reason: 'missing_tool',
-          skip: buildSkip('missing_tool', detail),
-          duration_ms: 0,
-          validations: [],
-          context,
-          next: getNextStepPreview(step.id, allSteps, context, runnerVars),
-          extraction: { path: 'none', note: detail },
-        };
+        const result = validationOnlyCoverageGap(step, phase.id, context, allSteps, runnerVars, storyboard.id);
         stepResults.push(result);
         priorStepResults.set(step.id, result);
         skippedCount++;
@@ -4715,23 +4698,7 @@ async function executeStep(
   };
 
   if (step.task === VALIDATION_ONLY_TASK) {
-    const detail =
-      'Validation-only agent output requires an orchestrator output adapter and is not dispatched as an AdCP tool.';
-    return {
-      step_id: step.id,
-      phase_id: phaseId,
-      title: step.title,
-      task: step.task,
-      passed: true,
-      skipped: true,
-      skip_reason: 'missing_tool',
-      skip: buildSkip('missing_tool', detail),
-      duration_ms: 0,
-      validations: [],
-      context,
-      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
-      extraction: { path: 'none', note: detail },
-    };
+    return validationOnlyCoverageGap(step, phaseId, context, allSteps, runState.runnerVars);
   }
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
@@ -6145,6 +6112,34 @@ async function executeStep(
     extraction: extractionFromTaskResult(taskResult),
     ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
     ...(hints.length > 0 && { hints }),
+  };
+}
+
+function validationOnlyCoverageGap(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  runnerVars: RunnerVariables | undefined,
+  storyboardId?: string
+): StoryboardStepResult {
+  const detail =
+    'Validation-only agent output requires an orchestrator output adapter and is not dispatched as an AdCP tool.';
+  return {
+    ...(storyboardId ? { storyboard_id: storyboardId } : {}),
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed: true,
+    skipped: true,
+    skip_reason: 'fixture_unavailable',
+    skip: buildSkip('fixture_unavailable', detail),
+    duration_ms: 0,
+    validations: [],
+    context,
+    next: getNextStepPreview(step.id, allSteps, context, runnerVars),
+    extraction: { path: 'none', note: detail },
   };
 }
 

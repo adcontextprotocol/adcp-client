@@ -261,7 +261,7 @@ describe('validation-only storyboard steps', () => {
     assert.equal(result.task, '__validation_only__');
     assert.equal(storyboard.phases[0].steps[0].task, undefined);
     assert.equal(result.skipped, true);
-    assert.equal(result.skip_reason, 'missing_tool');
+    assert.equal(result.skip_reason, 'fixture_unavailable');
     assert.equal(dispatches, 0);
 
     const fullResult = await runStoryboard('https://seller.example/mcp', storyboard, {
@@ -275,7 +275,7 @@ describe('validation-only storyboard steps', () => {
       },
     });
     assert.equal(fullResult.overall_passed, false);
-    assert.equal(fullResult.phases[0].steps[0].skip_reason, 'missing_tool');
+    assert.equal(fullResult.phases[0].steps[0].skip_reason, 'fixture_unavailable');
     assert.equal(dispatches, 0);
   });
 });

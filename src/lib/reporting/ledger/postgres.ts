@@ -765,6 +765,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           id: string;
           errorCode?: string;
           safeMessage?: string;
+          errorField?: string;
         }>;
       }
     >(
@@ -784,6 +785,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           reporting_status_id: result.id,
           errorCode: result.errorCode ?? 'VALIDATION_ERROR',
           safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+          ...(result.errorField ? { errorField: result.errorField } : {}),
         });
         continue;
       }
@@ -808,6 +810,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           id: string;
           errorCode?: string;
           safeMessage?: string;
+          errorField?: string;
         };
         const priorBatch = await client.query<
           QueryResultRow & { request_fingerprint: string; results: StoredResult[] }
@@ -828,6 +831,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 reporting_status_id: result.id,
                 errorCode: result.errorCode ?? 'VALIDATION_ERROR',
                 safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+                ...(result.errorField ? { errorField: result.errorField } : {}),
               });
               continue;
             }
@@ -875,9 +879,21 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         let remainingStatements = MAX_CONSUMER_STATUS_STATEMENTS - Number(capacity.rows[0]?.statuses ?? 0);
         const results: ReportingConsumerStatusBatchResultV1[] = [];
         const storedResults: StoredResult[] = [];
-        const fail = (statusId: string, errorCode: string, safeMessage: string) => {
-          results.push({ inserted: false, reporting_status_id: statusId, errorCode, safeMessage });
-          storedResults.push({ kind: 'failed', id: statusId, errorCode, safeMessage });
+        const fail = (statusId: string, errorCode: string, safeMessage: string, errorField?: string) => {
+          results.push({
+            inserted: false,
+            reporting_status_id: statusId,
+            errorCode,
+            safeMessage,
+            ...(errorField ? { errorField } : {}),
+          });
+          storedResults.push({
+            kind: 'failed',
+            id: statusId,
+            errorCode,
+            safeMessage,
+            ...(errorField ? { errorField } : {}),
+          });
         };
         for (const [index, entry] of input.entries.entries()) {
           const statusId = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
@@ -886,7 +902,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             continue;
           }
           if (!('status' in entry)) {
-            fail(statusId, 'VALIDATION_ERROR', entry.validationError);
+            fail(statusId, 'VALIDATION_ERROR', entry.validationError, entry.validationField);
             continue;
           }
           const status = entry.status;
@@ -921,7 +937,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           }
           const prevalidation = entry.validationError;
           if (prevalidation) {
-            fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation);
+            fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation, entry.validationField);
             continue;
           }
           if (Buffer.byteLength(JSON.stringify(status), 'utf8') > MAX_CONSUMER_STATUS_BYTES) {

@@ -72,6 +72,10 @@ const TOOL_GOTCHAS: Record<string, string[]> = {
     'Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).',
     'Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).',
   ],
+  sync_reporting_status: [
+    'A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. Results map one-for-one to submitted statuses in request order.',
+    '`recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.',
+  ],
 };
 
 // GitHub Pages base URL for published docs
@@ -1203,6 +1207,9 @@ function generateLlmsTxt(
   ln(`| \`PricingOption\` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |`);
   ln(`| \`GovernanceConfig\` | Buyer-side governance middleware config |`);
   ln(
+    `| \`ReportingConsumerStatus\` | Consumer acknowledgement for one config/report/period; see the four-state evidence matrix below |`
+  );
+  ln(
     `| \`EstablishedProposalStore\` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |`
   );
   ln(
@@ -1216,6 +1223,10 @@ function generateLlmsTxt(
   );
   ln(
     `| \`PostgresWebhookRuntime\` | Opinionated PostgreSQL webhook emitter, ready-to-wire server config, durable stores, migrations, probes, and bounded recovery |`
+  );
+  ln();
+  ln(
+    `\`ReportingConsumerStatus\` always carries \`reporting_status_id\`, delivery configuration identity, report definition, half-open period, \`consumer_status\`, and \`status_as_of\`. \`received\` requires obligation ID, revision ID, and observed revision SHA-256; \`obligation_missing\` forbids all three; \`revision_missing\` requires only obligation ID; \`unreadable\` requires obligation ID, revision ID, and \`failure_code\`. Snapshot ID/time are paired. Caller requests must omit seller-authored \`recorded_at\`.`
   );
   ln();
   ln(
@@ -1903,6 +1914,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
     ['ContentStandards', 'Brand safety config — has standards_id, name, scope, policy entries, calibration exemplars'],
     ['Catalog', 'Data feed — typed (offering, product, store, etc.) with items, URL, or inline data'],
     ['Offering', 'Promotable item with asset groups — used in sponsored intelligence and catalog creatives'],
+    [
+      'Reporting Consumer Status',
+      'Consumer acknowledgement for one config/report/half-open period — received requires obligation, revision, and observed SHA-256; obligation_missing forbids them; revision_missing requires obligation only; unreadable requires obligation, revision, and failure_code; snapshot ID/time are paired; recorded_at is response-only',
+    ],
   ];
 
   ln(`| Type | Key Fields |`);

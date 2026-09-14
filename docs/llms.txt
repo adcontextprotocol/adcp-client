@@ -615,6 +615,10 @@ Submit authenticated consumer status for expected reporting periods.
 - Required: `status: 'completed'`, `results: (Recorded reporting consumer status | Unchanged reporting consumer status | Failed reporting consumer status)[]`
 - Optional: `context: Context`
 
+**Watch out:**
+- A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. Results map one-for-one to submitted statuses in request order.
+- `recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.
+
 #### `sync_reporting_receipts`
 
 Submit authenticated consumer reconciliation receipts for durable reporting materializations.
@@ -2030,11 +2034,14 @@ See docs/TYPE-SUMMARY.md for field-level detail. Key types at a glance:
 | `Targeting` | Audience criteria (geo, demo, behavioral, contextual, device) |
 | `PricingOption` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |
 | `GovernanceConfig` | Buyer-side governance middleware config |
+| `ReportingConsumerStatus` | Consumer acknowledgement for one config/report/period; see the four-state evidence matrix below |
 | `EstablishedProposalStore` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |
 | `WebhooksConfig.tenantScope` | Explicit trusted webhook namespace for a genuinely single-tenant server; multi-tenant servers derive scope per request |
 | `PostgresTaskSettlementCoordinator` | Atomically commits a push task terminal state and PostgreSQL recovery-outbox checkpoint for different-process workers |
 | `PostgresTaskSettlementIntentQueue` | Commits an exact terminal intent with application state, then recovers idempotent SDK task settlement after a crash |
 | `PostgresWebhookRuntime` | Opinionated PostgreSQL webhook emitter, ready-to-wire server config, durable stores, migrations, probes, and bounded recovery |
+
+`ReportingConsumerStatus` always carries `reporting_status_id`, delivery configuration identity, report definition, half-open period, `consumer_status`, and `status_as_of`. `received` requires obligation ID, revision ID, and observed revision SHA-256; `obligation_missing` forbids all three; `revision_missing` requires only obligation ID; `unreadable` requires obligation ID, revision ID, and `failure_code`. Snapshot ID/time are paired. Caller requests must omit seller-authored `recorded_at`.
 
 Production webhook publishers may construct an unbound emitter and call `forTenantScope(trustedTenant)` before every delivery. Direct unbound `emit()` fails before checkpointing or network access. `createAdcpServer` derives scope from trusted request context; configure `webhooks.tenantScope` only for a genuinely single-tenant factory.
 In-process HITL callbacks can write `return taskCtx.reject(result, reason)` for a business decline with an artifact but no structured execution error. `ctx.handoffToTask(producer, { settlement: 'external' })` is polling-only and must omit `push_notification_config`; its external producer context intentionally has no `reject()` and must durably queue the complete scoped handle before returning. Workers use `completeScopedTask()` or `failScopedTask()`, acknowledging only `applied` or compatible `already_terminal` outcomes and retrying or dead-lettering scope misses and conflicts. `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()`, `failScopedPushTask()`, or `rejectScopedPushTask()` is a lower-level application-managed push-settlement API for integrations that already create and own both the task and protected push registration outside this framework handoff path.

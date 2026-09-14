@@ -915,7 +915,11 @@ function postProcessForecastRangeConstraint(content: string): string {
     entry => entry.name === 'ForecastRateRangeSchema'
   );
   if (!rateTarget) throw new Error('Unable to locate ForecastRateRangeSchema');
+  // ts-to-zod resolves the rate scalar alias as an object, so the generated
+  // target rejects every numeric rate. ForecastRateRange intentionally shares
+  // ForecastRange's low/mid/high structure and adds the published upper bound.
   const rateConstraint = `ForecastRangeSchema.superRefine((value, ctx) => {
+    // forecast rate JSON Schema parity
     for (const field of ["low", "mid", "high"] as const) {
         if (value[field] !== undefined && value[field] > 1) {
             ctx.addIssue({ code: "custom", path: [field], message: "forecast rate values must not exceed 1" });

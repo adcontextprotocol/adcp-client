@@ -464,6 +464,58 @@ test('loads a scope-matched Core revision without a managed materialization', as
   assert.ok(evaluated.obligations[0].reasons.includes('MISSING_VERIFIED_MATERIALIZATION'));
 });
 
+test('rejects an ambiguous direct-Core revision scope across feed purposes', async () => {
+  const raw = response([]);
+  const first = raw.periods[0];
+  first.reconciliation_mode = 'delivery_only';
+  first.reconciliation_status = 'not_required';
+  delete first.destination_ref;
+  delete first.materialization_count;
+  delete first.successful_materialization_count;
+  delete first.receipt_count;
+  delete first.accepted_receipt_count;
+  const second = structuredClone(first);
+  second.reporting_obligation_id = 'obligation-analytics';
+  second.feed_purpose = 'analytics';
+  raw.periods.push(second);
+  raw.materializations = [];
+  raw.pagination.total_count = raw.periods.length + raw.revisions.length;
+
+  await assert.rejects(
+    loadReportingLedger(
+      {
+        async getReportingStatus() {
+          return raw;
+        },
+      },
+      { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
+    ),
+    error => error.code === 'LEDGER_GRAPH_INTEGRITY_FAILED'
+  );
+});
+
+test('fails closed when healthy obligations omit conditionally required history counts', () => {
+  const item = obligation();
+  item.health = 'complete';
+  delete item.materialization_count;
+  delete item.successful_materialization_count;
+  delete item.receipt_count;
+  delete item.accepted_receipt_count;
+  const ledger = {
+    ledgerSnapshotId: 'snapshot-missing-required-counts',
+    ledgerAsOf: '2026-09-02T00:00:06Z',
+    accountId: 'account-1',
+    scope: response([]).scope,
+    obligations: [item],
+    revisions: [structuredClone(revision)],
+    materializations: [structuredClone(materialization())],
+    receipts: [],
+  };
+
+  const result = evaluateReportingLedger(ledger, [expectedPeriod()]);
+  assert.ok(result.obligations[0].reasons.includes('ASSOCIATED_HISTORY_INCOMPLETE'));
+});
+
 test('rejects unbounded ledger loading and snapshot restart policies', async () => {
   const client = {
     async getReportingStatus() {

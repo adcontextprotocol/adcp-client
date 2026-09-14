@@ -98,8 +98,10 @@ export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSche
 
 // Validate the envelope independently so one malformed status does not reject
 // valid siblings. Each status is checked against the published schema below.
-export type ReportingConsumerStatusV1 = ReportingConsumerStatus;
-export type SyncReportingStatusRequestV1 = SyncReportingStatusRequest;
+export type ReportingConsumerStatusV1 = Omit<ReportingConsumerStatus, 'recorded_at'>;
+export type SyncReportingStatusRequestV1 = Omit<SyncReportingStatusRequest, 'statuses'> & {
+  statuses: ReportingConsumerStatusV1[];
+};
 export type RecordedReportingConsumerStatusV1 = {
   result: 'recorded' | 'unchanged';
   consumer_status: ReportingConsumerStatusV1 & { recorded_at: string };
@@ -134,23 +136,17 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
   const activeReadsByAccount = new Map<string, number>();
   return async (requestInput, context) => {
     if (!hasBoundedJsonDepth(requestInput)) {
-      return failed(
-        ['invalid-reporting-status-id'],
-        'VALIDATION_ERROR',
-        'Reporting consumer status request is invalid'
-      );
+      return failed(requestStatusIds(requestInput), 'VALIDATION_ERROR', 'Reporting consumer status request is invalid');
     }
     const envelope = validateSyncReportingStatusEnvelope(requestInput);
     if (!envelope.valid) {
-      const rawStatuses = isRecord(requestInput) && Array.isArray(requestInput.statuses) ? requestInput.statuses : [];
-      const ids =
-        rawStatuses.length > 0 && rawStatuses.length <= 100
-          ? rawStatuses.map(value => {
-              const candidate = isRecord(value) ? value.reporting_status_id : undefined;
-              return statusId.safeParse(candidate).success ? (candidate as string) : 'invalid-reporting-status-id';
-            })
-          : ['invalid-reporting-status-id'];
-      return failed(ids, 'VALIDATION_ERROR', 'Reporting consumer status request is invalid');
+      const ids = requestStatusIds(requestInput);
+      return failed(
+        ids,
+        'VALIDATION_ERROR',
+        'Reporting consumer status request is invalid',
+        envelope.issues[0]?.pointer
+      );
     }
     const request = requestInput;
     const parsedStatuses = request.statuses.map(value => ReportingConsumerStatusV1Schema.safeParse(value));
@@ -207,9 +203,11 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         const entries: ReportingConsumerStatusBatchEntryV1[] = [];
         for (const [index, parsedStatus] of parsedStatuses.entries()) {
           if (!parsedStatus.success) {
+            const path = parsedStatus.error.issues[0]?.path;
             entries.push({
               reporting_status_id: reportingStatusId(request.statuses[index]),
               validationError: 'Reporting consumer status request is invalid',
+              ...(path?.length ? { validationField: zodPathToPointer(['statuses', index, ...path]) } : {}),
               ...rawStatusChainIdentity(request.statuses[index]),
             });
             continue;
@@ -465,11 +463,11 @@ function wireConsumerStatus(
   return wire;
 }
 
-function failed(ids: string[], code: string, message: string): SyncReportingStatusResponseV1 {
+function failed(ids: string[], code: string, message: string, field?: string): SyncReportingStatusResponseV1 {
   const results = ids.map(reporting_status_id => ({
     result: 'failed' as const,
     reporting_status_id,
-    errors: [{ code, message }] as FailedReportingConsumerStatusV1['errors'],
+    errors: [{ code, message, ...(field ? { field } : {}) }] as FailedReportingConsumerStatusV1['errors'],
   }));
   if (results.length === 0) throw new TypeError('sync_reporting_status requires at least one result');
   return {
@@ -492,7 +490,13 @@ function completed(
       : {
           result: 'failed' as const,
           reporting_status_id: result.reporting_status_id,
-          errors: [{ code: result.errorCode, message: result.safeMessage }],
+          errors: [
+            {
+              code: result.errorCode,
+              message: result.safeMessage,
+              ...(result.errorField ? { field: result.errorField } : {}),
+            },
+          ],
         }
   );
   if (wireResults.length === 0) throw new TypeError('sync_reporting_status store returned no item results');
@@ -527,6 +531,17 @@ function statusBatchFingerprint(request: {
 function reportingStatusId(value: unknown): string {
   const candidate = isRecord(value) ? value.reporting_status_id : undefined;
   return statusId.safeParse(candidate).success ? (candidate as string) : 'invalid-reporting-status-id';
+}
+
+function requestStatusIds(value: unknown): string[] {
+  const statuses = isRecord(value) && Array.isArray(value.statuses) ? value.statuses : [];
+  return statuses.length > 0 && statuses.length <= 100
+    ? statuses.map(reportingStatusId)
+    : ['invalid-reporting-status-id'];
+}
+
+function zodPathToPointer(path: PropertyKey[]): string {
+  return `/${path.map(value => String(value).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

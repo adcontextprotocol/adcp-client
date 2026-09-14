@@ -1358,6 +1358,10 @@ _Response (success branch):_
 }
 ```
 
+_Watch out:_
+- A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. Results map one-for-one to submitted statuses in request order.
+- `recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.
+
 #### `sync_reporting_receipts`
 
 Submit authenticated consumer reconciliation receipts for durable reporting materializations.
@@ -2683,6 +2687,7 @@ These are the main domain objects returned in tool responses. Defined in `src/li
 | `ContentStandards` | Brand safety config — has standards_id, name, scope, policy entries, calibration exemplars |
 | `Catalog` | Data feed — typed (offering, product, store, etc.) with items, URL, or inline data |
 | `Offering` | Promotable item with asset groups — used in sponsored intelligence and catalog creatives |
+| `Reporting Consumer Status` | Consumer acknowledgement for one config/report/half-open period — received requires obligation, revision, and observed SHA-256; obligation_missing forbids them; revision_missing requires obligation only; unreadable requires obligation, revision, and failure_code; snapshot ID/time are paired; recorded_at is response-only |
 
 ## PricingOption Variants
 

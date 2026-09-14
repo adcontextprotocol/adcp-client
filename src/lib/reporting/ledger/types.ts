@@ -185,10 +185,11 @@ export interface ReportingLedgerConsumerStatementV1 {
 export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerStatementV1, 'recorded_at'>;
 
 export type ReportingConsumerStatusBatchEntryV1 =
-  | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string }
+  | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string; validationField?: string }
   | {
       reporting_status_id: string;
       validationError: string;
+      validationField?: string;
       chainIdentity?: {
         delivery_config_id: string;
         delivery_config_version: number;
@@ -217,7 +218,7 @@ export type ReportingConsumerStatusReplayInputV1 = Pick<
 
 export type ReportingConsumerStatusBatchResultV1 =
   | { inserted: boolean; value: ReportingLedgerConsumerStatementV1 }
-  | { inserted: false; reporting_status_id: string; errorCode: string; safeMessage: string };
+  | { inserted: false; reporting_status_id: string; errorCode: string; safeMessage: string; errorField?: string };
 
 export interface ReportingLedgerIssueV1 {
   issueId: string;

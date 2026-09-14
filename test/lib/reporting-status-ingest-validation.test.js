@@ -6,6 +6,7 @@ const {
   SyncReportingStatusRequestV1Schema,
   createSyncReportingStatusHandler,
 } = require('../../dist/lib/reporting/ledger/index.js');
+const { validateSyncReportingStatusEnvelope } = require('../../dist/lib/validation/sync-reporting-status-envelope.js');
 
 function consumerStatus(overrides = {}) {
   return {
@@ -25,6 +26,24 @@ function consumerStatus(overrides = {}) {
 }
 
 describe('reporting consumer status validation', () => {
+  test('keeps the envelope placeholder and 0/100/101 item boundaries aligned with the published schema', () => {
+    const envelope = count => ({
+      account: { account_id: 'account-1' },
+      idempotency_key: 'reporting-status-envelope-boundary',
+      statuses: Array.from({ length: count }, (_, index) =>
+        consumerStatus({
+          reporting_status_id: `reporting_status_${String(index + 1).padStart(4, '0')}`,
+          // The envelope validator deliberately ignores item-level evidence.
+          consumer_status: 'received',
+        })
+      ),
+    });
+    assert.equal(validateSyncReportingStatusEnvelope(envelope(0)).valid, false);
+    assert.equal(validateSyncReportingStatusEnvelope(envelope(1)).valid, true);
+    assert.equal(validateSyncReportingStatusEnvelope(envelope(100)).valid, true);
+    assert.equal(validateSyncReportingStatusEnvelope(envelope(101)).valid, false);
+  });
+
   test('whole-request validation applies the consumer-only status refinements', () => {
     const malformed = consumerStatus({
       reporting_obligation_id: undefined,
@@ -40,6 +59,34 @@ describe('reporting consumer status validation', () => {
       }).success,
       false
     );
+  });
+
+  test('returns an item-local field for malformed status recovery', async () => {
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ entries }) =>
+          entries.map(entry => ({
+            inserted: false,
+            reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+            errorCode: 'VALIDATION_ERROR',
+            safeMessage: entry.validationError,
+            errorField: entry.validationField,
+          })),
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-field-0001',
+        statuses: [consumerStatus({ recorded_at: '2026-09-03T00:00:00Z' })],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].field, '/statuses/0/recorded_at');
   });
 
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {
@@ -80,9 +127,16 @@ describe('reporting consumer status validation', () => {
       {
         account: { account_id: 'account-1' },
         idempotency_key: 'reporting-status-depth-0001',
-        statuses: [{ ...consumerStatus(), ext: nested }],
+        statuses: [
+          { ...consumerStatus({ reporting_status_id: 'reporting_status_depth_0001' }), ext: nested },
+          consumerStatus({ reporting_status_id: 'reporting_status_depth_0002' }),
+        ],
       },
       { account: { id: 'account-1' } }
+    );
+    assert.deepEqual(
+      result.results.map(item => item.reporting_status_id),
+      ['reporting_status_depth_0001', 'reporting_status_depth_0002']
     );
     assert.equal(result.results[0].result, 'failed');
     assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');

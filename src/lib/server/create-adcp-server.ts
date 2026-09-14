@@ -1086,8 +1086,10 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
   /**
    * Partial-success batch handler. Custom handlers must validate each status
-   * with ReportingConsumerStatusV1Schema; the framework validates only the
-   * published request envelope so one malformed sibling cannot reject all.
+   * with ReportingConsumerStatusV1Schema from @adcp/sdk/reporting/ledger; the
+   * framework validates only the published request envelope so one malformed
+   * sibling cannot reject all. They must also reject every duplicate ID and
+   * every entry in a duplicate logical status chain at batch scope.
    */
   syncReportingStatus?: DomainHandler<'sync_reporting_status', TAccount>;
   syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;
@@ -2992,9 +2994,6 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
   adcp_version: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_major_version: SHALLOW_HINT_FIELD_SCHEMA,
 } as unknown as ZodRawShapeCompat;
-// `sync_reporting_status` is intentionally a partial-success batch. Validate
-// the official envelope at the framework boundary, while leaving each status
-// item to the registered handler so one malformed sibling cannot reject all.
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
   return cachedToolInputShapes;
@@ -3020,6 +3019,9 @@ function validateFrameworkPayload(
   version: Parameters<typeof validateRequest>[2],
   proposalCapabilities?: ProposalRefinementCapabilities
 ) {
+  // `sync_reporting_status` is intentionally a partial-success batch. Validate
+  // the official envelope here while leaving each item to the registered
+  // handler so one malformed sibling cannot reject all.
   if (toolName === 'sync_reporting_status' && direction === 'request') {
     return validateSyncReportingStatusEnvelope(payload, version);
   }

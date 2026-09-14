@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T02:49:40.118Z
+// Generated at: 2026-09-14T03:05:58.042Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -3947,6 +3947,7 @@ export const CanonicalMetricQualifierSchema = z.object({
 }).strict();
 
 export const ForecastRateRangeSchema = ForecastRangeSchema.superRefine((value, ctx) => {
+    // forecast rate JSON Schema parity
     for (const field of ["low", "mid", "high"] as const) {
         if (value[field] !== undefined && value[field] > 1) {
             ctx.addIssue({ code: "custom", path: [field], message: "forecast rate values must not exceed 1" });
