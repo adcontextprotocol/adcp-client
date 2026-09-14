@@ -2748,6 +2748,7 @@ function toProtocolTaskStatus(task: TaskRecord): GetTaskStatusResponse | undefin
       ? { completed_at: task.updatedAt }
       : {}),
     ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
+    ...(task.ext !== undefined ? { ext: task.ext } : {}),
     ...(progress !== undefined ? { progress } : {}),
     ...(task.status === 'rejected' && task.statusMessage !== undefined ? { message: task.statusMessage } : {}),
     ...(task.error !== undefined
@@ -2781,6 +2782,8 @@ function toProtocolTaskListItem(task: TaskRecord): ListTasksResponse['tasks'][nu
       ? { completed_at: task.updatedAt }
       : {}),
     ...(task.hasWebhook !== undefined ? { has_webhook: task.hasWebhook === true } : {}),
+    // The list item schema is open (passthrough); `ext` is the spec's vendor slot.
+    ...(task.ext !== undefined ? ({ ext: task.ext } as Record<string, unknown>) : {}),
   };
 }
 

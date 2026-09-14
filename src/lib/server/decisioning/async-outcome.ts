@@ -221,6 +221,14 @@ export interface TaskHandoffOptions {
    * The caller is responsible for uniqueness within the account.
    */
   task_id?: string;
+  /**
+   * Vendor-namespaced extension object echoed on the submitted envelope
+   * (`{ status: 'submitted', task_id, ext }`). The spec's submitted branch
+   * declares `ext`; keys MUST be namespaced under a vendor key (`ext.acme`),
+   * never a spec field such as `media_buy_id` — those belong on the terminal
+   * artifact. Not persisted; a registry decorator may re-attach it on reads.
+   */
+  ext?: Record<string, unknown>;
 }
 
 /**
