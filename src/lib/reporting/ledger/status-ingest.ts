@@ -34,6 +34,7 @@ const statusId = z
   .min(16)
   .max(255)
   .regex(/^[A-Za-z0-9_.:-]+$/);
+const MAX_VALIDATION_FIELD_BYTES = 1024;
 
 /** Published AdCP 3.2.0-rc.2 consumer status schema with request-only instant bounds. */
 export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.superRefine((value, context) => {
@@ -206,10 +207,11 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
         for (const [index, parsedStatus] of parsedStatuses.entries()) {
           if (!parsedStatus.success) {
             const path = parsedStatus.error.issues[0]?.path;
+            const validationField = path?.length ? zodPathToPointer(['statuses', index, ...path]) : undefined;
             entries.push({
               reporting_status_id: reportingStatusId(request.statuses[index]),
               validationError: 'Reporting consumer status request is invalid',
-              ...(path?.length ? { validationField: zodPathToPointer(['statuses', index, ...path]) } : {}),
+              ...(validationField ? { validationField } : {}),
               ...rawStatusChainIdentity(request.statuses[index]),
             });
             continue;
@@ -469,7 +471,7 @@ function failed(ids: string[], code: string, message: string, field?: string): S
   const results = ids.map(reporting_status_id => ({
     result: 'failed' as const,
     reporting_status_id,
-    errors: [{ code, message, ...(field ? { field } : {}) }] as FailedReportingConsumerStatusV1['errors'],
+    errors: [{ code, message, ...wireValidationField(field) }] as FailedReportingConsumerStatusV1['errors'],
   }));
   if (results.length === 0) throw new TypeError('sync_reporting_status requires at least one result');
   return {
@@ -496,7 +498,7 @@ function completed(
             {
               code: result.errorCode,
               message: result.safeMessage,
-              ...(result.errorField ? { field: result.errorField } : {}),
+              ...wireValidationField(result.errorField),
             },
           ],
         }
@@ -542,8 +544,21 @@ function requestStatusIds(value: unknown): string[] {
     : ['invalid-reporting-status-id'];
 }
 
-function zodPathToPointer(path: PropertyKey[]): string {
-  return `/${path.map(value => String(value).replace(/~/g, '~0').replace(/\//g, '~1')).join('/')}`;
+function zodPathToPointer(path: PropertyKey[]): string | undefined {
+  let pointer = '';
+  for (const value of path) {
+    const raw = String(value);
+    if (Buffer.byteLength(raw, 'utf8') > MAX_VALIDATION_FIELD_BYTES) return undefined;
+    const segment = raw.replace(/~/g, '~0').replace(/\//g, '~1');
+    const next = `${pointer}/${segment}`;
+    if (Buffer.byteLength(next, 'utf8') > MAX_VALIDATION_FIELD_BYTES) return undefined;
+    pointer = next;
+  }
+  return pointer || undefined;
+}
+
+function wireValidationField(field?: string): { field?: string } {
+  return field && Buffer.byteLength(field, 'utf8') <= MAX_VALIDATION_FIELD_BYTES ? { field } : {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

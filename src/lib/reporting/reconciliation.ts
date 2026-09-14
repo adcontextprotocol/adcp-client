@@ -782,15 +782,17 @@ function assertReportingLedgerGraph(
   }
   for (const revision of revisions.values()) {
     const referenced = referencedRevisions.has(revision.reporting_revision_id);
+    const directCoreScopeCount = Array.isArray(revision.media_buy_ids)
+      ? (directCoreScopeCounts.get(reportingRevisionScopeKey(revision)) ?? 0)
+      : 0;
     // A Core revision has no feed_purpose identity. Exactly one direct-Core
     // obligation may therefore own a given revision scope; ambiguous scopes
-    // fail closed instead of associating the same revision with two feeds.
-    const directlyScopedCoreRevision =
-      !referenced &&
-      Array.isArray(revision.media_buy_ids) &&
-      directCoreScopeCounts.get(reportingRevisionScopeKey(revision)) === 1;
+    // fail closed instead of associating the same revision with two feeds,
+    // even when a managed materialization also references that revision.
+    const directlyScopedCoreRevision = !referenced && directCoreScopeCount === 1;
     if (
       revision.account_id !== accountId ||
+      directCoreScopeCount > 1 ||
       (!referenced && !directlyScopedCoreRevision) ||
       !isReportingControlTotals(revision.control_totals)
     ) {

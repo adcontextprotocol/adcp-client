@@ -1125,6 +1125,32 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.ok(mismatch.issue_id.length <= 255);
   });
 
+  test('bounds rejected-item diagnostics before persistence and replay', async () => {
+    const input = {
+      account_id: request.account.account_id,
+      consumerId: 'fixture-consumer-oversized-diagnostic',
+      idempotencyKey: 'fixture-status-oversized-diagnostic-batch',
+      requestFingerprint: 'f'.repeat(64),
+      entries: [
+        {
+          reporting_status_id: 'fixture-status-oversized-diagnostic',
+          validationError: 'Reporting consumer status request is invalid',
+          validationField: `/${'x'.repeat(70_000)}`,
+        },
+      ],
+    };
+    const recorded = await reference.store.syncConsumerStatusBatch(input);
+    assert.equal(recorded[0].inserted, false);
+    assert.equal(recorded[0].errorField, undefined);
+    const replay = await reference.store.getConsumerStatusBatchReplay({
+      account_id: input.account_id,
+      consumerId: input.consumerId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: input.requestFingerprint,
+    });
+    assert.equal(replay[0].errorField, undefined);
+  });
+
   test('serializes competing successors and concurrent exact batch retries', async () => {
     const consumer = 'fixture-consumer-concurrency';
     const context = { account: { account_id: request.account.account_id }, consumer };

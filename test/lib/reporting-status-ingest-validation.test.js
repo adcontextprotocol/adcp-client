@@ -89,6 +89,41 @@ describe('reporting consumer status validation', () => {
     assert.equal(result.results[0].errors[0].field, '/statuses/0/recorded_at');
   });
 
+  test('omits an oversized malformed-property pointer from stored and returned diagnostics', async () => {
+    const oversizedProperty = `oversized_${'x'.repeat(70_000)}`;
+    let storedField;
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ entries }) => {
+          storedField = entries[0].validationField;
+          return [
+            {
+              inserted: false,
+              reporting_status_id: entries[0].reporting_status_id,
+              errorCode: 'VALIDATION_ERROR',
+              safeMessage: entries[0].validationError,
+              errorField: entries[0].validationField,
+            },
+          ];
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-oversized-field-0001',
+        statuses: [{ ...consumerStatus(), [oversizedProperty]: true }],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(storedField, undefined);
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].field, undefined);
+  });
+
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {
     assert.equal(
       ReportingConsumerStatusV1Schema.safeParse(consumerStatus({ status_as_of: '2026-09-03T00:00:00+0530' })).success,

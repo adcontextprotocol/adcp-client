@@ -265,6 +265,7 @@ const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
 const MAX_CONSUMER_STATUS_BATCHES = 10_000;
 const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
 const MAX_CONSUMER_STATUS_BYTES = 64 * 1024;
+const MAX_CONSUMER_STATUS_ERROR_FIELD_BYTES = 1024;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -785,7 +786,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           reporting_status_id: result.id,
           errorCode: result.errorCode ?? 'VALIDATION_ERROR',
           safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
-          ...(result.errorField ? { errorField: result.errorField } : {}),
+          ...boundedConsumerStatusErrorField(result.errorField),
         });
         continue;
       }
@@ -831,7 +832,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 reporting_status_id: result.id,
                 errorCode: result.errorCode ?? 'VALIDATION_ERROR',
                 safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
-                ...(result.errorField ? { errorField: result.errorField } : {}),
+                ...boundedConsumerStatusErrorField(result.errorField),
               });
               continue;
             }
@@ -880,19 +881,20 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const results: ReportingConsumerStatusBatchResultV1[] = [];
         const storedResults: StoredResult[] = [];
         const fail = (statusId: string, errorCode: string, safeMessage: string, errorField?: string) => {
+          const boundedErrorField = boundedConsumerStatusErrorField(errorField);
           results.push({
             inserted: false,
             reporting_status_id: statusId,
             errorCode,
             safeMessage,
-            ...(errorField ? { errorField } : {}),
+            ...boundedErrorField,
           });
           storedResults.push({
             kind: 'failed',
             id: statusId,
             errorCode,
             safeMessage,
-            ...(errorField ? { errorField } : {}),
+            ...boundedErrorField,
           });
         };
         for (const [index, entry] of input.entries.entries()) {
@@ -2088,6 +2090,12 @@ function consumerStatusFingerprint(
     Object.entries(status).filter(([key]) => !['account_id', 'consumerId', 'recorded_at'].includes(key))
   );
   return digest(JSON.parse(JSON.stringify(semanticValue)) as Record<string, unknown>);
+}
+
+function boundedConsumerStatusErrorField(errorField?: string): { errorField?: string } {
+  return errorField && Buffer.byteLength(errorField, 'utf8') <= MAX_CONSUMER_STATUS_ERROR_FIELD_BYTES
+    ? { errorField }
+    : {};
 }
 
 function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): string {

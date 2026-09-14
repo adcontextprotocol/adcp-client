@@ -494,6 +494,36 @@ test('rejects an ambiguous direct-Core revision scope across feed purposes', asy
   );
 });
 
+test('rejects an ambiguous direct-Core scope when a managed materialization references the revision', async () => {
+  const raw = response([]);
+  const directCore = feedPurpose => {
+    const item = obligation(`obligation-direct-${feedPurpose}`);
+    item.feed_purpose = feedPurpose;
+    item.reconciliation_mode = 'delivery_only';
+    item.reconciliation_status = 'not_required';
+    delete item.destination_ref;
+    delete item.materialization_count;
+    delete item.successful_materialization_count;
+    delete item.receipt_count;
+    delete item.accepted_receipt_count;
+    return item;
+  };
+  raw.periods.push(directCore('analytics'), directCore('billing_export'));
+  raw.pagination.total_count = raw.periods.length + raw.revisions.length + raw.materializations.length;
+
+  await assert.rejects(
+    loadReportingLedger(
+      {
+        async getReportingStatus() {
+          return raw;
+        },
+      },
+      { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
+    ),
+    error => error.code === 'LEDGER_GRAPH_INTEGRITY_FAILED'
+  );
+});
+
 test('fails closed when healthy obligations omit conditionally required history counts', () => {
   const item = obligation();
   item.health = 'complete';
