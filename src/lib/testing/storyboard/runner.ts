@@ -2601,8 +2601,9 @@ async function executeStoryboardPass(
           routedErrors.set(step, error);
         }
       }
-      if (phase.steps.length && phase.steps.every(step => routedStepCapabilitySkips.has(step))) {
-        routedPhaseCapabilitySkips.set(phase.id, routedStepCapabilitySkips.get(phase.steps[0]!)!);
+      const callableSteps = phase.steps.filter(step => step.task !== VALIDATION_ONLY_TASK);
+      if (callableSteps.length && callableSteps.every(step => routedStepCapabilitySkips.has(step))) {
+        routedPhaseCapabilitySkips.set(phase.id, routedStepCapabilitySkips.get(callableSteps[0]!)!);
       }
     }
   }

@@ -950,3 +950,34 @@ test('validation-only rows do not prevent a whole-storyboard capability skip', a
   });
   assert.deepEqual(calls, { a: ['get_adcp_capabilities'] });
 });
+
+test('validation-only rows do not trigger fixture routes for a capability-skipped phase', async () => {
+  const sb = storyboard([
+    { id: 'probe', task: 'get_adcp_capabilities', agent: 'seller' },
+    { id: 'coverage', validations: [{ check: 'present', path: 'value' }] },
+  ]);
+  sb.phases[0].requires_capability = { path: 'request_signing.supported', equals: true };
+  sb.fixtures = { products: [{ product_id: 'fixture-product' }] };
+  sb.fixture_resolution = { products: [{ handle: 'fixture-product', strategies: ['seed'] }] };
+  const { result, calls } = await run(
+    {
+      seller: [[], { request_signing: { supported: false } }],
+      controller_a: [['comply_test_controller'], { compliance_testing: { scenarios: ['seed_product'] } }],
+      controller_b: [['comply_test_controller'], { compliance_testing: { scenarios: ['seed_product'] } }],
+    },
+    sb
+  );
+  assert.deepEqual(sets(result), {
+    selected: [],
+    skipped: [
+      ['probe', 'not_applicable'],
+      ['coverage', 'not_applicable'],
+    ],
+    failed: [],
+  });
+  assert.deepEqual(calls, {
+    seller: ['get_adcp_capabilities'],
+    controller_a: ['get_adcp_capabilities'],
+    controller_b: ['get_adcp_capabilities'],
+  });
+});
