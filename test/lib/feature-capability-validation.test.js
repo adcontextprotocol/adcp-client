@@ -459,6 +459,21 @@ describe('SingleAgentClient feature API exists', () => {
     assert.strictEqual(client.getAgent().headers['x-org-id'], 'tenant-b');
   });
 
+  test('keeps authorization material out of public capability evidence scopes', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+      auth_token: 'bearer-secret-value',
+      headers: { 'x-org-secret': 'header-secret-value' },
+    });
+
+    const serializedScope = JSON.stringify(client.getCapabilityEvidenceScope());
+    assert.ok(!serializedScope.includes('bearer-secret-value'));
+    assert.ok(!serializedScope.includes('header-secret-value'));
+  });
+
   test('rotates the evidence scope when refreshed transport OAuth tokens replace the bundle', () => {
     const client = new SingleAgentClient({
       id: 'test',
