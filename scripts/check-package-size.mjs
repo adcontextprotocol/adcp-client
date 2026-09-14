@@ -39,7 +39,11 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // and a compile-gated thin integration example; byte budgets remain unchanged.
 // Canonical principal/reporting-core distribution adds two YAML files, one
 // provenance manifest, and one dual-format module/declaration set (+7 files).
-const MAX_PACKED_FILE_COUNT = 6_069;
+// The rc.3 buyer-side consumer-status loop adds one module,
+// `reporting/content-mismatch` (CJS + ESM + both declaration flavours), for +4.
+// Its reconciliation changes are edits to existing modules, and the unpacked
+// total is unchanged against the 120 MiB ceiling.
+const MAX_PACKED_FILE_COUNT = 6_073;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
