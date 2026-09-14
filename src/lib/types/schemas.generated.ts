@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T02:01:47.138Z
+// Generated at: 2026-09-14T02:14:16.410Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6714,7 +6714,7 @@ export const ReportingConsumerStatusSchema = (() => {
               pick: objectSchema.pick.bind(objectSchema),
               omit: objectSchema.omit.bind(objectSchema),
               extend: objectSchema.extend.bind(objectSchema),
-              safeExtend: objectSchema.safeExtend.bind(objectSchema),
+              safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });
       })();
 
@@ -9410,7 +9410,7 @@ export const SyncReportingStatusRequestSchema = (() => {
               pick: objectSchema.pick.bind(objectSchema),
               omit: objectSchema.omit.bind(objectSchema),
               extend: objectSchema.extend.bind(objectSchema),
-              safeExtend: objectSchema.safeExtend.bind(objectSchema),
+              safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });
       })();
 

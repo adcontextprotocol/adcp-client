@@ -167,7 +167,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema, SyncReportingStatusResponseSchema } from ${JSON.stringify(GENERATED)};
 const schemas = { status: ReportingConsumerStatusSchema, request: SyncReportingStatusRequestSchema, response: SyncReportingStatusResponseSchema };
 const cases = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf8'));
-writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(cases.map(entry => schemas[entry.schema].safeParse(entry.value).success)));
+writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({
+  direct: cases.map(entry => schemas[entry.schema].safeParse(entry.value).success),
+  safeExtended: cases.map(entry => schemas[entry.schema].safeExtend({}).safeParse(entry.value).success),
+}));
 `
   );
   try {
@@ -182,5 +185,7 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(cases.map(entry => s
 test('generated consumer-status schemas preserve published rc.2 wire constraints', async () => {
   const expected = cases.map(entry => entry.expected);
   assert.deepEqual(await authoritativeOutcomes(), expected, 'fixture expectations match the published JSON Schemas');
-  assert.deepEqual(generatedOutcomes(), expected, 'public Zod exports match the published JSON Schemas');
+  const generated = generatedOutcomes();
+  assert.deepEqual(generated.direct, expected, 'public Zod exports match the published JSON Schemas');
+  assert.deepEqual(generated.safeExtended, expected, 'safeExtend preserves the public schema refinements');
 });

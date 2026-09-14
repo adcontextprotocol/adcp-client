@@ -1956,7 +1956,7 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
               pick: objectSchema.pick.bind(objectSchema),
               omit: objectSchema.omit.bind(objectSchema),
               extend: objectSchema.extend.bind(objectSchema),
-              safeExtend: objectSchema.safeExtend.bind(objectSchema),
+              safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });
       })()`
       : `${target.expression}.superRefine(${refinement})`;
