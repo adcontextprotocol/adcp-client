@@ -100,12 +100,15 @@ export function findAvailableAction(
 ): { entry: MediaBuyAvailableAction; result: AvailableActionsResult } | undefined {
   const result = getAvailableActions(buy, options);
   const direct = result.actions.find(a => a.action === action);
-  if (direct) return { entry: direct, result };
+  // Future opaque modes carry no executable authority, including legacy structured projections.
+  const knownMode = (entry: MediaBuyAvailableAction) =>
+    ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(entry.mode);
+  if (direct) return knownMode(direct) ? { entry: direct, result } : undefined;
 
   const rollupParent = ROLLUP_PARENT_OF[action];
   if (rollupParent) {
     const parent = result.actions.find(a => a.action === rollupParent);
-    if (parent) return { entry: parent, result };
+    if (parent && knownMode(parent)) return { entry: parent, result };
   }
   return undefined;
 }

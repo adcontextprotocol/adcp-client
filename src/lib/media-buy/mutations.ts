@@ -1,3 +1,4 @@
+import { ValidationError } from '../errors';
 import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyValidAction, UpdateMediaBuyRequestLike } from './types';
 import { ACTIONS_BY_FIELD } from './update-fields.generated';
 
@@ -92,6 +93,13 @@ export function decomposeUpdateMediaBuy(
   currentBuy: MediaBuyActionContext,
   request: UpdateMediaBuyRequestLike
 ): DecomposedUpdateMediaBuy {
+  const shapeIssue = mutationShapeIssue(request);
+  if (shapeIssue)
+    throw new ValidationError(
+      shapeIssue,
+      undefined,
+      'Invalid mutation field shape. Validate the request against the selected wire schema.'
+    );
   const mutations: DecomposedUpdateMediaBuyMutation[] = [];
   const currentPackages = new Map<string, NonNullable<MediaBuyActionContext['packages']>[number]>();
 
@@ -107,18 +115,22 @@ export function decomposeUpdateMediaBuy(
     // A missing cap/baseline cannot be interpreted as zero. Keep the coarse
     // vocabulary so strict assessment cannot accidentally approve a direction.
     const action =
-      typeof from !== 'number' || !Number.isFinite(from) || typeof to !== 'number' || !Number.isFinite(to)
-        ? 'update_budget'
-        : to > from
-          ? 'increase_budget'
-          : to < from
-            ? 'decrease_budget'
-            : 'reallocate_budget';
+      to === null && typeof from === 'number' && Number.isFinite(from)
+        ? 'increase_budget'
+        : from === null && typeof to === 'number' && Number.isFinite(to) && field.endsWith('daily_budget_cap')
+          ? 'decrease_budget'
+          : typeof from !== 'number' || !Number.isFinite(from) || typeof to !== 'number' || !Number.isFinite(to)
+            ? 'update_budget'
+            : to > from
+              ? 'increase_budget'
+              : to < from
+                ? 'decrease_budget'
+                : 'reallocate_budget';
     push({ action, field, path, from, to, scope: package_id ? 'package' : 'buy', ...(package_id && { package_id }) });
   };
   if (request.total_budget !== undefined)
     budgetMutation(
-      typeof currentBuy.total_budget === 'object' ? currentBuy.total_budget.amount : currentBuy.total_budget,
+      typeof currentBuy.total_budget === 'object' ? currentBuy.total_budget?.amount : currentBuy.total_budget,
       request.total_budget.amount,
       'total_budget.amount'
     );
@@ -241,9 +253,24 @@ export function decomposeUpdateMediaBuy(
           to: pkg.canceled,
         });
       }
-      // `pkg.paused` has no entry in the generated action mapping - the
-      // spec keys pause/resume at the buy level only. Drop silently so the
-      // resolver doesn't conflate it with the top-level `paused` action.
+      // Package lifecycle controls have their own scope in both wire shapes.
+      if (pkg.paused !== undefined)
+        push({
+          action: pkg.paused ? 'pause' : 'resume',
+          field: 'packages[].paused',
+          path: `packages[${index}].paused`,
+          ...base,
+          from: currentPkg?.paused,
+          to: pkg.paused,
+        });
+      if (pkg.cancellation_reason !== undefined)
+        push({
+          action: 'remove_packages',
+          field: 'packages[].cancellation_reason',
+          path: `packages[${index}].cancellation_reason`,
+          ...base,
+          to: pkg.cancellation_reason,
+        });
 
       if (pkg.budget !== undefined) {
         push({
@@ -327,7 +354,10 @@ export function decomposeUpdateMediaBuy(
 
       if (pkg.creative_assignments !== undefined) {
         push({
-          action: 'update_creative_assignments',
+          action:
+            Array.isArray(pkg.creative_assignments) && pkg.creative_assignments.length === 0
+              ? 'remove_creative'
+              : 'update_creative_assignments',
           field: 'packages[].creative_assignments',
           path: `packages[${index}].creative_assignments`,
           ...base,
@@ -439,8 +469,8 @@ export function decomposeUpdateMediaBuy(
   request.packages?.forEach((pkg, i) => addMetadataFields(pkg, 'packages[].', i, pkg.package_id));
 
   // Canonical control fields differ from legacy update rollups. These bindings
-  // follow the merged #6750 reference seller's actionsForUpdateRequest; the
-  // canonical task allowlist is still generated from the selected bundle.
+  // follow control-media-buy-request/package-update schemas, corroborated by
+  // the merged #6750 seller. Canonical task allowlists are schema-generated.
   if (currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined) {
     const canonicalFields: Record<string, MediaBuyActionId> = {
       reporting_webhook: 'update_reporting_webhook',
@@ -449,7 +479,9 @@ export function decomposeUpdateMediaBuy(
       'packages[].keyword_targets_remove': 'update_keywords',
       'packages[].negative_keywords_add': 'update_keywords',
       'packages[].negative_keywords_remove': 'update_keywords',
-      'packages[].catalog_ids': 'update_catalog_assignments',
+      'packages[].catalog_ids': 'update_catalog_assignments', // canonical control shape
+      'packages[].catalogs': 'update_catalog_assignments', // legacy update shape
+      'packages[].bid_price': 'update_bidding',
       'packages[].optimization_goals': 'update_optimization_goals',
       'packages[].impressions': 'update_impression_goal',
       'packages[].min_spend_target': 'update_spend_target',
@@ -657,10 +689,47 @@ export function hasUnmappedMutation(
         !envelope.has(key) &&
         !covered(key)
     ) ||
+    !!request.new_packages?.some(
+      pkg => pkg !== null && typeof pkg === 'object' && 'ext' in pkg && pkg.ext !== undefined
+    ) ||
     !!request.packages?.some((pkg, index) =>
       Object.entries(pkg).some(
-        ([key, value]) => value !== undefined && key !== 'package_id' && !covered(`packages[${index}].${key}`)
+        ([key, value]) =>
+          value !== undefined && !['package_id', 'context'].includes(key) && !covered(`packages[${index}].${key}`)
       )
     )
   );
+}
+
+/** Minimal structural guard for JSON callers; full wire validation remains at dispatch. */
+export function mutationShapeIssue(request: unknown): string | undefined {
+  const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!record(request)) return 'request';
+  if (
+    request.total_budget !== undefined &&
+    (!record(request.total_budget) ||
+      typeof request.total_budget.amount !== 'number' ||
+      !Number.isFinite(request.total_budget.amount) ||
+      typeof request.total_budget.currency !== 'string')
+  )
+    return 'total_budget';
+  if (request.paused !== undefined && typeof request.paused !== 'boolean') return 'paused';
+  if (request.canceled !== undefined && request.canceled !== true) return 'canceled';
+  for (const key of ['packages', 'new_packages']) {
+    if (request[key] === undefined) continue;
+    if (!Array.isArray(request[key])) return key;
+    for (const [index, pkg] of request[key].entries()) {
+      if (!record(pkg)) return `${key}[${index}]`;
+      if (key === 'new_packages') continue;
+      if (pkg.paused !== undefined && typeof pkg.paused !== 'boolean') return `packages[${index}].paused`;
+      if (pkg.canceled !== undefined && pkg.canceled !== true) return `packages[${index}].canceled`;
+      if (pkg.targeting_overlay !== undefined && !record(pkg.targeting_overlay))
+        return `packages[${index}].targeting_overlay`;
+      if (pkg.creatives !== undefined && (!Array.isArray(pkg.creatives) || !pkg.creatives.length))
+        return `packages[${index}].creatives`;
+      if (pkg.creative_assignments !== undefined && !Array.isArray(pkg.creative_assignments))
+        return `packages[${index}].creative_assignments`;
+    }
+  }
+  return undefined;
 }

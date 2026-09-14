@@ -191,7 +191,7 @@ describe('decomposeUpdateMediaBuy', () => {
 
   test('returns empty plan for unknown/no-op patches', () => {
     const plan = decomposeUpdateMediaBuy(buy, {
-      packages: [{ package_id: 'pkg_1', paused: false }],
+      packages: [{ package_id: 'pkg_1' }],
     });
     assert.deepStrictEqual(plan, {
       mutations: [],
@@ -406,15 +406,11 @@ describe('preflightUpdateMediaBuy', () => {
     assert.throws(() => preflightUpdateMediaBuy(buy, {}), ValidationError);
   });
 
-  test('request touching only pkg.paused throws (not a real action)', () => {
-    // pkg.paused has no entry in the action mapping - the spec keys pause
-    // at the buy level only. Resolver should ignore it; preflight should
-    // refuse to dispatch a no-op rather than misclassify it as `pause`.
+  test('package pause/resume requires its own lifecycle right', () => {
     const buy = buyWith([{ action: 'pause', mode: 'self_serve' }]);
-    assert.throws(
-      () => preflightUpdateMediaBuy(buy, { packages: [{ package_id: 'pkg_1', paused: false }] }),
-      ValidationError
-    );
+    const result = preflightUpdateMediaBuy(buy, { packages: [{ package_id: 'pkg_1', paused: false }] });
+    assert.equal(result.ok, false);
+    assert.equal(result.denials[0].action, 'resume');
   });
 
   test('requiresAsyncFlow false when every mode is self_serve', () => {

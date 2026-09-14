@@ -81,6 +81,7 @@ export interface MediaBuyActionContext {
     start_time?: string;
     end_time?: string;
     canceled?: boolean;
+    paused?: boolean;
     status?: string;
     daily_budget_cap?: number | null;
     min_spend_target?: number | null;
@@ -96,6 +97,14 @@ export interface MediaBuyActionContext {
  * resolver signature.
  */
 export interface UpdateMediaBuyRequestLike {
+  media_buy_id?: string;
+  account?: unknown;
+  context?: unknown;
+  governance_context?: unknown;
+  push_notification_config?: unknown;
+  ext?: unknown;
+  budget_cap_timezone?: string | null;
+  invoice_recipient?: unknown;
   revision?: number;
   idempotency_key?: string;
   name?: string;
@@ -115,6 +124,14 @@ export interface UpdateMediaBuyRequestLike {
   new_packages?: ReadonlyArray<unknown>;
   packages?: ReadonlyArray<{
     package_id: string;
+    context?: unknown;
+    ext?: unknown;
+    cancellation_reason?: string;
+    catalogs?: unknown;
+    catalog_ids?: readonly string[];
+    bid_price?: number;
+    optimization_goals?: unknown;
+    impressions?: number;
     budget?: number | null;
     daily_budget_cap?: number | null;
     min_spend_target?: number | null;

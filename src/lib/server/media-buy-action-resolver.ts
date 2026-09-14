@@ -1,3 +1,4 @@
+import { ADCP_VERSION } from '../version';
 import type {
   ActionBuy,
   ActionProduct,
@@ -15,6 +16,8 @@ import {
   elapsedDuration,
   findProductAction,
   legacyActionSupported,
+  supportsRc3Actions,
+  packageActionStatus,
 } from '../media-buy/action-contracts';
 import { assessActionAvailability, type ActionAvailability } from '../media-buy/action-assessment';
 import { decomposeUpdateMediaBuy } from '../media-buy/mutations';
@@ -38,10 +41,12 @@ export interface SellerActionResolutionOptions {
   /** Trusted current snapshot from the seller store after account and revision checks. */
   buy: ActionBuy;
   /** Every affected product, including those on sibling packages for aggregate changes. Never union rights. */
-  products?: readonly ActionProduct[];
+  productPolicy?: readonly ActionProduct[];
   decide: (term: Readonly<ProposalChangeTerm>) => SellerActionDecision;
   /** Current output is 3.2. A deliberate 3.1 projection emits opaque terms_ref and requires_approval. */
   wireVersion?: '3.2' | '3.1';
+  /** Exact served schema version; defaults to the SDK pin. rc.3 features require rc.3 or newer. */
+  adcpVersion?: string;
   /** Emit a deliberate equal compatibility alias alongside the 3.2 identity. */
   emitTermsRefAlias?: boolean;
   /** Separately assess this request without replacing the full live projection. */
@@ -115,9 +120,9 @@ export const mediaBuyActionResolver = {
   },
   resolve(input: SellerActionResolutionOptions): SellerActionResolution {
     const terms = input.buy.accepted_proposal?.commercial_terms?.change_terms ?? [];
-    const currency = typeof input.buy.total_budget === 'object' ? input.buy.total_budget.currency : input.buy.currency;
+    const currency = typeof input.buy.total_budget === 'object' ? input.buy.total_budget?.currency : input.buy.currency;
     const issues = changeTermIssues(terms, currency);
-    for (const product of input.products ?? [])
+    for (const product of input.productPolicy ?? [])
       issues.push(...productTemplateIssues(product.allowed_actions ?? [], currency));
     if (issues.length) throw new TypeError(issues.join('; '));
     const available_actions: LiveMediaBuyAction[] = [],
@@ -149,7 +154,7 @@ export const mediaBuyActionResolver = {
       // Product declarations may only narrow accepted rights. Missing product
       // information is not a positive declaration when the caller supplies products.
       let productBlocked = false;
-      for (const product of input.products ?? []) {
+      for (const product of input.productPolicy ?? []) {
         const template = findProductAction(product.allowed_actions, term.action);
         if (
           !template ||
@@ -171,6 +176,13 @@ export const mediaBuyActionResolver = {
         });
         continue;
       }
+      if (
+        !supportsRc3Actions(input.adcpVersion ?? ADCP_VERSION) &&
+        (term.action === 'update_media_buy_frequency_cap' || decision.applicable_package_ids !== undefined)
+      ) {
+        blocked('This action or package scope requires an rc.3-or-newer served schema.', true);
+        continue;
+      }
       const entry: LiveMediaBuyAction = {
         action: term.action,
         mode: term.service_mode,
@@ -190,6 +202,20 @@ export const mediaBuyActionResolver = {
       ) {
         blocked('Invalid or unknown package scope.', true);
         continue;
+      }
+      if (['pause', 'resume'].includes(term.action) && entry.applicable_package_ids) {
+        const eligible = entry.applicable_package_ids.filter(id => {
+          const status = packageActionStatus(input.buy.packages?.find(p => p.package_id === id));
+          return (
+            status !== undefined &&
+            actionAllowedStatuses({ action: term.action }).includes(
+              status as import('../media-buy/action-types').MediaBuyStatus
+            )
+          );
+        });
+        // Narrow mixed scopes to packages executable now. If none can be established,
+        // preserve the original scope for the diagnostic assessment below.
+        if (eligible.length) entry.applicable_package_ids = eligible;
       }
       if (
         input.wireVersion === '3.1' &&
@@ -214,16 +240,39 @@ export const mediaBuyActionResolver = {
         )
       )
         request_assessments.push(
-          assessActionAvailability(evaluatedBuy, term.action, { request: input.request, now: input.now })
+          structuredClone(
+            assessActionAvailability(evaluatedBuy, term.action, { request: input.request, now: input.now })
+          )
         );
       // A projection can advertise a bounded right before a particular request.
       // When a request is supplied, the exact same portable preflight is enforced.
       const constraint = evaluatedTerm.constraints as Record<string, unknown> | undefined;
-      const hasTimingGate = constraint?.kind === 'effective_timing' || constraint?.minimum_notice !== undefined;
+      const hasTimingGate =
+        constraint?.kind === 'effective_timing' &&
+        (constraint.earliest_effective_at !== undefined || constraint.latest_effective_at !== undefined);
       if (!hasTimingGate) delete evaluatedTerm.constraints;
-      evaluatedBuy.available_actions = [{ ...entry, applicable_package_ids: undefined }];
+      else
+        evaluatedTerm.constraints = {
+          kind: 'effective_timing',
+          ...(constraint.earliest_effective_at !== undefined && {
+            earliest_effective_at: constraint.earliest_effective_at,
+          }),
+          ...(constraint.latest_effective_at !== undefined && { latest_effective_at: constraint.latest_effective_at }),
+        };
+      const packageLifecycleRequest =
+        ['pause', 'resume'].includes(term.action) && entry.applicable_package_ids
+          ? {
+              packages: entry.applicable_package_ids.map(package_id => ({
+                package_id,
+                paused: term.action === 'pause',
+              })),
+            }
+          : undefined;
+      evaluatedBuy.available_actions = [
+        { ...entry, ...(packageLifecycleRequest ? {} : { applicable_package_ids: undefined }) },
+      ];
       const result = assessActionAvailability(evaluatedBuy, term.action, {
-        request: hasTimingGate ? {} : undefined,
+        request: packageLifecycleRequest ?? (hasTimingGate ? {} : undefined),
         now: input.now,
       });
       if (result.status !== 'available_now') {
@@ -255,7 +304,7 @@ export const mediaBuyActionResolver = {
         metadata.governance === true &&
         metadata.policy === true &&
         metadata.applicable_package_ids === undefined &&
-        (input.products ?? []).every(p => {
+        (input.productPolicy ?? []).every(p => {
           const template = findProductAction(p.allowed_actions, 'update_name');
           return (
             template?.modes.includes('self_serve') &&

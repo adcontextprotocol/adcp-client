@@ -45,7 +45,11 @@ function buy(terms = [term()], extra = {}) {
     },
     ...extra,
   };
-  state.available_actions ??= mediaBuyActionResolver.resolve({ buy: state, decide: accept }).available_actions;
+  state.available_actions ??= mediaBuyActionResolver.resolve({
+    buy: state,
+    decide: accept,
+    adcpVersion: '3.2.0-rc.3',
+  }).available_actions;
   return state;
 }
 function constraint(t, state, request, options = {}) {
@@ -328,7 +332,10 @@ test('seller rejects duplicate identities, incompatible constraints/statuses, an
     () => mediaBuyActionResolver.materialize({ products, acceptedTerms: [term()], sellerAccepted: true }),
     TypeError
   );
-  assert.equal(mediaBuyActionResolver.resolve({ buy: state, products, decide: accept }).available_actions.length, 0);
+  assert.equal(
+    mediaBuyActionResolver.resolve({ buy: state, productPolicy: products, decide: accept }).available_actions.length,
+    0
+  );
 });
 
 test('rc.3 shared frequency cap routes use canonical metadata without admitting an incompatible constraint', () => {
@@ -407,11 +414,29 @@ test('strict multi-action preflight refuses unmapped fields and unknown baseline
   assert.equal(preflightMediaBuyActions(buy(), { paused: true }, { task: 'control_media_buy' }).ok, true);
 });
 
-test('seller does not project effective timing that cannot execute now', () => {
+test('seller preserves notice-bound rights and evaluates notice only for a requested mutation', () => {
   const t = term('pause', {
     constraints: { kind: 'effective_timing', minimum_notice: { interval: 1, unit: 'hours' } },
   });
-  assert.equal(mediaBuyActionResolver.resolve({ buy: buy([t]), decide: accept, now: NOW }).available_actions.length, 0);
+  const state = buy([t]);
+  const result = mediaBuyActionResolver.resolve({ buy: state, decide: accept, request: { paused: true }, now: NOW });
+  assert.equal(result.available_actions.length, 1);
+  assert.equal(result.request_assessments[0].code, 'REQUOTE_REQUIRED');
+  const flight = buy([
+    term('extend_flight', {
+      constraints: {
+        kind: 'flight',
+        minimum_notice: { interval: 1, unit: 'days' },
+        max_change: { interval: 30, unit: 'days' },
+      },
+    }),
+  ]);
+  assert.equal(flight.available_actions.length, 1);
+  assert.equal(
+    assessActionAvailability(flight, 'extend_flight', { request: { end_time: '2027-02-02T00:00:00Z' } }).constraints
+      .constraint,
+    'minimum_notice'
+  );
 });
 
 test('portable historical fixtures preserve absence without authorizing coincidental identities', () => {
@@ -502,10 +527,9 @@ test('mixed mutations require one route and mapped fields on every package', () 
   const state = buy([term('pause'), term('replace_creative')]);
   const request = { paused: true, packages: [{ package_id: 'p1', creatives: ['creative1'] }] };
   assert.equal(preflightMediaBuyActions(state, request).ok, false);
-  assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+  assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
   for (const request of [
     { paused: true, invoice_recipient: 'buyer' },
-    { paused: true, packages: [{ package_id: 'p1', paused: true }] },
     JSON.parse('{"paused":true,"constructor":{}}'),
   ]) {
     assert.throws(() => preflightUpdateMediaBuy(state, request), /no supported action mapping/);
@@ -518,6 +542,7 @@ test('rc.3 package-scoped grants cannot authorize siblings or buy-wide changes',
   const state = buy([term('increase_budget')]);
   state.available_actions = mediaBuyActionResolver.resolve({
     buy: state,
+    adcpVersion: '3.2.0-rc.3',
     decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
   }).available_actions;
   for (const request of [
@@ -536,6 +561,7 @@ test('rc.3 package-scoped grants cannot authorize siblings or buy-wide changes',
     mediaBuyActionResolver.resolve({
       buy: state,
       wireVersion: '3.1',
+      adcpVersion: '3.2.0-rc.3',
       decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
     }).available_actions.length,
     0
@@ -551,7 +577,7 @@ test('request denial preserves full projection and hard denials preserve the act
   assert.equal(result.request_assessments[0].code, 'REQUOTE_REQUIRED');
   const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
   assert.throws(
-    () => assertUpdateMediaBuyAllowed(state, { ...request, paused: true }),
+    () => assertUpdateMediaBuyAllowed(state, { ...request, paused: true }, { task: 'control_media_buy' }),
     error => error.code === 'ACTION_NOT_ALLOWED' && error.details.currently_available_actions.length === 1
   );
 });
@@ -611,6 +637,7 @@ test('released 3.1.19, beta.8 and rc.3 schemas validate the actual compatibility
   const state = buy([term('increase_budget')]);
   const entry = mediaBuyActionResolver.resolve({
     buy: state,
+    adcpVersion: '3.2.0-rc.3',
     decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
   }).available_actions[0];
   assert.equal(valid(entry), true, JSON.stringify(valid.errors));
@@ -675,7 +702,7 @@ test('historical seller projection uses the target 3.1.19 vocabulary and product
   assert.equal(
     mediaBuyActionResolver.resolve({
       buy: buy([]),
-      products: [product],
+      productPolicy: [product],
       decide: accept,
       metadata: { update_name: accept() },
     }).available_actions.length,
@@ -720,8 +747,539 @@ test('legacy no-snapshot inference is retained and disallowed modes precede requ
       assertUpdateMediaBuyAllowed(
         state,
         { total_budget: { amount: 2000, currency: 'USD' } },
-        { allowedModes: ['self_serve'] }
+        { allowedModes: ['self_serve'], task: 'control_media_buy' }
       ),
     error => error.code === 'ACTION_NOT_ALLOWED' && error.details.reason === 'mode_mismatch'
   );
+});
+
+test('canonical and legacy package control spellings map to the same exact rights', () => {
+  const state = buy([term('update_catalog_assignments'), term('update_bidding'), term('remove_packages')]);
+  for (const key of ['catalogs', 'catalog_ids'])
+    assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', [key]: [] }] }).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', bid_price: 2 }] }).ok, true);
+  assert.equal(
+    preflightUpdateMediaBuy(state, {
+      packages: [{ package_id: 'p1', canceled: true, cancellation_reason: 'finished', context: { trace: 'x' } }],
+    }).ok,
+    true
+  );
+  assert.throws(
+    () =>
+      preflightUpdateMediaBuy(state, {
+        packages: [{ package_id: 'p1', canceled: true, ext: { vendor: { controls: 1 } } }],
+      }),
+    /no supported action mapping/
+  );
+});
+
+test('scoped package pause and resume require known package state and negotiated buy status', () => {
+  const state = buy([term('pause'), term('resume')], {
+    packages: [
+      { package_id: 'p1', paused: false },
+      { package_id: 'p2', paused: true },
+    ],
+  });
+  state.available_actions = mediaBuyActionResolver.resolve({
+    buy: state,
+    adcpVersion: '3.2.0-rc.3',
+    decide: t => ({ ...accept(), applicable_package_ids: t.action === 'pause' ? ['p1'] : ['p2'] }),
+  }).available_actions;
+  assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', paused: true }] }).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p2', paused: false }] }).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', paused: false }] }).ok, false);
+  assert.equal(preflightUpdateMediaBuy(state, { paused: false }).ok, false);
+  const unknown = buy([term('pause')]);
+  assert.equal(
+    preflightUpdateMediaBuy(unknown, { packages: [{ package_id: 'p1', paused: true }] }).denials[0].assessment
+      .certainty,
+    'unknown'
+  );
+});
+
+test('daily cap clearing is an increase and cannot exceed finite accepted ceilings', () => {
+  const state = buy([term('increase_budget')], {
+    daily_budget_cap: 100,
+    packages: [{ package_id: 'p1', daily_budget_cap: 50 }],
+  });
+  assert.equal(preflightUpdateMediaBuy(state, { daily_budget_cap: null }).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', daily_budget_cap: null }] }).ok, true);
+  const bounded = buy([term('increase_budget', { constraints: { kind: 'budget', max_delta_percent: 10 } })], {
+    daily_budget_cap: 100,
+  });
+  assert.equal(
+    assessActionAvailability(bounded, 'increase_budget', { request: { daily_budget_cap: null } }).constraints
+      .constraint,
+    'unbounded_result'
+  );
+});
+
+test('malformed JSON gets typed seller errors and assignment removal has its own right', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  for (const request of [
+    { paused: true, total_budget: null },
+    { paused: true, new_packages: null },
+    { packages: {} },
+    { packages: [null] },
+    { packages: [{ package_id: 'p1', targeting_overlay: null }] },
+    { packages: [{ package_id: 'p1', creatives: [] }] },
+  ]) {
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(buy(), request),
+      error => error.code === 'INVALID_REQUEST'
+    );
+    assert.equal(preflightMediaBuyActions(buy(), request).ok, false);
+  }
+  const remove = { packages: [{ package_id: 'p1', creative_assignments: [] }] };
+  assert.equal(preflightUpdateMediaBuy(buy([term('remove_creative')]), remove).ok, true);
+  assert.equal(preflightUpdateMediaBuy(buy([term('replace_creative')]), remove).ok, false);
+  assert.throws(
+    () =>
+      assertUpdateMediaBuyAllowed(
+        buy([term('extend_flight')]),
+        { end_time: '2027-02-02T00:00:00Z' },
+        { task: 'control_media_buy' }
+      ),
+    error => error.code === 'ACTION_NOT_ALLOWED'
+  );
+});
+
+test('advisory product differences do not override a live negotiated grant; coarse bounds remain usable', () => {
+  const state = buy([term('increase_budget')]);
+  const product = { allowed_actions: [{ action: 'pause', modes: ['self_serve'] }] };
+  const result = assessMediaBuyAction({ action: 'increase_budget', product, buy: state });
+  assert.equal(result.possibility.status, 'unsupported');
+  assert.equal(result.availability.status, 'available_now');
+  const coarse = {
+    allowed_actions: [
+      { action: 'update_budget', modes: ['self_serve'], constraints: { kind: 'budget', max_delta_percent: 10 } },
+    ],
+  };
+  assert.equal(assessProductAction(coarse, 'increase_budget').status, 'possible');
+  assert.equal(
+    mediaBuyActionResolver.materialize({
+      products: [coarse],
+      acceptedTerms: [term('increase_budget')],
+      sellerAccepted: true,
+    })[0].constraints.max_delta_percent,
+    10
+  );
+});
+
+test('rc.3 seller emission requires a matching served version and error details obey the pinned schema', () => {
+  const { readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const Ajv = require('ajv');
+  const addFormats = require('ajv-formats');
+  const version = require('../../package.json').adcp_version;
+  const ajv = new Ajv({ strict: false });
+  addFormats(ajv);
+  const seen = new Set();
+  function add(relative) {
+    const schema = JSON.parse(readFileSync(join('schemas/cache', version, relative), 'utf8'));
+    if (seen.has(schema.$id)) return schema.$id;
+    seen.add(schema.$id);
+    ajv.addSchema(schema);
+    function walk(value) {
+      if (!value || typeof value !== 'object') return;
+      if (value.$ref?.includes(`/schemas/${version}/`)) add(value.$ref.split(`/schemas/${version}/`)[1].split('#')[0]);
+      Object.values(value).forEach(walk);
+    }
+    walk(schema);
+    return schema.$id;
+  }
+  const errorId = add('core/error.json');
+  const detailsId = add('error-details/action-not-allowed.json');
+  const valid = ajv.getSchema(detailsId);
+  const scoped = buy([term('increase_budget')]);
+  const old = mediaBuyActionResolver.resolve({
+    buy: scoped,
+    adcpVersion: '3.2.0-rc.2',
+    decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+  });
+  assert.equal(old.available_actions.length, 0);
+  const cap = buy([term('update_media_buy_frequency_cap')]);
+  assert.equal(
+    mediaBuyActionResolver.resolve({ buy: cap, adcpVersion: '3.2.0-rc.2', decide: accept }).available_actions.length,
+    0
+  );
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const bounded = term('increase_budget', { constraints: { kind: 'budget', max_delta_percent: 10 } });
+  for (const [state, request, code] of [
+    [buy([bounded]), { total_budget: { amount: 2000, currency: 'USD' } }, 'REQUOTE_REQUIRED'],
+    [buy([bounded]), { total_budget: { amount: 1100, currency: 'EUR' } }, 'REQUOTE_REQUIRED'],
+    [buy([bounded], { daily_budget_cap: 100 }), { daily_budget_cap: null }, 'REQUOTE_REQUIRED'],
+    [buy(), { paused: true, revision: 1 }, 'CONFLICT'],
+  ]) {
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request),
+      error => {
+        assert.equal(error.code, code);
+        const wire = {
+          code: error.code,
+          message: error.message,
+          recovery: error.recovery,
+          field: error.field,
+          ...(error.details && { details: error.details }),
+        };
+        const validate = ajv.getSchema(errorId);
+        assert.equal(validate(wire), true, JSON.stringify(validate.errors));
+        return true;
+      }
+    );
+  }
+  for (const [state, request] of [
+    [buy(), { total_budget: { amount: 1100, currency: 'USD' } }],
+    [buy([term('update_spend_target')]), { paused: true }],
+    [buy(), { packages: [{ package_id: 'p1', keyword_targets_add: ['run'] }] }],
+  ]) {
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request, { task: 'control_media_buy' }),
+      error => {
+        assert.equal(error.code, 'ACTION_NOT_ALLOWED');
+        if (error.details) assert.equal(valid(error.details), true, JSON.stringify(valid.errors));
+        return true;
+      }
+    );
+  }
+});
+
+test('the update facade subsumes compact routes for single and atomic mixed actions', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = buy([term('update_targeting'), term('update_creative_assignments')]);
+  const target = { package_id: 'p1', targeting_overlay: { geo_countries: ['US'] } };
+  const assignment = { package_id: 'p1', creative_assignments: [{ creative_id: 'c1', weight: 1 }] };
+  for (const [action, patch, task] of [
+    ['update_targeting', target, 'control_media_buy'],
+    ['update_creative_assignments', assignment, 'sync_creatives'],
+  ]) {
+    assert.equal(
+      assessActionAvailability(state, action, { request: { packages: [patch] }, task: 'update_media_buy' }).status,
+      'available_now'
+    );
+    assert.equal(preflightMediaBuyActions(state, { packages: [patch] }, { task }).ok, true);
+    assert.equal(
+      preflightMediaBuyActions(
+        state,
+        { packages: [patch] },
+        { task: task === 'control_media_buy' ? 'sync_creatives' : 'control_media_buy' }
+      ).ok,
+      false
+    );
+    assert.equal(assertUpdateMediaBuyAllowed(state, { packages: [patch] }).ok, true);
+  }
+  const request = { packages: [{ ...target, ...assignment }] };
+  assert.equal(preflightMediaBuyActions(state, request, { task: 'update_media_buy' }).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
+  assert.equal(assertUpdateMediaBuyAllowed(state, request, { task: 'update_media_buy' }).ok, true);
+  for (const task of ['control_media_buy', 'sync_creatives', 'refine_proposals']) {
+    assert.equal(preflightMediaBuyActions(state, request, { task }).ok, false);
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request, { task }),
+      e => e.code === 'ACTION_NOT_ALLOWED'
+    );
+  }
+  state.available_actions.pop();
+  assert.equal(preflightMediaBuyActions(state, request, { task: 'update_media_buy' }).ok, false);
+});
+
+test('a separately supplied accepted proposal drives the same canonical decomposition and bounds', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = buy([
+    term('update_spend_target', {
+      constraints: { kind: 'budget', max_result_amount: { amount: 200, currency: 'USD' } },
+    }),
+  ]);
+  const { accepted_proposal: proposal, ...separate } = state;
+  for (const min_spend_target of [100, 300]) {
+    const request = { packages: [{ package_id: 'p1', min_spend_target }] };
+    assert.deepEqual(preflightUpdateMediaBuy(separate, request, { proposal }), preflightUpdateMediaBuy(state, request));
+    assert.deepEqual(
+      preflightMediaBuyActions(separate, request, { proposal }),
+      preflightMediaBuyActions(state, request)
+    );
+    assert.equal(preflightMediaBuyActions(separate, request, { proposal }).ok, min_spend_target === 100);
+  }
+  assert.equal(
+    assertUpdateMediaBuyAllowed(separate, { packages: [{ package_id: 'p1', min_spend_target: 100 }] }, { proposal })
+      .actions[0].action,
+    'update_spend_target'
+  );
+  assert.equal(
+    assessActionAvailability(separate, 'update_spend_target', {
+      proposal: { ...proposal, proposal_status: 'proposed' },
+    }).certainty,
+    'unknown'
+  );
+});
+
+test('unaccounted added-package budgets cannot pass portable result bounds', () => {
+  const bounded = term('increase_budget', {
+    constraints: { kind: 'budget', max_result_amount: { amount: 2000, currency: 'USD' } },
+  });
+  const state = buy([bounded, term('add_packages')]);
+  for (const new_packages of [[{ product_id: 'new' }], [{ product_id: 'new', budget: 9000 }]]) {
+    const request = { total_budget: { amount: 1100, currency: 'USD' }, new_packages };
+    assert.equal(constraint(bounded, state, request).status, 'unknown');
+    assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+  }
+});
+
+test('opposite package budget movements neither conceal nor fabricate directional bound violations', () => {
+  const increase = term('increase_budget', {
+    constraints: { kind: 'budget', max_delta_amount: { amount: 100, currency: 'USD' } },
+  });
+  const decrease = term('decrease_budget', {
+    constraints: { kind: 'budget', max_delta_amount: { amount: 300, currency: 'USD' } },
+  });
+  const state = buy([increase, decrease]);
+  for (const [next, expected] of [
+    [650, 'satisfied'],
+    [750, 'exceeded'],
+  ]) {
+    const request = {
+      packages: [
+        { package_id: 'p1', budget: next },
+        { package_id: 'p2', budget: 200 },
+      ],
+    };
+    assert.equal(constraint(increase, state, request).status, expected);
+    assert.equal(constraint(decrease, state, request).status, 'satisfied');
+  }
+  const request = {
+    packages: [
+      { package_id: 'p1', budget: 950 },
+      { package_id: 'p2', budget: 350 },
+    ],
+  };
+  assert.equal(constraint(increase, state, request).status, 'exceeded');
+  assert.equal(constraint(decrease, state, request).status, 'satisfied');
+});
+
+test('unknown legacy structured modes cannot become executable through exact or coarse lookup', () => {
+  const { canIncreaseBudget } = require('../../dist/lib/media-buy/index.js');
+  for (const action of ['increase_budget', 'update_budget']) {
+    const state = {
+      available_actions: [{ action, mode: 'future_opaque_mode' }],
+      packages: [{ package_id: 'p1', budget: 100 }],
+    };
+    assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', budget: 110 }] }).ok, false);
+    assert.equal(canIncreaseBudget(state), false);
+  }
+});
+
+test('mixed allocation changes evaluate the resulting total and preserve returned accepted bounds', () => {
+  const bounded = term('update_budget_allocation', {
+    constraints: { kind: 'budget', max_result_amount: { amount: 1500, currency: 'USD' } },
+  });
+  const state = buy([bounded, term('increase_budget')]);
+  const request = { total_budget: { amount: 2000, currency: 'USD' }, budget_allocation: { mode: 'fixed' } };
+  assert.equal(constraint(bounded, state, request).status, 'exceeded');
+  assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+  request.total_budget.amount = 1100;
+  const projection = mediaBuyActionResolver.resolve({ buy: state, decide: accept, request });
+  assert.deepEqual(
+    projection.request_assessments.find(a => a.action === 'update_budget_allocation').term.constraints,
+    bounded.constraints
+  );
+  assert.deepEqual(state.accepted_proposal.commercial_terms.change_terms[0].constraints, bounded.constraints);
+});
+
+test('legacy compatibility never discards an explicit current package scope or compact task', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = {
+    packages: [
+      { package_id: 'p1', budget: 100 },
+      { package_id: 'p2', budget: 100 },
+    ],
+    available_actions: [
+      { action: 'increase_budget', mode: 'self_serve', task: 'control_media_buy', applicable_package_ids: ['p1'] },
+    ],
+  };
+  for (const request of [
+    { packages: [{ package_id: 'p2', budget: 110 }] },
+    { total_budget: { amount: 110, currency: 'USD' } },
+  ]) {
+    assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request),
+      e => e.code === 'ACTION_NOT_ALLOWED'
+    );
+  }
+  const allowed = { packages: [{ package_id: 'p1', budget: 110 }] };
+  assert.equal(preflightUpdateMediaBuy(state, allowed).ok, true);
+  assert.equal(preflightUpdateMediaBuy(state, allowed, { task: 'sync_creatives' }).ok, false);
+  state.available_actions[0].applicable_package_ids = [];
+  assert.equal(preflightUpdateMediaBuy(state, allowed).ok, false);
+});
+
+test('explicit legacy scope also rejects opaque unmapped sibling mutations', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = {
+    packages: [{ package_id: 'p1', budget: 100 }],
+    available_actions: [{ action: 'increase_budget', mode: 'self_serve', applicable_package_ids: ['p1'] }],
+  };
+  const request = {
+    packages: [
+      { package_id: 'p1', budget: 110 },
+      { package_id: 'p2', ext: { vendor: { controls: 1 } } },
+    ],
+  };
+  assert.throws(() => preflightUpdateMediaBuy(state, request), /no supported action mapping/);
+  assert.throws(
+    () => assertUpdateMediaBuyAllowed(state, request),
+    e => e.code === 'INVALID_REQUEST'
+  );
+});
+
+test('terminal package state overrides stale pause toggles in preflight and live projection', () => {
+  for (const action of ['pause', 'resume']) {
+    for (const terminal of [
+      { canceled: true },
+      { status: 'canceled' },
+      { status: 'completed' },
+      { status: 'failed' },
+      { status: 'rejected' },
+    ]) {
+      const state = buy([term(action)], { packages: [{ package_id: 'p1', paused: action === 'resume', ...terminal }] });
+      const request = { packages: [{ package_id: 'p1', paused: action === 'pause' }] };
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+      assert.equal(assessActionAvailability(state, action, { request }).reason, 'wrong_status');
+      assert.equal(
+        mediaBuyActionResolver.resolve({
+          buy: state,
+          adcpVersion: '3.2.0-rc.3',
+          decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+        }).available_actions.length,
+        0
+      );
+    }
+  }
+});
+
+test('seller lifecycle scope narrows mixed and unknown package state without erasing known executable rights', () => {
+  const state = buy([term('pause'), term('resume')], {
+    packages: [{ package_id: 'p1', paused: false }, { package_id: 'p2', paused: true }, { package_id: 'p3' }],
+  });
+  const projection = mediaBuyActionResolver.resolve({
+    buy: state,
+    adcpVersion: '3.2.0-rc.3',
+    decide: () => ({ ...accept(), applicable_package_ids: ['p1', 'p2', 'p3'] }),
+  });
+  assert.deepEqual(projection.available_actions.find(a => a.action === 'pause').applicable_package_ids, ['p1']);
+  assert.deepEqual(projection.available_actions.find(a => a.action === 'resume').applicable_package_ids, ['p2']);
+});
+
+test('plain legacy grants cannot hide governance-bearing or opaque siblings and errors retain no request payload', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = { available_actions: [{ action: 'pause', mode: 'self_serve' }] };
+  for (const extra of [
+    { invoice_recipient: { name: 'Recipient' } },
+    { reporting_webhook: { url: 'https://buyer.example/report' } },
+    { ext: { vendor: { controls: 1 } } },
+  ]) {
+    const request = { paused: true, governance_context: 'private-authorization', ...extra };
+    assert.throws(
+      () => preflightUpdateMediaBuy(state, request),
+      e => e.details.value === undefined
+    );
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request),
+      e => e.code === 'INVALID_REQUEST'
+    );
+  }
+});
+
+test('separate proposal snapshots need accepted status and explicit current identity before granting authority', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const state = buy();
+  const { accepted_proposal, accepted_proposal_id, ...separate } = state;
+  const proposal = { commercial_terms: accepted_proposal.commercial_terms };
+  for (const snapshot of [
+    proposal,
+    { ...proposal, proposal_status: 'accepted' },
+    { ...proposal, media_buy_id: 'other-buy', proposal_status: 'accepted' },
+  ]) {
+    assert.equal(assessActionAvailability(separate, 'pause', { proposal: snapshot }).certainty, 'unknown');
+    assert.equal(preflightUpdateMediaBuy(separate, { paused: true }, { proposal: snapshot }).ok, false);
+    assert.equal(preflightMediaBuyActions(separate, { paused: true }, { proposal: snapshot }).ok, false);
+  }
+});
+
+test('served version is explicit at both seller emission and assertion boundaries', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = buy([term('increase_budget')]);
+  state.available_actions[0].applicable_package_ids = ['p1'];
+  const request = { packages: [{ package_id: 'p1', budget: 650 }] };
+  assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.3' }).ok, true);
+  assert.throws(
+    () => assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.2.0-rc.2' }),
+    e => e.code === 'ACTION_NOT_ALLOWED'
+  );
+});
+
+test('missing stored budget stays unknown rather than throwing a raw property error', () => {
+  const state = buy([term('increase_budget')], { total_budget: null });
+  const request = { total_budget: { amount: 1100, currency: 'USD' } };
+  assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+});
+
+test('flat action hints never create metadata execution authority in compatibility preflight or seller assertion', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  const state = { status: 'active', valid_actions: ['update_name'] };
+  assert.equal(preflightUpdateMediaBuy(state, { name: 'Changed' }).ok, false);
+  assert.throws(
+    () => assertUpdateMediaBuyAllowed(state, { name: 'Changed' }),
+    e => e.code === 'ACTION_NOT_ALLOWED'
+  );
+  const structured = {
+    status: 'active',
+    available_actions: [{ action: 'update_name', mode: 'self_serve', task: 'control_media_buy' }],
+  };
+  assert.equal(preflightUpdateMediaBuy(structured, { name: 'Changed' }).ok, true);
+  assert.equal(assertUpdateMediaBuyAllowed(structured, { name: 'Changed' }).ok, true);
+});
+
+test('add-only requests cannot bypass monetary assessment through package-count rights', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const terms of [
+    [term('add_packages')],
+    [
+      term('add_packages'),
+      term('increase_budget', {
+        constraints: { kind: 'budget', max_result_amount: { amount: 2000, currency: 'USD' } },
+      }),
+    ],
+  ]) {
+    const state = buy(terms);
+    for (const money of [{ budget: 9000 }, { min_spend_target: 9000 }, { daily_budget_cap: 9000 }]) {
+      const request = { new_packages: [{ product_id: 'new', pricing_option_id: 'price', ...money }] };
+      const result = assessActionAvailability(state, 'add_packages', { request });
+      assert.equal(result.certainty, 'unknown');
+      assert.equal(result.constraints.constraint, 'added_package_budget');
+      assert.equal(preflightMediaBuyActions(state, request).ok, false);
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, request),
+        e => e.code === 'ACTION_NOT_ALLOWED'
+      );
+    }
+  }
+});
+
+test('opaque new-package extensions never ride an add-package grant', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const state of [buy([term('add_packages')]), { valid_actions: ['add_packages'] }]) {
+    const request = { new_packages: [{ product_id: 'new', ext: { vendor: { controls: 1 } } }] };
+    assert.equal(preflightMediaBuyActions(state, request).ok, false);
+    assert.throws(
+      () => assertUpdateMediaBuyAllowed(state, request),
+      e => e.code === 'INVALID_REQUEST'
+    );
+  }
 });

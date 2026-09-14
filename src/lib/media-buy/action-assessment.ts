@@ -21,16 +21,21 @@ import {
   findProductAction,
   NON_TERMINAL_ACTION_STATUSES,
   liveActionIssues,
+  supportsRc3Actions,
+  withActionProposal,
+  packageActionStatus,
 } from './action-contracts';
 import { evaluateChangeTermConstraints, type ConstraintEvaluationOptions } from './action-constraints';
-import { decomposeUpdateMediaBuy, hasUnmappedMutation } from './mutations';
+import { decomposeUpdateMediaBuy, hasUnmappedMutation, mutationShapeIssue } from './mutations';
 
 export interface ActionAssessmentOptions extends ConstraintEvaluationOptions {
   /** Seller-served wire version. 3.1 term references are always opaque. Defaults to the current 3.2 shape. */
   adcpVersion?: string;
   /** Explicit 3.2 compatibility projection declaring terms_ref an alias for change_term_id. */
   termsRefIsAlias?: boolean;
-  /** Optional route being attempted. Omission does not turn a live route into a default route. */
+  /** Current accepted snapshot when it is stored separately from the buy. An embedded snapshot takes precedence. */
+  proposal?: ActionProposal;
+  /** Optional route being attempted. update_media_buy can subsume compact tasks as a compatibility facade. */
   task?: MediaBuyTask;
   request?: UpdateMediaBuyRequestLike;
 }
@@ -109,6 +114,12 @@ export function assessActionAvailability(
     certainty: 'blocked' | 'unknown' = 'blocked',
     extra: Partial<Extract<ActionAvailability, { status: 'currently_unavailable' }>> = {}
   ): ActionAvailability => ({ status: 'currently_unavailable', action, reason, message, certainty, ...extra });
+  if (options.request !== undefined && mutationShapeIssue(options.request))
+    return deny(
+      'condition_unresolved',
+      'Invalid mutation field shape; validate against the selected wire schema.',
+      'unknown'
+    );
   if (!buy) return deny('condition_unresolved', 'Current MediaBuy state is missing.', 'unknown');
   if (options.request?.packages?.length) {
     const requested = options.request.packages.map(p => p.package_id);
@@ -125,6 +136,19 @@ export function assessActionAvailability(
         'unknown'
       );
   }
+  if (buy.accepted_proposal === undefined && options.proposal !== undefined) {
+    const supplied = options.proposal;
+    const linked =
+      (buy.accepted_proposal_id !== undefined && supplied.proposal_id === buy.accepted_proposal_id) ||
+      (buy.media_buy_id !== undefined && supplied.media_buy_id === buy.media_buy_id);
+    if (!linked || supplied.proposal_status !== 'accepted')
+      return deny(
+        'condition_unresolved',
+        'The separately supplied snapshot must be accepted and explicitly linked to this MediaBuy.',
+        'unknown'
+      );
+  }
+  buy = withActionProposal(buy, options);
   const metadataOnly = action === 'update_name';
   const proposal = buy.accepted_proposal;
   const terms = proposal?.commercial_terms?.change_terms;
@@ -152,7 +176,22 @@ export function assessActionAvailability(
   if (!metadataOnly && promise.status === 'not_negotiated')
     return deny('not_supported_on_buy', 'This action was not negotiated in the accepted proposal.');
   const term = promise.status === 'promised' ? promise.term : undefined;
-  const allowedStatuses = metadataOnly ? [...NON_TERMINAL_ACTION_STATUSES] : actionAllowedStatuses(term!);
+  const packageLifecycle =
+    ['pause', 'resume'].includes(action) &&
+    options.request?.packages?.filter(p => p.paused !== undefined && (p.paused ? 'pause' : 'resume') === action);
+  const scopedLifecycle = packageLifecycle && packageLifecycle.length > 0 && options.request?.paused === undefined;
+  const allowedStatuses = metadataOnly
+    ? [...NON_TERMINAL_ACTION_STATUSES]
+    : scopedLifecycle
+      ? NON_TERMINAL_ACTION_STATUSES.filter(status => !term?.allowed_statuses || term.allowed_statuses.includes(status))
+      : actionAllowedStatuses(term!);
+  for (const pkg of packageLifecycle || []) {
+    const current = buy.packages?.find(p => p.package_id === pkg.package_id);
+    const status = packageActionStatus(current);
+    if (!status) return deny('condition_unresolved', 'Current package lifecycle state is missing.', 'unknown');
+    if (!actionAllowedStatuses({ action }).includes(status as MediaBuyStatus))
+      return deny('wrong_status', 'The action is not meaningful in the current package status.');
+  }
   if (buy.status === undefined) return deny('condition_unresolved', 'Current MediaBuy status is missing.', 'unknown');
   if (!allowedStatuses.includes(buy.status as MediaBuyStatus))
     return deny('wrong_status', 'The negotiated action is latent in the current status.', 'blocked', {
@@ -181,6 +220,16 @@ export function assessActionAvailability(
   if (liveActionIssues(entries).length)
     return deny('condition_unresolved', 'The live action projection is invalid or ambiguous.', 'unknown');
   const entry = entries.find(e => e.action === action);
+  if (
+    options.adcpVersion &&
+    !supportsRc3Actions(options.adcpVersion) &&
+    (action === 'update_media_buy_frequency_cap' || entry?.applicable_package_ids !== undefined)
+  )
+    return deny(
+      'condition_unresolved',
+      'The action uses metadata introduced after the supplied seller version.',
+      'unknown'
+    );
   if (!entry)
     return deny('not_supported_on_buy', 'The seller has not made this negotiated action available now.', 'unknown');
   if (!metadataOnly && options.adcpVersion && /^3\.[01](?:\.|-|$)/.test(options.adcpVersion))
@@ -208,10 +257,12 @@ export function assessActionAvailability(
     return deny('mode_mismatch', 'The live action has no compatible canonical task.');
   const task = entry.task ?? 'update_media_buy';
   const nonDefaultRoute = task === 'update_media_buy' ? undefined : task;
-  if (options.task !== undefined && options.task !== task)
+  if (options.task !== undefined && options.task !== 'update_media_buy' && options.task !== task)
     return deny(
       'mode_mismatch',
-      'Use the task declared by the live action; seller_managed uses its standard async lifecycle.',
+      entry.task === undefined
+        ? 'This task-less entry uses update_media_buy. Refresh get_media_buys for a canonical task projection before changing routes.'
+        : 'Use the task declared by the live action; seller_managed uses its standard async lifecycle.',
       'blocked',
       { nonDefaultRoute }
     );
@@ -258,6 +309,31 @@ export function assessActionAvailability(
         }
       );
   }
+  if (action === 'add_packages' && options.request?.new_packages) {
+    const index = options.request.new_packages.findIndex(
+      pkg =>
+        pkg !== null &&
+        typeof pkg === 'object' &&
+        ['budget', 'min_spend_target', 'daily_budget_cap'].some(
+          field => Object.hasOwn(pkg, field) && (pkg as Record<string, unknown>)[field] !== undefined
+        )
+    );
+    if (index !== -1)
+      return deny(
+        'condition_unresolved',
+        'Added-package monetary commitments cannot be assessed from package-count rights alone.',
+        'unknown',
+        {
+          constraints: {
+            status: 'unknown',
+            constraint: 'added_package_budget',
+            path: `new_packages[${index}]`,
+            message:
+              'Supply a verified commercial amendment for the added package commitments; their budget baseline is not represented by this portable patch assessment.',
+          },
+        }
+      );
+  }
   return {
     status: 'available_now',
     action,
@@ -282,17 +358,8 @@ export function assessMediaBuyAction(
 ): MediaBuyActionAssessment {
   const possibility = assessProductAction(input.product, input.action);
   const promise = assessProposalAction(input.buy?.accepted_proposal ?? input.proposal, input.action);
-  let availability = assessActionAvailability(input.buy, input.action, input);
-  // An explicit current product denial can narrow accepted rights. Absence is
-  // not a denial and an advisory positive cannot override any other blocker.
-  if (possibility.status === 'unsupported' && availability.status === 'available_now')
-    availability = {
-      status: 'currently_unavailable',
-      action: input.action,
-      reason: 'not_supported_on_product',
-      message: 'The product does not currently support this action.',
-      certainty: 'blocked',
-    };
+  const availability = assessActionAvailability(input.buy, input.action, input);
+  // Advisory discovery information cannot override a negotiated live grant.
   return { action: input.action, possibility, promise, availability };
 }
 
@@ -320,6 +387,10 @@ export function preflightMediaBuyActions(
   request: UpdateMediaBuyRequestLike,
   options: Omit<ActionAssessmentOptions, 'request'> = {}
 ): MediaBuyActionsPreflight {
+  const assessmentBuy = buy;
+  buy = withActionProposal(buy, options);
+  const shapeIssue = mutationShapeIssue(request);
+  if (shapeIssue) return { ok: false, assessments: [], message: `Invalid mutation field shape at ${shapeIssue}.` };
   const decomposition = decomposeUpdateMediaBuy(buy as Parameters<typeof decomposeUpdateMediaBuy>[0], request);
   const unresolvedField = hasUnmappedMutation(request, decomposition);
   if (unresolvedField)
@@ -331,18 +402,22 @@ export function preflightMediaBuyActions(
   if (!decomposition.actions.length)
     return { ok: false, assessments: [], message: 'No recognized mutation could be assessed.' };
   const assessments = decomposition.actions.map(({ action }) =>
-    assessActionAvailability(buy, action, { ...options, request })
+    assessActionAvailability(assessmentBuy, action, { ...options, request })
   );
   if (
     assessments.every(
       (a): a is Extract<ActionAvailability, { status: 'available_now' }> => a.status === 'available_now'
     )
   ) {
-    if (new Set(assessments.map(a => a.nonDefaultRoute ?? 'update_media_buy')).size > 1)
+    if (
+      options.task !== 'update_media_buy' &&
+      new Set(assessments.map(a => a.nonDefaultRoute ?? 'update_media_buy')).size > 1
+    )
       return {
         ok: false,
         assessments,
-        message: 'The requested actions require different tasks; no single task can execute this whole mutation.',
+        message:
+          'The requested actions declare different compact tasks. Pass task: update_media_buy to assess the whole mutation through the compatibility facade.',
       };
     return { ok: true, assessments };
   }

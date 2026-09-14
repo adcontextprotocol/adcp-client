@@ -1,16 +1,10 @@
-import type {
-  CanonicalMediaBuyAction,
-  CanonicalProductAction,
-  MediaBuyChangeTerm,
-  MediaBuyChangeTermConstraints,
-  MediaBuyStatus,
-} from '../types/core.generated';
+import type { CanonicalProductAction, MediaBuyChangeTerm, MediaBuyStatus } from '../types/core.generated';
 import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyActionMode, SLAWindow } from './types';
 
 /** Explicit task vocabulary; update_media_buy is the established 3.1 default. */
 export type MediaBuyTask = 'update_media_buy' | 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
-/** Includes the rc.3 shared-cap action without adopting unrelated generated schema changes. */
-export type MediaBuyAction = MediaBuyActionId | CanonicalMediaBuyAction['action'] | 'update_media_buy_frequency_cap';
+/** Alias of the shared action vocabulary, including the isolated rc.3 shared-cap bridge. */
+export type MediaBuyAction = MediaBuyActionId;
 export type ProductActionTemplate = Pick<
   CanonicalProductAction,
   'modes' | 'allowed_statuses' | 'sla' | 'constraints' | 'terms_ref'
@@ -82,11 +76,8 @@ export interface ActionProposal {
   media_buy_id?: string;
   commercial_terms?: { change_terms?: readonly ProposalChangeTerm[] };
 }
-export interface ActionBuy extends Omit<MediaBuyActionContext, 'available_actions'> {
-  available_actions?: readonly LiveMediaBuyAction[];
-  accepted_proposal?: ActionProposal;
-  accepted_proposal_id?: string;
-}
+/** Same current snapshot accepted by the existing preflight helpers. */
+export type ActionBuy = MediaBuyActionContext;
 
 export type ConstraintAssessment =
   | { status: 'satisfied' }

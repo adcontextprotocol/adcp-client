@@ -35,8 +35,11 @@ export function evaluateChangeTermConstraints(
   mutations: readonly DecomposedUpdateMediaBuyMutation[],
   options: ConstraintEvaluationOptions = {}
 ): ConstraintAssessment {
-  if (request.total_budget && mutations.some(m => m.action === term.action && m.field === 'total_budget.amount')) {
-    const currency = typeof buy.total_budget === 'object' ? buy.total_budget.currency : buy.currency;
+  if (
+    request.total_budget &&
+    mutations.some(m => m.action === term.action && ['total_budget.amount', 'budget_allocation'].includes(m.field))
+  ) {
+    const currency = typeof buy.total_budget === 'object' ? buy.total_budget?.currency : buy.currency;
     if (currency === undefined) return unknown('currency', 'total_budget.currency');
     if (request.total_budget.currency !== currency) return exceeded('currency_mismatch', 'total_budget.currency');
   }
@@ -51,26 +54,34 @@ export function evaluateChangeTermConstraints(
     unresolved ??= unknown(key, path);
   };
   if (c.kind === 'budget') {
+    // New-package creation is an opaque shape here. Do not approve result bounds
+    // using only the existing-package values while leaving added commitments unaccounted.
+    if (request.new_packages?.length && (c.min_result_amount || c.max_result_amount))
+      return unknown('added_package_budget', 'new_packages');
     const values = relevant.filter(m => /(?:budget(?:\.amount)?|daily_budget_cap|min_spend_target)$/.test(m.field));
     if (
       !values.length &&
       term.action === 'update_budget_allocation' &&
       relevant.some(m => m.field === 'budget_allocation')
     ) {
-      const amount = typeof buy.total_budget === 'object' ? buy.total_budget.amount : buy.total_budget;
+      const amount = typeof buy.total_budget === 'object' ? buy.total_budget?.amount : buy.total_budget;
       values.push({
         action: term.action,
         field: 'budget_allocation',
         path: 'budget_allocation',
         scope: 'buy',
         from: amount,
-        to: amount,
+        to: request.total_budget?.amount ?? amount,
       });
     }
     if (!values.length) return unknown('cannot_preflight', term.action);
-    const currency = typeof buy.total_budget === 'object' ? buy.total_budget.currency : buy.currency;
+    const currency = typeof buy.total_budget === 'object' ? buy.total_budget?.currency : buy.currency;
     for (const m of values) {
-      if (m.to === null && m.field === 'packages[].budget' && term.action === 'increase_budget') {
+      if (
+        m.to === null &&
+        (m.field === 'packages[].budget' || m.field.endsWith('daily_budget_cap')) &&
+        term.action === 'increase_budget'
+      ) {
         if (c.max_delta_amount || c.max_delta_percent !== undefined || c.max_result_amount)
           return exceeded('unbounded_result', m.path);
         continue;

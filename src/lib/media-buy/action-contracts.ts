@@ -8,6 +8,8 @@ import { V3_1_ACTION_IDS } from './legacy-action-ids';
 import { validActionsForStatus } from '../server/media-buy-helpers';
 import { getRollupParent } from './available-actions';
 import type {
+  ActionBuy,
+  ActionProposal,
   MediaBuyAction,
   MediaBuyTask,
   ProposalChangeTerm,
@@ -252,7 +254,12 @@ export function productTemplateIssues(templates: readonly ProductActionTemplate[
         [
           {
             term_id: 'template',
-            action: template.action,
+            action:
+              (CHANGE_TERM_ACTIONS as readonly MediaBuyAction[]).find(
+                action =>
+                  getRollupParent(action) === template.action &&
+                  changeConstraintIssues(action, template.constraints, currency).length === 0
+              ) ?? template.action,
             service_mode: template.modes?.[0],
             allowed_statuses: undefined,
             processing_sla: template.sla,
@@ -330,4 +337,37 @@ export function liveActionIssues(entries: unknown): string[] {
       return ['invalid package scope'];
   }
   return [];
+}
+
+/** rc.3 added shared-cap rights and exact live package scope. */
+export function supportsRc3Actions(version: string): boolean {
+  const match = /^(\d+)\.(\d+)(?:\.(\d+))?(?:-(.*))?$/.exec(version);
+  if (!match) return false;
+  if (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) > 2)) return true;
+  if (Number(match[1]) !== 3 || Number(match[2]) !== 2) return false;
+  return !match[4] || (/^rc\.(\d+)$/.test(match[4]) && Number(match[4].slice(3)) >= 3);
+}
+/** Narrow error-details vocabulary is distinct from canonical MediaBuy actions. */
+export function actionFitsErrorDetails(action: MediaBuyAction, version: string): boolean {
+  if (/^3\.[01](?:\.|-|$)/.test(version)) return legacyActionSupported(action);
+  return (
+    (LEGACY_AVAILABLE_ACTIONS as readonly string[]).includes(action) ||
+    (action === 'update_media_buy_frequency_cap' && supportsRc3Actions(version))
+  );
+}
+
+/** Apply a separately stored accepted snapshot before either decomposition or assessment. */
+export function withActionProposal<T extends ActionBuy>(buy: T, options: { proposal?: ActionProposal }): T {
+  return buy.accepted_proposal === undefined && options.proposal !== undefined
+    ? { ...buy, accepted_proposal: options.proposal }
+    : buy;
+}
+
+/** Lifecycle state for package controls; terminal state wins over a stale pause flag. */
+export function packageActionStatus(
+  pkg: { status?: string; canceled?: boolean; paused?: boolean } | undefined
+): string | undefined {
+  if (pkg?.canceled === true) return 'canceled';
+  if (pkg?.status && ['completed', 'canceled', 'failed', 'rejected'].includes(pkg.status)) return pkg.status;
+  return pkg?.paused === true ? 'paused' : pkg?.paused === false ? 'active' : pkg?.status;
 }

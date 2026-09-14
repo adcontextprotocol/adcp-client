@@ -12,6 +12,7 @@ import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-typ
 //      resolver + gate checks into a single ok/not-ok decision.
 
 import { ValidationError } from '../errors';
+import { withActionProposal, liveActionIssues } from './action-contracts';
 import { assessActionAvailability, type ActionAssessmentOptions } from './action-assessment';
 import { findAvailableAction, getAvailableActions, type AvailableActionsResult } from './available-actions';
 import type {
@@ -119,6 +120,10 @@ export type ModeMismatchRecovery =
  * matching action - mode is not knowable, so it's reported as `self_serve`
  * but flagged as a compat fallback.
  *
+ * Supplying an accepted snapshot enables negotiated-term checks; separately stored
+ * snapshots use options.proposal. options.task defaults to the named update facade.
+ * For route-neutral strict assessment, use preflightMediaBuyActions.
+ *
  * Multi-action requests: every resolved action must be present in
  * `available_actions[]`. All missing actions are reported in `denials[]`
  * so callers can render every blocker in a single pass.
@@ -132,20 +137,23 @@ export function preflightUpdateMediaBuy(
   request: UpdateMediaBuyRequestLike,
   options: Omit<ActionAssessmentOptions, 'request'> = {}
 ): PreflightResult {
+  const assessmentBuy = currentBuy;
+  currentBuy = withActionProposal(currentBuy, options);
+  options = { ...options, task: options.task ?? 'update_media_buy' };
   const decomposition = decomposeUpdateMediaBuy(currentBuy, request);
   const resolved = decomposition.actions;
   const strict = currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined;
-  if (strict && hasUnmappedMutation(request, decomposition))
+  if (hasUnmappedMutation(request, decomposition))
     throw new ValidationError(
       'request',
-      request,
+      undefined,
       'At least one requested mutation has no supported action mapping; do not submit a partial mutation.'
     );
 
   if (resolved.length === 0) {
     throw new ValidationError(
       'request',
-      request,
+      undefined,
       'update_media_buy request must touch at least one mutating field (paused, canceled, start_time, end_time, frequency_cap, packages[*], or new_packages)'
     );
   }
@@ -159,8 +167,8 @@ export function preflightUpdateMediaBuy(
   const denials: PreflightDenial[] = [];
 
   for (const resolvedAction of resolved) {
-    if (currentBuy.accepted_proposal?.commercial_terms?.change_terms !== undefined) {
-      const assessment = assessActionAvailability(currentBuy, resolvedAction.action, { ...options, request });
+    if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
+      const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
       if (assessment.status === 'currently_unavailable') {
         denials.push({ action: resolvedAction.action, reason: assessment.reason, assessment });
         continue;
@@ -176,11 +184,33 @@ export function preflightUpdateMediaBuy(
       denials.push({ action: resolvedAction.action, reason: 'not_supported_on_buy' });
       continue;
     }
+    // Legacy compatibility must still honor explicit current scope and route restrictions.
+    if (!strict && lookup.entry.applicable_package_ids !== undefined) {
+      const scoped = decomposition.mutations.filter(m => m.action === resolvedAction.action);
+      const ids = lookup.entry.applicable_package_ids;
+      if (liveActionIssues([lookup.entry]).length || !scoped.length) {
+        denials.push({ action: resolvedAction.action, reason: 'condition_unresolved' });
+        continue;
+      }
+      if (scoped.some(m => m.scope !== 'package' || !m.package_id || !ids.includes(m.package_id))) {
+        denials.push({ action: resolvedAction.action, reason: 'not_supported_on_buy' });
+        continue;
+      }
+    }
+    if (!strict && options.task !== 'update_media_buy' && options.task !== (lookup.entry.task ?? 'update_media_buy')) {
+      denials.push({ action: resolvedAction.action, reason: 'mode_mismatch' });
+      continue;
+    }
     matched.push(lookup.entry);
     modes.push(lookup.entry.mode);
   }
 
-  if (strict && denials.length === 0 && new Set(matched.map(entry => entry.task ?? 'update_media_buy')).size > 1) {
+  if (
+    strict &&
+    options.task !== 'update_media_buy' &&
+    denials.length === 0 &&
+    new Set(matched.map(entry => entry.task ?? 'update_media_buy')).size > 1
+  ) {
     for (const action of resolved) denials.push({ action: action.action, reason: 'mode_mismatch' });
   }
   if (denials.length > 0) {
