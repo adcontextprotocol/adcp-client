@@ -8,6 +8,7 @@ const {
   ReportingConsumerStatusV1Schema,
   SyncReportingStatusRequestV1Schema,
 } = require('../../dist/lib/reporting/ledger/index.js');
+const publishedFixtureExport = require('@adcp/sdk/compliance-fixtures/reporting-consumer-status-v1.json');
 
 const directory = path.resolve(__dirname, '../fixtures/reporting-reconciliation');
 const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'fixture.json'), 'utf8'));
@@ -28,6 +29,7 @@ test('portable consumer-status vectors retain exact bytes, clocks, principals, r
     path.resolve(__dirname, '../../dist/lib/compliance-fixtures/reporting-consumer-status-v1.json')
   );
   assert.deepEqual(publishedBytes, fixtureBytes);
+  assert.deepEqual(publishedFixtureExport, fixture);
   assert.equal(fixtureBytes.byteLength, manifest.files['consumer-status.json'].size_bytes);
   assert.equal(sha256(fixtureBytes), manifest.files['consumer-status.json'].sha256);
   assert.equal(fixture.protocol_version, '3.2.0-rc.2');

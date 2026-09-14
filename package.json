@@ -586,7 +586,7 @@
     "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js' test/examples/proxy-seller-snap.test.js",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
-    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack .",
+    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json",
     "check:packed-artifact": "node scripts/check-packed-artifact.mjs",
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
     "check:package-size": "node scripts/check-package-size.mjs",
