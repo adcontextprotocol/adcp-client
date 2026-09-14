@@ -1197,3 +1197,106 @@ describe('StoryboardStep.requires_contract ordinary-task gate (#2755)', () => {
     assert.equal(result.passed_count, 2);
   });
 });
+
+describe('parallel_dispatch_runner missing-contract grading (#2859)', () => {
+  const tools = ['get_adcp_capabilities', 'create_media_buy'];
+  const storyboard = buildStoryboard({
+    phases: [
+      {
+        id: 'parallel_dispatch',
+        title: 'Parallel dispatch',
+        steps: [
+          {
+            id: 'concurrent_create',
+            title: 'Create concurrently',
+            task: 'create_media_buy',
+            requires_contract: 'parallel_dispatch_runner',
+            sample_request: { idempotency_key: 'parallel-dispatch-regression-key' },
+            parallel_dispatch: {
+              count: 2,
+              mode: 'process_local',
+              same_idempotency_key: true,
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  function options(calls) {
+    return {
+      _profile: { name: 'parallel-dispatch-stub', tools, raw_capabilities: {} },
+      agentTools: tools,
+      contracts: [],
+      _client: {
+        executeTask: async (task, params) => {
+          calls.push({ task, params });
+          return { success: true, data: { status: 'completed' } };
+        },
+      },
+    };
+  }
+
+  function assertCanonicalNotApplicable(step) {
+    assert.equal(step.passed, true);
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'not_applicable');
+    assert.equal(step.skip.reason, 'not_applicable');
+    assert.notEqual(step.skip.reason, 'unsatisfied_contract');
+  }
+
+  test('full runner records a canonical not_applicable skip without dispatch', async () => {
+    const calls = [];
+    const result = await runStoryboard('https://parallel-dispatch.example/mcp', storyboard, options(calls));
+
+    assert.deepStrictEqual(calls, [], 'missing contract must prevent parallel dispatch');
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 1);
+    assertCanonicalNotApplicable(result.phases[0].steps[0]);
+  });
+
+  test('mixed non-failing contract skips keep a required phase passing', async () => {
+    const calls = [];
+    const mixedStoryboard = buildStoryboard({
+      phases: [
+        {
+          id: 'mixed_contract_skips',
+          title: 'Mixed contract skips',
+          steps: [
+            storyboard.phases[0].steps[0],
+            {
+              id: 'signed_response_probe',
+              title: 'Probe signed response',
+              task: 'create_media_buy',
+              requires_contract: 'signed_responses_runner',
+              sample_request: { idempotency_key: 'signed-response-regression-key' },
+            },
+          ],
+        },
+      ],
+    });
+    const result = await runStoryboard('https://parallel-dispatch.example/mcp', mixedStoryboard, options(calls));
+
+    assert.deepStrictEqual(calls, [], 'missing contracts must prevent every dispatch');
+    assert.equal(result.overall_passed, true);
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.skipped_count, 2);
+    assertCanonicalNotApplicable(result.phases[0].steps[0]);
+    assert.equal(result.phases[0].steps[1].skip_reason, 'missing_test_kit_contract');
+    assert.equal(result.phases[0].steps[1].skip.reason, 'unsatisfied_contract');
+  });
+
+  test('standalone runner records the same canonical skip without dispatch', async () => {
+    const calls = [];
+    const result = await runStoryboardStep(
+      'https://parallel-dispatch.example/mcp',
+      storyboard,
+      'concurrent_create',
+      options(calls)
+    );
+
+    assert.deepStrictEqual(calls, [], 'missing contract must prevent parallel dispatch');
+    assertCanonicalNotApplicable(result);
+  });
+});
