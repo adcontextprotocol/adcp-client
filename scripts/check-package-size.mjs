@@ -62,7 +62,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // The durable buyer-writes adoption example adds two TypeScript files and one
 // packaged guide, bringing the clean package to 6,135 published files. The
 // remaining changes edit existing modules; byte budgets stay fixed.
-const MAX_PACKED_FILE_COUNT = 6_135;
+// Supply-path verification adds 32 runtime/declaration artifacts and its guide
+// and packaged example (34 files total); byte and schema budgets stay unchanged.
+const MAX_PACKED_FILE_COUNT = 6_135 + 34;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
