@@ -30,6 +30,11 @@ Pass the result through `unwrapVerifiedRefineProposals(result, request)` or use 
 
 Exact transport retries reuse the same request and key. A changed refinement is a new intent and must use a fresh key; `ProposalNegotiator.changedRequest()` enforces that split. Check the committed proposal's `expires_at` immediately before `accept_proposal`/`buy_products`.
 
+Use the standalone `verifyProposalCommercialTerms` API to compare the complete
+buyer-reviewed commercial snapshot before acceptance. See
+[proposal term verification](./guides/PROPOSAL-TERMS-VERIFICATION.md) for the
+schema-version coupling and preservation of legacy opaque contract references.
+
 If `lifecycle_tools` omits `refine_proposals`, translate supported requests to the legacy `get_products({ buying_mode: 'refine', refine: [...] })` flow. Free-text `ask` maps to the legacy proposal ask. Product include/omit actions map directly. Hard constraints require explicit adapter policy: legacy discovery cannot guarantee the 3.2 hard-constraint semantics, so verify the returned proposal locally or report the dimension as unsupported.
 
 When that fallback sends a proposal refinement with `action: 'finalize'`, it

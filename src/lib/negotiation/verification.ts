@@ -3,6 +3,19 @@ import { MAX_JSON_DEPTH } from '../utils/json-depth';
 import { canonicalize } from '../utils/jcs';
 import { getSchemaDocumentByRef, getSchemaValidatorByRef } from '../validation/schema-loader';
 import { ADCP_VERSION } from '../version';
+import { commercialTermsSchemaSupportError } from './commercial-terms-schema';
+import { COMMERCIAL_TERMS_KEYWORDS } from './commercial-terms-keywords';
+export type {
+  CanonicalProposal,
+  ProposalCommercialTermsMismatch,
+  ProposalCommercialTermsVerificationResult,
+  ProposalVerificationIssue,
+  ProposalVerificationResult,
+  RefineProposalsCompletedResponse,
+  RefineProposalsRequest,
+  RefineProposalsResponse,
+  VerifyProposalCommercialTermsOptions,
+} from './types';
 import type {
   CanonicalProposal,
   ProposalCommercialTermsMismatch,
@@ -27,6 +40,9 @@ const MAX_COMMERCIAL_TERMS_BYTES = 256 * 1024;
 const MAX_COMMERCIAL_TERMS_NODES = 50_000;
 const MAX_COMMERCIAL_TERMS_MISMATCHES = 100;
 const MAX_COMMERCIAL_TERMS_DIAGNOSTIC_BYTES = 64 * 1024;
+// Loader identities are immutable and scoped by bundle/root. Replacing or
+// resetting a bundle produces fresh identities and therefore fresh audits.
+const commercialSchemaSupport = new WeakMap<object, string | null>();
 
 export class ProposalResponseVerificationError extends Error {
   readonly issues: ProposalVerificationIssue[];
@@ -70,7 +86,13 @@ export class ProposalCommercialTermsVerificationError extends Error {
  * should pass the seller-served release through `adcpVersion`, and must ship
  * that matching bundle. A newly added optional commercial field is therefore
  * compared automatically when present instead of being omitted by a stale SDK
- * allowlist.
+ * allowlist. It fails closed unless the buyer's complete reviewed snapshot also
+ * contains that field. Unknown schema keywords or changed non-structural
+ * validation contracts require explicit SDK support, even for equal snapshots.
+ * No version projection, field stripping, or contract-reference resolution is
+ * performed. A 3.1 bundle without commercial_terms returns schema_unavailable.
+ * This Node.js API loads local bundles; importing it does not load a client or
+ * contact the seller. See @adcp/sdk/negotiation/verification.
  *
  * The proposal's `terms_digest` is checked before schema validation or field
  * comparison. A digest failure returns only `digest_mismatch`, preventing a
@@ -128,15 +150,52 @@ export function verifyProposalCommercialTerms(
   let validator: ReturnType<typeof getSchemaValidatorByRef>;
   try {
     document = getSchemaDocumentByRef('media-buy/commercial-terms.json', adcpVersion);
-    validator = getSchemaValidatorByRef('media-buy/commercial-terms.json', adcpVersion);
   } catch {
     return schemaUnavailableResult();
   }
-  if (!document || !validator) {
+  if (!document) {
     return schemaUnavailableResult();
   }
 
-  const schemaVersion = document.resolvedVersion;
+  const declaredSchemaVersion =
+    (typeof document.schema.$id === 'string' &&
+      /\/schemas\/([^/]+)\/media-buy\/commercial-terms\.json$/.exec(document.schema.$id)?.[1]) ||
+    undefined;
+  const schemaVersion =
+    declaredSchemaVersion && declaredSchemaVersion !== 'latest' ? declaredSchemaVersion : document.resolvedVersion;
+  try {
+    let supportError = commercialSchemaSupport.get(document.schema);
+    if (supportError === undefined) {
+      supportError =
+        commercialTermsSchemaSupportError(
+          document.schema,
+          document.resolvedVersion,
+          ref => getSchemaDocumentByRef(ref, adcpVersion)?.schema
+        ) ?? null;
+      commercialSchemaSupport.set(document.schema, supportError);
+    }
+    if (supportError) {
+      return {
+        ok: false,
+        schemaVersion,
+        mismatches: [{ kind: 'unsupported_schema', path: '/commercial_terms', message: supportError }],
+      };
+    }
+    validator = getSchemaValidatorByRef('media-buy/commercial-terms.json', adcpVersion, COMMERCIAL_TERMS_KEYWORDS);
+  } catch {
+    return {
+      ok: false,
+      schemaVersion,
+      mismatches: [
+        {
+          kind: 'unsupported_schema',
+          path: '/commercial_terms',
+          message: 'the selected commercial-terms schema could not be audited or compiled',
+        },
+      ],
+    };
+  }
+  if (!validator) return schemaUnavailableResult();
   const schemaProperties = isRecord(document.schema.properties) ? document.schema.properties : undefined;
   if (!schemaProperties || document.schema.additionalProperties !== false) {
     return {
@@ -211,20 +270,6 @@ export function verifyProposalCommercialTerms(
     return invalidTermsResult('proposal', '/commercial_terms', 'commercial terms must be objects', schemaVersion);
   }
 
-  const semanticSupportError = commercialTermsSemanticSupportError(document.schema, changeTermSchema);
-  if (semanticSupportError) {
-    return {
-      ok: false,
-      schemaVersion,
-      mismatches: [
-        {
-          kind: 'unsupported_schema',
-          path: '/commercial_terms',
-          message: semanticSupportError,
-        },
-      ],
-    };
-  }
   const actualSemanticIssues = validateCommercialTermsSemantics(actual, document.schema, changeTermSchema);
   if (actualSemanticIssues.length > 0) {
     const truncated = actualSemanticIssues.length > MAX_COMMERCIAL_TERMS_MISMATCHES;
@@ -256,9 +301,9 @@ export function verifyProposalCommercialTerms(
     };
   }
 
-  // Derive the exhaustive top-level comparison allowlist from the selected
-  // schema. Nested values are recursively compared in full after AJV has
-  // proved that both trees satisfy the same schema bundle.
+  // The selected schema admits fields (including patternProperties); the
+  // union of both validated trees ensures no admitted binding value is lost.
+  // Compare recursively, including open extension objects and ordered arrays.
   const comparisonFields = new Set([...Object.keys(actual), ...Object.keys(expected)]);
   const mismatchState = { truncated: false, diagnosticBytes: 0 };
   for (const field of [...comparisonFields].sort()) {
@@ -1347,8 +1392,12 @@ function commercialTermsComplexityError(value: unknown): string | undefined {
       }
     }
 
-    const descriptors = Object.getOwnPropertyDescriptors(current.value);
-    for (const [key, descriptor] of Object.entries(descriptors)) {
+    const keys = Object.keys(current.value);
+    if (nodes + keys.length > MAX_COMMERCIAL_TERMS_NODES) {
+      return 'commercial terms exceed the 50,000-node complexity limit';
+    }
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(current.value, key)!;
       if (!descriptor.enumerable) continue;
       if (!('value' in descriptor)) return 'commercial terms must contain data properties only';
       stringBytes += Buffer.byteLength(key, 'utf8');
@@ -1357,64 +1406,6 @@ function commercialTermsComplexityError(value: unknown): string | undefined {
     }
   }
   return undefined;
-}
-
-const PRICING_INTEGRITY_CONSTRAINTS = {
-  pricing_option_ids: 'each_purchase.pricing_option_id_equals_pricing.pricing_option_id',
-  purchase_currencies: 'all_purchase.pricing.currency_equal',
-  total_budget_currency: 'when_total_budget_present_equals_purchase_pricing_currency',
-  monetary_fields: 'purchase_budget_min_spend_and_bidding_use_purchase_pricing_currency',
-  on_violation: 'reject_proposal_or_commitment',
-} as const;
-
-function commercialTermsSemanticSupportError(
-  schema: Readonly<Record<string, unknown>>,
-  changeTermSchema: Readonly<Record<string, unknown>> | undefined
-): string | undefined {
-  const validation = schema['x-adcp-validation'];
-  if (validation !== undefined) {
-    if (!isRecord(validation)) return 'commercial-terms x-adcp-validation metadata must be an object';
-    const constraints = validation.verifier_constraints;
-    if (constraints !== undefined) {
-      if (!isRecord(constraints)) return 'commercial-terms verifier_constraints metadata must be an object';
-      const constraintKeys = Object.keys(constraints);
-      if (constraintKeys.some(key => key !== 'pricing_integrity')) {
-        return 'commercial-terms schema declares verifier constraints this SDK does not understand';
-      }
-      if (constraints.pricing_integrity !== undefined) {
-        if (!isRecord(constraints.pricing_integrity)) {
-          return 'commercial-terms pricing_integrity metadata must be an object';
-        }
-        const actual = constraints.pricing_integrity;
-        const expectedKeys = Object.keys(PRICING_INTEGRITY_CONSTRAINTS);
-        if (
-          Object.keys(actual).length !== expectedKeys.length ||
-          expectedKeys.some(
-            key => actual[key] !== PRICING_INTEGRITY_CONSTRAINTS[key as keyof typeof PRICING_INTEGRITY_CONSTRAINTS]
-          )
-        ) {
-          return 'commercial-terms schema declares unsupported pricing_integrity constraints';
-        }
-      }
-    }
-  }
-
-  const properties = schema.properties;
-  if (!isRecord(properties)) return undefined;
-  const changeTermsProperty = properties.change_terms;
-  if (!isRecord(changeTermsProperty)) return undefined;
-  const changeTermsValidation = changeTermsProperty['x-adcp-validation'];
-  if (changeTermsValidation !== undefined) {
-    if (
-      !isRecord(changeTermsValidation) ||
-      Object.keys(changeTermsValidation).length !== 1 ||
-      changeTermsValidation.unique_by !== 'action'
-    ) {
-      return 'commercial-terms schema declares unsupported change_terms validation metadata';
-    }
-  }
-  if (!changeTermSchema) return 'commercial-terms schema is missing its change-term schema';
-  return changeTermSemanticSupportError(changeTermSchema);
 }
 
 function validateCommercialTermsSemantics(
@@ -1430,6 +1421,9 @@ function validateCommercialTermsSemantics(
 
   const issues: Array<{ path: string; message: string }> = [];
   if (!Array.isArray(terms.purchases)) return issues;
+  // Budget, min-spend, and bidding amounts in the reviewed schemas are scalar
+  // amounts in this shared currency. Their closed schemas reject a separate
+  // currency property; there is no second denomination to compare here.
   let purchaseCurrency: string | undefined;
   for (const [index, purchase] of terms.purchases.entries()) {
     if (!isRecord(purchase) || !isRecord(purchase.pricing)) continue;
@@ -1468,54 +1462,6 @@ function validateCommercialTermsSemantics(
   return issues;
 }
 
-function changeTermSemanticSupportError(schema: Readonly<Record<string, unknown>>): string | undefined {
-  const validation = schema['x-adcp-validation'];
-  if (!isRecord(validation) || !isRecord(validation.verifier_constraints)) {
-    return 'change-term schema is missing verifier constraint metadata';
-  }
-  const constraints = validation.verifier_constraints;
-  const expectedKeys = new Set([
-    'allowed_statuses',
-    'constraint_action_compatibility',
-    'constraint_currency',
-    'constraint_consistency',
-  ]);
-  if (
-    Object.keys(constraints).length !== expectedKeys.size ||
-    Object.keys(constraints).some(key => !expectedKeys.has(key))
-  ) {
-    return 'change-term schema declares verifier constraints this SDK does not understand';
-  }
-  if (
-    constraints.allowed_statuses !==
-      'Every value is a non-terminal MediaBuy status. The current buy projection omits the action outside these statuses without extinguishing the negotiated right.' ||
-    constraints.constraint_currency !==
-      'Every monetary constraint currency equals the commercial terms purchase currency.' ||
-    constraints.constraint_consistency !==
-      'Minimum result does not exceed maximum result; earliest timestamp does not exceed latest timestamp.'
-  ) {
-    return 'change-term schema declares unsupported verifier constraint semantics';
-  }
-  const compatibility = constraints.constraint_action_compatibility;
-  if (!isRecord(compatibility) || compatibility.on_violation !== 'reject_proposal') {
-    return 'change-term schema declares unsupported action compatibility metadata';
-  }
-  for (const [kind, actions] of Object.entries(CHANGE_TERM_ACTIONS_BY_CONSTRAINT)) {
-    const declared = compatibility[kind];
-    if (
-      !Array.isArray(declared) ||
-      declared.length !== actions.size ||
-      declared.some(action => typeof action !== 'string' || !actions.has(action))
-    ) {
-      return 'change-term schema declares unsupported action compatibility metadata';
-    }
-  }
-  if (Object.keys(compatibility).some(key => key !== 'on_violation' && !(key in CHANGE_TERM_ACTIONS_BY_CONSTRAINT))) {
-    return 'change-term schema declares unsupported action compatibility metadata';
-  }
-  return undefined;
-}
-
 function validateChangeTermSemantics(
   terms: unknown[],
   purchaseCurrency: string | undefined,
@@ -1538,7 +1484,7 @@ function validateChangeTermSemantics(
     if (typeof action === 'string' && !CHANGE_TERM_ACTIONS_BY_CONSTRAINT[kind]?.has(action)) {
       issues.push({
         path: `${path}/constraints/kind`,
-        message: `${String(kind)} constraints are not compatible with action ${action}`,
+        message: 'constraint kind is not compatible with the change action',
       });
     }
     for (const key of ['max_delta_amount', 'min_result_amount', 'max_result_amount'] as const) {
@@ -1546,7 +1492,7 @@ function validateChangeTermSemantics(
       if (purchaseCurrency !== undefined && isRecord(money) && money.currency !== purchaseCurrency) {
         issues.push({
           path: `${path}/constraints/${key}/currency`,
-          message: `constraint currency must equal ${purchaseCurrency}`,
+          message: 'constraint currency must equal the purchase currency',
         });
       }
     }
