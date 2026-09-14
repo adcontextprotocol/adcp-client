@@ -202,3 +202,5 @@ npm run dev
 ```
 
 See the main README for full testing framework documentation.
+
+Supply-path verification: [supply-path-verification.ts](supply-path-verification.ts) reads owner, host, agent and collection from environment variables and prints a live evidence-bearing verdict.

@@ -240,6 +240,7 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   if (options.signal?.aborted) onExternalAbort();
   const timer = setTimeout(() => ac.abort(new Error('ssrf-fetch: timeout')), timeoutMs);
   let dispatcher: Agent | undefined;
+  let cancelBody: (() => void) | undefined;
   let pinned: { address: string; family: number } | undefined;
   let pinnedFamily: 4 | 6 | undefined;
 
@@ -317,22 +318,25 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
       });
     }
 
-    const res = options.trustedFetchFn
-      ? await options.trustedFetchFn(checkedUrl, {
-          method: options.method ?? 'GET',
-          redirect: 'manual',
-          signal: ac.signal,
-          headers: options.headers,
-          ...(options.body !== undefined && { body: options.body as BodyInit }),
-        })
-      : await undiciFetch(checkedUrl, {
-          method: options.method ?? 'GET',
-          redirect: 'manual',
-          signal: ac.signal,
-          headers: options.headers,
-          dispatcher,
-          ...(options.body !== undefined && { body: options.body }),
-        });
+    const res = await raceWithAbort<Response | Awaited<ReturnType<typeof undiciFetch>>>(
+      options.trustedFetchFn
+        ? options.trustedFetchFn(checkedUrl, {
+            method: options.method ?? 'GET',
+            redirect: 'manual',
+            signal: ac.signal,
+            headers: options.headers,
+            ...(options.body !== undefined && { body: options.body as BodyInit }),
+          })
+        : undiciFetch(checkedUrl, {
+            method: options.method ?? 'GET',
+            redirect: 'manual',
+            signal: ac.signal,
+            headers: options.headers,
+            dispatcher,
+            ...(options.body !== undefined && { body: options.body }),
+          }),
+      ac.signal
+    );
 
     const headers: Record<string, string> = {};
     res.headers.forEach((v, k) => {
@@ -351,14 +355,17 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
       };
     }
 
+    cancelBody = () => {
+      void reader.cancel().catch(() => {});
+    };
     const chunks: Uint8Array[] = [];
     let bytes = 0;
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await raceWithAbort(reader.read(), ac.signal);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > maxBodyBytes) {
-        await reader.cancel();
+        void reader.cancel().catch(() => {});
         throw new SsrfRefusedError('body_exceeds_limit', `Response body exceeded ${maxBodyBytes} bytes`, {
           url,
           hostname: parsed.hostname,
@@ -386,7 +393,10 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener('abort', onExternalAbort);
-    await dispatcher?.close().catch(() => {});
+    if (ac.signal.aborted) {
+      cancelBody?.();
+      await dispatcher?.destroy().catch(() => {});
+    } else await dispatcher?.close().catch(() => {});
   }
 }
 
@@ -397,11 +407,24 @@ export async function ssrfSafeFetch(url: string, options: SsrfFetchOptions = {})
  * branch has already won the race.
  */
 function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  throwIfSignalAborted(signal);
   return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signalAbortError(signal));
-    signal.addEventListener('abort', onAbort, { once: true });
-    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    const cleanup = () => signal.removeEventListener('abort', onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(signalAbortError(signal));
+    };
+    operation.then(
+      value => {
+        cleanup();
+        resolve(value);
+      },
+      error => {
+        cleanup();
+        reject(error);
+      }
+    );
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
   });
 }
 

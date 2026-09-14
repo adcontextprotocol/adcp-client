@@ -1050,3 +1050,5 @@ Apache 2.0 License - see [LICENSE](LICENSE) file for details.
 - **Documentation**: [docs.adcontextprotocol.org](https://docs.adcontextprotocol.org)
 - **Issues**: [GitHub Issues](https://github.com/adcontextprotocol/adcp-client/issues)
 - **Protocol Spec**: [AdCP Specification](https://github.com/adcontextprotocol/adcp)
+
+Supply-path verification: use `verifySupplyPath` for authoritative evidence or the canonical registry verdict, and opt into external collection discovery annotations. See [the supply-path guide](docs/guides/SUPPLY-PATH-VERIFICATION.md).

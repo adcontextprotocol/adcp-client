@@ -657,3 +657,80 @@ describe('client product property policy enforcement', () => {
     assert.strictEqual(policyLog.request_property_list.resolution_error, 'list_agent_url_malformed');
   });
 });
+
+describe('supply-path annotations across discovery completion paths', () => {
+  for (const taskName of ['get_products', 'list_products']) {
+    test(`${taskName} annotates immediate, polled, and webhook products before publication`, async () => {
+      const products = [
+        makeProduct('owner-sold', 'host.example', {
+          collections: [{ publisher_domain: 'owner.example', collection_ids: ['channel'] }],
+          supply_path_state: 'verified_owner_sold',
+        }),
+      ];
+      const handlerCalls = [];
+      const agent = makeClient({
+        validation: {
+          supplyPathVerification: {
+            source: 'registry',
+            registry: {
+              verifySupplyPath: async request => ({
+                ...request,
+                semantics_version: '1',
+                state: 'owner_attested',
+                legs: {},
+                sources: { cached: true },
+                checked_at: new Date().toISOString(),
+              }),
+            },
+          },
+        },
+        handlers: {
+          [taskName === 'get_products' ? 'onGetProductsStatusChange' : 'onTaskStatusChange']: response =>
+            handlerCalls.push(response),
+        },
+      });
+      ProtocolClient.callTool = async () => ({ status: 'completed', products, cache_scope: 'public' });
+      const immediate = await agent.executeTask(taskName, taskName === 'get_products' ? { brief: 'sports' } : {});
+      assert.strictEqual(immediate.success, true, JSON.stringify(immediate));
+      assert.strictEqual(immediate.data.products[0].supply_path_state, 'owner_attested');
+      ProtocolClient.callTool = async (_agent, tool) =>
+        tool === taskName
+          ? { status: 'submitted', task_id: 'supply-path-task' }
+          : {
+              task_id: 'supply-path-task',
+              task_type: taskName,
+              protocol: 'media-buy',
+              status: 'completed',
+              created_at: '2026-06-02T12:00:00Z',
+              updated_at: '2026-06-02T12:00:01Z',
+              result: { products, cache_scope: 'public' },
+            };
+      const submitted = await agent.executeTask(taskName, taskName === 'get_products' ? { brief: 'sports' } : {});
+      assert.strictEqual(submitted.status, 'submitted');
+      const tracked = await submitted.submitted.track();
+      assert.strictEqual(tracked.result.products[0].supply_path_state, 'owner_attested');
+      const completed = await submitted.submitted.waitForCompletion(1);
+      assert.strictEqual(completed.data.products[0].supply_path_state, 'owner_attested');
+      const next = await agent.executeTask(taskName, taskName === 'get_products' ? { brief: 'sports' } : {});
+      await agent.handleWebhook(
+        {
+          idempotency_key: `supply_path_${taskName}_completed`,
+          operation_id: next.metadata.taskId,
+          task_id: 'supply-path-task',
+          task_type: taskName,
+          status: 'completed',
+          timestamp: new Date().toISOString(),
+          result: { products, cache_scope: 'public' },
+        },
+        taskName,
+        next.metadata.taskId
+      );
+      assert.ok(handlerCalls.some(response => response.products?.[0]?.supply_path_state === 'owner_attested'));
+      assert.ok(
+        handlerCalls.every(
+          response => !response.products || response.products[0].supply_path_state !== 'verified_owner_sold'
+        )
+      );
+    });
+  }
+});
