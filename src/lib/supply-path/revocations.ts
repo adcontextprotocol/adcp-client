@@ -89,6 +89,10 @@ export function parseRevocations(value: unknown): SupplyPathRevocation[] | null 
  * Trust-on-first-successful-use storage. Capture the authenticated tenant in the
  * store instance and namespace every pin by that tenant. Neither a read nor a
  * failed fetch may create a pin. Storage failures must reject.
+ * Keys are the exact serialized HTTPS URL supplied by the verifier, with no
+ * fragment delimiter. Preserve query/path spelling; do not merge distinct URLs.
+ * A deadline may abandon an observe promise while its transaction completes.
+ * Such a commit still represents a validated manifest; retries must be idempotent.
  */
 export interface SupplyPathAuthorityStore {
   /** Read-only precheck: true if absent or equal; false for a different existing pin. */

@@ -213,7 +213,7 @@ export class SupplyPathEvidenceSession {
         location.protocol !== 'https:' ||
         location.username ||
         location.password ||
-        location.hash ||
+        location.href.includes('#') ||
         (location.port && location.port !== '443')
       ) {
         this.documentError(publisher, initial, 'invalid_authoritative_location');

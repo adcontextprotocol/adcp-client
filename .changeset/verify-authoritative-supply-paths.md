@@ -7,3 +7,5 @@ Add supply-path verification with a typed canonical registry wrapper and a live 
 Add opt-in external collection path annotations for product discovery, public selector/distribution types, and an explicit distinction between authorization bulk grants and product selectors that require concrete collection IDs.
 
 Support explicit publisher attribution on shared collection declarations, bounded process-local authority admission, durable tenant-scoped stores, and independent authority migration confirmation. Establish first-use pins only after successful manifest validation, with a read-only precheck and atomic successful-observation commit.
+
+Persist parsed revocations before later fetch or authority-store failures, preserving their seven-day hold through failed affirmative verification.
