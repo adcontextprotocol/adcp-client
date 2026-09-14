@@ -7,6 +7,7 @@ const {
   SyncReportingStatusRequestV1Schema,
   createSyncReportingStatusHandler,
   normalizeReportingConsumerStatusIdsV1,
+  reportingConsumerStatusChainKeyFromIdentityV1,
   reportingConsumerStatusChainKeyV1,
   reportingConsumerStatusFingerprintV1,
 } = require('../../dist/lib/reporting/ledger/index.js');
@@ -401,6 +402,60 @@ describe('reporting consumer status validation', () => {
     ]);
     assert.deepEqual(normalized.values, ['invalid-reporting-status-id-1', 'invalid-reporting-status-id-2']);
     assert.deepEqual([...normalized.invalidIndexes], [0, 1]);
+  });
+
+  test('does not retain an unsafe integer in malformed-item chain identity', async () => {
+    let invalidChainIdentity;
+    const configuration = {
+      configurationId: 'unsafe-integer-configuration',
+      account: { account_id: 'account-1' },
+      delivery_config_id: 'delivery_config_0001',
+      delivery_config_version: 1,
+      report_definition_id: 'report_definition_0001',
+      sourceTimezone: 'UTC',
+      requiredFinality: 'snapshot',
+      installedAt: '2026-09-01T00:00:00Z',
+      schedule: {
+        anchor: '2026-09-01T00:00:00Z',
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+      },
+    };
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [configuration],
+        syncConsumerStatusBatch: async ({ entries }) =>
+          entries.map(entry => {
+            if (!('status' in entry)) {
+              invalidChainIdentity = entry.chainIdentity;
+              if (entry.chainIdentity) reportingConsumerStatusChainKeyFromIdentityV1(entry.chainIdentity);
+              return {
+                inserted: false,
+                reporting_status_id: entry.reporting_status_id,
+                errorCode: 'VALIDATION_ERROR',
+                safeMessage: entry.validationError,
+              };
+            }
+            return { inserted: true, value: { ...entry.status, recorded_at: '2026-09-03T00:00:00Z' } };
+          }),
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-unsafe-integer-0001',
+        statuses: [
+          consumerStatus({ delivery_config_version: 1e100 }),
+          consumerStatus({ reporting_status_id: 'reporting_status_0002' }),
+        ],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[1].result, 'recorded');
+    assert.equal(invalidChainIdentity, undefined);
   });
 
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {

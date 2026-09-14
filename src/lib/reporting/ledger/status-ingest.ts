@@ -477,12 +477,14 @@ function rawStatusChainIdentity(
     typeof fields.delivery_config_id !== 'string' ||
     fields.delivery_config_id.length === 0 ||
     fields.delivery_config_id.length > 255 ||
-    !Number.isInteger(fields.delivery_config_version) ||
+    !Number.isSafeInteger(fields.delivery_config_version) ||
     typeof fields.report_definition_id !== 'string' ||
     fields.report_definition_id.length === 0 ||
     fields.report_definition_id.length > 255 ||
     typeof fields.periodStart !== 'string' ||
+    fields.periodStart.length > 64 ||
     typeof fields.periodEnd !== 'string' ||
+    fields.periodEnd.length > 64 ||
     typeof fields.sourceTimezone !== 'string' ||
     fields.sourceTimezone.length === 0 ||
     fields.sourceTimezone.length > 255
