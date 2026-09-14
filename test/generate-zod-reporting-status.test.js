@@ -341,6 +341,21 @@ test('current reporting-status guard accepts source-timezone schedule alignment'
   assert.deepEqual(currentResponseOutcomes([sourceTimezone]), [true]);
 });
 
+test('current reporting-status guard accepts direct-Core obligations without optional delivery counters', () => {
+  const directCore = response();
+  for (const field of [
+    'destination_ref',
+    'materialization_count',
+    'successful_materialization_count',
+    'receipt_count',
+    'accepted_receipt_count',
+  ]) {
+    delete directCore.periods[0][field];
+  }
+  assert.deepEqual(generatedOutcomes([directCore]), [true]);
+  assert.deepEqual(currentResponseOutcomes([directCore]), [true]);
+});
+
 test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {
   const valid = response();
   const missingMaterializations = response();
