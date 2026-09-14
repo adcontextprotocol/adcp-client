@@ -49,7 +49,11 @@ jobs:
           npm run generate-types
           npm run generate-types:v2.5
           npm run generate-wellknown-schemas
-          npm run generate-registry-types -- --sync
+          registry_schema_hash="$(sha256sum schemas/registry/registry.yaml)"
+          npm run generate-registry-types
+          registry_types_hash="$(sha256sum src/lib/registry/types.generated.ts)"
+          npm run generate-registry-types
+          printf '%s\n%s\n' "$registry_schema_hash" "$registry_types_hash" | sha256sum --check --strict
 
           if ! git diff --exit-code -I '// Generated at:' src/lib/types/*.generated.ts src/lib/types/v2-5/tools.generated.ts src/lib/agents/index.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml 2>/dev/null; then
             echo ""
@@ -62,7 +66,7 @@ jobs:
             echo "  npm run sync-schemas:all"
             echo "  npm run generate-types:all"
             echo "  npm run generate-wellknown-schemas"
-            echo "  npm run generate-registry-types -- --sync"
+            echo "  npm run generate-registry-types"
             echo ""
             echo "Then commit the updated generated files."
             exit 1
