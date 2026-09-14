@@ -372,10 +372,12 @@ async function validateStatus(
       revision.reporting_obligation_id !== status.reporting_obligation_id
     )
       throw new ReportingStatusValidationError('revision mismatch');
+    // Canonical item validation requires this binding for received and
+    // content_mismatch, and forbids it for statuses that did not consume bytes.
     if (
       status.observed_revision_content_sha256 !== undefined &&
       revision.wireRevision.revision_content_sha256.toLowerCase() !==
-        status.observed_revision_content_sha256?.toLowerCase()
+        status.observed_revision_content_sha256.toLowerCase()
     )
       throw new ReportingStatusValidationError('revision binding mismatch');
   }

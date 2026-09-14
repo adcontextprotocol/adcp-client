@@ -38,6 +38,16 @@ handler so invalid items do not reject valid siblings. Generated client, server,
 and protocol adapters pass these wire fields through; no alternate enum mapper
 or persistence column needs widening.
 
+This is a schema-generation and accepted-input fix, not full rc.3/rc.4 reporting
+conformance. The canonical prose additionally restricts `content_mismatch` to a
+revision currently required for the period. The public consumer-status store
+exposes point lookup by revision ID, so the handler does not determine whether a
+successor exists or apply a current-required-finality policy. That requires a
+separate store/producer contract change and maintainer review. The rc.4 issue
+lifecycle (`opened_at` on mismatch issues) and optional escalation capabilities
+also remain protocol-adoption work. These limitations do not change the exact
+JSON Schema field constraints tested here.
+
 The SDK stays on its existing protocol pin. This patch repairs generation from
 newer bundles; adopting a new protocol version remains a separate regeneration.
 The patch changeset follows the repository's existing `rc` prerelease mode and
