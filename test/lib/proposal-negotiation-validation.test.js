@@ -684,6 +684,26 @@ test('remove_media_buy_frequency_cap is valid as the only revision', () => {
   assert.equal(built.refinements[0].remove_media_buy_frequency_cap, true);
 });
 
+test('remove_media_buy_frequency_cap rejects false even beside another revision', () => {
+  assert.throws(
+    () =>
+      buildRefineProposalsRequest({
+        refinements: [
+          {
+            proposal_id: 'source-1',
+            action: 'revise',
+            ask: 'Keep the existing cap',
+            remove_media_buy_frequency_cap: false,
+          },
+        ],
+      }),
+    error =>
+      error instanceof ProposalRefinementValidationError &&
+      error.field === 'refinements[0].remove_media_buy_frequency_cap' &&
+      error.message.includes('must be true when provided')
+  );
+});
+
 test('compact submitted responses validate without completed-field access', () => {
   const submitted = {
     adcp_version: '3.2',

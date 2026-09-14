@@ -160,6 +160,12 @@ export function validateRefineProposalsRequest(
     }
     if (refinement.action === 'revise') {
       if (
+        refinement.remove_media_buy_frequency_cap !== undefined &&
+        refinement.remove_media_buy_frequency_cap !== true
+      ) {
+        fail('remove_media_buy_frequency_cap must be true when provided', `${base}.remove_media_buy_frequency_cap`);
+      }
+      if (
         refinement.change_kind !== undefined &&
         refinement.change_kind !== 'amendment' &&
         refinement.change_kind !== 'cancellation'
@@ -176,7 +182,7 @@ export function validateRefineProposalsRequest(
         refinement.remove_media_buy_frequency_cap === true;
       if (!hasRevision) {
         throw new ProposalRefinementValidationError(
-          'revise requires a constraint, product change, alternative request, ask, criteria, or cancellation',
+          'revise requires a constraint, product change, alternative request, ask, criteria, frequency-cap removal, or cancellation',
           base
         );
       }
