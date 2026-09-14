@@ -14,6 +14,10 @@ import { globalAsyncLocalStorage } from '../utils/global-async-local-storage';
 export interface RawHttpCapture {
   url: string;
   method: string;
+  /** JSON-RPC method parsed from a JSON request body, when available. */
+  requestJsonRpcMethod?: string;
+  /** AdCP skill parsed from an A2A SendMessage request, when available. */
+  requestAdcpSkill?: string;
   status: number;
   headers: Record<string, string>;
   body: string;
@@ -113,6 +117,7 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
 
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    const requestMetadata = extractSafeRequestMetadata(init?.body, slot.maxBodyBytes);
     const startedAt = Date.now();
     const response = await upstream(input, init);
     const latencyMs = Date.now() - startedAt;
@@ -130,6 +135,7 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
     slot.captures.push({
       url,
       method,
+      ...requestMetadata,
       status: response.status,
       headers,
       body: redactBearerInBody(body),
@@ -141,6 +147,55 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
     return response;
   };
   return wrapped;
+}
+
+/**
+ * Retain only the non-secret identifiers needed to correlate a captured A2A
+ * response with its request. The request payload itself can contain account
+ * data and credentials, so it is deliberately never stored in the capture.
+ */
+function extractSafeRequestMetadata(
+  body: BodyInit | null | undefined,
+  maxBodyBytes: number
+): Pick<RawHttpCapture, 'requestJsonRpcMethod' | 'requestAdcpSkill'> {
+  if (typeof body !== 'string' || body.length > maxBodyBytes) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return {};
+  }
+  if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+  const envelope = parsed as { method?: unknown; params?: unknown };
+  const requestJsonRpcMethod = typeof envelope.method === 'string' ? envelope.method : undefined;
+  let requestAdcpSkill: string | undefined;
+  const params =
+    envelope.params != null && typeof envelope.params === 'object' && !Array.isArray(envelope.params)
+      ? (envelope.params as { message?: unknown })
+      : undefined;
+  const message =
+    params?.message != null && typeof params.message === 'object' && !Array.isArray(params.message)
+      ? (params.message as { parts?: unknown })
+      : undefined;
+  if (Array.isArray(message?.parts)) {
+    for (const part of message.parts) {
+      if (part == null || typeof part !== 'object' || Array.isArray(part)) continue;
+      const data = (part as { data?: unknown }).data;
+      if (data == null || typeof data !== 'object' || Array.isArray(data)) continue;
+      const skill = (data as { skill?: unknown }).skill;
+      if (typeof skill === 'string') {
+        requestAdcpSkill = skill;
+        break;
+      }
+    }
+  }
+
+  return {
+    ...(requestJsonRpcMethod !== undefined && { requestJsonRpcMethod }),
+    ...(requestAdcpSkill !== undefined && { requestAdcpSkill }),
+  };
 }
 
 /**
