@@ -871,7 +871,7 @@ describe('seller reporting ledger', () => {
     let completeNotificationAttempts = 0;
     const source = createInlineReportingSourceExecutor(
       () => [
-        { media_buy_id: 'fixture-media-buy', impressions: 3, spend: 1.25 },
+        { media_buy_id: 'fixture-media-buy', impressions: 3, spend: '1.2500' },
         { media_buy_id: 'fixture-media-buy', impressions: 0, spend: 0 },
       ],
       redactedReportingSourceOfferingV1
