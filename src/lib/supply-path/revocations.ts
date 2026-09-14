@@ -85,10 +85,20 @@ export function parseRevocations(value: unknown): SupplyPathRevocation[] | null 
   return entries;
 }
 
-/** Atomic trust-on-first-use storage. Capture the authenticated tenant in the store instance and namespace every pin by that tenant. */
+/**
+ * Trust-on-first-successful-use storage. Capture the authenticated tenant in the
+ * store instance and namespace every pin by that tenant. Neither a read nor a
+ * failed fetch may create a pin. Storage failures must reject.
+ */
 export interface SupplyPathAuthorityStore {
-  /** Pin the first location; subsequently return true only for that location. Storage failures must reject. */
+  /** Read-only precheck: true if absent or equal; false for a different existing pin. */
   check(publisherDomain: string, location: string): Promise<boolean>;
+  /**
+   * After successful manifest validation, atomically insert if absent or compare
+   * with the existing pin. Return false on mismatch, including a concurrent change
+   * since check(). A successful precheck is never a reservation or authorization.
+   */
+  observe(publisherDomain: string, location: string): Promise<boolean>;
 }
 
 /** Process-local pointer integrity. Use durable shared storage across workers/restarts. */
@@ -96,6 +106,10 @@ export class InMemorySupplyPathAuthorityStore implements SupplyPathAuthorityStor
   private readonly admission = new AuthorityAdmissionBudget();
   private readonly locations = new Map<string, string>();
   async check(publisherDomain: string, location: string): Promise<boolean> {
+    const pinned = this.locations.get(publisherDomain);
+    return pinned === undefined || pinned === location;
+  }
+  async observe(publisherDomain: string, location: string): Promise<boolean> {
     const pinned = this.locations.get(publisherDomain);
     if (pinned !== undefined) return pinned === location;
     if (this.locations.size >= 10000) throw new Error('Supply-path authority store capacity exceeded');

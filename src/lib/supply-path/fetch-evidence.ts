@@ -19,7 +19,6 @@ export function boundedOption(value: number | undefined, fallback: number, maxim
 export class SupplyPathEvidenceSession {
   readonly evidence: SupplyPathEvidence[] = [];
   readonly crossOriginAuthorities = new Set<string>();
-  private readonly checkedAuthorities = new Set<string>();
   private readonly observedRevocations = new Map<string, SupplyPathRevocation[]>();
   readonly revocations = new Map<string, readonly import('./revocations').SupplyPathRevocation[]>();
   readonly signal: AbortSignal;
@@ -184,6 +183,8 @@ export class SupplyPathEvidenceSession {
     const url = `https://${publisher}/.well-known/adagents.json`;
     const initial = await this.read(publisher, 'adagents', url);
     if (!initial) return null;
+    let authorityLocation = url;
+    let documentResponse = initial;
     let manifest = this.parseManifest(publisher, initial);
     if (!manifest) return null;
     if (manifest.authoritative_location !== undefined || manifest.superseded_by !== undefined) {
@@ -215,29 +216,34 @@ export class SupplyPathEvidenceSession {
         this.documentError(publisher, initial, 'invalid_authoritative_location');
         return null;
       }
-      await this.checkAuthority(publisher, location.href);
-      if (location.origin !== new URL(url).origin) this.crossOriginAuthorities.add(publisher);
+      authorityLocation = location.href;
+      await this.checkAuthority(publisher, authorityLocation, 'check');
       const response = await this.read(publisher, 'adagents', target, true);
       if (!response) return null;
+      documentResponse = response;
       manifest = this.parseManifest(publisher, response);
       if (!manifest) return null;
       if (manifest.authoritative_location !== undefined || manifest.superseded_by !== undefined) {
         this.documentError(publisher, response, 'chained_authoritative_pointer');
         return null;
       }
+    } else {
+      await this.checkAuthority(publisher, authorityLocation, 'check');
     }
     if (!Array.isArray(manifest.authorized_agents)) {
-      this.documentError(publisher, initial, 'missing_authorized_agents');
-      // Preserve denials even when the affirmative authorization list is malformed.
-      return { revoked_publisher_domains: manifest.revoked_publisher_domains };
+      this.documentError(publisher, documentResponse, 'missing_authorized_agents');
+      // parseManifest already captured denials; invalid envelopes cannot establish a pin.
+      return null;
     }
+    await this.checkAuthority(publisher, authorityLocation, 'observe');
+    if (new URL(authorityLocation).origin !== new URL(url).origin) this.crossOriginAuthorities.add(publisher);
     return manifest;
   }
-  private async checkAuthority(publisher: string, location: string): Promise<void> {
+  private async checkAuthority(publisher: string, location: string, operation: 'check' | 'observe'): Promise<void> {
     let accepted: boolean;
     try {
       accepted = await withAbortSignal([this.signal], undefined, () =>
-        (this.options.authorityStore ?? defaultSupplyPathAuthorities).check(publisher, location)
+        (this.options.authorityStore ?? defaultSupplyPathAuthorities)[operation](publisher, location)
       );
     } catch (cause) {
       this.signal.throwIfAborted();
@@ -248,12 +254,9 @@ export class SupplyPathEvidenceSession {
       throw new TypeError(
         `Authoritative location changed for ${publisher} to ${location}; independently confirm the publisher migration before updating its pin`
       );
-    this.checkedAuthorities.add(publisher);
   }
   private async readAndRemember(publisher: string): Promise<SupplyPathManifest | null> {
     const manifest = await this.readAdagents(publisher);
-    if (manifest && !this.checkedAuthorities.has(publisher))
-      await this.checkAuthority(publisher, `https://${publisher}/.well-known/adagents.json`);
     const observed = this.observedRevocations.get(publisher) ?? [];
     let held: readonly SupplyPathRevocation[];
     try {
