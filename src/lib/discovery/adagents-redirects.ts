@@ -30,21 +30,23 @@ export class AdAgentsRedirectRefusedError extends Error {
 
 export type AdAgentsRedirectPolicy =
   | { mode: 'none' }
+  | { mode: 'same-origin'; originUrl: string; maxRedirects?: number }
   | { mode: 'same-registrable-domain'; originUrl: string; maxRedirects?: number };
 
 export async function ssrfSafeFetchAdAgents(
   url: string,
   options: SsrfFetchOptions,
-  policy: AdAgentsRedirectPolicy
+  policy: AdAgentsRedirectPolicy,
+  onResponse?: (response: SsrfFetchResult) => void
 ): Promise<SsrfFetchResult> {
   let currentUrl = url;
   let redirects = 0;
-  const originUrl = policy.mode === 'same-registrable-domain' ? policy.originUrl : url;
-  const maxRedirects =
-    policy.mode === 'same-registrable-domain' ? (policy.maxRedirects ?? DEFAULT_WELL_KNOWN_REDIRECT_HOPS) : 0;
+  const originUrl = policy.mode !== 'none' ? policy.originUrl : url;
+  const maxRedirects = policy.mode !== 'none' ? (policy.maxRedirects ?? DEFAULT_WELL_KNOWN_REDIRECT_HOPS) : 0;
 
   while (true) {
     const result = await ssrfSafeFetch(currentUrl, options);
+    onResponse?.(result);
     if (!REDIRECT_STATUSES.has(result.status)) return result;
 
     const location = result.headers['location'];
@@ -89,6 +91,12 @@ export async function ssrfSafeFetchAdAgents(
       );
     }
 
+    if (policy.mode === 'same-origin' && new URL(originUrl).origin !== next.origin) {
+      throw new AdAgentsRedirectRefusedError('redirect_refused', 'Authoritative evidence redirect changed origin', {
+        url: currentUrl,
+        location: scrubUrl(next),
+      });
+    }
     validateSameRegistrableDomainRedirect(originUrl, currentUrl, nextUrl);
     redirects++;
     currentUrl = nextUrl;

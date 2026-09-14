@@ -29,7 +29,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // and one migration guide. Byte budgets remain unchanged.
 // The standalone proposal verifier adds twelve helper module artifacts and
 // one buyer guide; byte budgets remain unchanged.
-const MAX_PACKED_FILE_COUNT = 6_029;
+// Supply-path verification adds 32 runtime/declaration artifacts and its guide
+// and packaged example (34 files total); byte and schema budgets stay unchanged.
+const MAX_PACKED_FILE_COUNT = 6_029 + 34;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

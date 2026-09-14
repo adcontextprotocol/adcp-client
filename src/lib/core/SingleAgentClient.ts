@@ -1,3 +1,4 @@
+import { annotateProductsSupplyPaths, type ProductSupplyPathOptions } from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
 import { z } from 'zod';
@@ -1494,6 +1495,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * violates an exclusion for `ladbible.com`.
      */
     productPropertyPolicy?: ClientProductPropertyPolicy | false;
+    /** Opt in to computed, evidence-bearing external collection path annotations on product discovery. */
+    supplyPathVerification?: ProductSupplyPathOptions;
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
@@ -5273,6 +5276,23 @@ export class SingleAgentClient {
     // configured. This runs on the same completion chokepoint so it covers the
     // sync, polling, track, and webhook paths uniformly.
     result = this.enforceProductPricingOptions(result, taskType);
+    if (
+      this.config.validation?.supplyPathVerification &&
+      (taskType === 'get_products' || taskType === 'list_products') &&
+      result.success &&
+      result.status === 'completed' &&
+      result.data
+    ) {
+      const data = result.data as { products?: object[] };
+      if (Array.isArray(data.products)) {
+        const products = await annotateProductsSupplyPaths(
+          data.products,
+          this.agent.agent_uri,
+          this.config.validation.supplyPathVerification
+        );
+        result = { ...result, data: { ...result.data, products } };
+      }
+    }
 
     const policyConfig = this.config.validation?.productPropertyPolicy;
     if (policyConfig === false || taskType !== 'get_products') return result;
@@ -5467,7 +5487,11 @@ export class SingleAgentClient {
     result: TaskResult<T>,
     options?: TaskOptions
   ): void {
-    if (taskType !== 'get_products') return;
+    if (
+      taskType !== 'get_products' &&
+      !(taskType === 'list_products' && this.config.validation?.supplyPathVerification)
+    )
+      return;
     if (result.status !== 'submitted' && result.status !== 'working') return;
 
     const keys = new Set<string>();
@@ -5551,7 +5575,13 @@ export class SingleAgentClient {
     requestParams: Record<string, unknown>,
     options?: TaskOptions
   ): TaskResult<T> {
-    if (taskType !== 'get_products' || result.status !== 'submitted' || !result.submitted) return result;
+    if (
+      (taskType !== 'get_products' &&
+        !(taskType === 'list_products' && this.config.validation?.supplyPathVerification)) ||
+      result.status !== 'submitted' ||
+      !result.submitted
+    )
+      return result;
 
     const submitted = result.submitted;
     const policyState: { request?: Readonly<Record<string, unknown>> } = {
@@ -5617,7 +5647,13 @@ export class SingleAgentClient {
     taskType: string,
     requestParams: Record<string, unknown>
   ): Promise<TaskInfo> {
-    if (taskType !== 'get_products' || taskInfo.status !== 'completed' || !taskInfo.result) return taskInfo;
+    if (
+      (taskType !== 'get_products' &&
+        !(taskType === 'list_products' && this.config.validation?.supplyPathVerification)) ||
+      taskInfo.status !== 'completed' ||
+      !taskInfo.result
+    )
+      return taskInfo;
 
     const policyResult = await this.applyProductPropertyPolicy(
       attachMatch({
@@ -5676,7 +5712,12 @@ export class SingleAgentClient {
     result: AdCPAsyncResponseData | undefined,
     metadata: WebhookMetadata
   ): Promise<{ result: AdCPAsyncResponseData | undefined; metadata: WebhookMetadata; suppressHandler: boolean }> {
-    if (metadata.task_type !== 'get_products' || metadata.status !== 'completed' || !result) {
+    if (
+      (metadata.task_type !== 'get_products' &&
+        !(metadata.task_type === 'list_products' && this.config.validation?.supplyPathVerification)) ||
+      metadata.status !== 'completed' ||
+      !result
+    ) {
       return { result, metadata, suppressHandler: false };
     }
 

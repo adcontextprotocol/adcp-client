@@ -2290,3 +2290,12 @@ export * from './client/account-changes';
 export * from './client/account-change-subscription';
 export * from './notifications/account-change-recorded';
 export type { AccountChangeFeedCapabilities } from './utils/capabilities';
+
+// Authoritative supply-path evidence and the canonical registry wrapper.
+export * from './supply-path';
+export type {
+  AuthorizationCollectionSelector,
+  ProductCollectionSelector,
+  CollectionDistribution,
+  DiscoveryCollection,
+} from './discovery/types';
