@@ -28,3 +28,6 @@ test/fixtures/reporting-reconciliation/
 # scripts/generate-media-buy-update-fields.ts). Byte-identical to the upstream
 # protocol bundle; see test/fixtures/media-buy-update-fields/README.md.
 test/fixtures/media-buy-update-fields/
+
+# Canonical reporting consumer-status source retained byte-for-byte as evidence.
+test/fixtures/reporting-consumer-status/canonical-rc3.json
