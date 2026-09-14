@@ -565,13 +565,11 @@ function validateResponseSchema(
   const externalSchemaIsAuthoritative = isExternalResponseSchemaAuthoritative(ctx);
 
   // An explicit schemaRoot represents current source that may be newer than
-  // this SDK package's generated Zod snapshot. In that mode the external JSON
-  // Schema bundle is the source of truth for both known tools and tools added
-  // by the external build.
-  if (externalSchemaIsAuthoritative) {
-    if (!strict) {
-      return noResponseSchemaResult(validation, taskName, schema_id, schema_url);
-    }
+  // this SDK package's generated Zod snapshot. When that root contains the
+  // task schema, its JSON Schema verdict is authoritative. Compliance-only
+  // harness tools are intentionally absent from protocol bundles, so fall
+  // through to their packaged Zod projection when no strict verdict exists.
+  if (externalSchemaIsAuthoritative && strict) {
     if (strict.valid) {
       const base: ValidationResult = {
         check: 'response_schema',

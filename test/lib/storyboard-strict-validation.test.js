@@ -197,6 +197,49 @@ describe('storyboard validations: strict/lenient response_schema delta', () => {
     }
   });
 
+  test('external schemaRoot falls back to packaged Zod for comply_test_controller', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-external-authority-'));
+    try {
+      // A compliance run registers the packaged protocol bundle as an
+      // external root, but that bundle intentionally omits compliance tool
+      // schemas. The controller still has a generated Zod projection.
+      writeExternalResponseSchema(root, 'list_creative_formats', {
+        type: 'object',
+        required: ['formats'],
+        properties: { formats: { type: 'array' } },
+      });
+
+      const validateControllerResponse = data =>
+        withExternalSchemaRoot(EXTERNAL_VERSION, root, () =>
+          runValidations(
+            [{ check: 'response_schema', description: 'controller response conforms' }],
+            ctxWith('comply_test_controller', data, 'compliance/comply-test-controller-response.json', {
+              adcpVersion: EXTERNAL_VERSION,
+              strictResponseSchemaValidation: true,
+            })
+          )
+        )[0];
+
+      const accepted = validateControllerResponse({
+        success: true,
+        forced: { arm: 'submitted', task_id: 'task_async_signals_nova_ev' },
+      });
+      assert.strictEqual(accepted.passed, true, accepted.error);
+      assert.strictEqual(accepted.strict, undefined, 'external bundle has no controller schema');
+
+      const rejected = validateControllerResponse([]);
+      assert.strictEqual(rejected.passed, false);
+      assert.ok(Array.isArray(rejected.actual), 'invalid response reports packaged Zod issues');
+      assert.notDeepStrictEqual(rejected.actual, {
+        reason: 'no_schema_registered',
+        task: 'comply_test_controller',
+      });
+    } finally {
+      _resetValidationLoader(EXTERNAL_VERSION);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('clean response: strict.valid=true, passed=true, no issues emitted', () => {
     // Minimal valid list_creative_formats response — `formats` is the only
     // required field at the root; an empty array satisfies both Zod and AJV.
