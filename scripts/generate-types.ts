@@ -144,6 +144,17 @@ const PRIORITY_CANONICAL_SCHEMAS = [
   'core/canonical-format-option.json',
   'core/delivery-metric-aggregate.json',
   'core/cancellation-policy.json',
+  // `action` on both of these is `$ref core/media-buy-available-action-id.json`
+  // (AdCP 3.2, adcp#7449): an `anyOf` of the legacy `MediaBuyValidAction` enum
+  // plus structured-only consts. json-schema-to-typescript emits that alias
+  // correctly the first time it meets it inside a large root, but degrades
+  // every later occurrence to a numbered copy of the legacy enum alone
+  // (`MediaBuyValidAction1`), which the numbered-dedupe pass then folds back
+  // to `MediaBuyValidAction` — silently dropping `update_media_buy_frequency_cap`
+  // from `available_actions[].action` / `allowed_actions[].action`. Own both
+  // interfaces from their standalone documents so first-definition wins.
+  'core/media-buy-available-action.json',
+  'core/product-allowed-action.json',
   // These two independent protocols both name a branch "File transfer" but
   // publish incompatible shapes. Own both declarations before aggregate
   // media-buy schemas can let traversal order collapse them to one type.
@@ -228,6 +239,8 @@ const PRIORITY_CANONICAL_TYPE_NAMES = new Set([
   'CanonicalFormatOption',
   'DeliveryMetricAggregate',
   'CancellationPolicy',
+  'MediaBuyAvailableAction',
+  'ProductAllowedAction',
   'PackageUpdate',
   'ScopedCreativeApproval',
   'WarningAffectedResource',

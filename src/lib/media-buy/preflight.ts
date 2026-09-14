@@ -15,17 +15,19 @@ import { findAvailableAction, getAvailableActions, type AvailableActionsResult }
 import type {
   ActionNotAllowedReason,
   MediaBuyActionContext,
+  MediaBuyActionId,
   MediaBuyActionMode,
   MediaBuyAvailableAction,
   MediaBuyValidAction,
   UpdateMediaBuyRequestLike,
 } from './types';
+import { ACTIONS_BY_FIELD } from './update-fields.generated';
 
 // ---------------------------------------------------------------------------
 // Boolean gates
 // ---------------------------------------------------------------------------
 
-function isAvailable(buy: MediaBuyActionContext, action: MediaBuyValidAction): boolean {
+function isAvailable(buy: MediaBuyActionContext, action: MediaBuyActionId): boolean {
   return findAvailableAction(buy, action, { silent: true }) !== undefined;
 }
 
@@ -72,7 +74,7 @@ export type MediaBuyMutationDirection = 'increase' | 'decrease' | 'reallocate' |
  * triggered this entry (useful for debugging).
  */
 export interface ResolvedAction {
-  action: MediaBuyValidAction;
+  action: MediaBuyActionId;
   /**
    * Direction tag. Present when the resolver picked between fine-grained
    * siblings (e.g. `increase_budget` vs `decrease_budget`).
@@ -93,7 +95,7 @@ export type MediaBuyMutationScope = 'buy' | 'package' | 'packages';
  * read from the supplied current buy snapshot.
  */
 export interface DecomposedUpdateMediaBuyMutation {
-  action: MediaBuyValidAction;
+  action: MediaBuyActionId;
   direction?: MediaBuyMutationDirection;
   field: string;
   path: string;
@@ -204,6 +206,25 @@ export function decomposeUpdateMediaBuy(
       from: currentBuy.end_time,
       to: request.end_time,
     });
+  }
+
+  if (request.frequency_cap !== undefined) {
+    // MediaBuy-level shared cap (AdCP 3.2). Its action is structured-only
+    // (`update_media_buy_frequency_cap`) and lives in
+    // core/media-buy-available-action-id.json, so the binding is read from
+    // the generated table instead of being hardcoded: on schema pins that
+    // predate that file there is no binding and the field is left unmapped
+    // exactly like any other unrecognized request key.
+    const [frequencyCapAction] = ACTIONS_BY_FIELD['frequency_cap'] ?? [];
+    if (frequencyCapAction) {
+      push({
+        action: frequencyCapAction,
+        field: 'frequency_cap',
+        path: 'frequency_cap',
+        scope: 'buy',
+        to: request.frequency_cap,
+      });
+    }
   }
 
   if (request.new_packages !== undefined && request.new_packages.length > 0) {
@@ -378,7 +399,7 @@ export function decomposeUpdateMediaBuy(
 }
 
 function aggregateResolvedActions(mutations: ReadonlyArray<DecomposedUpdateMediaBuyMutation>): ResolvedAction[] {
-  const resolved = new Map<MediaBuyValidAction, ResolvedAction>();
+  const resolved = new Map<MediaBuyActionId, ResolvedAction>();
 
   for (const mutation of mutations) {
     const existing = resolved.get(mutation.action);
@@ -540,7 +561,7 @@ export interface PreflightAllowed {
  * every blocker in one pass.
  */
 export interface PreflightDenial {
-  action: MediaBuyValidAction;
+  action: MediaBuyActionId;
   reason: ActionNotAllowedReason;
   /** Structured recovery hint when `reason: 'mode_mismatch'`. */
   recovery?: ModeMismatchRecovery;
@@ -590,7 +611,7 @@ export function preflightUpdateMediaBuy(
     throw new ValidationError(
       'request',
       request,
-      'update_media_buy request must touch at least one mutating field (paused, canceled, start_time, end_time, packages[*], or new_packages)'
+      'update_media_buy request must touch at least one mutating field (paused, canceled, start_time, end_time, frequency_cap, packages[*], or new_packages)'
     );
   }
 
@@ -645,7 +666,7 @@ export function preflightUpdateMediaBuy(
  * the same structured recovery path.
  */
 export function recoveryForModeMismatch(
-  attemptedAction: MediaBuyValidAction,
+  attemptedAction: MediaBuyActionId,
   currentlyAvailable: ReadonlyArray<MediaBuyAvailableAction>
 ): ModeMismatchRecovery | undefined {
   const entry = currentlyAvailable.find(a => a.action === attemptedAction);
@@ -688,6 +709,7 @@ export function recoveryForModeMismatch(
 export type {
   ActionNotAllowedReason,
   MediaBuyAvailableAction,
+  MediaBuyActionId,
   MediaBuyActionMode,
   MediaBuyValidAction,
   MediaBuyActionContext,

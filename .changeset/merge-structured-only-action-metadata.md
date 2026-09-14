@@ -1,0 +1,9 @@
+---
+'@adcp/sdk': patch
+---
+
+Merge structured-only media-buy action metadata into the generated `update_media_buy` field dispatch table. `scripts/generate-media-buy-update-fields.ts` now reads `enumMetadata` from both `enums/media-buy-valid-action.json` and `core/media-buy-available-action-id.json` (AdCP 3.2, adcontextprotocol/adcp#7449), so `UPDATE_FIELDS_BY_ACTION` / `ACTIONS_BY_FIELD` pick up `update_media_buy_frequency_cap -> ["frequency_cap"]` as soon as the schema pin ships that file, while `update_frequency_caps -> ["packages[].targeting_overlay.frequency_cap"]` is unchanged. Shared keys must agree (legacy block wins; a conflict aborts generation) and caches that predate the id schema still regenerate a legacy-only table.
+
+Adds `MediaBuyActionId` (every structured `available_actions[].action` id; equal to `MediaBuyValidAction` until the pin includes the id schema) and widens the preflight, rollup, and `ACTION_NOT_ALLOWED` helper signatures from the legacy enum to it. `decomposeUpdateMediaBuy` / `preflightUpdateMediaBuy` map the MediaBuy-level `frequency_cap` request field through the generated table. New exports: `MediaBuyActionId`, `MediaBuyUpdateFieldAction`, `StructuredOnlyMediaBuyAction`, `STRUCTURED_ONLY_MEDIA_BUY_ACTIONS`.
+
+Codegen: `MediaBuyAvailableAction` and `ProductAllowedAction` are now owned by `core.generated.ts` as priority canonical schemas (tool types import and re-export them). json-schema-to-typescript otherwise degrades later occurrences of the `anyOf [legacy enum, const]` id alias to the legacy enum alone, which would have dropped `update_media_buy_frequency_cap` from `available_actions[].action` and `allowed_actions[].action` once the pin moves. Under the current pin this only relocates the declarations; `ProductAllowedAction.modes` / `allowed_statuses` now type as plain arrays rather than non-empty tuples (Zod validators are unchanged and still enforce `minItems: 1`).

@@ -1,5 +1,5 @@
 // Generated AdCP core types from official schemas v3.2.0-rc.1
-// Generated at: 2026-09-05T10:48:18.479Z
+// Generated at: 2026-09-14T01:10:53.469Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -5012,6 +5012,82 @@ export interface CancellationPolicy {
          */
         amount?: number;
       };
+}
+// MEDIABUYAVAILABLEACTION PRIORITY CANONICAL SCHEMA
+/**
+ * The accepted proposal change_terms[].term_id from which this current-state action projection was derived.
+ */
+export type MediaBuyChangeTermID = string;
+/**
+ * Deprecated 3.1 opaque commercial-terms pointer. A 3.2 compatibility projection MAY echo change_term_id here for older buyers, but new buyers MUST prefer change_term_id and MUST NOT assume an arbitrary 3.1 value identifies an accepted change term.
+ */
+export type MediaBuyTermsReference = string;
+
+/**
+ * An action currently available on a media buy, resolved against the buy's current status, accepted commercial_terms.change_terms, account authorization, and applicable governance delegation. Authoritative for current availability, but not a replacement for negotiated rights: when explicit change_terms exist, this projection may temporarily omit an action because state changed, but MUST NOT silently replace its negotiated service mode, SLA, constraints, conditions, or contract reference. The containing array is uniquely keyed by action.
+ */
+export interface MediaBuyAvailableAction {
+  action: MediaBuyValidAction;
+  mode: MediaBuyActionMode;
+  /**
+   * Compact-lifecycle task for this resolved action: operational control, commercial refinement, or creative lifecycle mutation.
+   */
+  task?: 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
+  sla?: SLAWindow;
+  change_term_id?: MediaBuyChangeTermID;
+  terms_ref?: MediaBuyTermsReference;
+}
+/**
+ * Optional SLA commitment for this action on this buy. Absence means no commitment, not zero commitment.
+ */
+export interface SLAWindow {
+  /**
+   * Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
+   */
+  response_max?: string;
+  /**
+   * Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
+   */
+  completion_max?: string;
+}
+
+// PRODUCTALLOWEDACTION PRIORITY CANONICAL SCHEMA
+/**
+ * Optional advisory machine-readable bounds buyers can use during product selection. The proposal must restate any binding bounds in commercial_terms.change_terms[].constraints.
+ */
+export type MediaBuyChangeTermConstraints =
+  | BudgetChangeConstraints
+  | FlightChangeConstraints
+  | PackageCountConstraints
+  | EffectiveTimingConstraints;
+export type BudgetChangeConstraints = {
+};
+export type FlightChangeConstraints = {
+};
+export type PackageCountConstraints = {
+};
+export type EffectiveTimingConstraints = {
+};
+
+/**
+ * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
+ */
+export interface ProductAllowedAction {
+  action: MediaBuyValidAction;
+  /**
+   * Modes available for this action on this product. A product may declare multiple modes (for example `self_serve` within tolerances, escalating to `requires_approval` outside) — the buy-side `available_actions[<action>].mode` resolves to the singular mode in effect at mutation time. SDKs that see multiple modes MUST NOT assume which one will fire; they must read the resolved `mode` on the buy.
+   */
+  modes: MediaBuyActionMode[];
+  /**
+   * Media buy statuses in which this action is permitted. When absent, the action is permitted in all non-terminal statuses (`pending_creatives`, `pending_start`, `active`, `paused`).
+   */
+  allowed_statuses?: MediaBuyStatus[];
+  sla?: SLAWindow;
+  constraints?: MediaBuyChangeTermConstraints;
+  /**
+   * Optional advisory pointer to published commercial terms governing this product action. It is not a proposal change-term identity and never grants a binding change right; a proposal materializes binding rights under commercial_terms.change_terms[].term_id.
+   */
+  terms_ref?: string;
 }
 // AUDIENCEACTIVATIONMETHOD PRIORITY CANONICAL SCHEMA
 /**
@@ -17764,22 +17840,6 @@ export type RevenueSharePricingOption = {
   commission_basis_description: string;
 };
 /**
- * Optional advisory machine-readable bounds buyers can use during product selection. The proposal must restate any binding bounds in commercial_terms.change_terms[].constraints.
- */
-export type MediaBuyChangeTermConstraints =
-  | BudgetChangeConstraints
-  | FlightChangeConstraints
-  | PackageCountConstraints
-  | EffectiveTimingConstraints;
-export type BudgetChangeConstraints = {
-};
-export type FlightChangeConstraints = {
-};
-export type PackageCountConstraints = {
-};
-export type EffectiveTimingConstraints = {
-};
-/**
  * Product-scoped demographic breakdown support for by_demographic reporting. Declares reportable age ranges and measurement systems independently from demographic targeting execution.
  */
 export type DemographicReportingCapability = {
@@ -18546,43 +18606,6 @@ export interface OutcomeMeasurement {
    * Reporting frequency and format
    */
   reporting: string;
-}
-/**
- * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
- */
-export interface ProductAllowedAction {
-  action: MediaBuyValidAction;
-  /**
-   * Modes available for this action on this product. A product may declare multiple modes (for example `self_serve` within tolerances, escalating to `requires_approval` outside) — the buy-side `available_actions[<action>].mode` resolves to the singular mode in effect at mutation time. SDKs that see multiple modes MUST NOT assume which one will fire; they must read the resolved `mode` on the buy.
-   *
-   * @minItems 1
-   */
-  modes: [MediaBuyActionMode, ...MediaBuyActionMode[]];
-  /**
-   * Media buy statuses in which this action is permitted. When absent, the action is permitted in all non-terminal statuses (`pending_creatives`, `pending_start`, `active`, `paused`).
-   *
-   * @minItems 1
-   */
-  allowed_statuses?: [MediaBuyStatus, ...MediaBuyStatus[]];
-  sla?: SLAWindow;
-  constraints?: MediaBuyChangeTermConstraints;
-  /**
-   * Optional advisory pointer to published commercial terms governing this product action. It is not a proposal change-term identity and never grants a binding change right; a proposal materializes binding rights under commercial_terms.change_terms[].term_id.
-   */
-  terms_ref?: string;
-}
-/**
- * Optional SLA commitment for this action on this product. Absence means no commitment.
- */
-export interface SLAWindow {
-  /**
-   * Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
-   */
-  response_max?: string;
-  /**
-   * Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.
-   */
-  completion_max?: string;
 }
 /**
  * Reporting capabilities available for a product
@@ -20375,14 +20398,6 @@ export type MediaBuyCommitmentResponse = CommittedMediaBuy | CommitmentError | C
  * A currently available MediaBuy action with the compact-lifecycle task an SDK calls to exercise it. Deprecated coarse action values are absent.
  */
 export type CanonicalMediaBuyAction = CanonicalMediaBuyActionFields;
-/**
- * The accepted proposal change_terms[].term_id from which this current-state action projection was derived.
- */
-export type MediaBuyChangeTermID = string;
-/**
- * Deprecated 3.1 opaque commercial-terms pointer. A 3.2 compatibility projection MAY echo change_term_id here for older buyers, but new buyers MUST prefer change_term_id and MUST NOT assume an arbitrary 3.1 value identifies an accepted change term.
- */
-export type MediaBuyTermsReference = string;
 /**
  * A non-blocking observation returned with a successful operation. The operation succeeded exactly as its success arm states. Warnings are immediate receipts, not durable lifecycle state; a continuing condition MUST also appear on its authoritative read surface as an indicator, defect, delivery issue, approval state, or other applicable resource state.
  */
@@ -22331,20 +22346,6 @@ export type MeasurementTerms1 = MeasurementTerms;
  * @deprecated Use `BrandReference` from `@adcp/sdk/types`. Slated for removal in the next major.
  */
 export type BrandReference12 = BrandReference;
-/**
- * An action currently available on a media buy, resolved against the buy's current status, accepted commercial_terms.change_terms, account authorization, and applicable governance delegation. Authoritative for current availability, but not a replacement for negotiated rights: when explicit change_terms exist, this projection may temporarily omit an action because state changed, but MUST NOT silently replace its negotiated service mode, SLA, constraints, conditions, or contract reference. The containing array is uniquely keyed by action.
- */
-export interface MediaBuyAvailableAction {
-  action: MediaBuyValidAction;
-  mode: MediaBuyActionMode;
-  /**
-   * Compact-lifecycle task for this resolved action: operational control, commercial refinement, or creative lifecycle mutation.
-   */
-  task?: 'control_media_buy' | 'refine_proposals' | 'sync_creatives';
-  sla?: SLAWindow;
-  change_term_id?: MediaBuyChangeTermID;
-  terms_ref?: MediaBuyTermsReference;
-}
 /**
  * Error response - operation failed, no changes applied
  */
