@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { ReportingAdjustment, ReportingControlTotal, ReportingRevision } from '../../types';
 import { ReportingAdjustmentSchema, ReportingRevisionSchema } from '../../schemas';
 import { canonicalize } from '../../utils/jcs';
+import { AdcpError } from '../../server/decisioning/async-outcome';
 import {
   canonicalJsonV1,
   reportingIsoDurationMillisecondsV1,
@@ -1013,17 +1014,23 @@ function requiredOffering(
 /**
  * A configuration named a reserved capability this seller does not implement.
  *
- * Distinct from an ordinary validation failure because the buyer's request was
- * well formed: callers map this to `UNSUPPORTED_FEATURE` rather than to
- * `VALIDATION_ERROR`, which is what tells the buyer to stop retrying the same
- * shape and wait for the capability instead of correcting a field.
+ * Extends `AdcpError` deliberately. `createAdcpServer` dispatches on
+ * `instanceof AdcpError` and projects every other throw to
+ * `SERVICE_UNAVAILABLE`, whose recovery is `transient` — so a plain `Error`
+ * subclass carrying an ad-hoc `code` would tell the buyer to **retry the same
+ * unsupported request**, which is the opposite of what this refusal means and
+ * exactly the outcome the reservation exists to prevent.
  */
-export class UnsupportedReportingFeatureError extends Error {
-  readonly code = 'UNSUPPORTED_FEATURE';
-
-  constructor(message: string) {
-    super(message);
-    this.name = 'UnsupportedReportingFeatureError';
+export class UnsupportedReportingFeatureError extends AdcpError {
+  constructor(message: string, details?: Record<string, unknown>) {
+    super('UNSUPPORTED_FEATURE', {
+      recovery: 'terminal',
+      message,
+      field: 'reporting_delivery_configs',
+      suggestion:
+        'Remove authoritative_party or set it to "seller". No AdCP 3.2 seller implements a buyer-deposited billing revision task.',
+      ...(details ? { details } : {}),
+    });
   }
 }
 
@@ -1051,13 +1058,40 @@ export function assertSupportedReportingAuthoritativeParty(configuration: {
   authoritative_party?: unknown;
   authoritativeParty?: unknown;
 }): void {
-  const requested = configuration.authoritative_party ?? configuration.authoritativeParty;
+  // Reject a wrong-shaped argument rather than passing. Every field here is
+  // optional, so the realistic mistakes — handing over the enclosing
+  // `reporting_delivery_configs[i]` instead of its `.configuration`, or the
+  // whole array — would otherwise no-op, and a gate that cannot distinguish
+  // "checked and fine" from "checked nothing" is not a gate.
+  if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration)) {
+    throw new TypeError(
+      'assertSupportedReportingAuthoritativeParty expects one reporting delivery configuration object'
+    );
+  }
+  // `null` is not absence: an explicit null must not coerce to seller.
+  const requested =
+    'authoritative_party' in configuration ? configuration.authoritative_party : configuration.authoritativeParty;
   if (requested === undefined || requested === 'seller') return;
-  const label = configuration.delivery_config_id ? ` "${configuration.delivery_config_id}"` : '';
   throw new UnsupportedReportingFeatureError(
-    `Reporting delivery configuration${label} requests authoritative_party ${JSON.stringify(requested)}, ` +
-      'which no AdCP 3.2 seller implements. See https://github.com/adcontextprotocol/adcp/issues/7440.'
+    'Reporting delivery configuration requests an authoritative_party this seller does not implement. ' +
+      'See https://github.com/adcontextprotocol/adcp/issues/7440.',
+    {
+      // Structured and bounded rather than interpolated: both values are
+      // buyer-supplied, so a raw splice into the message would let a caller
+      // forge log records with newlines or blow up a log line with a 1 MB value.
+      requested_authoritative_party: boundedDiagnostic(requested),
+      ...(typeof configuration.delivery_config_id === 'string'
+        ? { delivery_config_id: boundedDiagnostic(configuration.delivery_config_id) }
+        : {}),
+    }
   );
+}
+
+/** Bound and flatten a buyer-supplied value before it reaches a log or a wire detail. */
+function boundedDiagnostic(value: unknown): string {
+  return String(value)
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 64);
 }
 
 function validateConfigurationAgainstOffering(
@@ -1067,10 +1101,7 @@ function validateConfigurationAgainstOffering(
   // Refuse the reserved capability before any other validation so the buyer
   // gets UNSUPPORTED_FEATURE rather than an incidental complaint about a
   // field it would have had to change anyway.
-  assertSupportedReportingAuthoritativeParty({
-    delivery_config_id: configuration.delivery_config_id,
-    authoritativeParty: configuration.authoritativeParty,
-  });
+  assertSupportedReportingAuthoritativeParty(configuration);
   positiveInteger(configuration.schedule.periodMilliseconds, 'periodMilliseconds');
   if (configuration.schedule.periodMilliseconds % 1_000 !== 0) {
     throw new Error('Reporting period must be representable as whole ISO 8601 seconds');

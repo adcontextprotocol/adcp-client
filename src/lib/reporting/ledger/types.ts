@@ -255,6 +255,18 @@ export type ReportingConsumerStatusBatchResultV1 =
       errorKeyword?: string;
     };
 
+/**
+ * Seller-maintained lifecycle for one `issueId`.
+ *
+ * All four values are storable, but only `open` and `acknowledged` are
+ * publishable: retiring an issue removes it from the projection instead of
+ * emitting it at a terminal state, which is what lets a reader treat a nonempty
+ * `issues[]` as degradation. The read handler drops `resolved` and `waived`
+ * issues rather than emitting them with the state elided, so marking an issue
+ * retired in a custom store does what it looks like it does.
+ */
+export type ReportingIssueStateV1 = 'open' | 'acknowledged' | 'resolved' | 'waived';
+
 export interface ReportingLedgerIssueV1 {
   issueId: string;
   reporting_obligation_id: string;
@@ -285,6 +297,11 @@ export interface ReportingLedgerIssueV1 {
     | 'change_reporting_scope'
     | 'use_supported_reader';
   detail?: Record<string, unknown>;
+  /**
+   * Consumer statement that caused this issue. Required on the wire for
+   * `CONSUMER_STATUS_MISMATCH` — see {@link ReportingLedgerConsumerMismatchIssueV1},
+   * which is the variant to construct for that code.
+   */
   reporting_status_id?: string;
   /**
    * When the seller first observed this logical condition.
@@ -314,7 +331,7 @@ export interface ReportingLedgerIssueV1 {
    * construction because it recomputes the mismatch from the current leaf on
    * every read; a custom store that persists issues must enforce it.
    */
-  issueState?: 'open' | 'acknowledged' | 'resolved' | 'waived';
+  issueState?: ReportingIssueStateV1;
   /**
    * Optional opaque, non-secret correlation string for the emitting party's
    * own tracker — a ticket key, incident ID, or case number.
@@ -370,6 +387,19 @@ export interface ReportingConsumerMismatchEscalationV1 {
   escalationSeconds: number;
   operationsContact: ReportingOperationsContactV1;
 }
+
+/**
+ * `CONSUMER_STATUS_MISMATCH` narrowed to what the wire actually requires.
+ *
+ * `opened_at` and `reporting_status_id` are both mandatory on this code, so a
+ * store that builds the base shape can typecheck its way into a response the
+ * SDK's own validator rejects. Construct this variant instead.
+ */
+export type ReportingLedgerConsumerMismatchIssueV1 = ReportingLedgerIssueV1 & {
+  code: 'CONSUMER_STATUS_MISMATCH';
+  reporting_status_id: string;
+  openedAt: string;
+};
 
 export interface ReportingLedgerStatusTransitionV1 {
   transitionId: string;

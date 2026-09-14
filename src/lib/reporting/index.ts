@@ -44,3 +44,9 @@ export type {
   ReportingResourceReadRole,
   ReportingResourceReader,
 } from './inspection';
+
+// Reserved-capability refusal for `sync_accounts`. Exported from the package
+// root because the guide instructs adopters to call it from their own
+// `sync_accounts` handler, and it was previously reachable only through the
+// deep `@adcp/sdk/reporting/ledger` subpath.
+export { assertSupportedReportingAuthoritativeParty, UnsupportedReportingFeatureError } from './ledger/producer';

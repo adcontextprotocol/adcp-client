@@ -2,10 +2,12 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  projectReportingConsumerStatusMismatchV1,
+  assertReportingConsumerMismatchEscalation,
   assertSupportedReportingAuthoritativeParty,
+  projectReportingConsumerStatusMismatchV1,
   UnsupportedReportingFeatureError,
 } = require('../../dist/lib/reporting/ledger/index.js');
+const { AdcpError } = require('../../dist/lib/server/decisioning/async-outcome.js');
 
 const HOUR = 3_600_000;
 const PERIOD = { start: '2026-03-08T00:00:00.000Z', end: '2026-03-09T00:00:00.000Z', sourceTimezone: 'UTC' };
@@ -221,6 +223,47 @@ describe('rc.3 stale-received grace window', () => {
     assert.equal(projection.health, 'action_required');
   });
 
+  test('opened_at never predates the statement that caused the issue', () => {
+    // The buyer posts `received` naming rev-1 two hours AFTER the seller already
+    // superseded it. Anchoring opened_at to the supersession would date the
+    // issue before the seller could have observed the disagreement — and with a
+    // 30-minute escalation window it would be emitted already escalated on its
+    // very first read.
+    // Supersession 02:00, grace to 03:00, but the buyer only files at 02:50.
+    // Read at 02:55 with a 30-minute escalation window: anchoring opened_at to
+    // the supersession would make this five-minute-old issue already escalated.
+    const projection = projectReportingConsumerStatusMismatchV1(
+      obligation(),
+      statement({ recorded_at: '2026-03-09T02:50:00.000Z' }),
+      RESTATED,
+      'healthy',
+      '2026-03-09T02:55:00.000Z',
+      { escalationSeconds: 1_800, operationsContact: { email: 'ops@seller.example' } }
+    );
+
+    assert.equal(projection.issue.openedAt, '2026-03-09T02:50:00.000Z', 'the later of supersession and statement');
+    assert.equal(projection.health, 'delayed');
+    assert.equal(projection.issue.recommendedAction, 'wait_for_retry', 'a five-minute-old issue is not escalated');
+    // The grace deadline stays anchored to the supersession, as the spec requires.
+    assert.equal(projection.staleReceivedGraceDeadline, GRACE_DEADLINE);
+  });
+
+  test('sub-millisecond instants are compared exactly, not truncated', () => {
+    // Date.parse would floor .0009Z to .000Z and end the window early.
+    const precise = [
+      revision('rev-1', 1, '2026-03-09T01:00:00.000Z'),
+      revision('rev-2', 2, '2026-03-09T02:00:00.0009Z', 'rev-1'),
+    ];
+    const justInside = projectReportingConsumerStatusMismatchV1(
+      obligation(),
+      statement(),
+      precise,
+      'healthy',
+      '2026-03-09T03:00:00.0005Z'
+    );
+    assert.equal(justInside.health, 'delayed', 'still inside the window by half a millisecond');
+  });
+
   test('a zero delivery SLA falls back to the automated recovery window', () => {
     const projection = projectReportingConsumerStatusMismatchV1(
       obligation({
@@ -350,8 +393,74 @@ describe('rc.3 reserved authoritative_party', () => {
       }
       assert.ok(error instanceof UnsupportedReportingFeatureError, 'must be the typed refusal, not a generic Error');
       assert.equal(error.code, 'UNSUPPORTED_FEATURE');
-      assert.match(error.message, /authoritative_party "consumer"/);
+      // Must be an AdcpError: createAdcpServer projects every other throw to
+      // SERVICE_UNAVAILABLE, whose recovery is `transient` — which would tell
+      // the buyer to retry the very request this refuses.
+      assert.ok(error instanceof AdcpError, 'must reach the framework error mapper');
+      assert.equal(error.recovery, 'terminal', 'retrying an unimplemented capability is never useful');
+      assert.equal(error.details.requested_authoritative_party, 'consumer');
       assert.match(error.message, /7440/, 'points at the tracking issue');
     }
+  });
+
+  test('an explicit null is not treated as absence', () => {
+    assert.throws(
+      () => assertSupportedReportingAuthoritativeParty({ delivery_config_id: 'cfg-1', authoritative_party: null }),
+      UnsupportedReportingFeatureError
+    );
+  });
+
+  test('a wrong-shaped argument is refused instead of silently passing', () => {
+    // Handing over the enclosing `reporting_delivery_configs[i]` or the whole
+    // array are the realistic mistakes; a guard that no-ops on them is not a
+    // guard.
+    for (const wrong of [null, undefined, [], 'cfg-1', 42]) {
+      assert.throws(() => assertSupportedReportingAuthoritativeParty(wrong), TypeError, JSON.stringify(wrong));
+    }
+  });
+
+  test('buyer-supplied diagnostics are flattened and bounded', () => {
+    let error;
+    try {
+      assertSupportedReportingAuthoritativeParty({
+        delivery_config_id: `cfg\n injected-log-record ${'x'.repeat(200)}`,
+        authoritative_party: `consumer\r\n${'y'.repeat(500)}`,
+      });
+    } catch (thrown) {
+      error = thrown;
+    }
+    for (const value of [error.details.requested_authoritative_party, error.details.delivery_config_id]) {
+      assert.ok(value.length <= 64, 'bounded');
+      assert.doesNotMatch(value, /[\r\n\t]/, 'cannot forge a log record');
+    }
+  });
+});
+
+describe('rc.3 escalation option validation', () => {
+  test('an unusable escalation window is refused at wiring time', () => {
+    // NaN makes every comparison false so escalation silently never fires; a
+    // negative window escalates everything on first read. Both look like a
+    // working policy from outside.
+    for (const escalationSeconds of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY]) {
+      assert.throws(
+        () =>
+          assertReportingConsumerMismatchEscalation({ escalationSeconds, operationsContact: { email: 'o@e.example' } }),
+        TypeError,
+        String(escalationSeconds)
+      );
+    }
+  });
+
+  test('a window with nowhere to escalate to is refused', () => {
+    assert.throws(
+      () => assertReportingConsumerMismatchEscalation({ escalationSeconds: 3600, operationsContact: {} }),
+      TypeError
+    );
+  });
+
+  test('absence is allowed and a complete commitment passes through', () => {
+    assert.equal(assertReportingConsumerMismatchEscalation(undefined), undefined);
+    const valid = { escalationSeconds: 0, operationsContact: { url: 'https://ops.seller.example/reporting' } };
+    assert.equal(assertReportingConsumerMismatchEscalation(valid), valid);
   });
 });
