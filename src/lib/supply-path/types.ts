@@ -159,7 +159,7 @@ export interface AuthoritativeSupplyPathOptions {
   source: 'authoritative';
   /** Defaults to a process-local seven-day hold; supply durable storage across workers/restarts. */
   revocationStore?: import('./revocations').SupplyPathRevocationStore;
-  /** Pins authoritative locations. Changed pointers require independently confirmed migration. */
+  /** Read-only check plus atomic observe pins only validated manifests; changed locations require confirmed migration. */
   authorityStore?: import('./revocations').SupplyPathAuthorityStore;
   /** Optional product property scope. Every selected host property must be proven. */
   propertySelectors?: import('../discovery/types').SinglePublisherPropertySelector[];
