@@ -62,7 +62,18 @@ two-agent MCP run demonstrated a call to A authorized solely by B's
 to the same selected agent as the transport client. It also makes routed discovery
 authoritative over stale caller `agentTools` and shares the any-of predicate
 between suite selection and standalone execution. Single-agent overrides retain
-their previous precedence. No failure grader, all-of gate, or protocol file changes.
+their previous precedence. No response validator or protocol declaration is weakened.
+
+Root and phase capability predicates apply to each selected agent's steps, not
+an insertion-order primary profile. A whole-storyboard/phase capability skip is
+retained only when every selected route is known and inapplicable. Predicates
+for a particular role should be scoped to that role's phase. Cascade tool checks,
+creative-asset preflight, account checks, controller scenario declarations,
+authentication, and transport observations use the selected profile/options.
+Dynamic task references resolve before protocol routing. Unresolved routes and
+failed discovery remain failures, including through early applicability gates.
+Runtime tool-family/controller availability remains a topology-level prerequisite;
+it cannot authorize a step that its selected agent does not advertise.
 
 `comply()` is a single-agent suite API; its public `ComplyOptions` does not declare
 `agents`, and the routed runner requires an empty positional URL. Tests exercise
@@ -90,14 +101,23 @@ identical in 3.1.20 and 3.1.23.
 - Routed controller seeding is already explicitly unsupported unless the caller
   provisions fixtures externally and sets `skip_controller_seeding: true`.
   Tests retain the complete declarations and assert the existing refusal for each
-  declaration that enables controller seeding; they do not silently remove phases.
+  declaration that enables controller seeding. A second matrix runs every authored
+  phase with the explicit external-seeding option, against split and complete
+  routed toolsets whose deterministic endpoints reject calls. Its exact selected,
+  skipped (including failed prerequisite skips), and failed sets are committed in
+  `test/fixtures/routed-applicability/routed-rejections.json`; none of the failures
+  become passing/neutral results. Fixture seeding is not claimed to be implemented.
 
 The independent routed matrix uses real discovery/dispatch through official SDK
 clients with deterministic test servers. It asserts selected/skipped/failed step
 sets for split prerequisites, complete first/secondary agents, overlap, explicit
 overrides, missing routes, discovery failures, stale caller lists, account-mode
-isolation, and mixed MCP/A2A transport. Versioned declaration tests cover both
-selection seams and canonical storyboard IDs versus bundle aliases.
+isolation, root/phase/conjunctive capabilities in reversed agent-map order,
+stateful cascades, creative preflight, dynamic tasks, and mixed MCP/A2A transport. Versioned declaration tests cover both
+selection seams and canonical storyboard IDs versus bundle aliases. Tests also
+verify the full historical archives and the +43/+4 delta. These are negative
+compatibility tests, not a claim that the authored governance/provenance flows
+are now conformant or that all historical failures share an SDK root cause.
 
 ## Adoption boundary
 

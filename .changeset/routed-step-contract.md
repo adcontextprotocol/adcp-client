@@ -2,4 +2,4 @@
 '@adcp/sdk': patch
 ---
 
-Bind routed storyboard step tool checks, account capability checks, authentication overrides, and transport observations to the selected agent. Routed discovery now determines storyboard tool applicability even when callers supply stale single-agent tool lists. Preserve the any-of required-tools rule through a shared selector/runner predicate.
+Keep required-tools applicability any-of while binding routed storyboard execution to the selected agent's tools, capabilities, authentication, and transport. Routed discovery overrides stale single-agent tool/profile/controller caches. Root/phase capability gates, stateful cascades, and creative preflight now respect that same route; dynamic tasks resolve before routing. Failed or absent routes remain failures through applicability gates and include redacted route attribution when known. Single-agent and replica behavior is preserved.

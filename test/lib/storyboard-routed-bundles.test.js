@@ -154,3 +154,29 @@ for (const version of ['3.1.20', '3.1.23']) {
     });
   });
 }
+
+test('preserves the exact pre-edit +43 step / +4 failure evidence', () => {
+  const evidenceDir = path.join(__dirname, '../../docs/development/evidence/routed-agent-7404');
+  const evidence = JSON.parse(fs.readFileSync(path.join(evidenceDir, 'reproduction.json'), 'utf8'));
+  const reports = evidence.runs.map(run => {
+    const archive = fs.readFileSync(path.join(evidenceDir, run.archive));
+    assert.equal(createHash('sha256').update(archive).digest('hex'), run.archive_sha256);
+    const raw = require('node:zlib').gunzipSync(archive);
+    assert.equal(createHash('sha256').update(raw).digest('hex'), run.raw_sha256);
+    const report = JSON.parse(raw);
+    for (const key of ['total_steps', 'steps_passed', 'steps_failed', 'steps_skipped']) {
+      assert.equal(report.summary[key], run.summary[key]);
+    }
+    return report;
+  });
+  assert.deepEqual(
+    reports.map(r => [r.summary.total_steps, r.summary.steps_failed]),
+    [
+      [306, 1],
+      [349, 5],
+      [331, 5],
+    ]
+  );
+  assert.equal(reports[1].summary.total_steps - reports[0].summary.total_steps, 43);
+  assert.equal(reports[1].summary.steps_failed - reports[0].summary.steps_failed, 4);
+});

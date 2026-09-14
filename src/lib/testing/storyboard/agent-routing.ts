@@ -40,6 +40,7 @@
  * See `StoryboardRunOptions.webhook_receiver` JSDoc and `webhook-receiver.ts`
  * for implementation details.
  */
+import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from './oauth-metadata-graph';
 import type { TestClient } from '../client';
 import { getOrCreateClient, getOrDiscoverProfile } from '../client';
 import type { AgentProfile } from '../types';
@@ -51,7 +52,7 @@ export function hasAnyRequiredTool(required: readonly string[] | undefined, tool
   return !required?.length || required.some(tool => tools.includes(tool));
 }
 
-/** Normalize legacy discovery entries; routed callers explicitly preserve empty lists. */
+/** Normalize legacy discovery entries, retaining the single-agent empty-list fallback. */
 export function normalizeAgentToolNames(tools: unknown): string[] | undefined {
   if (!Array.isArray(tools)) return undefined;
   const names = tools.flatMap(tool => {
@@ -105,7 +106,7 @@ function scrubAuthSecrets(text: string): string {
   // content to entropy-based secret scanners (GitGuardian/gitleaks). It
   // is the redaction pattern itself — no secret is encoded here.
   // ggignore
-  return text
+  return redactOAuthUrlsInText(text)
     .replace(/(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]') // ggignore
     .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]') // ggignore
     .replace(/([?&]token=)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]'); // ggignore
@@ -128,6 +129,7 @@ function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): St
     _client: undefined,
     _profile: undefined,
     profile: undefined,
+    _controllerCapabilities: undefined,
     agents: undefined,
     agentTools: undefined,
   };
@@ -139,11 +141,23 @@ export function routedAgentOptions(
   options: StoryboardRunOptions,
   profile: AgentProfile
 ): StoryboardRunOptions {
+  // An empty discovered list is authoritative in routed mode.
+  const tools = normalizeAgentToolNames(profile.tools) ?? [];
+  const raw = profile.raw_capabilities;
+  const compliance = raw && typeof raw === 'object' && 'compliance_testing' in raw ? raw.compliance_testing : undefined;
+  const scenarios =
+    compliance && typeof compliance === 'object' && 'scenarios' in compliance ? compliance.scenarios : undefined;
   return {
     ...buildAgentOptions(entry, options),
+    // Scenario opt-in must be the selected agent's declaration too; a
+    // comply() caller's controller cache belongs to its single agent.
+    _controllerCapabilities:
+      Array.isArray(scenarios) && tools.includes('comply_test_controller')
+        ? { detected: true, scenarios: scenarios.filter((s): s is string => typeof s === 'string') }
+        : { detected: false },
     profile,
     _profile: profile,
-    agentTools: normalizeAgentToolNames(profile.tools) ?? [],
+    agentTools: tools,
   };
 }
 
@@ -259,7 +273,7 @@ export async function buildRoutingContext(
       // discover the resilient flag without grep'ing the JSDoc. Suppressed
       // in resilient mode (the operator already opted in) so the hint
       // doesn't appear in every per-agent failure attached to the result.
-      const baseMessage = `Discovery failed for agent "${r.key}" (${agents[r.key]!.url}): ${detail}`;
+      const baseMessage = `Discovery failed for agent "${r.key}" (${redactOAuthUrlForOutput(agents[r.key]!.url)}): ${detail}`;
       const message = resilient
         ? baseMessage
         : `${baseMessage}\n\nIf this is hello-cluster / exploratory CI and you want unrelated storyboards to complete despite this failure, ` +
@@ -411,7 +425,7 @@ export function resolveAgentForStep(
       throw new RoutingError(
         `Step "${step.id}" targets agent "${step.agent}" via \`step.agent\` override, ` +
           `but that agent's discovery failed: ${failed.underlying} ` +
-          `(${failed.url}). Either remove the override, fix the agent, or ` +
+          `(${redactOAuthUrlForOutput(failed.url)}). Either remove the override, fix the agent, or ` +
           `route the step to a healthy agent.`,
         step.task,
         `agent "${step.agent}" failed discovery`
@@ -442,7 +456,7 @@ export function resolveAgentForStep(
     // error so the operator sees the connection without correlating logs.
     const failedHint =
       ctx.discoveryFailures.length > 0
-        ? ` Discovery failed for: ${ctx.discoveryFailures.map(f => `${f.agentKey} (${f.url})`).join(', ')}.`
+        ? ` Discovery failed for: ${ctx.discoveryFailures.map(f => `${f.agentKey} (${redactOAuthUrlForOutput(f.url)})`).join(', ')}.`
         : '';
     throw new RoutingError(
       `No agent in the map claims protocol "${protocol}" required by tool ` +

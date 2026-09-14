@@ -1648,8 +1648,8 @@ export interface StoryboardRunOptions extends TestOptions {
    *
    * Reuse a profile only for the same agent URL, authentication, AdCP version,
    * and route that produced it. Route-specific profiles are not interchangeable.
-   * In an `agents` run this value supplies only the run-level/default-agent
-   * gating context; each routed agent is still discovered independently.
+   * Ignored in an `agents` run: each routed agent is discovered independently,
+   * and its profile governs the steps selected for that agent.
    * Profile reuse does not retain or reuse a client or transport connection.
    *
    * `AgentProfile` does not carry the server's exact wire version. Pass
@@ -1685,7 +1685,11 @@ export interface StoryboardRunOptions extends TestOptions {
   contributions?: string[];
   /** Override the step's sample_request with a custom request */
   request?: Record<string, unknown>;
-  /** Agent's available tools for storyboard/step-level tool gates. */
+  /**
+   * Agent's available tools for storyboard/step-level tool gates. Ignored when
+   * `agents` is supplied: routed discovery determines applicability and each
+   * selected agent's tool list controls its execution gates.
+   */
   agentTools?: string[];
   /**
    * Allow plain-http agent URLs during compliance runs and permit guarded
