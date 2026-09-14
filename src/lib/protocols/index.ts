@@ -36,7 +36,7 @@ export async function closeScopedConnections(protocol: 'mcp' | 'a2a' = 'mcp'): P
 
 export { withMCPConnectionScope };
 export type { MCPCallOptions, MCPConnectionResult } from './mcp';
-export { callA2ATool } from './a2a';
+export { callA2ATool, createA2AClientFromCardUrl } from './a2a';
 export { DEFAULT_REQUEST_TIMEOUT_MS } from './abort';
 export {
   callMCPToolWithTasks,
@@ -316,6 +316,12 @@ export interface TransportOptions {
    * Set to `0` to disable the SDK-imposed discovery timeout.
    */
   requestTimeoutMs?: number;
+  /**
+   * Controls the official A2A SDK's v0.3 compatibility layer. A2A only;
+   * ignored for MCP. Defaults to `{ enabled: true }` to preserve existing
+   * interoperability. Set `enabled: false` for a native A2A 1.0-only path.
+   */
+  legacyCompat?: import('./a2a').A2ALegacyCompatOptions;
 }
 
 let warnedLegacyTransportFetch = false;
@@ -799,7 +805,8 @@ export class ProtocolClient {
                     signal,
                     transport?.requestTimeoutMs,
                     transport?.trustedFetchFn,
-                    transport?.allowPrivateIp
+                    transport?.allowPrivateIp,
+                    transport?.legacyCompat
                   );
                 } catch (err) {
                   // Same single-retry-on-401 for client-credentials agents as the
@@ -831,7 +838,8 @@ export class ProtocolClient {
                         signal,
                         transport?.requestTimeoutMs,
                         transport?.trustedFetchFn,
-                        transport?.allowPrivateIp
+                        transport?.allowPrivateIp,
+                        transport?.legacyCompat
                       );
                     } catch (retryErr) {
                       await rethrowAsNeedsAuthorization(
@@ -976,8 +984,11 @@ export const createA2AClient = (
           undefined,
           transport?.requestTimeoutMs,
           transport?.trustedFetchFn,
-          transport?.allowPrivateIp
+          transport?.allowPrivateIp,
+          transport?.legacyCompat
         )
       ),
   };
 };
+
+export type { A2ALegacyCompatOptions } from './a2a';

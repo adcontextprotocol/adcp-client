@@ -2857,7 +2857,9 @@ export class SingleAgentClient {
       let lastError: Error = new Error(`A2A agent card not found at ${cardUrls.join(', ')}`);
       for (const cardUrl of cardUrls) {
         try {
-          client = await withResponseSizeLimit(maxResponseBytes, () => createA2AClientFromCardUrl(cardUrl, fetchImpl));
+          client = await withResponseSizeLimit(maxResponseBytes, () =>
+            createA2AClientFromCardUrl(cardUrl, fetchImpl, transport?.legacyCompat)
+          );
           break;
         } catch (err: unknown) {
           lastError = err as Error;
@@ -8166,7 +8168,9 @@ export class SingleAgentClient {
           // Wrap A2A card discovery so `transport.maxResponseBytes` applies
           // to agent-card fetches and the deferred `agentCardPromise` read
           // below — both fire fetches that would otherwise bypass the cap.
-          client = await withResponseSizeLimit(maxResponseBytes, () => createA2AClientFromCardUrl(cardUrl, fetchImpl));
+          client = await withResponseSizeLimit(maxResponseBytes, () =>
+            createA2AClientFromCardUrl(cardUrl, fetchImpl, transport?.legacyCompat)
+          );
           break;
         } catch (err: unknown) {
           lastCardError = err as Error;

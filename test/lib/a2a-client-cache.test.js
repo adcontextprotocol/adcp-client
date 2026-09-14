@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const sdkA2AClient = require('../../dist/lib/protocols/a2a').legacyA2AClientTestShim;
 const { callA2ATool, closeA2AConnections } = require('../../dist/lib/protocols/a2a.js');
+const { createA2AClient } = require('../../dist/lib/index.js');
 
 const originalFromCardUrl = sdkA2AClient.fromCardUrl;
 
@@ -105,5 +106,25 @@ describe('A2A client cache', () => {
     await callA2ATool('https://collision.example/agent', ...args, undefined, undefined, undefined, undefined, true);
 
     assert.strictEqual(discoveries, 2);
+  });
+
+  test('does not reuse clients across legacy compatibility policies', async () => {
+    const policies = [];
+    sdkA2AClient.fromCardUrl = async (_cardUrl, options) => {
+      policies.push(options.legacyCompat.enabled);
+      return stubClient();
+    };
+
+    await createA2AClient('https://policy.example', undefined, undefined, undefined, undefined, {
+      legacyCompat: { enabled: false },
+    }).callTool('get_products', {});
+    await createA2AClient('https://policy.example', undefined, undefined, undefined, undefined, {
+      legacyCompat: { enabled: true },
+    }).callTool('get_products', {});
+    await createA2AClient('https://policy.example', undefined, undefined, undefined, undefined, {
+      legacyCompat: { enabled: false },
+    }).callTool('get_products', {});
+
+    assert.deepStrictEqual(policies, [false, true]);
   });
 });

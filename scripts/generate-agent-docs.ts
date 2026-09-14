@@ -1385,6 +1385,18 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  country?: string;`);
   ln(`}`);
   ln();
+  ln(`interface A2ALegacyCompatOptions {`);
+  ln(`  enabled: boolean; // false requires native A2A 1.0; defaults to true`);
+  ln(`}`);
+  ln();
+  ln(`interface TransportOptions {`);
+  ln(`  maxResponseBytes?: number;`);
+  ln(`  trustedFetchFn?: typeof fetch;`);
+  ln(`  allowPrivateIp?: boolean;`);
+  ln(`  requestTimeoutMs?: number;`);
+  ln(`  legacyCompat?: A2ALegacyCompatOptions; // A2A only`);
+  ln(`}`);
+  ln();
   ln(`interface TaskOptions {`);
   ln(`  // Trusted local receiver policy; snapshotted and persisted with generated`);
   ln(`  // webhook registrations, never inferred from or sent in task arguments.`);

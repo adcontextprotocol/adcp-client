@@ -90,6 +90,7 @@ import {
 } from './adcp-server';
 import type { McpToolResponse } from './responses';
 import type { AdcpLogger } from './create-adcp-server';
+import type { A2ALegacyCompatOptions } from '../protocols/a2a';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -140,7 +141,10 @@ export interface A2AAgentCardOverrides {
 
   defaultInputModes?: string[];
   defaultOutputModes?: string[];
-  /** @deprecated AdCP 3.2 always advertises A2A 1.0 plus the SDK's 0.3 compatibility interface. */
+  /**
+   * @deprecated AdCP 3.2 advertises A2A 1.0 and, unless `legacyCompat` is
+   * disabled on the adapter, the SDK's 0.3 compatibility interface.
+   */
   protocolVersion?: string;
 }
 
@@ -229,6 +233,13 @@ export interface A2AAdapterOptions {
 
   /** Optional logger. Falls back to `console`. */
   logger?: AdcpLogger;
+
+  /**
+   * Controls the official A2A SDK's v0.3 compatibility handlers and agent-card
+   * interface. Defaults to `{ enabled: true }` for backwards compatibility.
+   * Set `enabled: false` to expose only the native A2A 1.0 path.
+   */
+  legacyCompat?: A2ALegacyCompatOptions;
 }
 
 /** Minimal Express app surface the adapter's `mount()` helper needs. */
@@ -806,7 +817,11 @@ function normalizeAgentCardSkills(skills: A2AAgentSkillOverride[]): AgentSkill[]
   }));
 }
 
-function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): AgentCard {
+function buildAgentCard(
+  server: AdcpServer,
+  overrides: A2AAgentCardOverrides,
+  legacyCompat: A2ALegacyCompatOptions
+): AgentCard {
   if (overrides.preferredTransport && overrides.preferredTransport.toUpperCase() !== 'JSONRPC') {
     throw new Error('createA2AAdapter: only the JSONRPC A2A transport is supported');
   }
@@ -842,17 +857,26 @@ function buildAgentCard(server: AdcpServer, overrides: A2AAgentCardOverrides): A
   const card: AgentCard = {
     name: overrides.name,
     description: overrides.description,
-    supportedInterfaces: duplicateInterfacesForLegacy(
-      [
-        {
-          url: overrides.url,
-          protocolBinding: 'JSONRPC',
-          protocolVersion: DEFAULT_PROTOCOL_VERSION,
-          tenant: '',
-        },
-      ],
-      ['JSONRPC']
-    ),
+    supportedInterfaces: legacyCompat.enabled
+      ? duplicateInterfacesForLegacy(
+          [
+            {
+              url: overrides.url,
+              protocolBinding: 'JSONRPC',
+              protocolVersion: DEFAULT_PROTOCOL_VERSION,
+              tenant: '',
+            },
+          ],
+          ['JSONRPC']
+        )
+      : [
+          {
+            url: overrides.url,
+            protocolBinding: 'JSONRPC',
+            protocolVersion: DEFAULT_PROTOCOL_VERSION,
+            tenant: '',
+          },
+        ],
     version: overrides.version,
     defaultInputModes: overrides.defaultInputModes ?? [...DEFAULT_MODES],
     defaultOutputModes: overrides.defaultOutputModes ?? [...DEFAULT_MODES],
@@ -1078,7 +1102,10 @@ const DEFAULT_LOGGER: AdcpLogger = {
  */
 export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
   const logger = options.logger ?? DEFAULT_LOGGER;
-  const card = buildAgentCard(options.server, options.agentCard);
+  // Snapshot the policy so mutating caller-owned options after construction
+  // cannot desynchronize the advertised interfaces from the active handlers.
+  const legacyCompat = { enabled: options.legacyCompat?.enabled !== false };
+  const card = buildAgentCard(options.server, options.agentCard, legacyCompat);
   const handlerCard = structuredClone(card);
   if (handlerCard.capabilities?.extensions) {
     handlerCard.capabilities.extensions = handlerCard.capabilities.extensions.map(extension =>
@@ -1117,11 +1144,11 @@ export function createA2AAdapter(options: A2AAdapterOptions): A2AAdapter {
     return buildAuthenticatedUser(authInfo);
   };
 
-  const legacyCompat = { enabled: true } as const;
   const jsonRpc = jsonRpcHandler({ requestHandler, userBuilder, legacyCompat });
   const nativeAgentCardMiddleware = agentCardHandler({ agentCardProvider: async () => card });
   const legacyAgentCardMiddleware = agentCardHandler({ agentCardProvider: async () => handlerCard, legacyCompat });
   const agentCardMiddleware: RequestHandler = (req, res, next) => {
+    if (!legacyCompat.enabled) return nativeAgentCardMiddleware(req, res, next);
     const requestedVersion = req.header('A2A-Version');
     return requestedVersion && !requestedVersion.startsWith('0.')
       ? nativeAgentCardMiddleware(req, res, next)

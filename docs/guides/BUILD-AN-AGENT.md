@@ -301,6 +301,13 @@ a2a.mount(app);
 app.listen(3000);
 ```
 
+The adapter enables the official A2A SDK's v0.3 compatibility layer by
+default, preserving existing sellers and buyers. For a native A2A 1.0-only
+server, pass `legacyCompat: { enabled: false }` to `createA2AAdapter`. This
+removes the v0.3 interface from the agent card and disables the SDK's legacy
+JSON-RPC and card handlers; it does not introduce a separate protocol
+implementation.
+
 `tokenStore.lookup` represents your real credential verifier or identity provider. Returning a fixed principal for any
 non-empty bearer is an authentication bypass, not a safe example simplification.
 
