@@ -320,6 +320,49 @@ describe('reporting consumer status validation', () => {
     assert.doesNotMatch(JSON.stringify(result), /secret|internal\.example/);
   });
 
+  test('distinguishes malformed requests containing different lone surrogates', async () => {
+    let storedFingerprint;
+    const storedResult = [
+      {
+        inserted: false,
+        reporting_status_id: 'reporting_status_0001',
+        errorCode: 'VALIDATION_ERROR',
+        safeMessage: 'Reporting consumer status request is invalid',
+      },
+    ];
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async ({ requestFingerprint }) => {
+          if (!storedFingerprint) return undefined;
+          if (requestFingerprint !== storedFingerprint) {
+            throw new ReportingConsumerStatusConflictError('fingerprint mismatch');
+          }
+          return storedResult;
+        },
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ requestFingerprint }) => {
+          storedFingerprint = requestFingerprint;
+          return storedResult;
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const request = surrogate => ({
+      account: { account_id: 'account-1' },
+      idempotency_key: 'reporting-status-surrogate-conflict-0001',
+      statuses: [consumerStatus({ extra: surrogate })],
+    });
+
+    const first = await handler(request('\ud800'), { account: { id: 'account-1' } });
+    assert.equal(first.results[0].errors[0].code, 'VALIDATION_ERROR');
+
+    const replayed = await handler(request('\ud800'), { account: { id: 'account-1' } });
+    assert.equal(replayed.results[0].errors[0].code, 'VALIDATION_ERROR');
+
+    const conflicting = await handler(request('\ud801'), { account: { id: 'account-1' } });
+    assert.equal(conflicting.results[0].errors[0].code, 'IDEMPOTENCY_CONFLICT');
+  });
+
   test('preserves retry_after for transient per-item failures', async () => {
     const handler = createSyncReportingStatusHandler(
       {
