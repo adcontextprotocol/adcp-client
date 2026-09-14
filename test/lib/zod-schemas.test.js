@@ -1121,6 +1121,24 @@ describe('Zod Schema Validation', () => {
     assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ system: 'zip' }).success);
     assert.ok(schemas.PostalCountrySystemSchema.safeParse({ country: 'US', system: 'zip' }).success);
     assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ country: 'US', system: 'outward' }).success);
+    assert.ok(schemas.PostalCountrySystemSchema.safeParse({ country: 'PT', system: 'postal_code' }).success);
+    assert.ok(schemas.PostalCountrySystemSchema.safeParse({ country: 'PT', system: 'custom' }).success);
+    assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ country: 'US', system: 'custom' }).success);
+    assert.ok(!schemas.PostalCountrySystemSchema.safeParse({ country: 'DE', system: 'custom' }).success);
+    assert.ok(
+      schemas.PostalAreaSchema.safeParse({
+        country: 'PT',
+        system: 'postal_code',
+        values: ['1000-001'],
+      }).success
+    );
+
+    const cjsPublicSchemas = require('@adcp/sdk/schemas');
+    const esmPublicSchemas = await import('@adcp/sdk/schemas');
+    for (const publicSchemas of [cjsPublicSchemas, esmPublicSchemas]) {
+      assert.ok(publicSchemas.PostalCountrySystemSchema.safeParse({ country: 'PT', system: 'custom' }).success);
+      assert.ok(!publicSchemas.PostalCountrySystemSchema.safeParse({ country: 'US', system: 'custom' }).success);
+    }
   });
 
   test('Trusted Match request schemas reject unexpected privacy-boundary fields', async () => {

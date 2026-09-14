@@ -1360,6 +1360,16 @@ export class AgentClient {
     return this.client.getCapabilities(options);
   }
 
+  /** Scope token for a tenant-bound, application-owned capability preflight. */
+  getCapabilityEvidenceScope(): import('./SingleAgentClient').CapabilityEvidenceScope {
+    return this.client.getCapabilityEvidenceScope();
+  }
+
+  /** Install fresh capability evidence without making a redundant probe. */
+  primeCapabilities(snapshot: import('./SingleAgentClient').CapabilityEvidenceSnapshot): boolean {
+    return this.client.primeCapabilities(snapshot);
+  }
+
   /**
    * Return the seller's declared `adcp.idempotency.replay_ttl_seconds`, or
    * throw when a v3 seller omits the (required) declaration.

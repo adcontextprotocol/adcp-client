@@ -85,6 +85,15 @@ export interface AdAgentsValidationResult {
 export interface ValidateAdAgentsOptions {
   /** Per-request timeout in ms (default 10_000). */
   timeoutMs?: number;
+  /**
+   * Caller cancellation for the complete discovery operation. The same signal
+   * is used for every direct, authoritative-location, ads.txt, and manager
+   * request, so `AbortSignal.timeout(...)` is an absolute operation deadline
+   * rather than a fresh budget per hop. `timeoutMs` remains the ceiling for
+   * each individual request. Once aborted, discovery throws the abort reason
+   * and does not start a later fallback request.
+   */
+  signal?: AbortSignal;
   /** Maximum response body bytes for adagents.json and ads.txt fetches (default 256 KiB). */
   maxBodyBytes?: number;
   /** Optional User-Agent suffix (validated via `validateUserAgent`). */
@@ -139,6 +148,7 @@ export async function validateAdAgents(
   // Step 1: try the publisher's canonical location.
   const direct = await fetchJsonOrStatus(publisherUrl, {
     timeoutMs,
+    signal: options.signal,
     maxBodyBytes,
     userAgentHeader,
     fromHeader,
@@ -192,6 +202,7 @@ export async function validateAdAgents(
       }
       const followed = await fetchJsonOrStatus(target, {
         timeoutMs,
+        signal: options.signal,
         maxBodyBytes,
         userAgentHeader,
         fromHeader,
@@ -252,6 +263,7 @@ export async function validateAdAgents(
   const adsTxtUrl = buildUrl(publisher, '/ads.txt');
   const adsTxt = await fetchTextOrStatus(adsTxtUrl, {
     timeoutMs,
+    signal: options.signal,
     maxBodyBytes,
     userAgentHeader,
     fromHeader,
@@ -289,6 +301,7 @@ export async function validateAdAgents(
   const managerUrl = buildUrl(managerDomain, '/.well-known/adagents.json');
   const manager = await fetchJsonOrStatus(managerUrl, {
     timeoutMs,
+    signal: options.signal,
     maxBodyBytes,
     userAgentHeader,
     fromHeader,
@@ -447,6 +460,7 @@ type TextFetchOutcome = { kind: 'ok'; text: string; url: string } | FetchFailure
 
 interface InternalFetchOptions {
   timeoutMs: number;
+  signal?: AbortSignal;
   maxBodyBytes: number;
   userAgentHeader: string;
   fromHeader: string;
@@ -473,6 +487,7 @@ async function rawFetch(url: string, opts: InternalFetchOptions): Promise<RawFet
   try {
     const fetchOptions = {
       timeoutMs: opts.timeoutMs,
+      signal: opts.signal,
       allowPrivateIp: isInternalProbesAllowed(),
       maxBodyBytes: opts.maxBodyBytes,
       headers: {
@@ -494,6 +509,9 @@ async function rawFetch(url: string, opts: InternalFetchOptions): Promise<RawFet
     const text = typeof decoded === 'string' ? decoded : JSON.stringify(decoded);
     return { kind: 'ok-text', text, url: result.url };
   } catch (err) {
+    if (opts.signal?.aborted || (err instanceof Error && err.name === 'AbortError')) {
+      throw err;
+    }
     if (err instanceof AdAgentsRedirectRefusedError) {
       return { kind: 'redirect_refused', message: err.message };
     }

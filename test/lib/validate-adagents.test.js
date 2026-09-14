@@ -152,6 +152,187 @@ describe('parseManagerDomain', () => {
 });
 
 describe('validateAdAgents — discovery_method', () => {
+  test('pre-aborted discovery performs no network I/O', async () => {
+    let requests = 0;
+    const server = http.createServer((_req, res) => {
+      requests++;
+      res.end(adAgentsJson());
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await assert.rejects(
+        () =>
+          validateAdAgents(`127.0.0.1:${port}`, {
+            signal: controller.signal,
+            urlForDomain: (domain, path) => `http://${domain}${path}`,
+          }),
+        error => error?.name === 'AbortError'
+      );
+      assert.strictEqual(requests, 0);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  test('caller abort stops an in-flight direct request without starting fallback', async () => {
+    const paths = [];
+    let requestStarted;
+    const started = new Promise(resolve => {
+      requestStarted = resolve;
+    });
+    const server = http.createServer((req, _res) => {
+      paths.push(req.url);
+      requestStarted();
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    const controller = new AbortController();
+    try {
+      const discovery = validateAdAgents(`127.0.0.1:${port}`, {
+        signal: controller.signal,
+        timeoutMs: 30_000,
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      await started;
+      controller.abort();
+      await assert.rejects(discovery, error => error?.name === 'AbortError');
+      assert.deepStrictEqual(paths, ['/.well-known/adagents.json']);
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  test('caller abort reaches authoritative-location, ads.txt, and manager-domain fetches', async t => {
+    async function runPhase(name, setup) {
+      await t.test(name, async () => {
+        const controller = new AbortController();
+        const fixture = await setup();
+        try {
+          const discovery = validateAdAgents(fixture.publisherDomain, {
+            signal: controller.signal,
+            timeoutMs: 30_000,
+            urlForDomain: (domain, path) => `http://${domain}${path}`,
+          });
+          await fixture.phaseStarted;
+          controller.abort();
+          await assert.rejects(discovery, error => error?.name === 'AbortError');
+        } finally {
+          await fixture.close();
+        }
+      });
+    }
+
+    await runPhase('authoritative-location', async () => {
+      let startPhase;
+      const phaseStarted = new Promise(resolve => {
+        startPhase = resolve;
+      });
+      let authoritativeUrl;
+      const server = http.createServer((req, res) => {
+        if (req.url === '/.well-known/adagents.json') {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ authoritative_location: authoritativeUrl }));
+          return;
+        }
+        startPhase();
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address();
+      authoritativeUrl = `http://127.0.0.1:${port}/authoritative.json`;
+      return {
+        publisherDomain: `127.0.0.1:${port}`,
+        phaseStarted,
+        close: async () => {
+          server.closeAllConnections();
+          await new Promise(resolve => server.close(resolve));
+        },
+      };
+    });
+
+    await runPhase('ads.txt', async () => {
+      let startPhase;
+      const phaseStarted = new Promise(resolve => {
+        startPhase = resolve;
+      });
+      const server = http.createServer((req, res) => {
+        if (req.url === '/.well-known/adagents.json') {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        startPhase();
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address();
+      return {
+        publisherDomain: `127.0.0.1:${port}`,
+        phaseStarted,
+        close: async () => {
+          server.closeAllConnections();
+          await new Promise(resolve => server.close(resolve));
+        },
+      };
+    });
+
+    await runPhase('manager-domain', async () => {
+      let startPhase;
+      const phaseStarted = new Promise(resolve => {
+        startPhase = resolve;
+      });
+      const manager = http.createServer(() => startPhase());
+      await new Promise(resolve => manager.listen(0, '127.0.0.1', resolve));
+      const managerPort = manager.address().port;
+      const publisher = await startRoutedServer({
+        '/ads.txt': {
+          contentType: 'text/plain',
+          body: `MANAGERDOMAIN=127.0.0.1:${managerPort}`,
+        },
+      });
+      return {
+        publisherDomain: publisher.host,
+        phaseStarted,
+        close: async () => {
+          manager.closeAllConnections();
+          await Promise.all([publisher.close(), new Promise(resolve => manager.close(resolve))]);
+        },
+      };
+    });
+  });
+
+  test('one AbortSignal deadline spans direct, ads.txt, and manager discovery', async () => {
+    let managerStarted;
+    const managerRequest = new Promise(resolve => {
+      managerStarted = resolve;
+    });
+    const manager = http.createServer(() => managerStarted());
+    await new Promise(resolve => manager.listen(0, '127.0.0.1', resolve));
+    const managerPort = manager.address().port;
+    const publisher = await startRoutedServer({
+      '/ads.txt': {
+        contentType: 'text/plain',
+        body: `MANAGERDOMAIN=127.0.0.1:${managerPort}`,
+      },
+    });
+    const startedAt = Date.now();
+    try {
+      const discovery = validateAdAgents(publisher.host, {
+        signal: AbortSignal.timeout(100),
+        timeoutMs: 30_000,
+        urlForDomain: (domain, path) => `http://${domain}${path}`,
+      });
+      await managerRequest;
+      await assert.rejects(discovery, error => error?.name === 'TimeoutError');
+      assert.strictEqual(Date.now() - startedAt < 1_000, true);
+    } finally {
+      manager.closeAllConnections();
+      await Promise.all([publisher.close(), new Promise(resolve => manager.close(resolve))]);
+    }
+  });
+
   test('rejects invalid maxBodyBytes values before fetching', async () => {
     await assert.rejects(
       () => validateAdAgents('example.com', { maxBodyBytes: Infinity }),

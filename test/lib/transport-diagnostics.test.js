@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
+const { BODY_SNIPPET_TIMEOUT_MS, OBSERVER_FLUSH_TIMEOUT_MS } = require('../../dist/lib/index.js');
 const {
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
@@ -163,6 +164,92 @@ test('transport diagnostics waits for async handlers after the request completes
     events.map(event => event.type),
     ['request_started', 'response_received']
   );
+});
+
+test('transport diagnostics bounds stalled response previews and preserves the original body', async () => {
+  const events = [];
+  let streamController;
+  const stream = new ReadableStream({
+    start(controller) {
+      streamController = controller;
+      controller.enqueue(new TextEncoder().encode('{"ok":true}'));
+    },
+  });
+  // Missing Content-Type is intentionally treated as previewable text.
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => new Response(stream));
+
+  const startedAt = Date.now();
+  const response = await withTransportDiagnostics(
+    {
+      agentId: 'stalled-body-agent',
+      protocol: 'mcp',
+      onTransportActivity: event => events.push(event),
+    },
+    () => instrumentedFetch('https://seller.example/mcp')
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(elapsed >= BODY_SNIPPET_TIMEOUT_MS, true);
+  assert.equal(elapsed < BODY_SNIPPET_TIMEOUT_MS + 1500, true);
+  assert.equal(events.length, 2);
+  assert.equal(events[1].responseBody, undefined);
+  streamController.close();
+  assert.equal(await response.text(), '{"ok":true}');
+});
+
+test('transport diagnostics bounds a never-settling async observer', async () => {
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(async () => new Response('{}'));
+  const startedAt = Date.now();
+  const result = await withTransportDiagnostics(
+    {
+      agentId: 'stalled-observer-agent',
+      protocol: 'mcp',
+      onTransportActivity: () => new Promise(() => {}),
+    },
+    async () => (await instrumentedFetch('https://seller.example/mcp')).text()
+  );
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(result, '{}');
+  assert.equal(elapsed >= OBSERVER_FLUSH_TIMEOUT_MS, true);
+  assert.equal(elapsed < OBSERVER_FLUSH_TIMEOUT_MS + 1500, true);
+});
+
+test('ESM transport diagnostics entry keeps observer work off the unbounded critical path', async () => {
+  const esm = await import('../../dist/lib/protocols/index.mjs');
+  const publicEsm = await import('../../dist/lib/index.mjs');
+  const instrumentedFetch = esm.wrapFetchWithTransportDiagnostics(async () => new Response('{}'));
+  const startedAt = Date.now();
+  const result = await esm.withTransportDiagnostics(
+    {
+      agentId: 'esm-stalled-observer-agent',
+      protocol: 'mcp',
+      onTransportActivity: () => new Promise(() => {}),
+    },
+    async () => (await instrumentedFetch('https://seller.example/mcp')).text()
+  );
+
+  assert.equal(result, '{}');
+  assert.equal(Date.now() - startedAt < publicEsm.OBSERVER_FLUSH_TIMEOUT_MS + 1500, true);
+});
+
+test('transport diagnostics skips SSE response previews without disturbing the stream', async () => {
+  const events = [];
+  const body = 'event: message\ndata: {"ok":true}\n\n';
+  const instrumentedFetch = wrapFetchWithTransportDiagnostics(
+    async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+  );
+  const response = await withTransportDiagnostics(
+    {
+      agentId: 'sse-agent',
+      protocol: 'mcp',
+      onTransportActivity: event => events.push(event),
+    },
+    () => instrumentedFetch('https://seller.example/mcp')
+  );
+
+  assert.equal(events[1].responseBody, undefined);
+  assert.equal(await response.text(), body);
 });
 
 test('transport diagnostics does not deadlock on responses larger than the snippet limit', async () => {

@@ -774,6 +774,10 @@ function generateLlmsTxt(
     `A submitted mutation must settle before it can be controlled; retain the task handle or configure \`push_notification_config\`. The buyer quick start shows completion, revision-aware control, readback, and correction paths.`
   );
   ln();
+  ln(
+    `**Existing applications.** The [thin existing-platform recipe](./guides/EXISTING-PLATFORM.md) shows one SDK task inside application-owned auth and transactions, durable submitted-task recording, the error/cancellation matrix, bounded diagnostics, and client-scoped capability evidence reuse with \`getCapabilityEvidenceScope()\` + \`primeCapabilities()\`. The SDK 14 release represented by the checkout, its registry integrity check, peer/runtime ranges, wire pin, and a historical rc.33/rc.35 → rc.36 example are generated in [the release worksheet](./migration-14.x-rc-worksheet.md).`
+  );
+  ln();
 
   ln(`## Canonical Reference Resolver`);
   ln();
@@ -1402,10 +1406,35 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`}`);
   ln();
   ln(`interface TaskOptions {`);
+  ln(`  timeout?: number;             // Absolute whole-task deadline`);
+  ln(`  signal?: AbortSignal;         // Caller cancellation`);
   ln(`  // Trusted local receiver policy; snapshotted and persisted with generated`);
   ln(`  // webhook registrations, never inferred from or sent in task arguments.`);
   ln(`  delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;`);
   ln(`  // ...deadline, cancellation, transport, and conversation options...`);
+  ln(`}`);
+  ln();
+  ln(`interface ValidateAdAgentsOptions {`);
+  ln(`  timeoutMs?: number;           // Per-request ceiling`);
+  ln(`  signal?: AbortSignal;         // One signal/deadline across the complete discovery flow`);
+  ln(`  maxBodyBytes?: number;`);
+  ln(`  userAgent?: string;`);
+  ln(`  logLevel?: LogLevel;`);
+  ln(`  urlForDomain?: (domain: string, path: string) => string;`);
+  ln(`}`);
+  ln();
+  ln(`interface CapabilityEvidenceScope {`);
+  ln(`  agentUri: string;`);
+  ln(`  adcpVersion: string;`);
+  ln(`  scopeKey: string;             // Opaque, client-bound authorization/transport scope`);
+  ln(`}`);
+  ln();
+  ln(`interface CapabilityEvidenceSnapshot {`);
+  ln(`  scope: CapabilityEvidenceScope;`);
+  ln(`  capabilities: AdcpCapabilities;`);
+  ln(`  observedAt: string;`);
+  ln(`  expiresAt: string;`);
+  ln(`  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;`);
   ln(`}`);
   ln();
   ln(`interface TaskResult<T = any> {`);

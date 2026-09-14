@@ -35,7 +35,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // new compliance storyboards. With their bundled and compact-projection copies
 // that is +26 published files. The request-only Targeting Input helpers add one
 // module (CJS + ESM + both declaration flavours), for +4 more.
-const MAX_PACKED_FILE_COUNT = 6_059;
+// The 14.x adoption pass adds an existing-platform guide, a release worksheet,
+// and a compile-gated thin integration example; byte budgets remain unchanged.
+const MAX_PACKED_FILE_COUNT = 6_062;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

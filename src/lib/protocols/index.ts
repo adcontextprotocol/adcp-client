@@ -79,6 +79,8 @@ import {
 } from './transportDiagnostics';
 
 export {
+  BODY_SNIPPET_TIMEOUT_MS,
+  OBSERVER_FLUSH_TIMEOUT_MS,
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
   withTransportDiagnostics,

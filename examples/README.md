@@ -14,6 +14,10 @@ certification references. They intentionally show complete adapters, durable
 boundaries, and conformance hooks, so many are 700–1,400 lines. Start with the
 compact seller, then open the advanced example matching your backend.
 
+Adding one task to an application that already owns auth and storage? Start
+with [`existing-platform-thin.ts`](./existing-platform-thin.ts) and the
+[existing-platform guide](../docs/guides/EXISTING-PLATFORM.md).
+
 ## Building an AdCP agent — fork-target reference adapters
 
 Pick the example whose AdCP role and specialism most closely matches what you're building, fork it, replace the `// SWAP:` markers, and follow the `FORK CHECKLIST` block for the unmarked but load-bearing constants. The `hello_*_adapter_*` examples are paired with the three-gate CI test (strict tsc / storyboard / upstream-traffic) where a matching mock server exists; examples without one are called out below with the narrower runtime coverage they currently have. `proxy-seller-snap/` is a lighter bridge-pattern fork target: it proves seed-bridge wiring and must be paired with your live-OAuth sandbox runner for upstream health.

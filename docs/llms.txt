@@ -131,6 +131,8 @@ if (!completed.success || completed.status !== 'completed') throw new Error(comp
 
 A submitted mutation must settle before it can be controlled; retain the task handle or configure `push_notification_config`. The buyer quick start shows completion, revision-aware control, readback, and correction paths.
 
+**Existing applications.** The [thin existing-platform recipe](./guides/EXISTING-PLATFORM.md) shows one SDK task inside application-owned auth and transactions, durable submitted-task recording, the error/cancellation matrix, bounded diagnostics, and client-scoped capability evidence reuse with `getCapabilityEvidenceScope()` + `primeCapabilities()`. The SDK 14 release represented by the checkout, its registry integrity check, peer/runtime ranges, wire pin, and a historical rc.33/rc.35 → rc.36 example are generated in [the release worksheet](./migration-14.x-rc-worksheet.md).
+
 ## Canonical Reference Resolver
 
 `format_schema` and `platform_extensions` references use immutable `{ uri, digest }` pointers. Use `createCanonicalReferenceResolver` from `@adcp/sdk/canonical-references` instead of raw fetches; it applies SSRF-safe DNS-pinned fetches, redirect blocking, timeout/body caps, SHA-256 verification, structured non-throwing statuses, and bounded policy-scoped LRU caching. The zero-argument cache holds at most 64 entries / 32 MiB estimated retained data; use `createCanonicalReferenceCache({ maxEntries, maxBytes })` to tune the per-resolver budget or inject a fully caller-owned cache.

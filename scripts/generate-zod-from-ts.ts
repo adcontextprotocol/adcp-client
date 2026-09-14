@@ -1259,6 +1259,48 @@ function postProcessPostalAreaValues(content: string): string {
   return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
 }
 
+/**
+ * Preserve the primitive `not: { enum: [...] }` fallback in
+ * PostalCountrySystem. The TypeScript projection represents JSON Schema's
+ * `not` branch as an open object, which makes the generated intersection
+ * impossible: the branch asks for an object-valued `country` while the outer
+ * schema requires the same field to be a string.
+ */
+function postProcessPostalCountrySystemSchema(content: string): string {
+  const schemaStart = content.indexOf('export const PostalCountrySystemSchema = ');
+  const schemaEnd = content.indexOf('\n\nexport const ', schemaStart + 1);
+  if (schemaStart === -1 || schemaEnd === -1) {
+    throw new Error('postProcessPostalCountrySystemSchema: unable to locate PostalCountrySystemSchema.');
+  }
+
+  const block = content.slice(schemaStart, schemaEnd);
+  const fallbackCountry = 'country: z.object({}).passthrough().optional()';
+  if (!block.includes(fallbackCountry)) {
+    throw new Error('postProcessPostalCountrySystemSchema: unable to locate the generated fallback country arm.');
+  }
+
+  const registeredCountries = [
+    ...new Set(
+      [...block.matchAll(/country: ([^\n]+)\.optional\(\),\n\s+system:/g)].flatMap(match =>
+        [...match[1].matchAll(/z\.literal\("([A-Z]{2})"\)/g)].map(countryMatch => countryMatch[1])
+      )
+    ),
+  ];
+  if (registeredCountries.length === 0) {
+    throw new Error('postProcessPostalCountrySystemSchema: unable to derive the registered-country union.');
+  }
+
+  const countryList = JSON.stringify(registeredCountries);
+  const correctedBlock = block.replace(
+    fallbackCountry,
+    `country: z.string().refine(country => !${countryList}.includes(country)).optional()`
+  );
+  if (correctedBlock === block) {
+    throw new Error('postProcessPostalCountrySystemSchema: fallback replacement did not change the schema.');
+  }
+  return content.slice(0, schemaStart) + correctedBlock + content.slice(schemaEnd);
+}
+
 /** Restore the closed beta.4 SDK-local continuation schema exactly. */
 function postProcessCompatibilityPurchaseCoordinatorInput(content: string): string {
   const startMarker = 'export const CompatibilityPurchaseCoordinatorInputSchema = ';
@@ -4992,6 +5034,7 @@ async function generateZodSchemas() {
     zodSchemas = postProcessCanonicalFormatMarkerIntersections(zodSchemas);
     zodSchemas = postProcessCanonicalFormatSlots(zodSchemas);
     zodSchemas = postProcessCreativeBriefRequiredDisclosures(zodSchemas);
+    zodSchemas = postProcessPostalCountrySystemSchema(zodSchemas);
     zodSchemas = postProcessPostalAreaValues(zodSchemas);
     zodSchemas = postProcessCompatibilityPurchaseCoordinatorInput(zodSchemas);
     zodSchemas = postProcessLegacyPurchaseContinuationResponse(zodSchemas);
