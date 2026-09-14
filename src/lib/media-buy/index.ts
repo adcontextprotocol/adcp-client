@@ -94,3 +94,5 @@ export type { ResolvedTargetingInput, TargetingInputFor } from './targeting-inpu
 export * from './compatibility';
 export * from './established-proposal-store';
 export * from './legacy-purchase-continuation';
+
+export * from './actions';

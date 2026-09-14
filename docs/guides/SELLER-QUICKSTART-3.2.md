@@ -1,5 +1,7 @@
 # Build an AdCP 3.2 seller in 15 minutes
 
+Use the [MediaBuy action resolver](./MEDIA-BUY-ACTION-ASSESSMENT.md#seller-builder) to materialize explicitly accepted product templates and project accepted rights through current status, authorization, governance, and seller policy.
+
 The compact lifecycle is the SDK 14 starting point. Use Node.js
 `^20.19.0 || >=22.12.0`:
 

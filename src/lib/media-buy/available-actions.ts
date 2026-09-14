@@ -64,7 +64,7 @@ export function getAvailableActions(
   buy: MediaBuyActionContext,
   options: { silent?: boolean } = {}
 ): AvailableActionsResult {
-  if (buy.available_actions && buy.available_actions.length > 0) {
+  if (buy.available_actions !== undefined) {
     return { actions: [...buy.available_actions], source: 'available_actions' };
   }
   if (buy.valid_actions && buy.valid_actions.length > 0) {

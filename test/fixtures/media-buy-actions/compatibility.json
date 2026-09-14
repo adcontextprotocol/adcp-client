@@ -1,0 +1,39 @@
+[
+  {
+    "version": "3.1.19",
+    "description": "Released opaque action pointer with no negotiated change-term envelope",
+    "buy": {
+      "status": "active",
+      "available_actions": [{ "action": "pause", "mode": "self_serve", "terms_ref": "right_pause" }]
+    },
+    "expected": {
+      "status": "currently_unavailable",
+      "reason": "condition_unresolved",
+      "compat_reason": "no_change_terms"
+    }
+  },
+  {
+    "version": "3.1.19",
+    "description": "Released flat valid_actions fallback is a hint",
+    "buy": { "status": "active", "valid_actions": ["pause", "update_budget"] },
+    "expected": {
+      "status": "currently_unavailable",
+      "reason": "condition_unresolved",
+      "compat_reason": "no_change_terms"
+    }
+  },
+  {
+    "version": "3.2.0-beta.8",
+    "description": "Released early canonical lifecycle before proposal change terms",
+    "buy": {
+      "status": "active",
+      "accepted_proposal": { "commercial_terms": {} },
+      "available_actions": [{ "task": "control_media_buy", "action": "pause", "mode": "self_serve" }]
+    },
+    "expected": {
+      "status": "currently_unavailable",
+      "reason": "condition_unresolved",
+      "compat_reason": "no_change_terms"
+    }
+  }
+]

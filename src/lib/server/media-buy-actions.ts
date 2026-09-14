@@ -24,6 +24,8 @@ import {
 import { AdcpError } from './decisioning/async-outcome';
 
 export interface AssertUpdateMediaBuyAllowedOptions {
+  task?: import('../media-buy/action-types').MediaBuyTask;
+  now?: number;
   /**
    * Restrict the modes this call path may execute directly. Omit to enforce
    * availability only. Pass `['self_serve']` when the handler cannot queue
@@ -55,7 +57,7 @@ export function assertUpdateMediaBuyAllowed(
 ): PreflightAllowed {
   let result: ReturnType<typeof preflightUpdateMediaBuy>;
   try {
-    result = preflightUpdateMediaBuy(currentBuy, request);
+    result = preflightUpdateMediaBuy(currentBuy, request, { task: options.task, now: options.now });
   } catch (err) {
     if (err instanceof ValidationError) {
       throw new AdcpError('INVALID_REQUEST', {
@@ -70,6 +72,27 @@ export function assertUpdateMediaBuyAllowed(
   const currentlyAvailable = getAvailableActions(currentBuy, { silent: true }).actions;
 
   if (!result.ok) {
+    const assessment = result.denials.find(d => d.assessment?.code)?.assessment;
+    if (assessment?.code) {
+      throw new AdcpError(assessment.code, {
+        message: assessment.message,
+        recovery: assessment.code === 'CONFLICT' ? 'transient' : 'correctable',
+        field:
+          assessment.constraints && assessment.constraints.status !== 'satisfied'
+            ? assessment.constraints.path
+            : 'revision',
+        ...(assessment.constraints &&
+          assessment.constraints.status !== 'satisfied' && {
+            details: {
+              envelope_field: assessment.constraints.path,
+              change_term_id: currentBuy.accepted_proposal?.commercial_terms?.change_terms?.find(
+                t => t.action === assessment.action
+              )?.term_id,
+              constraint: assessment.constraints.constraint,
+            },
+          }),
+      });
+    }
     throw actionNotAllowedFromDenied(result, currentlyAvailable, options);
   }
 

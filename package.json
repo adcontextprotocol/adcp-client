@@ -379,7 +379,17 @@
         "default": "./dist/lib/negotiation/verification.js"
       }
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./media-buy/actions": {
+      "import": {
+        "types": "./dist/lib/media-buy/actions.d.mts",
+        "default": "./dist/lib/media-buy/actions.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/media-buy/actions.d.ts",
+        "default": "./dist/lib/media-buy/actions.js"
+      }
+    }
   },
   "typesVersions": {
     "*": {
@@ -490,6 +500,9 @@
       ],
       "negotiation/verification": [
         "dist/lib/negotiation/verification.d.ts"
+      ],
+      "media-buy/actions": [
+        "dist/lib/media-buy/actions.d.ts"
       ]
     }
   },
@@ -591,7 +604,7 @@
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
-    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts",
+    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts && tsx scripts/generate-media-buy-action-metadata.ts",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",

@@ -14,7 +14,7 @@ export type {
   SLAWindow,
 } from '../types/core.generated';
 
-import type { MediaBuyAvailableAction, MediaBuyValidAction } from '../types/core.generated';
+import type { CanonicalMediaBuyAction, MediaBuyAvailableAction, MediaBuyValidAction } from '../types/core.generated';
 import type { SLAWindow } from '../types/core.generated';
 import type { MediaBuyUpdateFieldAction } from './update-fields.generated';
 
@@ -30,7 +30,11 @@ import type { MediaBuyUpdateFieldAction } from './update-fields.generated';
  * or `ACTION_NOT_ALLOWED.attempted_action`. `MediaBuyValidAction` remains the
  * correct type for the deprecated flat `valid_actions[]` list only.
  */
-export type MediaBuyActionId = MediaBuyAvailableAction['action'] | MediaBuyUpdateFieldAction;
+export type MediaBuyActionId =
+  | MediaBuyAvailableAction['action']
+  | MediaBuyUpdateFieldAction
+  | CanonicalMediaBuyAction['action']
+  | 'update_media_buy_frequency_cap';
 
 /**
  * @deprecated Use `SLAWindow`. Kept as an import-compatibility alias for the
@@ -61,15 +65,25 @@ export type LegacyCoarseAction = (typeof LEGACY_COARSE_ACTIONS)[number];
  * fields are required by the helpers themselves.
  */
 export interface MediaBuyActionContext {
+  accepted_proposal?: import('./action-types').ActionProposal;
+  accepted_proposal_id?: string;
   media_buy_id?: string;
   status?: string;
   start_time?: string;
   end_time?: string;
+  revision?: number;
+  currency?: string;
+  total_budget?: number | { amount: number; currency: string };
+  daily_budget_cap?: number | null;
   packages?: ReadonlyArray<{
     package_id?: string;
     budget?: number;
     start_time?: string;
     end_time?: string;
+    canceled?: boolean;
+    status?: string;
+    daily_budget_cap?: number | null;
+    min_spend_target?: number | null;
   }>;
   available_actions?: MediaBuyAvailableAction[];
   valid_actions?: MediaBuyValidAction[];
@@ -82,6 +96,15 @@ export interface MediaBuyActionContext {
  * resolver signature.
  */
 export interface UpdateMediaBuyRequestLike {
+  revision?: number;
+  idempotency_key?: string;
+  name?: string;
+  total_budget?: { amount: number; currency: string };
+  daily_budget_cap?: number | null;
+  budget_allocation?: unknown;
+  pacing?: unknown;
+  bidding?: unknown;
+  reporting_webhook?: unknown;
   paused?: boolean;
   canceled?: true;
   cancellation_reason?: string;
@@ -92,7 +115,10 @@ export interface UpdateMediaBuyRequestLike {
   new_packages?: ReadonlyArray<unknown>;
   packages?: ReadonlyArray<{
     package_id: string;
-    budget?: number;
+    budget?: number | null;
+    daily_budget_cap?: number | null;
+    min_spend_target?: number | null;
+    bidding?: unknown;
     pacing?: unknown;
     start_time?: string;
     end_time?: string;
