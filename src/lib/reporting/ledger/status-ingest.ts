@@ -350,14 +350,17 @@ function boundedJsonStringBytes(value: string, remaining: number): number {
       bytes += 1;
     } else if (code < 0x800) {
       bytes += 2;
-    } else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length) {
-      const low = value.charCodeAt(index + 1);
-      if (low >= 0xdc00 && low <= 0xdfff) {
+    } else if (code >= 0xd800 && code <= 0xdbff) {
+      const low = index + 1 < value.length ? value.charCodeAt(index + 1) : undefined;
+      if (low !== undefined && low >= 0xdc00 && low <= 0xdfff) {
         bytes += 4;
         index += 1;
       } else {
-        bytes += 3;
+        // JSON.stringify emits an unpaired UTF-16 surrogate as `\ud800`.
+        bytes += 6;
       }
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      bytes += 6;
     } else {
       bytes += 3;
     }

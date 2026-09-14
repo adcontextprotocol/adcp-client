@@ -190,6 +190,18 @@ describe('reporting consumer status validation', () => {
     assert.equal(storeCalled, false);
     assert.equal(result.results[0].result, 'failed');
     assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
+
+    const escapedSurrogateResult = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-escaped-surrogate-bound-0001',
+        statuses: [consumerStatus({ ext: { 'example.invalid': '\ud800'.repeat(1_500_000) } })],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(storeCalled, false);
+    assert.equal(escapedSurrogateResult.results[0].result, 'failed');
+    assert.equal(escapedSurrogateResult.results[0].errors[0].code, 'VALIDATION_ERROR');
   });
 
   test('does not expose custom-store conflict messages', async () => {

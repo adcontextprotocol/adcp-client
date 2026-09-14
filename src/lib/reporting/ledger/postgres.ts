@@ -274,6 +274,13 @@ const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type JsonRow<T> = QueryResultRow & { data: T };
+type StoredConsumerStatusBatchResult = {
+  kind: 'recorded' | 'unchanged' | 'failed';
+  id: string;
+  errorCode?: string;
+  safeMessage?: string;
+  errorField?: string;
+};
 
 export interface PostgresReportingLedgerStoreOptions {
   /** Assert that the supplied PostgreSQL database/schema is isolated to this deployment. */
@@ -809,15 +816,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   ): Promise<ReportingConsumerStatusBatchResultV1[]> {
     return this.transaction(
       async client => {
-        type StoredResult = {
-          kind: 'recorded' | 'unchanged' | 'failed';
-          id: string;
-          errorCode?: string;
-          safeMessage?: string;
-          errorField?: string;
-        };
         const priorBatch = await client.query<
-          QueryResultRow & { request_fingerprint: string; results: StoredResult[] }
+          QueryResultRow & { request_fingerprint: string; results: StoredConsumerStatusBatchResult[] }
         >(
           `SELECT request_fingerprint, results FROM adcp_reporting_consumer_status_batches
            WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
@@ -889,22 +889,9 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const batchCapacityExhausted = Number(capacity.rows[0]?.batches ?? 0) >= MAX_CONSUMER_STATUS_BATCHES;
         let remainingStatements = MAX_CONSUMER_STATUS_STATEMENTS - Number(capacity.rows[0]?.statuses ?? 0);
         const results: ReportingConsumerStatusBatchResultV1[] = [];
-        const storedResults: StoredResult[] = [];
+        const storedResults: StoredConsumerStatusBatchResult[] = [];
         const fail = (statusId: string, errorCode: string, safeMessage: string, errorField?: string) => {
-          let boundedErrorField = boundedConsumerStatusErrorField(errorField);
-          const storedCandidate = {
-            kind: 'failed' as const,
-            id: statusId,
-            errorCode,
-            safeMessage,
-            ...boundedErrorField,
-          };
-          if (
-            storedResultsJsonBytes([...storedResults, storedCandidate]) >
-            REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES
-          ) {
-            boundedErrorField = {};
-          }
+          const boundedErrorField = boundedConsumerStatusErrorField(errorField);
           results.push({
             inserted: false,
             reporting_status_id: statusId,
@@ -1033,6 +1020,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           storedResults.push({ kind: 'recorded', id: status.reporting_status_id });
           remainingStatements -= 1;
         }
+        boundStoredConsumerStatusResults(storedResults, results);
         if (!batchCapacityExhausted) {
           await client.query(
             `INSERT INTO adcp_reporting_consumer_status_batches
@@ -2123,6 +2111,23 @@ function boundedConsumerStatusErrorField(errorField?: string): { errorField?: st
 
 function storedResultsJsonBytes(results: unknown[]): number {
   return Buffer.byteLength(JSON.stringify(results), 'utf8');
+}
+
+function boundStoredConsumerStatusResults(
+  storedResults: StoredConsumerStatusBatchResult[],
+  results: ReportingConsumerStatusBatchResultV1[]
+): void {
+  if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
+  for (let index = storedResults.length - 1; index >= 0; index -= 1) {
+    const stored = storedResults[index];
+    const result = results[index];
+    if (stored?.errorField !== undefined) {
+      delete stored.errorField;
+      if (result && !('value' in result)) delete result.errorField;
+      if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
+    }
+  }
+  throw new RangeError('Reporting consumer status replay metadata exceeds 64 KiB');
 }
 
 function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): string {
