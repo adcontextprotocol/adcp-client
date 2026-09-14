@@ -416,12 +416,30 @@ export interface ReportingLedgerStore {
   ): Promise<ReportingLedgerPageV1>;
 }
 
-export interface ReportingConsumerStatusLedgerStore extends ReportingLedgerStore {
+/**
+ * Minimal authoritative-ledger port required by sync_reporting_status.
+ *
+ * Existing seller ledgers can implement this interface without adopting the
+ * SDK producer, worker, lifecycle, lease, issue, or row-storage APIs. Every
+ * method remains account/principal scoped, and syncConsumerStatusBatch must
+ * atomically compare the current leaf, append, and retain the original batch
+ * result for idempotent replay.
+ */
+export interface ReportingConsumerStatusLedgerStore {
+  listConfigurations(account_id?: string): Promise<ReportingLedgerConfigurationV1[]>;
+  getObligation(reporting_obligation_id: string): Promise<ReportingLedgerObligationV1 | null>;
   /** Loads revision identity and binding for ingest validation without materializing rows. */
   getRevisionMetadata(
     reporting_revision_id: string,
     account_id: string
   ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
+  /** Reads only the caller-bound snapshot needed to validate optional provenance. */
+  readSnapshotPage(
+    snapshotId: string,
+    account_id: string,
+    cursor: string | undefined,
+    limit: number
+  ): Promise<ReportingLedgerPageV1>;
   getConsumerStatusBatchReplay(
     input: ReportingConsumerStatusReplayInputV1
   ): Promise<ReportingConsumerStatusBatchResultV1[] | null>;

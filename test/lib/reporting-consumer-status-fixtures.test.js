@@ -1,0 +1,69 @@
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+
+const {
+  ReportingConsumerStatusV1Schema,
+  SyncReportingStatusRequestV1Schema,
+} = require('../../dist/lib/reporting/ledger/index.js');
+
+const directory = path.resolve(__dirname, '../fixtures/reporting-reconciliation');
+const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'fixture.json'), 'utf8'));
+const fixtureBytes = fs.readFileSync(path.join(directory, 'consumer-status.json'));
+const fixture = JSON.parse(fixtureBytes.toString('utf8'));
+const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+
+test('portable consumer-status vectors retain exact bytes, clocks, principals, results, and ledger state', () => {
+  assert.equal(fixtureBytes.byteLength, manifest.files['consumer-status.json'].size_bytes);
+  assert.equal(sha256(fixtureBytes), manifest.files['consumer-status.json'].sha256);
+  assert.equal(fixture.protocol_version, '3.2.0-rc.2');
+  assert.deepEqual(
+    fixture.frozen.expected_periods.map(period => Date.parse(period.end) - Date.parse(period.start)),
+    [82_800_000, 90_000_000, 2_419_200_000]
+  );
+
+  let inputCount = 0;
+  for (const scenarios of Object.values(fixture.scenario_groups)) {
+    for (const scenario of scenarios) {
+      assert.ok(scenario.principal);
+      assert.ok(scenario.clock);
+      assert.ok(scenario.post_state && typeof scenario.post_state === 'object');
+      const inputs = scenario.concurrent_inputs ?? [scenario];
+      for (const input of inputs) {
+        const bytes = Buffer.from(input.input_utf8_base64, 'base64');
+        assert.equal(sha256(bytes), input.input_sha256, scenario.id);
+        assert.equal(bytes.toString('utf8'), JSON.stringify(input.request), scenario.id);
+        inputCount += 1;
+      }
+      assert.ok(scenario.expected_results || scenario.expected_results_unordered);
+    }
+  }
+  assert.ok(inputCount >= 16);
+
+  const bindingBytes = Buffer.from(fixture.frozen.core_revision_binding.canonical_json_utf8_base64, 'base64');
+  assert.equal(bindingBytes.toString('utf8'), JSON.stringify(fixture.frozen.core_revision_binding.value));
+  assert.equal(sha256(bindingBytes), fixture.frozen.core_revision_binding.sha256);
+});
+
+test('portable wire-parity statuses cover all four rc.2 states and reject every declared mutation', () => {
+  const statuses = new Map(
+    fixture.wire_parity.valid_statuses.map(status => [status.consumer_status, structuredClone(status)])
+  );
+  assert.deepEqual([...statuses.keys()].sort(), ['obligation_missing', 'received', 'revision_missing', 'unreadable']);
+  for (const status of statuses.values()) assert.equal(ReportingConsumerStatusV1Schema.safeParse(status).success, true);
+
+  for (const mutation of fixture.wire_parity.invalid_status_mutations) {
+    const value = structuredClone(statuses.get(mutation.base));
+    for (const field of mutation.remove ?? []) delete value[field];
+    Object.assign(value, mutation.add ?? {});
+    Object.assign(value.period, mutation.add_period ?? {});
+    const parsed = SyncReportingStatusRequestV1Schema.safeParse({
+      account: { account_id: 'portable-account-0001' },
+      idempotency_key: `portable-invalid-${mutation.id}`,
+      statuses: [value],
+    });
+    assert.equal(parsed.success, false, mutation.id);
+  }
+});

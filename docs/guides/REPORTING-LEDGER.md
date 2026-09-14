@@ -11,6 +11,8 @@ import {
   createReportingDeliveryHandler,
   createReportingProducer,
   createReportingStatusHandler,
+  createSyncReportingStatusHandler,
+  type ReportingConsumerStatusLedgerStore,
 } from '@adcp/sdk/reporting/ledger';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -62,9 +64,46 @@ const getReportingStatus = createReportingStatusHandler(store, {
 });
 ```
 
+Existing authoritative ledgers only need the narrow
+`ReportingConsumerStatusLedgerStore` port—not the producer/worker store. An
+adapter supplies `listConfigurations`, `getObligation`,
+`getRevisionMetadata`, `readSnapshotPage`, `getConsumerStatusBatchReplay`, and
+`syncConsumerStatusBatch`. Keep the adapter over the existing authority store:
+derive the internal account and durable consumer principal from authenticated
+transport, authorize before every replay or read, return immutable revision
+bindings, and implement current-leaf compare + append + original batch-result
+replay in one transaction. Several authorized principals for one external
+account must receive separate `(internal account, consumer principal)` chain
+namespaces; never create a second authority store or trust either identity from
+the request body.
+
+```ts
+const statusStore: ReportingConsumerStatusLedgerStore = {
+  listConfigurations: accountId => existingLedger.configurations(accountId),
+  getObligation: id => existingLedger.obligationForAuthorizedCaller(id),
+  getRevisionMetadata: (id, accountId) => existingLedger.boundRevision(id, accountId),
+  readSnapshotPage: (id, accountId, cursor, limit) =>
+    existingLedger.authorizedSnapshotPage(id, accountId, cursor, limit),
+  getConsumerStatusBatchReplay: input => existingLedger.statusBatchReplay(input),
+  syncConsumerStatusBatch: input => existingLedger.compareAppendAndReplayStatusBatch(input),
+};
+```
+
 `sync_reporting_status` is a partial-success batch. The server validates the
 closed request envelope, then the handler validates every status independently.
 Custom handlers should parse each item with the exported
 `ReportingConsumerStatusV1Schema`; the ledger handler already does this.
 
 The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.
+
+For account-local calendar periods, expand each boundary externally into an
+immutable configuration generation. Do not model a local day as a constant
+86,400,000 ms across daylight-saving changes. For example, the New York daily
+periods `2026-03-08T05:00:00Z` → `2026-03-09T04:00:00Z` and
+`2026-11-01T04:00:00Z` → `2026-11-02T05:00:00Z` use 82,800,000 and 90,000,000
+milliseconds respectively. Give each generated boundary its own delivery
+configuration version, set `anchor` and `installedAt` to the exact start,
+`supersededAt` to the exact end, and set `periodMilliseconds` to `end - start`.
+The portable `consumer-status.json` fixture contains those 23/25-hour cases,
+a calendar-month boundary, and the obligation-missing path with no invented
+obligation ID.

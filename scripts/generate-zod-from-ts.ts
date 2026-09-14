@@ -1935,6 +1935,136 @@ function postProcessReportingEvidenceStrictness(content: string): string {
   return result;
 }
 
+/**
+ * Restore sync_reporting_status constraints that are context-sensitive in the
+ * signed rc.2 schemas and are lost by the JSON Schema -> TypeScript -> Zod
+ * projection. Keep this separate from the server's envelope-only dispatch
+ * validator: custom integrations using the public schemas need exact wire
+ * validation, while the built-in handler deliberately preserves valid
+ * siblings in a mixed batch.
+ */
+function postProcessReportingConsumerStatusConstraints(content: string): string {
+  const refine = (source: string, schemaName: string, refinement: string, preserveObjectMethods = false): string => {
+    const target = findSchemaExportExpressions(source).find(entry => entry.name === schemaName);
+    if (!target) throw new Error(`postProcessReportingConsumerStatusConstraints: ${schemaName} was not generated.`);
+    if (target.expression.includes('// reporting consumer status rc.2 parity')) return source;
+    const expression = preserveObjectMethods
+      ? `(() => {
+          const objectSchema = ${target.expression};
+          const exactSchema = objectSchema.superRefine(${refinement});
+          return Object.assign(exactSchema, {
+              pick: objectSchema.pick.bind(objectSchema),
+              omit: objectSchema.omit.bind(objectSchema),
+              extend: objectSchema.extend.bind(objectSchema),
+              safeExtend: objectSchema.safeExtend.bind(objectSchema),
+          });
+      })()`
+      : `${target.expression}.superRefine(${refinement})`;
+    return source.slice(0, target.expressionStart) + expression + source.slice(target.expressionEnd);
+  };
+
+  const itemRefinement = `(value, ctx) => {
+      // reporting consumer status rc.2 parity
+      const require = (field: string) => {
+          if ((value as Record<string, unknown>)[field] === undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is required" });
+          }
+      };
+      const forbid = (field: string) => {
+          if ((value as Record<string, unknown>)[field] !== undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
+          }
+      };
+      const allowed = new Set([
+          "reporting_status_id", "supersedes_reporting_status_id", "delivery_config_id",
+          "delivery_config_version", "report_definition_id", "period", "reporting_obligation_id",
+          "reporting_revision_id", "observed_revision_content_sha256", "consumer_status",
+          "status_as_of", "failure_code", "consumer_commit_ref", "seller_ledger_snapshot_id",
+          "seller_ledger_as_of", "recorded_at", "ext"
+      ]);
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+      const period = (value as Record<string, unknown>).period;
+      if (period && typeof period === "object" && !Array.isArray(period)) {
+          for (const field of Object.keys(period)) {
+              if (!["start", "end", "source_timezone"].includes(field)) {
+                  ctx.addIssue({ code: "custom", path: ["period", field], message: "Unrecognized key" });
+              }
+          }
+      }
+      if (value.consumer_status === "received") {
+          require("reporting_obligation_id");
+          require("reporting_revision_id");
+          require("observed_revision_content_sha256");
+          forbid("failure_code");
+      } else if (value.consumer_status === "obligation_missing") {
+          ["reporting_obligation_id", "reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
+      } else if (value.consumer_status === "revision_missing") {
+          require("reporting_obligation_id");
+          ["reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
+      } else if (value.consumer_status === "unreadable") {
+          require("reporting_obligation_id");
+          require("reporting_revision_id");
+          require("failure_code");
+          forbid("observed_revision_content_sha256");
+      }
+      if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
+          ctx.addIssue({ code: "custom", path: ["seller_ledger_snapshot_id"], message: "snapshot identity and time must be paired" });
+      }
+  }`;
+
+  let result = refine(content, 'ReportingConsumerStatusSchema', itemRefinement, true);
+  result = refine(
+    result,
+    'SyncReportingStatusRequestSchema',
+    `(value, ctx) => {
+      // reporting consumer status rc.2 parity
+      const allowed = new Set(["account", "idempotency_key", "statuses", "adcp_version", "adcp_major_version", "context", "ext"]);
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+      if (value.statuses.length < 1) ctx.addIssue({ code: "custom", path: ["statuses"], message: "Array must contain at least 1 element(s)" });
+      value.statuses.forEach((status, index) => {
+          const checked = ReportingConsumerStatusSchema.safeParse(status);
+          if (!checked.success) {
+              for (const issue of checked.error.issues) ctx.addIssue({ code: "custom", path: ["statuses", index, ...issue.path], message: issue.message });
+          }
+          if ((status as Record<string, unknown>).recorded_at !== undefined) {
+              ctx.addIssue({ code: "custom", path: ["statuses", index, "recorded_at"], message: "recorded_at is response-only" });
+          }
+      });
+    }`,
+    true
+  );
+  result = refine(
+    result,
+    'SyncReportingStatusResponseSchema',
+    `(value, ctx) => {
+      // reporting consumer status rc.2 parity
+      if (value.status === "completed" && value.results.length < 1) {
+          ctx.addIssue({ code: "custom", path: ["results"], message: "Array must contain at least 1 element(s)" });
+      }
+      if (value.status !== "completed") return;
+      value.results.forEach((entry, index) => {
+          if (entry.result === "failed") {
+              if (entry.errors.length < 1) ctx.addIssue({ code: "custom", path: ["results", index, "errors"], message: "Array must contain at least 1 element(s)" });
+              return;
+          }
+          const status = entry.consumer_status as Record<string, unknown>;
+          const checked = ReportingConsumerStatusSchema.safeParse(status);
+          if (!checked.success) {
+              for (const issue of checked.error.issues) ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", ...issue.path], message: issue.message });
+          }
+          if (status.recorded_at === undefined) {
+              ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", "recorded_at"], message: "recorded_at is required" });
+          }
+      });
+  }`
+  );
+  return result;
+}
+
 type ReportingFileManifestStrictnessTarget = {
   schemaName: string;
   path: string[];
@@ -5143,6 +5273,7 @@ async function generateZodSchemas() {
     // global extension passthrough policy intentionally does not cover.
     zodSchemas = postProcessGetReportingStatusViewRequiredFields(zodSchemas, reportingStatusRequiredByView);
     zodSchemas = postProcessReportingEvidenceStrictness(zodSchemas);
+    zodSchemas = postProcessReportingConsumerStatusConstraints(zodSchemas);
     zodSchemas = postProcessGetReportingStatusEvidenceStrictness(zodSchemas, reportingStatusClosedStructuresBySource);
     zodSchemas = postProcessReportingFileManifestStrictness(zodSchemas, reportingFileManifestClosedStructuresBySource);
 
@@ -5251,6 +5382,7 @@ export const __test__ = {
   reportingFileManifestClosedStructures,
   postProcessGetReportingStatusViewRequiredFields,
   postProcessReportingEvidenceStrictness,
+  postProcessReportingConsumerStatusConstraints,
   postProcessGetReportingStatusEvidenceStrictness,
   postProcessReportingFileManifestStrictness,
   postProcessObjectUnionIntersections,

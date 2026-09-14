@@ -128,8 +128,10 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.omi
     }
   });
 
-/** Published AdCP 3.2.0-rc.2 request schema. */
-export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema;
+/** Published AdCP 3.2.0-rc.2 request schema with the SDK's consumer-only item refinements. */
+export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema.extend({
+  statuses: z.array(ReportingConsumerStatusV1Schema).min(1).max(100),
+}).strict();
 
 // Validate the envelope independently so one malformed status does not reject
 // valid siblings. Each status is checked against the published schema below.
@@ -151,7 +153,23 @@ const SyncReportingStatusEnvelopeV1Schema = z
 
 export type ReportingConsumerStatusV1 = ReportingConsumerStatus;
 export type SyncReportingStatusRequestV1 = SyncReportingStatusRequest;
-export type SyncReportingStatusResponseV1 = SyncReportingStatusResponse;
+export type RecordedReportingConsumerStatusV1 = {
+  result: 'recorded' | 'unchanged';
+  consumer_status: ReportingConsumerStatusV1 & { recorded_at: string };
+};
+export type FailedReportingConsumerStatusV1 = {
+  result: 'failed';
+  reporting_status_id: string;
+  errors: [
+    { code: string; message: string; field?: string; details?: Record<string, unknown> },
+    ...Array<{ code: string; message: string; field?: string; details?: Record<string, unknown> }>,
+  ];
+};
+export type ReportingConsumerStatusResultV1 = RecordedReportingConsumerStatusV1 | FailedReportingConsumerStatusV1;
+export type SyncReportingStatusResponseV1 = Omit<SyncReportingStatusResponse, 'status' | 'results'> & {
+  status: 'completed';
+  results: [ReportingConsumerStatusResultV1, ...ReportingConsumerStatusResultV1[]];
+};
 
 export interface SyncReportingStatusHandlerOptionsV1<TContext = unknown> {
   /** Resolve the durable authenticated consumer principal. Payloads cannot assert it. */
@@ -488,37 +506,41 @@ function wireConsumerStatus(
 }
 
 function failed(ids: string[], code: string, message: string): SyncReportingStatusResponseV1 {
+  const results = ids.map(reporting_status_id => ({
+    result: 'failed' as const,
+    reporting_status_id,
+    errors: [{ code, message }] as FailedReportingConsumerStatusV1['errors'],
+  }));
+  if (results.length === 0) throw new TypeError('sync_reporting_status requires at least one result');
   return {
     adcp_version: wireAdcpVersion(),
     adcp_major_version: ADCP_MAJOR_VERSION,
     status: 'completed',
-    results: ids.map(reporting_status_id => ({
-      result: 'failed',
-      reporting_status_id,
-      errors: [{ code, message }],
-    })),
+    results: results as [FailedReportingConsumerStatusV1, ...FailedReportingConsumerStatusV1[]],
   };
 }
 
 function completed(
   results: Awaited<ReturnType<ReportingConsumerStatusLedgerStore['syncConsumerStatusBatch']>>
 ): SyncReportingStatusResponseV1 {
+  const wireResults: ReportingConsumerStatusResultV1[] = results.map(result =>
+    'value' in result
+      ? {
+          result: result.inserted ? ('recorded' as const) : ('unchanged' as const),
+          consumer_status: wireConsumerStatus(result.value),
+        }
+      : {
+          result: 'failed' as const,
+          reporting_status_id: result.reporting_status_id,
+          errors: [{ code: result.errorCode, message: result.safeMessage }],
+        }
+  );
+  if (wireResults.length === 0) throw new TypeError('sync_reporting_status store returned no item results');
   return {
     adcp_version: wireAdcpVersion(),
     adcp_major_version: ADCP_MAJOR_VERSION,
     status: 'completed',
-    results: results.map(result =>
-      'value' in result
-        ? {
-            result: result.inserted ? ('recorded' as const) : ('unchanged' as const),
-            consumer_status: wireConsumerStatus(result.value),
-          }
-        : {
-            result: 'failed' as const,
-            reporting_status_id: result.reporting_status_id,
-            errors: [{ code: result.errorCode, message: result.safeMessage }],
-          }
-    ),
+    results: wireResults as [ReportingConsumerStatusResultV1, ...ReportingConsumerStatusResultV1[]],
   };
 }
 

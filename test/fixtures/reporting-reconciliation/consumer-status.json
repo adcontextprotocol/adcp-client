@@ -1,0 +1,1039 @@
+{
+  "version": "1.0",
+  "protocol_version": "3.2.0-rc.2",
+  "description": "Portable sync_reporting_status acceptance vectors. Consumer status is an operational acknowledgement, never a managed-delivery or billing-receipt oracle.",
+  "frozen": {
+    "clocks": {
+      "spring_after_deadline": "2026-03-09T05:00:00Z",
+      "autumn_after_deadline": "2026-11-02T06:00:00Z",
+      "month_after_deadline": "2026-03-01T06:00:00Z",
+      "restatement": "2026-03-10T05:00:00Z"
+    },
+    "principals": {
+      "consumer_a": {
+        "authenticated_consumer_id": "portable-consumer-a",
+        "internal_account_id": "portable-account-0001"
+      },
+      "consumer_b": {
+        "authenticated_consumer_id": "portable-consumer-b",
+        "internal_account_id": "portable-account-0001"
+      },
+      "foreign": {
+        "authenticated_consumer_id": "portable-consumer-a",
+        "internal_account_id": "portable-account-foreign"
+      }
+    },
+    "configuration_generations": [
+      {
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 1,
+        "report_definition_id": "portable-delivery-v1",
+        "source_timezone": "America/New_York",
+        "anchor": "2026-03-08T05:00:00Z",
+        "installed_at": "2026-03-08T05:00:00Z",
+        "superseded_at": "2026-03-09T04:00:00Z",
+        "period_milliseconds": 82800000,
+        "delivery_sla_milliseconds": 3600000
+      },
+      {
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 2,
+        "report_definition_id": "portable-delivery-v1",
+        "source_timezone": "America/New_York",
+        "anchor": "2026-11-01T04:00:00Z",
+        "installed_at": "2026-11-01T04:00:00Z",
+        "superseded_at": "2026-11-02T05:00:00Z",
+        "period_milliseconds": 90000000,
+        "delivery_sla_milliseconds": 3600000
+      },
+      {
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 3,
+        "report_definition_id": "portable-delivery-v1",
+        "source_timezone": "America/New_York",
+        "anchor": "2026-02-01T05:00:00Z",
+        "installed_at": "2026-02-01T05:00:00Z",
+        "superseded_at": "2026-03-01T05:00:00Z",
+        "period_milliseconds": 2419200000,
+        "delivery_sla_milliseconds": 3600000
+      }
+    ],
+    "expected_periods": [
+      {
+        "id": "spring-23h",
+        "start": "2026-03-08T05:00:00Z",
+        "end": "2026-03-09T04:00:00Z",
+        "source_timezone": "America/New_York",
+        "duration_milliseconds": 82800000,
+        "expected_at": "2026-03-09T05:00:00Z"
+      },
+      {
+        "id": "autumn-25h",
+        "start": "2026-11-01T04:00:00Z",
+        "end": "2026-11-02T05:00:00Z",
+        "source_timezone": "America/New_York",
+        "duration_milliseconds": 90000000,
+        "expected_at": "2026-11-02T06:00:00Z"
+      },
+      {
+        "id": "calendar-month",
+        "start": "2026-02-01T05:00:00Z",
+        "end": "2026-03-01T05:00:00Z",
+        "source_timezone": "America/New_York",
+        "duration_milliseconds": 2419200000,
+        "expected_at": "2026-03-01T06:00:00Z"
+      }
+    ],
+    "core_revision_binding": {
+      "canonical_json_utf8_base64": "eyJhY2NvdW50X2lkIjoicG9ydGFibGUtYWNjb3VudC0wMDAxIiwicmVwb3J0aW5nX29ibGlnYXRpb25faWQiOiJwb3J0YWJsZS1vYmxpZ2F0aW9uLTAwMDEiLCJyZXBvcnRpbmdfcmV2aXNpb25faWQiOiJwb3J0YWJsZS1yZXZpc2lvbi0wMDAxIiwiY2Fub25pY2FsX2NvbnRlbnRfc2hhMjU2IjoiYmNkMDc5OTAyZjNjOGVkYjQzMTVkYmJkYWY5YjRlMzdmNmZkNWFmMzNjODBkMWZlNmFjOGM2NTU1ODEzNDJkNCIsInJvd19jb3VudCI6Mn0=",
+      "sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69",
+      "value": {
+        "account_id": "portable-account-0001",
+        "reporting_obligation_id": "portable-obligation-0001",
+        "reporting_revision_id": "portable-revision-0001",
+        "canonical_content_sha256": "bcd079902f3c8edb4315dbbdaf9b4e37f6fd5af33c80d1fe6ac8c655581342d4",
+        "row_count": 2
+      }
+    }
+  },
+  "wire_parity": {
+    "valid_statuses": [
+      {
+        "reporting_status_id": "portable-status-received-0001",
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 1,
+        "report_definition_id": "portable-delivery-v1",
+        "period": {
+          "start": "2026-03-08T05:00:00Z",
+          "end": "2026-03-09T04:00:00Z",
+          "source_timezone": "America/New_York"
+        },
+        "consumer_status": "received",
+        "status_as_of": "2026-03-09T05:00:00Z",
+        "reporting_obligation_id": "portable-obligation-0001",
+        "reporting_revision_id": "portable-revision-0001",
+        "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+      },
+      {
+        "reporting_status_id": "portable-status-obligation-missing-0001",
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 1,
+        "report_definition_id": "portable-delivery-v1",
+        "period": {
+          "start": "2026-03-08T05:00:00Z",
+          "end": "2026-03-09T04:00:00Z",
+          "source_timezone": "America/New_York"
+        },
+        "consumer_status": "obligation_missing",
+        "status_as_of": "2026-03-09T05:00:00Z"
+      },
+      {
+        "reporting_status_id": "portable-status-revision-missing-0001",
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 1,
+        "report_definition_id": "portable-delivery-v1",
+        "period": {
+          "start": "2026-03-08T05:00:00Z",
+          "end": "2026-03-09T04:00:00Z",
+          "source_timezone": "America/New_York"
+        },
+        "consumer_status": "revision_missing",
+        "status_as_of": "2026-03-09T05:00:00Z",
+        "reporting_obligation_id": "portable-obligation-0001"
+      },
+      {
+        "reporting_status_id": "portable-status-unreadable-0001",
+        "delivery_config_id": "portable-calendar-daily",
+        "delivery_config_version": 1,
+        "report_definition_id": "portable-delivery-v1",
+        "period": {
+          "start": "2026-03-08T05:00:00Z",
+          "end": "2026-03-09T04:00:00Z",
+          "source_timezone": "America/New_York"
+        },
+        "consumer_status": "unreadable",
+        "status_as_of": "2026-03-09T05:00:00Z",
+        "reporting_obligation_id": "portable-obligation-0001",
+        "reporting_revision_id": "portable-revision-0001",
+        "failure_code": "integrity_mismatch"
+      }
+    ],
+    "invalid_status_mutations": [
+      {
+        "id": "received-missing-evidence",
+        "base": "received",
+        "remove": ["reporting_obligation_id", "reporting_revision_id", "observed_revision_content_sha256"]
+      },
+      {
+        "id": "obligation-missing-with-id",
+        "base": "obligation_missing",
+        "add": {
+          "reporting_obligation_id": "portable-obligation-0001"
+        }
+      },
+      {
+        "id": "revision-missing-with-revision",
+        "base": "revision_missing",
+        "add": {
+          "reporting_revision_id": "portable-revision-0001"
+        }
+      },
+      {
+        "id": "unreadable-with-observed-digest",
+        "base": "unreadable",
+        "add": {
+          "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+        }
+      },
+      {
+        "id": "caller-recorded-at",
+        "base": "received",
+        "add": {
+          "recorded_at": "2026-03-09T05:00:01Z"
+        }
+      },
+      {
+        "id": "open-status-object",
+        "base": "obligation_missing",
+        "add": {
+          "unexpected": true
+        }
+      },
+      {
+        "id": "open-period-object",
+        "base": "obligation_missing",
+        "add_period": {
+          "unexpected": true
+        }
+      }
+    ],
+    "response_rules": [
+      {
+        "id": "recorded-requires-recorded-at",
+        "result": "recorded",
+        "required": ["consumer_status.recorded_at"]
+      },
+      {
+        "id": "unchanged-requires-recorded-at",
+        "result": "unchanged",
+        "required": ["consumer_status.recorded_at"]
+      },
+      {
+        "id": "completed-results-nonempty",
+        "minimum_results": 1
+      },
+      {
+        "id": "failed-errors-nonempty",
+        "result": "failed",
+        "minimum_errors": 1
+      }
+    ]
+  },
+  "scenario_groups": {
+    "independent_expected_periods": [
+      {
+        "id": "spring-23h-missing",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtc3ByaW5nLTAwMDEiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1vYmxpZ2F0aW9uLW1pc3NpbmctMDAwMSIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjEsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAzLTA4VDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDlUMDQ6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJvYmxpZ2F0aW9uX21pc3NpbmciLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiJ9XX0=",
+        "input_sha256": "754389001c55dc3f48ee22de47b8387f568dad6ff315759929e42d7768de02c6",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-spring-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-obligation-missing-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-03-09T05:00:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-obligation-missing-0001"
+          }
+        ],
+        "post_state": {
+          "obligations_created": 0,
+          "current_leaf": "portable-status-obligation-missing-0001"
+        }
+      },
+      {
+        "id": "autumn-25h-missing",
+        "principal": "consumer_a",
+        "clock": "autumn_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtYXV0dW1uLTAwMDEiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1hdXR1bW4tbWlzc2luZy0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MiwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMTEtMDFUMDQ6MDA6MDBaIiwiZW5kIjoiMjAyNi0xMS0wMlQwNTowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6Im9ibGlnYXRpb25fbWlzc2luZyIsInN0YXR1c19hc19vZiI6IjIwMjYtMTEtMDJUMDY6MDA6MDBaIn1dfQ==",
+        "input_sha256": "737fb3610e83e79d4896d23be4f5c7a95cc54cedf688e69cbd84a3d440ca2c78",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-autumn-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-autumn-missing-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 2,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-11-01T04:00:00Z",
+                "end": "2026-11-02T05:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-11-02T06:00:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-autumn-missing-0001"
+          }
+        ],
+        "post_state": {
+          "obligations_created": 0,
+          "current_leaf": "portable-status-autumn-missing-0001"
+        }
+      },
+      {
+        "id": "calendar-month-missing",
+        "principal": "consumer_a",
+        "clock": "month_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtbW9udGgtMDAwMSIsInN0YXR1c2VzIjpbeyJyZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLW1vbnRoLW1pc3NpbmctMDAwMSIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjMsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAyLTAxVDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDFUMDU6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJvYmxpZ2F0aW9uX21pc3NpbmciLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTAxVDA2OjAwOjAwWiJ9XX0=",
+        "input_sha256": "ae35a30273ef08e2d443661ae8e3e8c4cb3b61246188fa50962a7194f15d916f",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-month-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-month-missing-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 3,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-02-01T05:00:00Z",
+                "end": "2026-03-01T05:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-03-01T06:00:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-month-missing-0001"
+          }
+        ],
+        "post_state": {
+          "obligations_created": 0,
+          "current_leaf": "portable-status-month-missing-0001"
+        }
+      },
+      {
+        "id": "ineligible-generation",
+        "principal": "consumer_a",
+        "clock": "autumn_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtaW5lbGlnaWJsZS0wMDAxIiwic3RhdHVzZXMiOlt7InJlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtaW5lbGlnaWJsZS0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMTEtMDFUMDQ6MDA6MDBaIiwiZW5kIjoiMjAyNi0xMS0wMlQwNTowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6Im9ibGlnYXRpb25fbWlzc2luZyIsInN0YXR1c19hc19vZiI6IjIwMjYtMTEtMDJUMDY6MDA6MDBaIn1dfQ==",
+        "input_sha256": "79536c4cc2c04f031c52e8aa58e039f8ef670990521fd07534e964ffd00ebcd1",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-ineligible-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-ineligible-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-11-01T04:00:00Z",
+                "end": "2026-11-02T05:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-11-02T06:00:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-ineligible-0001",
+            "error": "VALIDATION_ERROR"
+          }
+        ],
+        "post_state": {
+          "inserted": 0
+        }
+      }
+    ],
+    "repair_and_restatement": [
+      {
+        "id": "missing-root",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmVwYWlyLXJvb3QiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1vYmxpZ2F0aW9uLW1pc3NpbmctMDAwMSIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjEsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAzLTA4VDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDlUMDQ6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJvYmxpZ2F0aW9uX21pc3NpbmciLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiJ9XX0=",
+        "input_sha256": "aa9146d8a143865ef8de54973c354e9608f34db321df6f98701d8307d522747f",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-repair-root",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-obligation-missing-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-03-09T05:00:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-obligation-missing-0001"
+          }
+        ],
+        "post_state": {
+          "chain": ["portable-status-obligation-missing-0001"],
+          "current_leaf": "portable-status-obligation-missing-0001"
+        }
+      },
+      {
+        "id": "repaired-received",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmVwYWlyZWQiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1yZXBhaXJlZC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJlY2VpdmVkIiwic3RhdHVzX2FzX29mIjoiMjAyNi0wMy0wOVQwNTowMDowMFoiLCJyZXBvcnRpbmdfb2JsaWdhdGlvbl9pZCI6InBvcnRhYmxlLW9ibGlnYXRpb24tMDAwMSIsInJlcG9ydGluZ19yZXZpc2lvbl9pZCI6InBvcnRhYmxlLXJldmlzaW9uLTAwMDEiLCJvYnNlcnZlZF9yZXZpc2lvbl9jb250ZW50X3NoYTI1NiI6IjA2MDdiMDQ4ODE0NTUxM2Y2NWM1NDg3MTEwNDNiYzdkZWY3ZTVmMWNmMDU0M2I5ZWJjOTE5MDQzOGEwNjJiNjkiLCJzdXBlcnNlZGVzX3JlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtb2JsaWdhdGlvbi1taXNzaW5nLTAwMDEifV19",
+        "input_sha256": "7c0e2cae6498bc9e00238c8e4f6672f441587ad1c3bb3ddeb5045cf568037c07",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-repaired",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-repaired-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69",
+              "supersedes_reporting_status_id": "portable-status-obligation-missing-0001"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-repaired-0001"
+          }
+        ],
+        "post_state": {
+          "chain": ["portable-status-obligation-missing-0001", "portable-status-repaired-0001"],
+          "current_leaf": "portable-status-repaired-0001",
+          "mismatch": false
+        }
+      },
+      {
+        "id": "seller-restatement-readback",
+        "principal": "consumer_a",
+        "clock": "restatement",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmVzdGF0ZW1lbnQtcmVhZGJhY2siLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1yZXN0YXRlZC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJlY2VpdmVkIiwic3RhdHVzX2FzX29mIjoiMjAyNi0wMy0xMFQwNTowMDowMFoiLCJyZXBvcnRpbmdfb2JsaWdhdGlvbl9pZCI6InBvcnRhYmxlLW9ibGlnYXRpb24tMDAwMSIsInJlcG9ydGluZ19yZXZpc2lvbl9pZCI6InBvcnRhYmxlLXJldmlzaW9uLTAwMDIiLCJvYnNlcnZlZF9yZXZpc2lvbl9jb250ZW50X3NoYTI1NiI6ImVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUiLCJzdXBlcnNlZGVzX3JlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtcmVwYWlyZWQtMDAwMSJ9XX0=",
+        "input_sha256": "b131715eb707069f93bca7f3bde8cc9e4b1081e15c3fe151f4492ee2ef35eef8",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-restatement-readback",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-restated-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-10T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0002",
+              "observed_revision_content_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+              "supersedes_reporting_status_id": "portable-status-repaired-0001"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-restated-0001"
+          }
+        ],
+        "post_state": {
+          "prior_observation_immutable": true,
+          "seller_current_revision": "portable-revision-0002",
+          "current_leaf": "portable-status-restated-0001",
+          "mismatch": false
+        }
+      }
+    ],
+    "replay_and_concurrency": [
+      {
+        "id": "exact-batch-retry",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmVwbGF5LTAwMDEiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1yZWNlaXZlZC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJlY2VpdmVkIiwic3RhdHVzX2FzX29mIjoiMjAyNi0wMy0wOVQwNTowMDowMFoiLCJyZXBvcnRpbmdfb2JsaWdhdGlvbl9pZCI6InBvcnRhYmxlLW9ibGlnYXRpb24tMDAwMSIsInJlcG9ydGluZ19yZXZpc2lvbl9pZCI6InBvcnRhYmxlLXJldmlzaW9uLTAwMDEiLCJvYnNlcnZlZF9yZXZpc2lvbl9jb250ZW50X3NoYTI1NiI6IjA2MDdiMDQ4ODE0NTUxM2Y2NWM1NDg3MTEwNDNiYzdkZWY3ZTVmMWNmMDU0M2I5ZWJjOTE5MDQzOGEwNjJiNjkifV19",
+        "input_sha256": "9da0d636dd9bbb6471c7d147accbbfb2c7a1c80cad4895c598bc90d4ae7475e6",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-replay-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-received-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-received-0001",
+            "replay_returns_original_result": true
+          }
+        ],
+        "post_state": {
+          "inserted_once": true,
+          "current_leaf": "portable-status-received-0001"
+        }
+      },
+      {
+        "id": "same-statement-new-batch",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmVwbGF5LTAwMDIiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1yZWNlaXZlZC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJlY2VpdmVkIiwic3RhdHVzX2FzX29mIjoiMjAyNi0wMy0wOVQwNTowMDowMFoiLCJyZXBvcnRpbmdfb2JsaWdhdGlvbl9pZCI6InBvcnRhYmxlLW9ibGlnYXRpb24tMDAwMSIsInJlcG9ydGluZ19yZXZpc2lvbl9pZCI6InBvcnRhYmxlLXJldmlzaW9uLTAwMDEiLCJvYnNlcnZlZF9yZXZpc2lvbl9jb250ZW50X3NoYTI1NiI6IjA2MDdiMDQ4ODE0NTUxM2Y2NWM1NDg3MTEwNDNiYzdkZWY3ZTVmMWNmMDU0M2I5ZWJjOTE5MDQzOGEwNjJiNjkifV19",
+        "input_sha256": "357c1298c8c3391f3c1fe5695dbbf393ba30d264280fe2da337c2cddec36f763",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-replay-0002",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-received-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "unchanged",
+            "reporting_status_id": "portable-status-received-0001"
+          }
+        ],
+        "post_state": {
+          "inserted_once": true,
+          "current_leaf": "portable-status-received-0001"
+        }
+      },
+      {
+        "id": "changed-content-conflict",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmVwbGF5LTAwMDMiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1yZWNlaXZlZC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJlY2VpdmVkIiwic3RhdHVzX2FzX29mIjoiMjAyNi0wMy0wOVQwNTowMDowMVoiLCJyZXBvcnRpbmdfb2JsaWdhdGlvbl9pZCI6InBvcnRhYmxlLW9ibGlnYXRpb24tMDAwMSIsInJlcG9ydGluZ19yZXZpc2lvbl9pZCI6InBvcnRhYmxlLXJldmlzaW9uLTAwMDEiLCJvYnNlcnZlZF9yZXZpc2lvbl9jb250ZW50X3NoYTI1NiI6IjA2MDdiMDQ4ODE0NTUxM2Y2NWM1NDg3MTEwNDNiYzdkZWY3ZTVmMWNmMDU0M2I5ZWJjOTE5MDQzOGEwNjJiNjkifV19",
+        "input_sha256": "e9bf06f6218bb0b4486335f7c94bd3a579293a237ff239d239c9a7eb1d833192",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-replay-0003",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-received-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:01Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-received-0001",
+            "error": "IDEMPOTENCY_CONFLICT"
+          }
+        ],
+        "post_state": {
+          "inserted_once": true,
+          "current_leaf": "portable-status-received-0001"
+        }
+      },
+      {
+        "id": "mixed-valid-invalid",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtbWl4ZWQtMDAwMSIsInN0YXR1c2VzIjpbeyJyZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLW9ibGlnYXRpb24tbWlzc2luZy0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6Im9ibGlnYXRpb25fbWlzc2luZyIsInN0YXR1c19hc19vZiI6IjIwMjYtMDMtMDlUMDU6MDA6MDBaIn0seyJyZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLW1hbGZvcm1lZC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MS41LCJyZXBvcnRfZGVmaW5pdGlvbl9pZCI6InBvcnRhYmxlLWRlbGl2ZXJ5LXYxIiwicGVyaW9kIjp7InN0YXJ0IjoiMjAyNi0wMy0wOFQwNTowMDowMFoiLCJlbmQiOiIyMDI2LTAzLTA5VDA0OjAwOjAwWiIsInNvdXJjZV90aW1lem9uZSI6IkFtZXJpY2EvTmV3X1lvcmsifSwiY29uc3VtZXJfc3RhdHVzIjoicmVjZWl2ZWQiLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiIsInJlcG9ydGluZ19vYmxpZ2F0aW9uX2lkIjoicG9ydGFibGUtb2JsaWdhdGlvbi0wMDAxIiwicmVwb3J0aW5nX3JldmlzaW9uX2lkIjoicG9ydGFibGUtcmV2aXNpb24tMDAwMSIsIm9ic2VydmVkX3JldmlzaW9uX2NvbnRlbnRfc2hhMjU2IjoiMDYwN2IwNDg4MTQ1NTEzZjY1YzU0ODcxMTA0M2JjN2RlZjdlNWYxY2YwNTQzYjllYmM5MTkwNDM4YTA2MmI2OSJ9XX0=",
+        "input_sha256": "380ae85e59b1f7ee6655a59c70f17b83f78f332106eff1d846dbc081e13af648",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-mixed-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-obligation-missing-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-03-09T05:00:00Z"
+            },
+            {
+              "reporting_status_id": "portable-status-malformed-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1.5,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-obligation-missing-0001"
+          },
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-malformed-0001",
+            "error": "VALIDATION_ERROR"
+          }
+        ],
+        "post_state": {
+          "inserted": ["portable-status-obligation-missing-0001"],
+          "rejected": ["portable-status-malformed-0001"]
+        }
+      },
+      {
+        "id": "duplicate-chain-batch",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtZHVwbGljYXRlLTAwMDEiLCJzdGF0dXNlcyI6W3sicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1vYmxpZ2F0aW9uLW1pc3NpbmctMDAwMSIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjEsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAzLTA4VDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDlUMDQ6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJvYmxpZ2F0aW9uX21pc3NpbmciLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiJ9LHsicmVwb3J0aW5nX3N0YXR1c19pZCI6InBvcnRhYmxlLXN0YXR1cy1kdXBsaWNhdGUtMDAwMiIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjEsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAzLTA4VDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDlUMDQ6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJvYmxpZ2F0aW9uX21pc3NpbmciLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiJ9XX0=",
+        "input_sha256": "c763c9cdaa29813a26f91d52dc146789fa9a6109e3b22ba93513a7c502ba4a7d",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-duplicate-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-obligation-missing-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-03-09T05:00:00Z"
+            },
+            {
+              "reporting_status_id": "portable-status-duplicate-0002",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "obligation_missing",
+              "status_as_of": "2026-03-09T05:00:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-obligation-missing-0001",
+            "error": "IDEMPOTENCY_CONFLICT"
+          },
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-duplicate-0002",
+            "error": "IDEMPOTENCY_CONFLICT"
+          }
+        ],
+        "post_state": {
+          "inserted": 0
+        }
+      },
+      {
+        "id": "competing-successors",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "concurrent_inputs": [
+          {
+            "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtbGVmdC0wMDAxIiwic3RhdHVzZXMiOlt7InJlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtbGVmdC0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJldmlzaW9uX21pc3NpbmciLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiIsInJlcG9ydGluZ19vYmxpZ2F0aW9uX2lkIjoicG9ydGFibGUtb2JsaWdhdGlvbi0wMDAxIiwic3VwZXJzZWRlc19yZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLXJldmlzaW9uLW1pc3NpbmctMDAwMSJ9XX0=",
+            "input_sha256": "030eb4abf059f5343c5724fe2c619a0d77c8e063e452ece4d5211cc346b5abd6",
+            "request": {
+              "account": {
+                "account_id": "portable-account-0001"
+              },
+              "idempotency_key": "portable-batch-left-0001",
+              "statuses": [
+                {
+                  "reporting_status_id": "portable-status-left-0001",
+                  "delivery_config_id": "portable-calendar-daily",
+                  "delivery_config_version": 1,
+                  "report_definition_id": "portable-delivery-v1",
+                  "period": {
+                    "start": "2026-03-08T05:00:00Z",
+                    "end": "2026-03-09T04:00:00Z",
+                    "source_timezone": "America/New_York"
+                  },
+                  "consumer_status": "revision_missing",
+                  "status_as_of": "2026-03-09T05:00:00Z",
+                  "reporting_obligation_id": "portable-obligation-0001",
+                  "supersedes_reporting_status_id": "portable-status-revision-missing-0001"
+                }
+              ]
+            }
+          },
+          {
+            "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtcmlnaHQtMDAwMSIsInN0YXR1c2VzIjpbeyJyZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLXJpZ2h0LTAwMDEiLCJkZWxpdmVyeV9jb25maWdfaWQiOiJwb3J0YWJsZS1jYWxlbmRhci1kYWlseSIsImRlbGl2ZXJ5X2NvbmZpZ192ZXJzaW9uIjoxLCJyZXBvcnRfZGVmaW5pdGlvbl9pZCI6InBvcnRhYmxlLWRlbGl2ZXJ5LXYxIiwicGVyaW9kIjp7InN0YXJ0IjoiMjAyNi0wMy0wOFQwNTowMDowMFoiLCJlbmQiOiIyMDI2LTAzLTA5VDA0OjAwOjAwWiIsInNvdXJjZV90aW1lem9uZSI6IkFtZXJpY2EvTmV3X1lvcmsifSwiY29uc3VtZXJfc3RhdHVzIjoicmV2aXNpb25fbWlzc2luZyIsInN0YXR1c19hc19vZiI6IjIwMjYtMDMtMDlUMDU6MDA6MDBaIiwicmVwb3J0aW5nX29ibGlnYXRpb25faWQiOiJwb3J0YWJsZS1vYmxpZ2F0aW9uLTAwMDEiLCJzdXBlcnNlZGVzX3JlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtcmV2aXNpb24tbWlzc2luZy0wMDAxIn1dfQ==",
+            "input_sha256": "6f50bad68a3b8e194326e40cd722204ac575ffbc14ceac298da8c67027079e57",
+            "request": {
+              "account": {
+                "account_id": "portable-account-0001"
+              },
+              "idempotency_key": "portable-batch-right-0001",
+              "statuses": [
+                {
+                  "reporting_status_id": "portable-status-right-0001",
+                  "delivery_config_id": "portable-calendar-daily",
+                  "delivery_config_version": 1,
+                  "report_definition_id": "portable-delivery-v1",
+                  "period": {
+                    "start": "2026-03-08T05:00:00Z",
+                    "end": "2026-03-09T04:00:00Z",
+                    "source_timezone": "America/New_York"
+                  },
+                  "consumer_status": "revision_missing",
+                  "status_as_of": "2026-03-09T05:00:00Z",
+                  "reporting_obligation_id": "portable-obligation-0001",
+                  "supersedes_reporting_status_id": "portable-status-revision-missing-0001"
+                }
+              ]
+            }
+          }
+        ],
+        "expected_results_unordered": ["recorded", "failed"],
+        "post_state": {
+          "chain_length": 2,
+          "current_leaf_count": 1
+        }
+      },
+      {
+        "id": "commit-before-ack-recovery",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtbG9zcy0wMDAxIiwic3RhdHVzZXMiOlt7InJlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtcmVjZWl2ZWQtMDAwMSIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjEsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAzLTA4VDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDlUMDQ6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJyZWNlaXZlZCIsInN0YXR1c19hc19vZiI6IjIwMjYtMDMtMDlUMDU6MDA6MDBaIiwicmVwb3J0aW5nX29ibGlnYXRpb25faWQiOiJwb3J0YWJsZS1vYmxpZ2F0aW9uLTAwMDEiLCJyZXBvcnRpbmdfcmV2aXNpb25faWQiOiJwb3J0YWJsZS1yZXZpc2lvbi0wMDAxIiwib2JzZXJ2ZWRfcmV2aXNpb25fY29udGVudF9zaGEyNTYiOiIwNjA3YjA0ODgxNDU1MTNmNjVjNTQ4NzExMDQzYmM3ZGVmN2U1ZjFjZjA1NDNiOWViYzkxOTA0MzhhMDYyYjY5In1dfQ==",
+        "input_sha256": "f79a27645535edc1021e6253c3b2ffb0994bea597518ff33d24185e0f8ab6b46",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-loss-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-received-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-received-0001",
+            "returned_after_retry": true
+          }
+        ],
+        "post_state": {
+          "transaction_committed_before_lost_ack": true,
+          "inserted_once": true
+        }
+      }
+    ],
+    "scope_and_evidence_separation": [
+      {
+        "id": "foreign-account",
+        "principal": "foreign",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtZm9yZWlnbi0wMDAxIiwic3RhdHVzZXMiOlt7InJlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtcmVjZWl2ZWQtMDAwMSIsImRlbGl2ZXJ5X2NvbmZpZ19pZCI6InBvcnRhYmxlLWNhbGVuZGFyLWRhaWx5IiwiZGVsaXZlcnlfY29uZmlnX3ZlcnNpb24iOjEsInJlcG9ydF9kZWZpbml0aW9uX2lkIjoicG9ydGFibGUtZGVsaXZlcnktdjEiLCJwZXJpb2QiOnsic3RhcnQiOiIyMDI2LTAzLTA4VDA1OjAwOjAwWiIsImVuZCI6IjIwMjYtMDMtMDlUMDQ6MDA6MDBaIiwic291cmNlX3RpbWV6b25lIjoiQW1lcmljYS9OZXdfWW9yayJ9LCJjb25zdW1lcl9zdGF0dXMiOiJyZWNlaXZlZCIsInN0YXR1c19hc19vZiI6IjIwMjYtMDMtMDlUMDU6MDA6MDBaIiwicmVwb3J0aW5nX29ibGlnYXRpb25faWQiOiJwb3J0YWJsZS1vYmxpZ2F0aW9uLTAwMDEiLCJyZXBvcnRpbmdfcmV2aXNpb25faWQiOiJwb3J0YWJsZS1yZXZpc2lvbi0wMDAxIiwib2JzZXJ2ZWRfcmV2aXNpb25fY29udGVudF9zaGEyNTYiOiIwNjA3YjA0ODgxNDU1MTNmNjVjNTQ4NzExMDQzYmM3ZGVmN2U1ZjFjZjA1NDNiOWViYzkxOTA0MzhhMDYyYjY5In1dfQ==",
+        "input_sha256": "49710f1157dd9029a51de4e7ca290b136f03e6448ef6c38eab69ab828c356e64",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-foreign-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-received-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-received-0001",
+            "error": "PERMISSION_DENIED"
+          }
+        ],
+        "post_state": {
+          "cross_scope_reads": 0,
+          "inserted": 0
+        }
+      },
+      {
+        "id": "foreign-consumer-supersession",
+        "principal": "consumer_b",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtY29uc3VtZXItYi0wMDAxIiwic3RhdHVzZXMiOlt7InJlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtY29uc3VtZXItYi0wMDAxIiwiZGVsaXZlcnlfY29uZmlnX2lkIjoicG9ydGFibGUtY2FsZW5kYXItZGFpbHkiLCJkZWxpdmVyeV9jb25maWdfdmVyc2lvbiI6MSwicmVwb3J0X2RlZmluaXRpb25faWQiOiJwb3J0YWJsZS1kZWxpdmVyeS12MSIsInBlcmlvZCI6eyJzdGFydCI6IjIwMjYtMDMtMDhUMDU6MDA6MDBaIiwiZW5kIjoiMjAyNi0wMy0wOVQwNDowMDowMFoiLCJzb3VyY2VfdGltZXpvbmUiOiJBbWVyaWNhL05ld19Zb3JrIn0sImNvbnN1bWVyX3N0YXR1cyI6InJlY2VpdmVkIiwic3RhdHVzX2FzX29mIjoiMjAyNi0wMy0wOVQwNTowMDowMFoiLCJyZXBvcnRpbmdfb2JsaWdhdGlvbl9pZCI6InBvcnRhYmxlLW9ibGlnYXRpb24tMDAwMSIsInJlcG9ydGluZ19yZXZpc2lvbl9pZCI6InBvcnRhYmxlLXJldmlzaW9uLTAwMDEiLCJvYnNlcnZlZF9yZXZpc2lvbl9jb250ZW50X3NoYTI1NiI6IjA2MDdiMDQ4ODE0NTUxM2Y2NWM1NDg3MTEwNDNiYzdkZWY3ZTVmMWNmMDU0M2I5ZWJjOTE5MDQzOGEwNjJiNjkiLCJzdXBlcnNlZGVzX3JlcG9ydGluZ19zdGF0dXNfaWQiOiJwb3J0YWJsZS1zdGF0dXMtcmVjZWl2ZWQtMDAwMSJ9XX0=",
+        "input_sha256": "c213f08fa7c47484d21826fd09a5054430dfc35fb5a5d67a5f87c844e4e5b835",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-consumer-b-0001",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-consumer-b-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69",
+              "supersedes_reporting_status_id": "portable-status-received-0001"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-consumer-b-0001",
+            "error": "IDEMPOTENCY_CONFLICT"
+          }
+        ],
+        "post_state": {
+          "consumer_a_chain_unchanged": true,
+          "consumer_b_inserted": 0
+        }
+      },
+      {
+        "id": "expired-snapshot-provenance",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtZXhwaXJlZC1zbmFwc2hvdCIsInN0YXR1c2VzIjpbeyJyZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLWV4cGlyZWQtc25hcHNob3QiLCJkZWxpdmVyeV9jb25maWdfaWQiOiJwb3J0YWJsZS1jYWxlbmRhci1kYWlseSIsImRlbGl2ZXJ5X2NvbmZpZ192ZXJzaW9uIjoxLCJyZXBvcnRfZGVmaW5pdGlvbl9pZCI6InBvcnRhYmxlLWRlbGl2ZXJ5LXYxIiwicGVyaW9kIjp7InN0YXJ0IjoiMjAyNi0wMy0wOFQwNTowMDowMFoiLCJlbmQiOiIyMDI2LTAzLTA5VDA0OjAwOjAwWiIsInNvdXJjZV90aW1lem9uZSI6IkFtZXJpY2EvTmV3X1lvcmsifSwiY29uc3VtZXJfc3RhdHVzIjoicmVjZWl2ZWQiLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiIsInJlcG9ydGluZ19vYmxpZ2F0aW9uX2lkIjoicG9ydGFibGUtb2JsaWdhdGlvbi0wMDAxIiwicmVwb3J0aW5nX3JldmlzaW9uX2lkIjoicG9ydGFibGUtcmV2aXNpb24tMDAwMSIsIm9ic2VydmVkX3JldmlzaW9uX2NvbnRlbnRfc2hhMjU2IjoiMDYwN2IwNDg4MTQ1NTEzZjY1YzU0ODcxMTA0M2JjN2RlZjdlNWYxY2YwNTQzYjllYmM5MTkwNDM4YTA2MmI2OSIsInNlbGxlcl9sZWRnZXJfc25hcHNob3RfaWQiOiJwb3J0YWJsZS1leHBpcmVkLXNuYXBzaG90Iiwic2VsbGVyX2xlZGdlcl9hc19vZiI6IjIwMjYtMDMtMDlUMDQ6MzA6MDBaIn1dfQ==",
+        "input_sha256": "b70ad64f26e0565813260b077a14fb3e5446a92df78a5dd35be35a57c0ffdb2b",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-expired-snapshot",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-expired-snapshot",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69",
+              "seller_ledger_snapshot_id": "portable-expired-snapshot",
+              "seller_ledger_as_of": "2026-03-09T04:30:00Z"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "failed",
+            "reporting_status_id": "portable-status-expired-snapshot",
+            "error": "VALIDATION_ERROR"
+          }
+        ],
+        "post_state": {
+          "inserted": 0,
+          "unavailable_result_equal_for_expired_and_foreign": true
+        }
+      },
+      {
+        "id": "received-is-not-a-receipt",
+        "principal": "consumer_a",
+        "clock": "spring_after_deadline",
+        "input_utf8_base64": "eyJhY2NvdW50Ijp7ImFjY291bnRfaWQiOiJwb3J0YWJsZS1hY2NvdW50LTAwMDEifSwiaWRlbXBvdGVuY3lfa2V5IjoicG9ydGFibGUtYmF0Y2gtZXZpZGVuY2Utc2VwYXJhdGlvbiIsInN0YXR1c2VzIjpbeyJyZXBvcnRpbmdfc3RhdHVzX2lkIjoicG9ydGFibGUtc3RhdHVzLXJlY2VpdmVkLTAwMDEiLCJkZWxpdmVyeV9jb25maWdfaWQiOiJwb3J0YWJsZS1jYWxlbmRhci1kYWlseSIsImRlbGl2ZXJ5X2NvbmZpZ192ZXJzaW9uIjoxLCJyZXBvcnRfZGVmaW5pdGlvbl9pZCI6InBvcnRhYmxlLWRlbGl2ZXJ5LXYxIiwicGVyaW9kIjp7InN0YXJ0IjoiMjAyNi0wMy0wOFQwNTowMDowMFoiLCJlbmQiOiIyMDI2LTAzLTA5VDA0OjAwOjAwWiIsInNvdXJjZV90aW1lem9uZSI6IkFtZXJpY2EvTmV3X1lvcmsifSwiY29uc3VtZXJfc3RhdHVzIjoicmVjZWl2ZWQiLCJzdGF0dXNfYXNfb2YiOiIyMDI2LTAzLTA5VDA1OjAwOjAwWiIsInJlcG9ydGluZ19vYmxpZ2F0aW9uX2lkIjoicG9ydGFibGUtb2JsaWdhdGlvbi0wMDAxIiwicmVwb3J0aW5nX3JldmlzaW9uX2lkIjoicG9ydGFibGUtcmV2aXNpb24tMDAwMSIsIm9ic2VydmVkX3JldmlzaW9uX2NvbnRlbnRfc2hhMjU2IjoiMDYwN2IwNDg4MTQ1NTEzZjY1YzU0ODcxMTA0M2JjN2RlZjdlNWYxY2YwNTQzYjllYmM5MTkwNDM4YTA2MmI2OSJ9XX0=",
+        "input_sha256": "3709378d29b92844426d7de71489d750209da66990ae46828df807eaefa6504d",
+        "request": {
+          "account": {
+            "account_id": "portable-account-0001"
+          },
+          "idempotency_key": "portable-batch-evidence-separation",
+          "statuses": [
+            {
+              "reporting_status_id": "portable-status-received-0001",
+              "delivery_config_id": "portable-calendar-daily",
+              "delivery_config_version": 1,
+              "report_definition_id": "portable-delivery-v1",
+              "period": {
+                "start": "2026-03-08T05:00:00Z",
+                "end": "2026-03-09T04:00:00Z",
+                "source_timezone": "America/New_York"
+              },
+              "consumer_status": "received",
+              "status_as_of": "2026-03-09T05:00:00Z",
+              "reporting_obligation_id": "portable-obligation-0001",
+              "reporting_revision_id": "portable-revision-0001",
+              "observed_revision_content_sha256": "0607b0488145513f65c548711043bc7def7e5f1cf0543b9ebc9190438a062b69"
+            }
+          ]
+        },
+        "expected_results": [
+          {
+            "result": "recorded",
+            "reporting_status_id": "portable-status-received-0001"
+          }
+        ],
+        "post_state": {
+          "consumer_status_count": 1,
+          "materialization_count": 0,
+          "billing_receipt_count": 0,
+          "invoice_accepted": false
+        }
+      }
+    ]
+  }
+}

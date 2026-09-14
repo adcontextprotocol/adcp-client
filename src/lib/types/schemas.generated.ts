@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T00:29:42.705Z
+// Generated at: 2026-09-14T02:01:47.138Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6637,7 +6637,8 @@ export const AdditionalGoldenVectorSchema = z.object({
     sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
 }).passthrough();
 
-export const ReportingConsumerStatusSchema = z.object({}).passthrough().merge(z.object({
+export const ReportingConsumerStatusSchema = (() => {
+          const objectSchema = z.object({}).passthrough().merge(z.object({
     reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")),
     supersedes_reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
     delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
@@ -6659,6 +6660,63 @@ export const ReportingConsumerStatusSchema = z.object({}).passthrough().merge(z.
     seller_ledger_as_of: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     recorded_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).passthrough());
+          const exactSchema = objectSchema.superRefine((value, ctx) => {
+      // reporting consumer status rc.2 parity
+      const require = (field: string) => {
+          if ((value as Record<string, unknown>)[field] === undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is required" });
+          }
+      };
+      const forbid = (field: string) => {
+          if ((value as Record<string, unknown>)[field] !== undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
+          }
+      };
+      const allowed = new Set([
+          "reporting_status_id", "supersedes_reporting_status_id", "delivery_config_id",
+          "delivery_config_version", "report_definition_id", "period", "reporting_obligation_id",
+          "reporting_revision_id", "observed_revision_content_sha256", "consumer_status",
+          "status_as_of", "failure_code", "consumer_commit_ref", "seller_ledger_snapshot_id",
+          "seller_ledger_as_of", "recorded_at", "ext"
+      ]);
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+      const period = (value as Record<string, unknown>).period;
+      if (period && typeof period === "object" && !Array.isArray(period)) {
+          for (const field of Object.keys(period)) {
+              if (!["start", "end", "source_timezone"].includes(field)) {
+                  ctx.addIssue({ code: "custom", path: ["period", field], message: "Unrecognized key" });
+              }
+          }
+      }
+      if (value.consumer_status === "received") {
+          require("reporting_obligation_id");
+          require("reporting_revision_id");
+          require("observed_revision_content_sha256");
+          forbid("failure_code");
+      } else if (value.consumer_status === "obligation_missing") {
+          ["reporting_obligation_id", "reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
+      } else if (value.consumer_status === "revision_missing") {
+          require("reporting_obligation_id");
+          ["reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
+      } else if (value.consumer_status === "unreadable") {
+          require("reporting_obligation_id");
+          require("reporting_revision_id");
+          require("failure_code");
+          forbid("observed_revision_content_sha256");
+      }
+      if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
+          ctx.addIssue({ code: "custom", path: ["seller_ledger_snapshot_id"], message: "snapshot identity and time must be paired" });
+      }
+  });
+          return Object.assign(exactSchema, {
+              pick: objectSchema.pick.bind(objectSchema),
+              omit: objectSchema.omit.bind(objectSchema),
+              extend: objectSchema.extend.bind(objectSchema),
+              safeExtend: objectSchema.safeExtend.bind(objectSchema),
+          });
+      })();
 
 export const ReportingScheduleOfferingSchema = z.object({}).passthrough().merge(z.object({
     period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
@@ -9321,7 +9379,8 @@ export const OperationalFailureSchema = z.object({
     errors: z.array(ErrorSchema)
 }).passthrough();
 
-export const SyncReportingStatusRequestSchema = z.object({
+export const SyncReportingStatusRequestSchema = (() => {
+          const objectSchema = z.object({
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().optional(),
     account: CanonicalAccountReferenceSchema,
@@ -9330,6 +9389,30 @@ export const SyncReportingStatusRequestSchema = z.object({
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
+          const exactSchema = objectSchema.superRefine((value, ctx) => {
+      // reporting consumer status rc.2 parity
+      const allowed = new Set(["account", "idempotency_key", "statuses", "adcp_version", "adcp_major_version", "context", "ext"]);
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+      if (value.statuses.length < 1) ctx.addIssue({ code: "custom", path: ["statuses"], message: "Array must contain at least 1 element(s)" });
+      value.statuses.forEach((status, index) => {
+          const checked = ReportingConsumerStatusSchema.safeParse(status);
+          if (!checked.success) {
+              for (const issue of checked.error.issues) ctx.addIssue({ code: "custom", path: ["statuses", index, ...issue.path], message: issue.message });
+          }
+          if ((status as Record<string, unknown>).recorded_at !== undefined) {
+              ctx.addIssue({ code: "custom", path: ["statuses", index, "recorded_at"], message: "recorded_at is response-only" });
+          }
+      });
+    });
+          return Object.assign(exactSchema, {
+              pick: objectSchema.pick.bind(objectSchema),
+              omit: objectSchema.omit.bind(objectSchema),
+              extend: objectSchema.extend.bind(objectSchema),
+              safeExtend: objectSchema.safeExtend.bind(objectSchema),
+          });
+      })();
 
 export const RecordedReportingConsumerStatusSchema = z.object({
     result: z.literal("recorded"),
@@ -15402,7 +15485,27 @@ export const SyncReportingStatusResponseSchema = z.object({
     adcp_major_version: z.number().int().gte(1).lte(99).optional(),
     results: z.array(z.union([RecordedReportingConsumerStatusSchema, UnchangedReportingConsumerStatusSchema, FailedReportingConsumerStatusSchema])).max(100),
     ext: ExtensionObjectSchema.optional()
-}).passthrough();
+}).passthrough().superRefine((value, ctx) => {
+      // reporting consumer status rc.2 parity
+      if (value.status === "completed" && value.results.length < 1) {
+          ctx.addIssue({ code: "custom", path: ["results"], message: "Array must contain at least 1 element(s)" });
+      }
+      if (value.status !== "completed") return;
+      value.results.forEach((entry, index) => {
+          if (entry.result === "failed") {
+              if (entry.errors.length < 1) ctx.addIssue({ code: "custom", path: ["results", index, "errors"], message: "Array must contain at least 1 element(s)" });
+              return;
+          }
+          const status = entry.consumer_status as Record<string, unknown>;
+          const checked = ReportingConsumerStatusSchema.safeParse(status);
+          if (!checked.success) {
+              for (const issue of checked.error.issues) ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", ...issue.path], message: issue.message });
+          }
+          if (status.recorded_at === undefined) {
+              ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", "recorded_at"], message: "recorded_at is required" });
+          }
+      });
+  });
 
 export const SyncReportingReceiptsResponseSchema = z.object({
     context_id: z.string().optional(),

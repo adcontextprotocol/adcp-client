@@ -3,6 +3,7 @@ const { describe, test } = require('node:test');
 
 const {
   ReportingConsumerStatusV1Schema,
+  SyncReportingStatusRequestV1Schema,
   createSyncReportingStatusHandler,
 } = require('../../dist/lib/reporting/ledger/index.js');
 
@@ -24,6 +25,23 @@ function consumerStatus(overrides = {}) {
 }
 
 describe('reporting consumer status validation', () => {
+  test('whole-request validation applies the consumer-only status refinements', () => {
+    const malformed = consumerStatus({
+      reporting_obligation_id: undefined,
+      reporting_revision_id: undefined,
+      observed_revision_content_sha256: undefined,
+      recorded_at: '2026-09-03T00:00:00Z',
+    });
+    assert.equal(
+      SyncReportingStatusRequestV1Schema.safeParse({
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-validation',
+        statuses: [malformed],
+      }).success,
+      false
+    );
+  });
+
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {
     assert.equal(
       ReportingConsumerStatusV1Schema.safeParse(consumerStatus({ status_as_of: '2026-09-03T00:00:00+0530' })).success,
@@ -102,5 +120,90 @@ describe('reporting consumer status validation', () => {
       result.results.map(value => value.reporting_status_id),
       ['reporting_status_0002', 'reporting_status_0003']
     );
+  });
+
+  test('accepts externally expanded 23/25-hour days and a calendar month without inventing obligations', async () => {
+    const boundaries = [
+      {
+        version: 1,
+        start: '2026-03-08T05:00:00Z',
+        end: '2026-03-09T04:00:00Z',
+        milliseconds: 82_800_000,
+      },
+      {
+        version: 2,
+        start: '2026-11-01T04:00:00Z',
+        end: '2026-11-02T05:00:00Z',
+        milliseconds: 90_000_000,
+      },
+      {
+        version: 3,
+        start: '2026-02-01T05:00:00Z',
+        end: '2026-03-01T05:00:00Z',
+        milliseconds: 2_419_200_000,
+      },
+    ];
+    const configurations = boundaries.map(boundary => ({
+      configurationId: `calendar-boundary-${boundary.version}`,
+      account: { account_id: 'calendar-fixture-account' },
+      delivery_config_id: 'calendar-boundary',
+      delivery_config_version: boundary.version,
+      report_definition_id: 'calendar-delivery-v1',
+      sourceTimezone: 'America/New_York',
+      requiredFinality: 'snapshot',
+      installedAt: boundary.start,
+      supersededAt: boundary.end,
+      schedule: {
+        anchor: boundary.start,
+        periodMilliseconds: boundary.milliseconds,
+        deliverySlaMilliseconds: 3_600_000,
+      },
+    }));
+    const store = {
+      getConsumerStatusBatchReplay: async () => undefined,
+      listConfigurations: async () => configurations,
+      getObligation: async () => {
+        throw new Error('obligation_missing must not invent or load an obligation');
+      },
+      getRevisionMetadata: async () => null,
+      readSnapshotPage: async () => {
+        throw new Error('snapshot provenance was not supplied');
+      },
+      syncConsumerStatusBatch: async ({ entries }) =>
+        entries.map(entry => ({
+          inserted: true,
+          value: { ...entry.status, recorded_at: '2026-11-03T00:00:00Z' },
+        })),
+    };
+    const handler = createSyncReportingStatusHandler(store, {
+      resolveConsumerId: () => 'calendar-fixture-consumer',
+      now: () => new Date('2026-11-03T00:00:00Z'),
+    });
+
+    for (const boundary of boundaries) {
+      const result = await handler(
+        {
+          account: { account_id: 'calendar-fixture-account' },
+          idempotency_key: `calendar-boundary-batch-${boundary.version}`,
+          statuses: [
+            {
+              reporting_status_id: `calendar-boundary-status-${boundary.version}`,
+              delivery_config_id: 'calendar-boundary',
+              delivery_config_version: boundary.version,
+              report_definition_id: 'calendar-delivery-v1',
+              period: {
+                start: boundary.start,
+                end: boundary.end,
+                source_timezone: 'America/New_York',
+              },
+              consumer_status: 'obligation_missing',
+              status_as_of: new Date(Date.parse(boundary.end) + 3_600_000).toISOString(),
+            },
+          ],
+        },
+        { account: { id: 'calendar-fixture-account' } }
+      );
+      assert.equal(result.results[0].result, 'recorded', JSON.stringify(result));
+    }
   });
 });
