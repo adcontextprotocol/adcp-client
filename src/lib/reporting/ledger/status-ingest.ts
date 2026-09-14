@@ -40,7 +40,7 @@ const statusId = z
   .regex(/^[A-Za-z0-9_.:-]+$/);
 const INVALID_REPORTING_STATUS_ID = 'invalid-reporting-status-id';
 
-/** Published AdCP 3.2.0-rc.2 consumer status schema with request-only instant bounds. */
+/** Pinned AdCP consumer status schema with request-only instant bounds. */
 export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.superRefine((value, context) => {
   if (value.recorded_at !== undefined) {
     context.addIssue({ code: 'custom', path: ['recorded_at'], message: 'recorded_at is response-only' });
@@ -98,7 +98,7 @@ export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.sup
   }
 });
 
-/** Published AdCP 3.2.0-rc.2 request schema with the SDK's consumer-only item refinements. */
+/** Pinned AdCP request schema with the SDK's consumer-only item refinements. */
 export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema.safeExtend({
   statuses: z.array(ReportingConsumerStatusV1Schema).min(1).max(100),
 }).strict();
@@ -372,10 +372,12 @@ async function validateStatus(
       revision.reporting_obligation_id !== status.reporting_obligation_id
     )
       throw new ReportingStatusValidationError('revision mismatch');
+    // Canonical item validation requires this binding for received and
+    // content_mismatch, and forbids it for statuses that did not consume bytes.
     if (
-      status.consumer_status === 'received' &&
+      status.observed_revision_content_sha256 !== undefined &&
       revision.wireRevision.revision_content_sha256.toLowerCase() !==
-        status.observed_revision_content_sha256?.toLowerCase()
+        status.observed_revision_content_sha256.toLowerCase()
     )
       throw new ReportingStatusValidationError('revision binding mismatch');
   }

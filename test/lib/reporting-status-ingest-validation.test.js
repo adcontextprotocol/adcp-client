@@ -31,6 +31,49 @@ function consumerStatus(overrides = {}) {
 }
 
 describe('reporting consumer status validation', () => {
+  test('retains pinned status evidence and rejects each missing or forbidden field at public boundaries', () => {
+    const canonical = require('../../schemas/cache/latest/core/reporting-consumer-status.json');
+    const values = {
+      reporting_obligation_id: 'reporting-obligation-0001',
+      reporting_revision_id: 'reporting-revision-0001',
+      observed_revision_content_sha256: 'a'.repeat(64),
+      failure_code: 'integrity_mismatch',
+      mismatch_code: 'metric_missing',
+    };
+    const check = (item, expected) => {
+      const parsed = ReportingConsumerStatusV1Schema.safeParse(item);
+      assert.equal(parsed.success, expected, JSON.stringify(item));
+      if (parsed.success) assert.deepEqual(parsed.data, item);
+      assert.equal(
+        SyncReportingStatusRequestV1Schema.safeParse({
+          account: { account_id: 'account-1' },
+          idempotency_key: 'status-contract-check',
+          statuses: [item],
+        }).success,
+        expected
+      );
+    };
+    for (const consumer_status of canonical.properties.consumer_status.enum) {
+      const rule = canonical.allOf.find(arm => arm.if?.properties?.consumer_status?.const === consumer_status).then;
+      const item = consumerStatus({ consumer_status });
+      for (const field of rule.required ?? []) item[field] = values[field];
+      check(item, true);
+      for (const field of rule.required ?? []) {
+        const missing = { ...item };
+        delete missing[field];
+        check(missing, false);
+      }
+      const forbidden = rule.not.anyOf?.flatMap(arm => arm.required) ?? rule.not.required;
+      for (const field of forbidden) check({ ...item, [field]: values[field] }, false);
+      if (consumer_status === 'content_mismatch') {
+        for (const mismatch_code of canonical.properties.mismatch_code.enum) check({ ...item, mismatch_code }, true);
+        for (const mismatch_code of ['', null, 'measurement_disagreement', 'integrity_mismatch']) {
+          check({ ...item, mismatch_code }, false);
+        }
+      }
+    }
+  });
+
   test('keeps the envelope placeholder and 0/100/101 item boundaries aligned with the published schema', () => {
     const envelope = count => ({
       account: { account_id: 'account-1' },

@@ -31,6 +31,12 @@ function status(consumer_status, overrides = {}) {
     },
     obligation_missing: {},
     revision_missing: { reporting_obligation_id: 'obligation-portable-0001' },
+    content_mismatch: {
+      reporting_obligation_id: 'obligation-portable-0001',
+      reporting_revision_id: 'revision-portable-0001',
+      observed_revision_content_sha256: digest,
+      mismatch_code: 'metric_missing',
+    },
     unreadable: {
       reporting_obligation_id: 'obligation-portable-0001',
       reporting_revision_id: 'revision-portable-0001',
@@ -62,7 +68,8 @@ function response(result) {
   return { adcp_version: '3.2-rc.2', adcp_major_version: 3, status: 'completed', results: [result] };
 }
 
-const validStatuses = ['received', 'obligation_missing', 'revision_missing', 'unreadable'].map(value => status(value));
+const canonical = JSON.parse(fs.readFileSync(SCHEMAS.status, 'utf8'));
+const validStatuses = canonical.properties.consumer_status.enum.map(value => status(value));
 const cases = [
   ...validStatuses.map((value, index) => ({ id: `valid-status-${index}`, schema: 'status', value, expected: true })),
   {
@@ -229,7 +236,7 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({
   }
 }
 
-test('generated consumer-status schemas preserve published rc.2 wire constraints', async () => {
+test('generated consumer-status schemas preserve pinned wire constraints', async () => {
   const expected = cases.map(entry => entry.expected);
   assert.deepEqual(await authoritativeOutcomes(), expected, 'fixture expectations match the published JSON Schemas');
   const generated = generatedOutcomes();

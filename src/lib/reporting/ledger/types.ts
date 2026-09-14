@@ -1,4 +1,9 @@
-import type { GetReportingStatusResponse, ReportingAdjustment, ReportingRevision } from '../../types';
+import type {
+  GetReportingStatusResponse,
+  ReportingAdjustment,
+  ReportingConsumerStatus,
+  ReportingRevision,
+} from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
 import type { ErrorRecovery } from '../../types/error-codes';
 import type {
@@ -156,30 +161,11 @@ export interface ReportingLedgerConsumerStatusV1 {
   createdAt: string;
 }
 
-export interface ReportingLedgerConsumerStatementV1 {
+/** Wire fields follow the generated protocol contract, including status-specific reason codes. */
+export interface ReportingLedgerConsumerStatementV1 extends Omit<ReportingConsumerStatus, 'recorded_at'> {
   /** Authenticated transport principal; never serialized on the wire. */
   consumerId: string;
   account_id: string;
-  reporting_status_id: string;
-  supersedes_reporting_status_id?: string;
-  delivery_config_id: string;
-  delivery_config_version: number;
-  report_definition_id: string;
-  period: { start: string; end: string; source_timezone: string };
-  reporting_obligation_id?: string;
-  reporting_revision_id?: string;
-  observed_revision_content_sha256?: string;
-  consumer_status: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable';
-  status_as_of: string;
-  failure_code?:
-    | 'access_denied'
-    | 'resource_not_found'
-    | 'integrity_mismatch'
-    | 'reader_incompatible'
-    | 'transport_failed';
-  consumer_commit_ref?: string;
-  seller_ledger_snapshot_id?: string;
-  seller_ledger_as_of?: string;
   recorded_at: string;
 }
 

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T10:31:50.046Z
+// Generated at: 2026-09-14T15:12:42.507Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6687,7 +6687,7 @@ export const ReportingConsumerStatusSchema = (() => {
     recorded_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).passthrough());
           const exactSchema = objectSchema.superRefine((value, ctx) => {
-      // reporting consumer status rc.2 parity
+      // reporting consumer status canonical parity
       const require = (field: string) => {
           if ((value as Record<string, unknown>)[field] === undefined) {
               ctx.addIssue({ code: "custom", path: [field], message: field + " is required" });
@@ -6698,13 +6698,7 @@ export const ReportingConsumerStatusSchema = (() => {
               ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
           }
       };
-      const allowed = new Set([
-          "reporting_status_id", "supersedes_reporting_status_id", "delivery_config_id",
-          "delivery_config_version", "report_definition_id", "period", "reporting_obligation_id",
-          "reporting_revision_id", "observed_revision_content_sha256", "consumer_status",
-          "status_as_of", "failure_code", "consumer_commit_ref", "seller_ledger_snapshot_id",
-          "seller_ledger_as_of", "recorded_at"
-      ]);
+      const allowed = new Set(["reporting_status_id","supersedes_reporting_status_id","delivery_config_id","delivery_config_version","report_definition_id","period","reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","consumer_status","status_as_of","failure_code","consumer_commit_ref","seller_ledger_snapshot_id","seller_ledger_as_of","recorded_at"]);
       for (const field of Object.keys(value as Record<string, unknown>)) {
           if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
       }
@@ -6716,21 +6710,13 @@ export const ReportingConsumerStatusSchema = (() => {
               }
           }
       }
-      if (value.consumer_status === "received") {
-          require("reporting_obligation_id");
-          require("reporting_revision_id");
-          require("observed_revision_content_sha256");
-          forbid("failure_code");
-      } else if (value.consumer_status === "obligation_missing") {
-          ["reporting_obligation_id", "reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
-      } else if (value.consumer_status === "revision_missing") {
-          require("reporting_obligation_id");
-          ["reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
-      } else if (value.consumer_status === "unreadable") {
-          require("reporting_obligation_id");
-          require("reporting_revision_id");
-          require("failure_code");
-          forbid("observed_revision_content_sha256");
+      const rules: Record<string, { required: string[]; forbidden: string[] }> = {"received":{"required":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256"],"forbidden":["failure_code"]},"obligation_missing":{"required":[],"forbidden":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","failure_code"]},"revision_missing":{"required":["reporting_obligation_id"],"forbidden":["reporting_revision_id","observed_revision_content_sha256","failure_code"]},"unreadable":{"required":["reporting_obligation_id","reporting_revision_id","failure_code"],"forbidden":["observed_revision_content_sha256"]}};
+      const rule = Object.hasOwn(rules, value.consumer_status) ? rules[value.consumer_status] : undefined;
+      if (!rule) {
+          ctx.addIssue({ code: "custom", path: ["consumer_status"], message: "Unsupported consumer status" });
+      } else {
+          rule.required.forEach(require);
+          rule.forbidden.forEach(forbid);
       }
       if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
           ctx.addIssue({ code: "custom", path: ["seller_ledger_snapshot_id"], message: "snapshot identity and time must be paired" });
@@ -9396,7 +9382,7 @@ export const SyncReportingStatusRequestSchema = (() => {
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
           const exactSchema = objectSchema.superRefine((value, ctx) => {
-      // reporting consumer status rc.2 parity
+      // reporting consumer status canonical parity
       const allowed = new Set(["account", "idempotency_key", "statuses", "adcp_version", "adcp_major_version", "context", "ext"]);
       for (const field of Object.keys(value as Record<string, unknown>)) {
           if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
@@ -15489,7 +15475,7 @@ export const SyncReportingStatusResponseSchema = z.object({
     results: z.array(z.union([RecordedReportingConsumerStatusSchema, UnchangedReportingConsumerStatusSchema, FailedReportingConsumerStatusSchema])).max(100),
     ext: ExtensionObjectSchema.optional()
 }).passthrough().superRefine((value, ctx) => {
-      // reporting consumer status rc.2 parity
+      // reporting consumer status canonical parity
       if (value.status === "completed" && value.results.length < 1) {
           ctx.addIssue({ code: "custom", path: ["results"], message: "Array must contain at least 1 element(s)" });
       }

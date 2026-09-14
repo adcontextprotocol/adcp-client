@@ -1,0 +1,20 @@
+{
+  "sdk_base_commit": "90ad47b67401d35e0a9ffc99fd0e76252e026a9a",
+  "sdk_version": "14.0.0-rc.36",
+  "protocol_main_at_dispatch": "98fa207cb81c14b745f66a90d0b82cb6fad82f4b",
+  "protocol_candidate_commit": "c59427cde5025f273126cc639885f5ce85984df0",
+  "protocol_candidate_pr": 7508,
+  "workflow_run_id": 34854119276,
+  "failed_job_id": 104010429918,
+  "artifact_id": 10352186775,
+  "artifact_name": "schema-pr-bundle-c59427cde5025f273126cc639885f5ce85984df0",
+  "bundle_sha256": "3bd8ddba0dafc6ecb92864f6bd97d28c7d69ff9d6a700a1596838297cee9be32",
+  "published_version": "3.2.0-rc.4",
+  "sha256": {
+    "failed-job.log": "c865a2c09c6b3462bfd7d33ff36e8bc21f1d0396d5ca1ced742cfaa33e3c2021",
+    "validate-schema-bundle.yml": "f4c231c3e2b6282e729fa3914a97ff1ec48439ef470dcb8a44c9eef33b0b54e3",
+    "main-consumer-status.json": "a698b4ac073ac749b519ef94bfee2c313fc7b743eb392aa42eda66fdb149df46",
+    "candidate-consumer-status.json": "42e6f1c21f86d5029238752f43ae4e809e5a4f9904986b51c6a1897445da3dc5",
+    "bundle/latest.tgz.provenance.json": "db631107eda0daefcd3d0fb6e59ffe1e6774c6925b33da161ecc9ffeebba4e79"
+  }
+}

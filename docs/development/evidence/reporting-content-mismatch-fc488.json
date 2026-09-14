@@ -1,0 +1,23 @@
+{
+  "sdk_checkout": "90ad47b67401d35e0a9ffc99fd0e76252e026a9a",
+  "protocol_candidate": "fc488660c1501d3cb9db71ee3ecfad8316ee924a",
+  "job_id": 104038964777,
+  "run_id": 34862418515,
+  "bundle_sha256": "82c1932c2d1cc068c6ae99f4ac6710039210332d16ca1e1859cc2849fa029cfc",
+  "full_log_verified": true,
+  "sha256": {
+    "full-job.log": "429e03620250ba69d35d3c461d0596faa853f8231648fe06a0377959108dd6ad",
+    "verified-error-excerpt.txt": "a4187705bf7601daf943054d77609fa130b17aa737bcf89aa9ccb694c3945daf",
+    "bundle/latest.tgz": "82c1932c2d1cc068c6ae99f4ac6710039210332d16ca1e1859cc2849fa029cfc",
+    "bundle/latest.tgz.provenance.json": "22ab0a0a2deb5f7896370ef18441dc969635e16dd6aa8697f3d8e8b2dc500c5a",
+    "bundle/latest.tgz.sha256": "a61d0150867d362daa4618be46ed5f47325e185aabb1c8b6b1c312cde25512da"
+  },
+  "artifact_id": 10356276302,
+  "artifact_name": "schema-pr-bundle-fc488660c1501d3cb9db71ee3ecfad8316ee924a",
+  "published_version": "3.2.0-rc.4",
+  "failed_step_completed_at": "2026-09-14T15:57:43Z",
+  "canonical_source_unchanged": true,
+  "qualification_workflow_unchanged": true,
+  "canonical_source_sha256": "a698b4ac073ac749b519ef94bfee2c313fc7b743eb392aa42eda66fdb149df46",
+  "qualification_workflow_sha256": "f4c231c3e2b6282e729fa3914a97ff1ec48439ef470dcb8a44c9eef33b0b54e3"
+}
