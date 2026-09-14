@@ -616,6 +616,9 @@ function generateLlmsTxt(
   ln();
   ln(`- **Buyer** (calling a seller): read \`docs/guides/BUYER-QUICKSTART-3.2.md\` first.`);
   ln(
+    `- **Before proposal acceptance:** use \`verifyProposalCommercialTerms\` from \`@adcp/sdk/negotiation/verification\` with a complete, independently reviewed snapshot and the seller-served schema version. Never use an unreviewed candidate as its own expected terms. See \`docs/guides/PROPOSAL-TERMS-VERIFICATION.md\`.`
+  );
+  ln(
     `- **Seller** (implementing an agent that others call): read \`docs/guides/SELLER-QUICKSTART-3.2.md\` first, then \`docs/guides/BUILD-AN-AGENT.md\` for the complete framework surface.`
   );
   ln(
@@ -1287,6 +1290,7 @@ function generateLlmsTxt(
   const docLinks: [string, string][] = [
     ['Full type signatures', 'TYPE-SUMMARY.md'],
     ['Buyer quick start (AdCP 3.2)', 'guides/BUYER-QUICKSTART-3.2.md'],
+    ['Verify proposal terms before acceptance', 'guides/PROPOSAL-TERMS-VERIFICATION.md'],
     ['Seller quick start (AdCP 3.2)', 'guides/SELLER-QUICKSTART-3.2.md'],
     ['Production durability checklist', 'guides/PRODUCTION-DURABILITY.md'],
     ['Persistent notification subscriptions', 'guides/PERSISTENT-NOTIFICATION-RUNTIME.md'],

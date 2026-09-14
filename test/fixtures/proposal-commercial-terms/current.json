@@ -1,0 +1,109 @@
+{
+  "brand": {
+    "domain": "buyer.example"
+  },
+  "purchases": [
+    {
+      "product_id": "product-1",
+      "pricing_option_id": "price-1",
+      "pricing": {
+        "pricing_option_id": "price-1",
+        "pricing_model": "cpm",
+        "currency": "USD",
+        "fixed_price": 8
+      },
+      "impressions": 1000000,
+      "budget": 8000,
+      "start_time": "2027-01-01T00:00:00Z",
+      "end_time": "2027-02-01T00:00:00Z",
+      "agency_estimate_number": "package-authorization-1",
+      "ext": {
+        "vendor": {
+          "binding/key~name": {
+            "rate": 1
+          }
+        }
+      }
+    }
+  ],
+  "start_time": "2027-01-01T00:00:00Z",
+  "end_time": "2027-02-01T00:00:00Z",
+  "total_budget": {
+    "amount": 8000,
+    "currency": "USD"
+  },
+  "purchase_order_ref": "contract-2027",
+  "change_terms": [
+    {
+      "term_id": "budget-1",
+      "action": "increase_budget",
+      "service_mode": "self_serve",
+      "allowed_statuses": ["active", "paused"],
+      "processing_sla": {
+        "response_max": "PT5M",
+        "completion_max": "PT1H"
+      },
+      "conditions": ["credit_available"],
+      "terms_ref": "https://contracts.example/agreements/2027#budget",
+      "constraints": {
+        "kind": "budget",
+        "max_delta_amount": {
+          "amount": 1000,
+          "currency": "USD"
+        },
+        "max_delta_percent": 25,
+        "min_result_amount": {
+          "amount": 8000,
+          "currency": "USD"
+        },
+        "max_result_amount": {
+          "amount": 12000,
+          "currency": "USD"
+        }
+      }
+    },
+    {
+      "term_id": "flight-1",
+      "action": "extend_flight",
+      "service_mode": "seller_managed",
+      "constraints": {
+        "kind": "flight",
+        "max_change": {
+          "interval": 7,
+          "unit": "days"
+        },
+        "minimum_notice": {
+          "interval": 1,
+          "unit": "days"
+        },
+        "earliest_result": "2027-02-01T00:00:00Z",
+        "latest_result": "2027-03-01T00:00:00Z"
+      }
+    },
+    {
+      "term_id": "packages-1",
+      "action": "add_packages",
+      "service_mode": "conditional_self_serve",
+      "constraints": {
+        "kind": "package_count",
+        "max_additions": 2,
+        "max_removals": 0,
+        "max_result_count": 3
+      }
+    },
+    {
+      "term_id": "pause-1",
+      "action": "pause",
+      "service_mode": "self_serve",
+      "constraints": {
+        "kind": "effective_timing",
+        "minimum_notice": {
+          "interval": 5,
+          "unit": "minutes"
+        },
+        "earliest_effective_at": "2027-01-01T00:00:00Z",
+        "latest_effective_at": "2027-02-01T00:00:00Z"
+      }
+    }
+  ]
+}

@@ -106,5 +106,10 @@ request_proposals → refine_proposals → accept_proposal
 those values locally. See the
 [type summary](../TYPE-SUMMARY.md#request_proposals) for exact request shapes.
 
+Before acceptance, compare the complete reviewed commercial snapshot with
+`verifyProposalCommercialTerms` from `@adcp/sdk/negotiation/verification`.
+See [proposal term verification](./PROPOSAL-TERMS-VERIFICATION.md) for digest
+integrity, schema-version selection, and typed mismatch paths.
+
 For compatibility behavior with AdCP 3.0/3.1 sellers, see
 [Media-buy 3.2 compatibility](./MEDIA-BUY-3.2-COMPATIBILITY.md).

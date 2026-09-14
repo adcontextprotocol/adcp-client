@@ -13,11 +13,12 @@
  * unchanged.
  */
 
-import Ajv, { type ValidateFunction } from 'ajv';
+import Ajv, { type KeywordDefinition, type ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
 import { AsyncLocalStorage } from 'async_hooks';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import path from 'path';
+import { isDeepStrictEqual } from 'node:util';
 import { ADCP_VERSION } from '../version';
 import { ConfigurationError } from '../errors';
 import { hasBundledSchemaStore, listBundledSchemaFiles, loadBundledSchemaFile } from './bundled-schema-store';
@@ -354,6 +355,11 @@ interface LoaderState {
 
 const states: Map<string, LoaderState> = new Map();
 const schemaRefValidators = new Map<string, ValidateFunction>();
+const keywordSchemaRefValidators = new WeakMap<
+  ReadonlyArray<KeywordDefinition>,
+  { generation: number; validators: Map<string, ValidateFunction> }
+>();
+let keywordCacheGeneration = 0;
 const externalSchemaRoots: Map<string, string> = new Map();
 const scopedExternalSchemaRoots = new AsyncLocalStorage<Map<string, string>>();
 
@@ -362,6 +368,7 @@ function stateCacheKey(bundleKey: string, root: string): string {
 }
 
 function clearStatesForBundle(bundleKey: string): void {
+  keywordCacheGeneration++;
   for (const [stateKey, state] of states) {
     if (state.version === bundleKey) states.delete(stateKey);
   }
@@ -923,9 +930,30 @@ export function getSchemaDocumentByRef(
   const file = path.join(state.root, normalized);
   if (!existsSync(file)) return undefined;
 
+  // Bundle documents are immutable for the lifetime of their loader state,
+  // just like compiled validators. Freeze shared documents so domain audits
+  // can memoize by identity without allowing callers to mutate a schema.
+  const readDocument = (ref: string): Record<string, unknown> => {
+    const key = `document::${ref}`;
+    let schema = state.rawSchemas.get(key);
+    if (!schema) {
+      schema = loadJson(path.join(state.root, ref));
+      const pending: unknown[] = [schema];
+      while (pending.length > 0) {
+        const value = pending.pop();
+        if (value && typeof value === 'object') {
+          for (const child of Object.values(value)) pending.push(child);
+          Object.freeze(value);
+        }
+      }
+      state.rawSchemas.set(key, schema);
+    }
+    return schema;
+  };
+
   let resolvedVersion = state.version;
   try {
-    const index = loadJson(path.join(state.root, 'index.json')) as Record<string, unknown>;
+    const index = readDocument('index.json');
     if (typeof index.adcp_version === 'string') resolvedVersion = index.adcp_version;
   } catch {
     // Legacy/external bundles may omit index.json; the loader key remains an
@@ -937,7 +965,7 @@ export function getSchemaDocumentByRef(
     requestedVersion: version,
     bundleKey: state.version,
     resolvedVersion,
-    schema: loadJson(file),
+    schema: readDocument(normalized),
   };
 }
 
@@ -948,7 +976,8 @@ export function getSchemaDocumentByRef(
  */
 export function getSchemaValidatorByRef(
   schemaRef: string,
-  version: string = ADCP_VERSION
+  version: string = ADCP_VERSION,
+  keywords?: ReadonlyArray<KeywordDefinition>
 ): ValidateFunction | undefined {
   // Keep remote schema-ref validation out of the shared tool-validator AJV,
   // which intentionally collects all errors for developer diagnostics.
@@ -957,8 +986,19 @@ export function getSchemaValidatorByRef(
   const normalized = normalizeSchemaRef(schemaRef);
   if (!normalized) return undefined;
 
+  // Keep domain-specific keyword validators isolated from ordinary schema-ref
+  // validation. Callers retain an immutable keyword array for cache reuse.
+  let cache = schemaRefValidators;
+  if (keywords) {
+    let entry = keywordSchemaRefValidators.get(keywords);
+    if (!entry || entry.generation !== keywordCacheGeneration) {
+      entry = { generation: keywordCacheGeneration, validators: new Map() };
+      keywordSchemaRefValidators.set(keywords, entry);
+    }
+    cache = entry.validators;
+  }
   const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}`;
-  const cached = schemaRefValidators.get(cacheKey);
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const file = path.join(root, normalized);
@@ -977,8 +1017,10 @@ export function getSchemaValidatorByRef(
     allowUnionTypes: true,
   });
   addFormats(ajv);
+  for (const keyword of keywords ?? []) ajv.addKeyword(keyword);
+  const rawSchema = loadJson(file);
   const dependencySchemas: LoadedSchema[] = [];
-  const registeredIds = new Set<string>();
+  const registeredIds = new Map<string, LoadedSchema>();
   for (const schemaFile of walkJsonFiles(root)) {
     if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
     if (
@@ -988,17 +1030,25 @@ export function getSchemaValidatorByRef(
     }
     if (schemaFile === file) continue;
     const schema = loadJson(schemaFile);
+    if (keywords && typeof schema.$id === 'string') {
+      const previous = schema.$id === rawSchema.$id ? rawSchema : registeredIds.get(schema.$id);
+      // Bundles intentionally mirror async-response refs. Identical copies
+      // are harmless; conflicting definitions must not shadow audited files.
+      if (previous && !isDeepStrictEqual(previous, schema)) {
+        throw new ConfigurationError('Schema keyword validation requires unambiguous schema identities', 'schemaRoot');
+      }
+      if (schema.$id === rawSchema.$id) continue;
+    }
     if (typeof schema.$id === 'string' && !registeredIds.has(schema.$id)) {
-      registeredIds.add(schema.$id);
+      registeredIds.set(schema.$id, schema);
       dependencySchemas.push(schema);
     }
   }
   if (dependencySchemas.length > 0) {
     ajv.addSchema(dependencySchemas);
   }
-  const rawSchema = loadJson(file);
   const compiled = ajv.compile(rawSchema);
-  schemaRefValidators.set(cacheKey, compiled);
+  cache.set(cacheKey, compiled);
   return compiled;
 }
 
@@ -1208,6 +1258,7 @@ export function _resetValidationLoader(version?: string): void {
   if (version === undefined) {
     states.clear();
     schemaRefValidators.clear();
+    keywordCacheGeneration++;
   } else {
     clearStatesForBundle(resolveBundleKey(version));
   }

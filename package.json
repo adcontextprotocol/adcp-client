@@ -366,6 +366,16 @@
         "default": "./dist/lib/reporting/ledger/index.js"
       }
     },
+    "./negotiation/verification": {
+      "import": {
+        "types": "./dist/lib/negotiation/verification.d.mts",
+        "default": "./dist/lib/negotiation/verification.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/negotiation/verification.d.ts",
+        "default": "./dist/lib/negotiation/verification.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -474,6 +484,9 @@
       ],
       "types/*": [
         "dist/lib/types/*.d.ts"
+      ],
+      "negotiation/verification": [
+        "dist/lib/negotiation/verification.d.ts"
       ]
     }
   },

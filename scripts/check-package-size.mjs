@@ -27,7 +27,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // cross-SDK consumer-status vector adds one published JSON artifact.
 // Account-feed adoption adds five runtime/declaration module sets (20 files)
 // and one migration guide. Byte budgets remain unchanged.
-const MAX_PACKED_FILE_COUNT = 6_016;
+// The standalone proposal verifier adds twelve helper module artifacts and
+// one buyer guide; byte budgets remain unchanged.
+const MAX_PACKED_FILE_COUNT = 6_029;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

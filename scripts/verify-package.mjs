@@ -141,6 +141,7 @@ try {
     'package/docs/migration-12-to-14.md',
     'package/docs/migration-13-to-14.md',
     'package/docs/migration-12-to-13.md',
+    'package/docs/guides/PROPOSAL-TERMS-VERIFICATION.md',
     'package/MIGRATION-v8.md',
   ];
   for (const guide of requiredGuides) {
@@ -268,6 +269,7 @@ try {
     { specifier: '@adcp/sdk/server', symbol: 'A2AInvocationError' },
     { specifier: '@adcp/sdk/signing/server', symbol: 'resolveAgent' },
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
+    { specifier: '@adcp/sdk/negotiation/verification', symbol: 'verifyProposalCommercialTerms' },
     { specifier: '@adcp/sdk/schemas', symbol: 'CreativeAssetSchema' },
   ];
 

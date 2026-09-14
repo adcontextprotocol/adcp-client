@@ -18,6 +18,7 @@ SDK 14 requires Node.js `^20.19.0 || >=22.12.0`; install the newest v14 prerelea
 SDK 14 is compact-lifecycle first: `list_products → buy_products → control_media_buy`, with `request_proposals → refine_proposals → accept_proposal` when terms need negotiation.
 
 - **Buyer** (calling a seller): read `docs/guides/BUYER-QUICKSTART-3.2.md` first.
+- **Before proposal acceptance:** use `verifyProposalCommercialTerms` from `@adcp/sdk/negotiation/verification` with a complete, independently reviewed snapshot and the seller-served schema version. Never use an unreviewed candidate as its own expected terms. See `docs/guides/PROPOSAL-TERMS-VERIFICATION.md`.
 - **Seller** (implementing an agent that others call): read `docs/guides/SELLER-QUICKSTART-3.2.md` first, then `docs/guides/BUILD-AN-AGENT.md` for the complete framework surface.
 - **Upgrading an existing application:** read `docs/migration-13-to-14.md`; established 3.0/3.1 tools remain supported as an explicit compatibility path.
 
@@ -2079,6 +2080,7 @@ These docs are available locally in the repo and hosted at https://adcontextprot
 |------|-----------|--------|
 | Full type signatures | docs/TYPE-SUMMARY.md | [link](https://adcontextprotocol.github.io/adcp-client/TYPE-SUMMARY.md) |
 | Buyer quick start (AdCP 3.2) | docs/guides/BUYER-QUICKSTART-3.2.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/BUYER-QUICKSTART-3.2.md) |
+| Verify proposal terms before acceptance | docs/guides/PROPOSAL-TERMS-VERIFICATION.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/PROPOSAL-TERMS-VERIFICATION.md) |
 | Seller quick start (AdCP 3.2) | docs/guides/SELLER-QUICKSTART-3.2.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/SELLER-QUICKSTART-3.2.md) |
 | Production durability checklist | docs/guides/PRODUCTION-DURABILITY.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/PRODUCTION-DURABILITY.md) |
 | Persistent notification subscriptions | docs/guides/PERSISTENT-NOTIFICATION-RUNTIME.md | [link](https://adcontextprotocol.github.io/adcp-client/guides/PERSISTENT-NOTIFICATION-RUNTIME.md) |

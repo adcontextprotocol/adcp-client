@@ -289,33 +289,16 @@ test('commercial-terms verifier rejects fields outside the selected schema', () 
 test('commercial-terms verifier derives newly added binding fields from the selected bundle', () => {
   const schemaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-commercial-terms-schema-'));
   try {
-    const mediaBuyDir = path.join(schemaRoot, 'media-buy');
-    fs.mkdirSync(mediaBuyDir, { recursive: true });
-    fs.writeFileSync(path.join(schemaRoot, 'index.json'), JSON.stringify({ adcp_version: ADCP_VERSION }));
-    fs.writeFileSync(
-      path.join(mediaBuyDir, 'commercial-terms.json'),
-      JSON.stringify({
-        $schema: 'http://json-schema.org/draft-07/schema#',
-        $id: `https://adcontextprotocol.org/schemas/${ADCP_VERSION}/media-buy/commercial-terms.json`,
-        type: 'object',
-        properties: {
-          brand: { type: 'object' },
-          purchases: { type: 'array', minItems: 1 },
-          start_time: { type: 'string' },
-          end_time: { type: 'string' },
-          future_binding: { type: 'string' },
-        },
-        patternProperties: { '^x_': { type: 'string' } },
-        required: ['brand', 'purchases', 'start_time', 'end_time'],
-        additionalProperties: false,
-      })
-    );
-    const reviewed = {
-      brand: { domain: 'buyer.example' },
-      purchases: [{}],
-      start_time: 'asap',
-      end_time: '2027-02-01T00:00:00Z',
-    };
+    fs.cpSync(path.resolve(__dirname, '../../schemas/cache', ADCP_VERSION), schemaRoot, {
+      recursive: true,
+      filter: source => !['bundled', 'mcp'].includes(path.basename(source)),
+    });
+    const schemaFile = path.join(schemaRoot, 'media-buy/commercial-terms.json');
+    const schema = JSON.parse(fs.readFileSync(schemaFile, 'utf8'));
+    schema.properties.future_binding = { type: 'string' };
+    schema.patternProperties = { '^x_': { type: 'string' } };
+    fs.writeFileSync(schemaFile, JSON.stringify(schema));
+    const reviewed = commercialTerms();
     const offered = {
       ...reviewed,
       future_binding: 'new-contract-value',
