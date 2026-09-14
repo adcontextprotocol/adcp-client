@@ -6,9 +6,12 @@ import {
   type CollectionDistribution,
   type AuthorizedAgent,
   type AdagentsAuthorizedAgent,
+  type SupplyPathAuthorityStore,
 } from '../index';
 
 const bulk: AuthorizationCollectionSelector = { publisher_domain: 'owner.example' };
+// @ts-expect-error Durable authority stores must separate precheck from atomic successful observation.
+const incompleteAuthorityStore: SupplyPathAuthorityStore = { check: async () => true };
 const product: ProductCollectionSelector = { publisher_domain: 'owner.example', collection_ids: ['channel'] };
 // @ts-expect-error Product selectors cannot use authorization bulk grants.
 const invalidProduct: ProductCollectionSelector = bulk;
@@ -56,4 +59,15 @@ async function check(): Promise<void> {
   const forged: typeof live = cached;
   void forged;
 }
-void [invalidProduct, emptyProduct, byId, byIdentifier, both, emptyDistribution, discoveryGrant, registryGrant, check];
+void [
+  incompleteAuthorityStore,
+  invalidProduct,
+  emptyProduct,
+  byId,
+  byIdentifier,
+  both,
+  emptyDistribution,
+  discoveryGrant,
+  registryGrant,
+  check,
+];

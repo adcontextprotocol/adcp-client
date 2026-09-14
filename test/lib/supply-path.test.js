@@ -134,7 +134,7 @@ describe('authority and revocation trust boundaries', () => {
       verifySupplyPath(request, {
         source: 'authoritative',
         timeoutMs: 25,
-        authorityStore: { check: () => new Promise(() => {}) },
+        authorityStore: { check: () => new Promise(() => {}), observe: async () => true },
         trustedFetchFn: transport(),
       }),
       /deadline|abort/i
@@ -852,7 +852,7 @@ it('rate-bounds many-authority admission and retains all live default-store evid
       for (let i = 0; i < 10000; i++) {
         if (i > 0 && i % 128 === 0) {
           await assert.rejects(revocations.observe('rate-blocked.attacker.example', denial), /admission rate/);
-          await assert.rejects(pins.check('rate-blocked.attacker.example', 'https://cdn.example/blocked.json'), /admission rate/);
+          await assert.rejects(pins.observe('rate-blocked.attacker.example', 'https://cdn.example/blocked.json'), /admission rate/);
           // Existing evidence remains readable during an admission-rate refusal.
           assert.deepEqual(await revocations.observe('host-0.attacker.example', []), denial);
           assert.equal(await pins.check('host-0.attacker.example', 'https://cdn.example/0.json'), true);
@@ -860,11 +860,11 @@ it('rate-bounds many-authority admission and retains all live default-store evid
         }
         const authority = 'host-' + i + '.attacker.example';
         await revocations.observe(authority, denial);
-        await pins.check(authority, 'https://cdn.example/' + i + '.json');
+        await pins.observe(authority, 'https://cdn.example/' + i + '.json');
       }
       now += 60001;
       await assert.rejects(revocations.observe('innocent.example', denial), /capacity exceeded/);
-      await assert.rejects(pins.check('innocent.example', 'https://innocent.example/adagents.json'), /capacity exceeded/);
+      await assert.rejects(pins.observe('innocent.example', 'https://innocent.example/adagents.json'), /capacity exceeded/);
       // Scan every retained authority: neither rate limiting nor total exhaustion
       // may evict a live denial or adopt a different pinned location.
       for (let i = 0; i < 10000; i++) {
@@ -989,4 +989,105 @@ it('records malformed pointers as unavailable evidence while retaining their den
       [OWNER]
     );
   }
+});
+
+describe('authority pins require a successfully validated manifest', () => {
+  const failures = {
+    unavailable: new Response('unavailable', { status: 503 }),
+    malformed: new Response('{invalid JSON', { headers: { 'content-type': 'application/json' } }),
+    missing_envelope: {},
+    malformed_envelope: { authorized_agents: null },
+    chained: { authoritative_location: 'https://chained.example/another.json' },
+  };
+  for (const [name, failedTarget] of Object.entries(failures)) {
+    it(`does not poison the process default with a ${name} target`, async () => {
+      const host = `${name.replaceAll('_', '-')}.first-pin.example`;
+      const failed = `https://cdn.example/${name}-failed.json`;
+      const valid = `https://cdn.example/${name}-valid.json`;
+      const replacement = `https://cdn.example/${name}-replacement.json`;
+      const fixture = input();
+      fixture.ownerManifest.collections[0].distribution[0].publisher_domain = host;
+      fixture.hostManifest.properties[0].publisher_domain = host;
+      const verify = (location, contents, requests = []) =>
+        verifySupplyPathSdk(
+          { ...request, host_domain: host },
+          {
+            source: 'authoritative', // Exercise the actual default authority store.
+            revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+            trustedFetchFn: transport(
+              {
+                [`https://${OWNER}/.well-known/adagents.json`]: fixture.ownerManifest,
+                [`https://${host}/.well-known/adagents.json`]: { authoritative_location: location },
+                [location]: contents,
+              },
+              requests
+            ),
+          }
+        );
+      assert.equal((await verify(failed, failedTarget)).state, 'owner_attested');
+      assert.equal(await sdk.defaultSupplyPathAuthorities.check(host, valid), true);
+      assert.equal((await verify(valid, fixture.hostManifest)).state, 'verified_owner_sold');
+      assert.equal(await sdk.defaultSupplyPathAuthorities.check(host, valid), true);
+      assert.equal(await sdk.defaultSupplyPathAuthorities.check(host, replacement), false);
+      const requests = [];
+      await assert.rejects(
+        verify(replacement, { revoked_publisher_domains: [OWNER] }, requests),
+        /Authoritative location changed/
+      );
+      assert.equal(
+        requests.some(item => item.url === replacement),
+        false
+      );
+      // A failed refresh of the accepted location preserves its pin as well.
+      assert.equal((await verify(valid, failedTarget)).state, 'owner_attested');
+      assert.equal(await sdk.defaultSupplyPathAuthorities.check(host, replacement), false);
+    });
+  }
+  it('does not pin a malformed publisher-origin envelope before a later valid pointer', async () => {
+    const pins = new sdk.InMemorySupplyPathAuthorityStore();
+    await verifySupplyPath(request, {
+      source: 'authoritative',
+      authorityStore: pins,
+      trustedFetchFn: transport({ [`https://${HOST}/.well-known/adagents.json`]: {} }),
+    });
+    assert.equal(await pins.check(HOST, 'https://cdn.example/later.json'), true);
+    assert.equal(await pins.observe(HOST, 'https://cdn.example/later.json'), true);
+    assert.equal(await pins.check(HOST, `https://${HOST}/.well-known/adagents.json`), false);
+  });
+  it('atomically rejects a pin changed between precheck and successful observation', async () => {
+    const pins = new sdk.InMemorySupplyPathAuthorityStore();
+    const fixture = input();
+    fixture.hostManifest.properties[0].publisher_domain = HOST;
+    const target = 'https://cdn.example/racing.json';
+    const confirmed = 'https://operator-confirmed.example/host.json';
+    await assert.rejects(
+      verifySupplyPath(request, {
+        source: 'authoritative',
+        authorityStore: pins,
+        trustedFetchFn: transport({
+          [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: target },
+          [target]: () => {
+            pins.approveChange(HOST, confirmed);
+            return new Response(JSON.stringify(fixture.hostManifest), {
+              headers: { 'content-type': 'application/json' },
+            });
+          },
+        }),
+      }),
+      /Authoritative location changed/
+    );
+    assert.equal(await pins.check(HOST, confirmed), true);
+    assert.equal(await pins.check(HOST, target), false);
+  });
+  it('bounds the successful-observation commit by the same overall deadline', async () => {
+    await assert.rejects(
+      verifySupplyPath(request, {
+        source: 'authoritative',
+        timeoutMs: 25,
+        authorityStore: { check: async () => true, observe: () => new Promise(() => {}) },
+        trustedFetchFn: transport(),
+      }),
+      /deadline|abort/i
+    );
+  });
 });
