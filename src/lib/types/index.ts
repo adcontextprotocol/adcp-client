@@ -47,6 +47,8 @@ export type {
   CanonicalFormatResponsiveCreative,
   CanonicalFormatSponsoredPlacementRetailMediaCatalogDriven,
   CanonicalFormatVASTVideo,
+  CanonicalDeliveryForecast,
+  CanonicalForecastPoint,
   ExtensionObject,
   PlacementPresentationDocument,
   PlacementPresentationReference,
