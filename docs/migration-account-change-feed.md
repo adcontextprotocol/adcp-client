@@ -227,7 +227,8 @@ SDK's launcher, which mounts the upstream router and its session persistence:
 
 ```bash
 git clone https://github.com/adcontextprotocol/adcp.git .context/account-feed/upstream
-git -C .context/account-feed/upstream checkout 1c70359cd
+git -C .context/account-feed/upstream fetch origin pull/7516/head
+git -C .context/account-feed/upstream checkout FETCH_HEAD
 npm --prefix .context/account-feed/upstream ci --ignore-scripts
 docker run --rm --network host \
   -v "$PWD:$PWD" -w "$PWD" node:22-bookworm-slim \

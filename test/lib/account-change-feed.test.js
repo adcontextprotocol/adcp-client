@@ -418,6 +418,18 @@ test('equivalent timestamp encodings retain identity without losing fractional p
   });
 });
 
+test('long fractional timestamps preserve identity and significant trailing digits', () => {
+  const fraction = `${'0'.repeat(8192)}1`;
+  const previous = parse(webhook({ recorded_at: `2026-08-24T11:58:04.${fraction}Z` }), identity);
+  assert.equal(
+    parse(webhook({ recorded_at: `2026-08-24T11:58:04.${fraction}00+00:00` }), { ...identity, previous }).changeId,
+    previous.changeId
+  );
+  assert.throws(() => parse(webhook({ recorded_at: `2026-08-24T11:58:04.${fraction}2Z` }), { ...identity, previous }), {
+    code: 'account_change_identity_mismatch',
+  });
+});
+
 test('registration refuses to carry old credentials to a new endpoint', () => {
   assert.throws(
     () =>

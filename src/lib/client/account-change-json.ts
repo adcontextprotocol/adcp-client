@@ -13,7 +13,7 @@ export function assertAccountChangeJsonSize(value: unknown, maxBytes: number): v
       charge(Buffer.byteLength(JSON.stringify(item)));
     } else if (item === null || typeof item === 'boolean' || (typeof item === 'number' && Number.isFinite(item))) {
       charge(JSON.stringify(item).length);
-    } else if (typeof item === 'object' && item !== null) {
+    } else if (typeof item === 'object') {
       if (ancestors.has(item)) throw new Error('Cyclic JSON');
       ancestors.add(item);
       charge(2);

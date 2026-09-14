@@ -179,10 +179,13 @@ function equalResource(left: AccountChange['resource'], right: AccountChange['re
 function equalInstant(actual: string, expected: string, field: string): void {
   if (actual === expected) return;
   const canonical = (value: string) => {
-    const match = /^(.*T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/i.exec(value);
+    const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/i.exec(value);
     if (!match) return undefined;
     const seconds = Date.parse(match[1]! + match[3]!);
-    return Number.isFinite(seconds) ? `${seconds}:${(match[2] ?? '').replace(/0+$/, '')}` : undefined;
+    const fraction = match[2] ?? '';
+    let end = fraction.length;
+    while (end > 0 && fraction[end - 1] === '0') end--;
+    return Number.isFinite(seconds) ? `${seconds}:${fraction.slice(0, end)}` : undefined;
   };
   const left = canonical(actual);
   if (left === undefined || left !== canonical(expected)) {
