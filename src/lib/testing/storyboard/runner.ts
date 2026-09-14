@@ -186,6 +186,9 @@ import {
   buildRoutingContext,
   DiscoveryFailure,
   resolveAgentForStep,
+  routedAgentOptions,
+  hasAnyRequiredTool,
+  normalizeAgentToolNames,
   RoutingError,
   type AgentRoutingContext,
 } from './agent-routing';
@@ -1753,20 +1756,6 @@ function buildRequiredAnyOfToolsMissingResult(
   };
 }
 
-function normalizeAgentToolNames(tools: unknown): string[] | undefined {
-  if (!Array.isArray(tools)) return undefined;
-  const names: string[] = [];
-  for (const tool of tools) {
-    if (typeof tool === 'string') {
-      names.push(tool);
-    } else if (tool && typeof tool === 'object') {
-      const name = (tool as { name?: unknown }).name;
-      if (typeof name === 'string') names.push(name);
-    }
-  }
-  return names.length > 0 ? names : undefined;
-}
-
 /**
  * Resolve a storyboard's `requires:` tags against the runtime environment.
  * Returns the first unmet requirement (with a human-readable detail) or
@@ -2477,11 +2466,9 @@ async function executeStoryboardPass(
     for (const p of routingContext.profiles.values()) {
       for (const t of normalizeAgentToolNames(p.tools) ?? []) unionedTools.add(t);
     }
-    if (!options.agentTools) {
-      options = { ...options, agentTools: [...unionedTools], _profile: profile };
-    } else if (profile && !options._profile) {
-      options = { ...options, _profile: profile };
-    }
+    // Routed discovery is authoritative. Caller-supplied single-agent tools
+    // cannot widen or suppress this topology's storyboard applicability.
+    options = { ...options, agentTools: [...unionedTools], _profile: profile };
   } else {
     // Build one client per URL. In single-URL mode `_client` (from comply()) is
     // honored so the shared MCP transport is reused across storyboards.
@@ -2627,8 +2614,8 @@ async function executeStoryboardPass(
   // discovery is available. If a direct `_client` caller supplies neither
   // `agentTools` nor a discoverable profile, this gate remains a no-op and
   // step-level `requires_tool` checks carry the compatibility signal.
-  if (storyboard.required_tools?.length && options.agentTools) {
-    const hasAnyRequired = storyboard.required_tools.some(t => options.agentTools!.includes(t));
+  if (storyboard.required_tools?.length && options.agentTools && !routingContext?.discoveryFailures.length) {
+    const hasAnyRequired = hasAnyRequiredTool(storyboard.required_tools, options.agentTools);
     if (!hasAnyRequired) {
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return {
@@ -3472,6 +3459,8 @@ async function executeStoryboardPass(
         // a failed step with the routing error verbatim so the report
         // tells the operator exactly what's missing.
         const detail = err instanceof RoutingError ? err.message : ((err as Error)?.message ?? String(err));
+        const failedAgentKey = step.agent ?? options.default_agent;
+        const failedAgentUrl = failedAgentKey ? options.agents?.[failedAgentKey]?.url : undefined;
         const failed: StoryboardStepResult = {
           storyboard_id: storyboard.id,
           step_id: step.id,
@@ -3483,6 +3472,7 @@ async function executeStoryboardPass(
           validations: [],
           context,
           error: detail,
+          ...(failedAgentUrl && { agent_url: redactOAuthUrlForOutput(failedAgentUrl) }),
           extraction: { path: 'none' },
         };
         stepResults.push(failed);
@@ -3503,7 +3493,7 @@ async function executeStoryboardPass(
         phase.id,
         context,
         allSteps,
-        options,
+        assignment.options ?? options,
         stepExecutionState
       );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
@@ -8530,6 +8520,8 @@ interface StepAssignment {
   instanceIndex: number;
   /** Profile discovered for the agent selected to execute this step. */
   profile?: AgentProfile;
+  /** Execution view bound to the routed agent, including its toolset and transport. */
+  options?: StoryboardRunOptions;
 }
 
 interface Dispatcher {
@@ -8601,11 +8593,19 @@ function createRoutingDispatcher(
           `key ${key} unbound`
         );
       }
+      if (!profile) {
+        throw new RoutingError(
+          `Agent "${key}" has no discovered profile; its task contract cannot be established.`,
+          step.task,
+          `agent "${key}" failed discovery`
+        );
+      }
       return {
         client,
         agentUrl: url,
         instanceIndex: keyToIndex.get(key) ?? 0,
         profile,
+        options: routedAgentOptions(agents[key]!, options, profile),
       };
     },
   };

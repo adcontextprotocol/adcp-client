@@ -1795,6 +1795,10 @@ export interface StoryboardRunOptions extends TestOptions {
    * (`StoryboardStep.task`) is resolved to the agent that claims its
    * specialism via `TASK_FEATURE_MAP` × per-agent `get_adcp_capabilities`.
    * An optional explicit `StoryboardStep.agent` override takes precedence.
+   * Discovered tools across the map determine storyboard-level any-of
+   * applicability. Each dispatched step uses only its selected agent's
+   * tools, profile, authentication, and transport; run-level `agentTools`
+   * cannot override routed discovery.
    *
    * Mutually exclusive with `multi_instance_strategy` (which is replica
    * round-robin, a different concept) and with the legacy `_client`

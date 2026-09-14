@@ -46,6 +46,22 @@ import type { AgentProfile } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
 
+/** Storyboard applicability is any-of; it does not authorize individual steps. */
+export function hasAnyRequiredTool(required: readonly string[] | undefined, tools: readonly string[]): boolean {
+  return !required?.length || required.some(tool => tools.includes(tool));
+}
+
+/** Normalize legacy discovery entries; routed callers explicitly preserve empty lists. */
+export function normalizeAgentToolNames(tools: unknown): string[] | undefined {
+  if (!Array.isArray(tools)) return undefined;
+  const names = tools.flatMap(tool => {
+    if (typeof tool === 'string') return [tool];
+    if (tool && typeof tool === 'object' && typeof tool.name === 'string') return [tool.name];
+    return [];
+  });
+  return names.length > 0 ? names : undefined;
+}
+
 // `compliance_testing` is on the wire as a top-level capability block, NOT
 // in `supported_protocols`. `parseCapabilitiesResponse`
 // (`src/lib/utils/capabilities.ts`) normalizes the block into the
@@ -111,8 +127,23 @@ function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): St
     // depends on.
     _client: undefined,
     _profile: undefined,
+    profile: undefined,
     agents: undefined,
     agentTools: undefined,
+  };
+}
+
+/** Bind execution gates and transport observations to the same agent as dispatch. */
+export function routedAgentOptions(
+  entry: AgentEntry,
+  options: StoryboardRunOptions,
+  profile: AgentProfile
+): StoryboardRunOptions {
+  return {
+    ...buildAgentOptions(entry, options),
+    profile,
+    _profile: profile,
+    agentTools: normalizeAgentToolNames(profile.tools) ?? [],
   };
 }
 

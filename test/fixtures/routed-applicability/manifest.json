@@ -1,0 +1,62 @@
+{
+  "3.1.20": {
+    "universal/canonical-format-validate-input.yaml": {
+      "file": "storyboards/f71add842a18-canonical-format-validate-input.yaml",
+      "sha256": "f71add842a181b2bcd5f676ffc35dce5785c0c7c6ba63580c97d04573fc2474b"
+    },
+    "universal/billing-gate-dispatch.yaml": {
+      "file": "storyboards/01c3b2a9f9ee-billing-gate-dispatch.yaml",
+      "sha256": "01c3b2a9f9eef1a93f20c21aa97a961f7a6dff224093c9e49619a2c2035aa886"
+    },
+    "protocols/media-buy/scenarios/governance_approved.yaml": {
+      "file": "storyboards/dbccbd1e7053-governance_approved.yaml",
+      "sha256": "dbccbd1e70539f1725e0d59093ed3ee3490ddf947f03b2dc3facd75bce55a1a6"
+    },
+    "protocols/media-buy/scenarios/governance_conditions.yaml": {
+      "file": "storyboards/fe4a0bc0eeb0-governance_conditions.yaml",
+      "sha256": "fe4a0bc0eeb096e867ee1995427da4213d0e6e05ca8d21543a258233d40707ec"
+    },
+    "protocols/media-buy/scenarios/provenance_audit_observation.yaml": {
+      "file": "storyboards/f3936d068116-provenance_audit_observation.yaml",
+      "sha256": "f3936d068116d1873f9721c825ccdb026a9908e8c39bf19762b6191f1773d9d2"
+    },
+    "protocols/media-buy/scenarios/provenance_enforcement.yaml": {
+      "file": "storyboards/efe04df8f590-provenance_enforcement.yaml",
+      "sha256": "efe04df8f590b0d25d08d4a103fab2387aeb31711006b8814766918033b86f32"
+    },
+    "protocols/media-buy/scenarios/provenance_truth_of_claim.yaml": {
+      "file": "storyboards/e498031661fc-provenance_truth_of_claim.yaml",
+      "sha256": "e498031661fc5181603ff00d6689b281aa0101763493754498c25684e4f7e7a7"
+    }
+  },
+  "3.1.23": {
+    "universal/canonical-format-validate-input.yaml": {
+      "file": "storyboards/4ac22f54839c-canonical-format-validate-input.yaml",
+      "sha256": "4ac22f54839c8d01184b0eb456fa2182f66577a02aa7bf2fb60ce0d88c0988e8"
+    },
+    "universal/billing-gate-dispatch.yaml": {
+      "file": "storyboards/f77a7ff7b831-billing-gate-dispatch.yaml",
+      "sha256": "f77a7ff7b831a932a0c6142d74f51e229f1fcd6e163c91eaa7c7087626c3ab27"
+    },
+    "protocols/media-buy/scenarios/governance_approved.yaml": {
+      "file": "storyboards/dbccbd1e7053-governance_approved.yaml",
+      "sha256": "dbccbd1e70539f1725e0d59093ed3ee3490ddf947f03b2dc3facd75bce55a1a6"
+    },
+    "protocols/media-buy/scenarios/governance_conditions.yaml": {
+      "file": "storyboards/fe4a0bc0eeb0-governance_conditions.yaml",
+      "sha256": "fe4a0bc0eeb096e867ee1995427da4213d0e6e05ca8d21543a258233d40707ec"
+    },
+    "protocols/media-buy/scenarios/provenance_audit_observation.yaml": {
+      "file": "storyboards/f3936d068116-provenance_audit_observation.yaml",
+      "sha256": "f3936d068116d1873f9721c825ccdb026a9908e8c39bf19762b6191f1773d9d2"
+    },
+    "protocols/media-buy/scenarios/provenance_enforcement.yaml": {
+      "file": "storyboards/efe04df8f590-provenance_enforcement.yaml",
+      "sha256": "efe04df8f590b0d25d08d4a103fab2387aeb31711006b8814766918033b86f32"
+    },
+    "protocols/media-buy/scenarios/provenance_truth_of_claim.yaml": {
+      "file": "storyboards/e498031661fc-provenance_truth_of_claim.yaml",
+      "sha256": "e498031661fc5181603ff00d6689b281aa0101763493754498c25684e4f7e7a7"
+    }
+  }
+}
