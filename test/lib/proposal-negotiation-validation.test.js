@@ -348,7 +348,7 @@ test('commercial-terms verifier fails closed when the requested schema bundle is
     proposal('proposal-version', 'source-1', { commercial_terms: terms }),
     terms,
     {
-      adcpVersion: '3.2.0-rc.199',
+      adcpVersion: '3.2.0-rc.299',
     }
   );
   assert.equal(result.ok, false);
@@ -678,7 +678,7 @@ test('compact submitted responses validate without completed-field access', () =
 });
 
 test('response verifier accepts only the 3.2 response release line and reports rejected values', () => {
-  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2-rc.1']) {
+  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2-rc.2']) {
     assert.equal(
       validateRefineProposalsResponseShape({
         ...response(),

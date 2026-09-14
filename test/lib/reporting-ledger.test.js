@@ -1039,7 +1039,7 @@ describe('seller reporting ledger', () => {
       true,
       parsedPeriods.success ? undefined : JSON.stringify(parsedPeriods.error.issues)
     );
-    const validatedPeriods = validateResponse('get_reporting_status', periods, '3.2.0-rc.1');
+    const validatedPeriods = validateResponse('get_reporting_status', periods, '3.2.0-rc.2');
     if (!validatedPeriods.valid) throw new Error(JSON.stringify(validatedPeriods));
     const firstPage = await handler(
       { account: request.account, view: 'periods', pagination: { max_results: 1 } },
@@ -1059,7 +1059,7 @@ describe('seller reporting ledger', () => {
     assert.equal(secondPage.periods.length, 0);
     assert.equal(secondPage.revisions.length, 1);
     assert.equal(secondPage.pagination.total_count, 2);
-    assert.equal(validateResponse('get_reporting_status', secondPage, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', secondPage, '3.2.0-rc.2').valid, true);
     const exact = await handler(
       {
         account: request.account,
@@ -1073,7 +1073,7 @@ describe('seller reporting ledger', () => {
     assert.equal(exact.reporting_revision_binding.revision_content_sha256, revisions[0].binding.sha256);
     const parsedExact = GetReportingStatusResponseSchema.safeParse(exact);
     assert.equal(parsedExact.success, true, parsedExact.success ? undefined : JSON.stringify(parsedExact.error.issues));
-    assert.equal(validateResponse('get_reporting_status', exact, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', exact, '3.2.0-rc.2').valid, true);
     const deliveryHandler = createReportingDeliveryHandler(store);
     const delivery = await deliveryHandler(
       {
@@ -1108,14 +1108,14 @@ describe('seller reporting ledger', () => {
       /cursor is invalid/
     );
     assert.equal(delivery.reporting_revision_binding.content_sha256, revisions[0].binding.sha256);
-    const validatedDelivery = validateResponse('get_media_buy_delivery', delivery, '3.2.0-rc.1');
+    const validatedDelivery = validateResponse('get_media_buy_delivery', delivery, '3.2.0-rc.2');
     if (!validatedDelivery.valid) throw new Error(JSON.stringify(validatedDelivery));
     const missing = await handler(
       { account: request.account, view: 'revision', reporting_revision_id: 'rrev_missing' },
       context
     );
     assert.equal(missing.failure_kind, 'lookup_unavailable');
-    assert.equal(validateResponse('get_reporting_status', missing, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', missing, '3.2.0-rc.2').valid, true);
     const summary = await handler({ account: request.account, view: 'summary' }, context);
     const parsedSummary = GetReportingStatusResponseSchema.safeParse(summary);
     assert.equal(
@@ -1128,7 +1128,7 @@ describe('seller reporting ledger', () => {
       context
     );
     assert.equal(unknownMediaBuy.failure_kind, 'lookup_unavailable');
-    assert.equal(validateResponse('get_reporting_status', summary, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', summary, '3.2.0-rc.2').valid, true);
     const filteredSummary = await handler({ account: request.account, view: 'summary', health: ['delayed'] }, context);
     assert.equal(filteredSummary.obligation_counts.total, 1, 'health is a periods-only filter');
     assert.equal(filteredSummary.health, summary.health);
@@ -1137,7 +1137,7 @@ describe('seller reporting ledger', () => {
     assert.equal(officialOnly.revisions.length, 0);
     assert.equal(officialOnly.pagination.has_more, false, 'filtered revisions must not create empty pages');
     assert.equal(officialOnly.pagination.total_count, 1);
-    assert.equal(validateResponse('get_reporting_status', officialOnly, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', officialOnly, '3.2.0-rc.2').valid, true);
     const completeOnly = await handler({ account: request.account, view: 'periods', health: ['complete'] }, context);
     assert.equal(completeOnly.periods.length, 1);
     const unknownConfiguration = await handler(
@@ -1145,13 +1145,13 @@ describe('seller reporting ledger', () => {
       context
     );
     assert.equal(unknownConfiguration.failure_kind, 'lookup_unavailable');
-    assert.equal(validateResponse('get_reporting_status', unknownConfiguration, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', unknownConfiguration, '3.2.0-rc.2').valid, true);
     const malformedCursor = await handler(
       { account: request.account, view: 'periods', pagination: { cursor: 'not-json' } },
       context
     );
     assert.equal(malformedCursor.failure_kind, 'lookup_unavailable');
-    assert.equal(validateResponse('get_reporting_status', malformedCursor, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', malformedCursor, '3.2.0-rc.2').valid, true);
     const restatement = await producer.runWorker({ now: () => new Date(anchor + 3 * 86_400_000), maxIterations: 1 });
     assert.equal(restatement.revisionsCommitted, 1);
     assert.equal((await store.listRevisions(planned[0].reporting_obligation_id)).length, 2);
@@ -1260,7 +1260,7 @@ describe('seller reporting ledger', () => {
         { account: { account_id: request.account.account_id } }
       );
       assert.equal(response.failure_kind, 'operational');
-      assert.equal(validateResponse('get_reporting_status', response, '3.2.0-rc.1').valid, true);
+      assert.equal(validateResponse('get_reporting_status', response, '3.2.0-rc.2').valid, true);
     }
   });
 
@@ -1414,7 +1414,7 @@ describe('seller reporting ledger', () => {
     assert.equal(periods.periods[0].adjustment_count, 1);
     const parsed = GetReportingStatusResponseSchema.safeParse(periods);
     assert.equal(parsed.success, true, parsed.success ? undefined : JSON.stringify(parsed.error.issues));
-    const validatedPeriods = validateResponse('get_reporting_status', periods, '3.2.0-rc.1');
+    const validatedPeriods = validateResponse('get_reporting_status', periods, '3.2.0-rc.2');
     if (!validatedPeriods.valid) throw new Error(JSON.stringify(validatedPeriods));
     const exact = await handler(
       {
@@ -1449,7 +1449,7 @@ describe('seller reporting ledger', () => {
     assert.equal(secondExactPage.pagination.has_more, false);
     const parsedExact = GetReportingStatusResponseSchema.safeParse(exact);
     assert.equal(parsedExact.success, true, parsedExact.success ? undefined : JSON.stringify(parsedExact.error.issues));
-    assert.equal(validateResponse('get_reporting_status', exact, '3.2.0-rc.1').valid, true);
+    assert.equal(validateResponse('get_reporting_status', exact, '3.2.0-rc.2').valid, true);
   });
 
   test('exports one idempotent migration for the complete store surface', () => {

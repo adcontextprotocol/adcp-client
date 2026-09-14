@@ -435,7 +435,7 @@ describe('conformance: seedFixtures', () => {
   test('default seeding does not probe the compact lifecycle unless the selected bundle enables it', async () => {
     let compactCalls = 0;
     const { server, port } = await startAgent({
-      adcpVersion: '3.2.0-rc.1',
+      adcpVersion: '3.2.0-rc.2',
       mediaBuy: {
         getProducts: async () => ({ products: [], cache_scope: 'public' }),
         listProducts: async () => {
