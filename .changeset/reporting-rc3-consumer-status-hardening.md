@@ -76,3 +76,21 @@ negative window escalated everything.
 `reportingConsumerStatusCapabilityV1(escalation)` projects the same option into the capability
 document's `consumer_mismatch_escalation_seconds` + `operations_contact`, so the advertised window
 and the window the reads enforce come from one value and cannot drift.
+
+**Ingest rejects a `content_mismatch` against a superseded revision.** `expected_period` makes it
+*"valid only against a revision the seller currently requires for that period"*, but existence,
+account ownership, obligation membership, and a matching content digest are all satisfiable by a
+long-superseded revision — so a buyer could dispute stale bytes and pin its own caller-scoped view
+at `action_required`, which the seller may then not clear while that statement is the leaf.
+Deciding currency needs the sibling revision set, so `ReportingConsumerStatusLedgerStore` gains an
+optional `listRevisionMetadata`; `ReportingLedgerStore` implementors are already covered through
+`listRevisions`. A store that can do neither now **rejects** `content_mismatch` rather than
+accepting a statement it cannot validate — the other four statuses are unaffected, and
+`content_mismatch` is new in rc.3 so no existing adapter regresses.
+
+`consumer_status_pending` now starts strictly *after* the deadline, since the duty is to post "no
+later than" it. A negative-status issue's `opened_at` takes the later of the statement's
+`recorded_at` and the earliest qualifying revision, so a statement filed during a seller outage no
+longer surfaces on recovery already past its escalation boundary. And
+`createReportingStatusHandler` inherits `consumerMismatchEscalation` from the store and throws on a
+disagreement, so a health-filtered periods read cannot contradict the summary.

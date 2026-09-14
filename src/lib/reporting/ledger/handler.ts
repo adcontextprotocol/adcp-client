@@ -27,7 +27,6 @@ import type {
   ReportingLedgerCoverageV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
-  ReportingLedgerRevisionSnapshotV1,
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
   ReportingDeliveryHandlerV1,
@@ -51,8 +50,14 @@ export function createReportingStatusHandler<TContext = unknown>(
   store: ReportingLedgerStore,
   options?: ReportingStatusConsumerScopeOptionsV1<TContext>
 ): ReportingStatusHandlerV1 {
-  // Fail at wiring time, not on the first escalated read.
-  const consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(options?.consumerMismatchEscalation);
+  // Fail at wiring time, not on the first escalated read. Inherit the store's
+  // setting when the handler was not given one, and refuse a disagreement
+  // outright: the store applies the `health` filter while building the
+  // snapshot and the handler projects severity afterwards, so two different
+  // windows would make a filtered periods read contradict the summary.
+  const consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(
+    resolveConsumerMismatchEscalation(options?.consumerMismatchEscalation, store)
+  );
   const activeReadsByAccount = new Map<string, number>();
   return async (request, context) => {
     const raw = request as unknown as Record<string, unknown>;
@@ -234,7 +239,9 @@ export function createReportingStatusHandler<TContext = unknown>(
         const consumerStatusPending =
           consumerId !== undefined &&
           consumerStatusProjection.length === 0 &&
-          compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) >= 0;
+          // Strictly after: the duty is to post "no later than" the deadline, so
+          // a buyer that posts at exactly that instant has met it.
+          compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
         return {
           obligation,
           revisions,
@@ -371,6 +378,32 @@ export function createReportingStatusHandler<TContext = unknown>(
       releaseReadSlot();
     }
   };
+}
+
+/**
+ * One escalation commitment for both the snapshot pre-filter and the
+ * projection. Throws when the handler and the store were configured with
+ * different windows rather than letting the two views silently diverge.
+ */
+function resolveConsumerMismatchEscalation(
+  fromOptions: ReportingConsumerMismatchEscalationV1 | undefined,
+  store: ReportingLedgerStore
+): ReportingConsumerMismatchEscalationV1 | undefined {
+  const fromStore = (store as { consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1 })
+    .consumerMismatchEscalation;
+  if (!fromOptions) return fromStore;
+  if (!fromStore) return fromOptions;
+  if (
+    fromOptions.escalationSeconds !== fromStore.escalationSeconds ||
+    fromOptions.operationsContact.url !== fromStore.operationsContact.url ||
+    fromOptions.operationsContact.email !== fromStore.operationsContact.email
+  ) {
+    throw new TypeError(
+      'consumerMismatchEscalation differs between createReportingStatusHandler and the reporting ledger store; ' +
+        'configure one value so a health-filtered periods read cannot disagree with the summary'
+    );
+  }
+  return fromOptions;
 }
 
 /** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
@@ -548,12 +581,6 @@ function currentStatusLeaf(
     statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
   );
   return statuses.find(value => !superseded.has(value.reporting_status_id));
-}
-
-function instant(value: string, name: string): number {
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) throw new TypeError(`${name} must be an RFC 3339 instant`);
-  return parsed;
 }
 
 function wireConsumerStatus(status: ReportingLedgerConsumerStatementV1) {

@@ -670,6 +670,107 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     assert.equal(stale.results[0].result, 'failed');
   });
 
+  test('rejects content_mismatch against a superseded revision', async () => {
+    const consumer = { account: { account_id: request.account.account_id }, consumer: 'fixture-consumer-superseded' };
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: context => context.consumer,
+    });
+    const base = {
+      delivery_config_id: obligation.delivery_config_id,
+      delivery_config_version: obligation.delivery_config_version,
+      report_definition_id: obligation.report_definition_id,
+      period: {
+        start: obligation.period.start,
+        end: obligation.period.end,
+        source_timezone: obligation.period.sourceTimezone,
+      },
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      consumer_status: 'content_mismatch',
+      mismatch_code: 'coverage_short',
+      status_as_of: new Date().toISOString(),
+    };
+
+    // Fixture state is shared across tests in this file and an earlier one
+    // already restated, so resolve the current revision rather than assuming
+    // the one captured at setup is still required.
+    const revisions = await reference.store.listRevisions(obligation.reporting_obligation_id);
+    assert.ok(revisions.length >= 2, 'the fixture has a superseded revision to dispute');
+    const superseded = new Set(revisions.map(value => value.supersedes_reporting_revision_id).filter(Boolean));
+    const currentRevision = revisions
+      .filter(value => !superseded.has(value.reporting_revision_id))
+      .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+    const staleRevision = revisions.find(value => superseded.has(value.reporting_revision_id));
+    assert.ok(currentRevision && staleRevision && currentRevision !== staleRevision);
+
+    // Against the revision the seller currently requires this is a legitimate
+    // dispute and must be recorded.
+    const current = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-cm-current',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-cm-0001',
+            reporting_revision_id: currentRevision.reporting_revision_id,
+            observed_revision_content_sha256: currentRevision.wireRevision.revision_content_sha256,
+          },
+        ],
+      },
+      consumer
+    );
+    assert.equal(current.results[0].result, 'recorded', JSON.stringify(current.results[0]));
+
+    // Same statement shape, same matching digest, now naming stale bytes.
+    // `expected_period`: content_mismatch is valid only against a revision the
+    // seller currently requires. Without the currency check this is accepted
+    // and pins the caller's own view at action_required.
+    const stale = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-cm-stale',
+        statuses: [
+          {
+            ...base,
+            reporting_status_id: 'fixture-status-cm-0002',
+            supersedes_reporting_status_id: 'fixture-status-cm-0001',
+            reporting_revision_id: staleRevision.reporting_revision_id,
+            observed_revision_content_sha256: staleRevision.wireRevision.revision_content_sha256,
+          },
+        ],
+      },
+      consumer
+    );
+    assert.equal(stale.results[0].result, 'failed');
+    assert.match(
+      stale.results[0].errors[0].message,
+      /currently requires/,
+      'the buyer is told which revision to dispute, not given a generic lookup failure'
+    );
+
+    // A `received` naming the same stale revision stays acceptable — it is a
+    // stale read, which rc.3 handles with the grace window, not a rejection.
+    const staleReceived = await sync(
+      {
+        account: request.account,
+        idempotency_key: 'fixture-status-cm-stale-received',
+        statuses: [
+          {
+            ...base,
+            consumer_status: 'received',
+            mismatch_code: undefined,
+            reporting_status_id: 'fixture-status-cm-0003',
+            supersedes_reporting_status_id: 'fixture-status-cm-0001',
+            reporting_revision_id: staleRevision.reporting_revision_id,
+            observed_revision_content_sha256: staleRevision.wireRevision.revision_content_sha256,
+          },
+        ],
+      },
+      consumer
+    );
+    assert.equal(staleReceived.results[0].result, 'recorded', JSON.stringify(staleReceived.results[0]));
+  });
+
   test('accepts an independently derived missing-obligation period', async () => {
     const day = configuration.schedule.periodMilliseconds;
     const start = new Date(Date.parse(configuration.schedule.anchor) + day).toISOString();

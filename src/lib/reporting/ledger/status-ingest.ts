@@ -27,6 +27,8 @@ import {
   ReportingConsumerStatusConflictError,
   ReportingLedgerSnapshotUnavailableError,
   type ReportingConsumerStatusLedgerStore,
+  type ReportingLedgerRevisionMetadataV1,
+  type ReportingLedgerStore,
   type ReportingConsumerStatusBatchEntryV1,
   type ReportingConsumerStatusBatchResultV1,
   type ReportingLedgerConfigurationV1,
@@ -164,6 +166,8 @@ type ReportingStatusValidationReason =
   | 'missing status precedes expected_at'
   | 'obligation mismatch'
   | 'revision mismatch'
+  | 'superseded revision'
+  | 'revision currency unverifiable'
   | 'revision binding mismatch'
   | 'snapshot provenance unavailable'
   | 'snapshot provenance mismatch';
@@ -380,6 +384,27 @@ async function validateStatus(
         status.observed_revision_content_sha256.toLowerCase()
     )
       throw new ReportingStatusValidationError('revision binding mismatch');
+    if (status.consumer_status === 'content_mismatch') {
+      // `expected_period`: "content_mismatch is valid only against a revision
+      // the seller currently requires for that period." Existence, ownership,
+      // and a matching digest are all satisfiable by a long-superseded
+      // revision, so without this a buyer could dispute stale bytes and hold
+      // its own caller-scoped view at action_required — which the seller then
+      // may not clear while that statement is the current leaf.
+      const siblings = await listObligationRevisionMetadata(store, revision.reporting_obligation_id, accountId);
+      if (!siblings) throw new ReportingStatusValidationError('revision currency unverifiable');
+      const superseded = new Set(
+        siblings
+          .map(value => value.supersedes_reporting_revision_id)
+          .filter((value): value is string => typeof value === 'string')
+      );
+      const current = siblings
+        .filter(value => !superseded.has(value.reporting_revision_id))
+        .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+      if (!current || current.reporting_revision_id !== revision.reporting_revision_id) {
+        throw new ReportingStatusValidationError('superseded revision');
+      }
+    }
   }
   if (status.seller_ledger_snapshot_id) {
     if (!store.readSnapshotPage) {
@@ -758,6 +783,31 @@ function zodIssueKeyword(
   }
 }
 
+/**
+ * Retained revisions for one obligation, or `undefined` when the store cannot
+ * enumerate them.
+ *
+ * Prefers the narrow port's `listRevisionMetadata`, and falls back to
+ * `listRevisions` so a full `ReportingLedgerStore` (including the bundled
+ * PostgreSQL one) needs no extra method. Rows are dropped either way — ingest
+ * validation must never materialize them.
+ */
+async function listObligationRevisionMetadata(
+  store: ReportingConsumerStatusLedgerStore,
+  reporting_obligation_id: string,
+  account_id: string
+): Promise<ReportingLedgerRevisionMetadataV1[] | undefined> {
+  if (typeof store.listRevisionMetadata === 'function') {
+    return store.listRevisionMetadata(reporting_obligation_id, account_id);
+  }
+  const full = store as Partial<ReportingLedgerStore>;
+  if (typeof full.listRevisions === 'function') {
+    const revisions = await full.listRevisions(reporting_obligation_id);
+    return revisions.map(({ rows: _rows, ...metadata }) => metadata);
+  }
+  return undefined;
+}
+
 function reportingStatusValidationDiagnostic(
   reason: ReportingStatusValidationReason,
   index: number
@@ -777,6 +827,19 @@ function reportingStatusValidationDiagnostic(
       return {
         message: 'Missing reporting status cannot precede the expected reporting time',
         field: `/statuses/${index}/status_as_of`,
+      };
+    // Not an existence question — the caller already proved it knows this
+    // revision by matching its content digest — so a specific diagnostic here
+    // cannot become an oracle and saves the buyer a guess.
+    case 'superseded revision':
+      return {
+        message: 'content_mismatch must name the revision the seller currently requires for this period',
+        field: `/statuses/${index}/reporting_revision_id`,
+      };
+    case 'revision currency unverifiable':
+      return {
+        message: 'This seller cannot validate content_mismatch because it cannot enumerate obligation revisions',
+        field: `/statuses/${index}/consumer_status`,
       };
     default:
       // Obligation, revision, and snapshot lookups remain deliberately

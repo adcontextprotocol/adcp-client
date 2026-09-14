@@ -586,6 +586,24 @@ export interface ReportingConsumerStatusLedgerStore {
     reporting_revision_id: string,
     account_id: string
   ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
+  /**
+   * Every retained revision for one obligation, without materializing rows.
+   *
+   * Required to accept `content_mismatch`, which per `expected_period` is
+   * *"valid only against a revision the seller currently requires for that
+   * period"*. Deciding that needs the sibling set: a revision is superseded
+   * when another one names it, which cannot be read off the named revision
+   * alone. A store that does not implement this rejects `content_mismatch`
+   * rather than accepting a statement it cannot validate — the other four
+   * statuses are unaffected.
+   *
+   * `ReportingLedgerStore` implementors already satisfy this through
+   * `listRevisions`; the handler uses whichever is present.
+   */
+  listRevisionMetadata?(
+    reporting_obligation_id: string,
+    account_id: string
+  ): Promise<ReportingLedgerRevisionMetadataV1[]>;
   /** Reads only the caller-bound snapshot needed to validate optional provenance. */
   readSnapshotPage?(
     snapshotId: string,

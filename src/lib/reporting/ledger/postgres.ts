@@ -363,7 +363,14 @@ export async function sweepExpiredReportingLedgerState(
 }
 
 export class PostgresReportingLedgerStore implements ReportingLedgerStore {
-  private readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  /**
+   * Exposed so `createReportingStatusHandler` can inherit it and refuse a
+   * disagreement. The store applies `health` while building the snapshot and
+   * the handler projects severity afterwards, so two independently configured
+   * copies of the escalation window would let a filtered periods read
+   * contradict the summary.
+   */
+  readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
 
   constructor(
     private readonly pool: ReportingPgPool,

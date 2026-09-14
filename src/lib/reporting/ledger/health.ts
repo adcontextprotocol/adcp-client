@@ -232,6 +232,16 @@ export function projectReportingConsumerStatusMismatchV1(
 ): ReportingConsumerStatusMismatchProjectionV1 | undefined {
   if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return undefined;
 
+  // The earliest instant the seller could have observed *any* conflict: the
+  // projection only emits while seller health is healthy/complete, which
+  // requires a qualifying revision. Dating an issue before that would let a
+  // statement filed during a seller outage surface, on recovery, already past
+  // its escalation boundary — the same defect the stale-received branch fixes
+  // by taking the later of two instants.
+  const earliestObservable = [...revisions]
+    .map(value => value.createdAt)
+    .sort((left, right) => compareReportingInstants(left, right))[0];
+
   let staleReceivedGraceDeadline: string | undefined;
   // Decided exactly against the anchor rather than against the rendered
   // deadline: materializing the deadline goes through `Date`, which floors to
@@ -241,7 +251,10 @@ export function projectReportingConsumerStatusMismatchV1(
   // `openedAt` must survive re-emission, so both branches anchor it to an
   // immutable ledger instant rather than to `ledgerAsOf`. Using the read time
   // would restart the escalation clock on every poll.
-  let openedAt = status.recorded_at;
+  let openedAt =
+    earliestObservable !== undefined && compareReportingInstants(earliestObservable, status.recorded_at) > 0
+      ? earliestObservable
+      : status.recorded_at;
 
   if (status.consumer_status === 'received') {
     const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
