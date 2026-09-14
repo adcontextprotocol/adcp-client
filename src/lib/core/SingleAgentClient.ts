@@ -1,7 +1,7 @@
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
 import { z } from 'zod';
-import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
@@ -1705,8 +1705,7 @@ export class SingleAgentClient {
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
   private primedCapabilitiesExpiresAt?: number; // Freshness bound for application-owned evidence only
   private capabilityEvidenceScopeKey = randomUUID();
-  private readonly capabilityEvidenceFingerprintKey = randomBytes(32);
-  private capabilityEvidenceAuthFingerprint?: string;
+  private capabilityEvidenceAuthMaterial?: string;
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
   private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
@@ -1789,7 +1788,7 @@ export class SingleAgentClient {
 
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(this.agent);
-    this.capabilityEvidenceAuthFingerprint = this.currentCapabilityEvidenceAuthFingerprint();
+    this.capabilityEvidenceAuthMaterial = this.currentCapabilityEvidenceAuthMaterial();
 
     this.executor = new TaskExecutor({
       workingTimeout: config.workingTimeout || 120000, // Max 120s for working status
@@ -8510,12 +8509,12 @@ export class SingleAgentClient {
     });
   }
 
-  private currentCapabilityEvidenceAuthFingerprint(): string {
+  private currentCapabilityEvidenceAuthMaterial(): string {
     // OAuth refresh updates the normalized transport agent in place/replaces
     // its token bundle. Bind evidence to that effective credential state,
     // rather than the constructor argument that may now be stale.
     const effectiveAgent = this.normalizedAgent;
-    const material = canonicalizeJson({
+    return canonicalizeJson({
       authToken: effectiveAgent.auth_token ?? null,
       headers: effectiveAgent.headers ?? null,
       oauthTokens: effectiveAgent.oauth_tokens ?? null,
@@ -8524,21 +8523,16 @@ export class SingleAgentClient {
       oauthClientCredentials: effectiveAgent.oauth_client_credentials ?? null,
       oauthCodeVerifier: effectiveAgent.oauth_code_verifier ?? null,
     });
-    // A per-client key makes this an opaque change detector instead of a
-    // reusable offline oracle for low-entropy credentials. This is neither a
-    // stored password digest nor a verifier; the random key dies with the client.
-    // codeql[js/insufficient-password-hash]
-    return createHmac('sha256', this.capabilityEvidenceFingerprintKey).update(material).digest('base64url');
   }
 
   private synchronizeCapabilityEvidenceAuthorizationScope(): void {
-    const current = this.currentCapabilityEvidenceAuthFingerprint();
-    if (this.capabilityEvidenceAuthFingerprint === undefined) {
-      this.capabilityEvidenceAuthFingerprint = current;
+    const current = this.currentCapabilityEvidenceAuthMaterial();
+    if (this.capabilityEvidenceAuthMaterial === undefined) {
+      this.capabilityEvidenceAuthMaterial = current;
       return;
     }
-    if (current === this.capabilityEvidenceAuthFingerprint) return;
-    this.capabilityEvidenceAuthFingerprint = current;
+    if (current === this.capabilityEvidenceAuthMaterial) return;
+    this.capabilityEvidenceAuthMaterial = current;
     this.cachedCapabilities = undefined;
     this.cachedToolSchemas = undefined;
     this.primedCapabilitiesExpiresAt = undefined;
