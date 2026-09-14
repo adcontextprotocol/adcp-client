@@ -8,7 +8,7 @@ ledger input. The [original error excerpt](./reporting-content-mismatch-failure.
 and [immutable inputs and checksums](./reporting-content-mismatch.json) preserve
 the cross-repository reproduction identity.
 
-The canonical [AdCP main schema](https://github.com/adcontextprotocol/adcp/blob/98fa207cb81c14b745f66a90d0b82cb6fad82f4b/specs/schemas/source/core/reporting-consumer-status.json)
+The canonical [AdCP main schema](https://github.com/adcontextprotocol/adcp/blob/98fa207cb81c14b745f66a90d0b82cb6fad82f4b/static/schemas/source/core/reporting-consumer-status.json)
 and the candidate bundle schema differ only in `$id`. This contract came from
 source/rc.3 (#7465); #7508 did not introduce the mismatch. An unmodified source
 copy is retained in `test/fixtures/reporting-consumer-status/canonical-rc3.json`.
