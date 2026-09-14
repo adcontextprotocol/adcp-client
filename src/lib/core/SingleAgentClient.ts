@@ -1,6 +1,7 @@
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
 import { z } from 'zod';
+import { createHash, randomUUID } from 'node:crypto';
 import * as schemas from '../types/schemas.generated';
 import type { AgentConfig } from '../types';
 import { ADCP_ENVELOPE_FIELDS } from '../types/adcp';
@@ -1510,6 +1511,47 @@ export interface SingleAgentClientConfig extends ConversationConfig {
   transport?: import('../protocols').TransportOptions;
 }
 
+/** Client-bound scope token for reusing externally observed capabilities. */
+export interface CapabilityEvidenceScope {
+  /** Exact normalized seller endpoint owned by this client. */
+  agentUri: string;
+  /** Exact AdCP release pin configured on this client. */
+  adcpVersion: string;
+  /** Opaque per-client token binding evidence to this authorization/transport instance. */
+  scopeKey: string;
+}
+
+/** Fresh, scoped capability evidence produced by an application-owned preflight. */
+export interface CapabilityEvidenceSnapshot {
+  scope: CapabilityEvidenceScope;
+  capabilities: AdcpCapabilities;
+  /** RFC 3339 timestamp when the application observed the evidence. */
+  observedAt: string;
+  /** RFC 3339 freshness deadline. Expired evidence is refused. */
+  expiresAt: string;
+  /** `tools/list` input-schema properties keyed by tool name; optional when capabilities already carry discoveredTools. */
+  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+function isCapabilityEvidence(value: unknown): value is AdcpCapabilities {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const candidate = value as Partial<AdcpCapabilities>;
+  return (
+    (candidate.version === 'v2' || candidate.version === 'v3') &&
+    Array.isArray(candidate.majorVersions) &&
+    candidate.majorVersions.length > 0 &&
+    candidate.majorVersions.every(version => version === 2 || version === 3) &&
+    Array.isArray(candidate.protocols) &&
+    candidate.protocols.every(protocol => typeof protocol === 'string') &&
+    typeof candidate.features === 'object' &&
+    candidate.features !== null &&
+    !Array.isArray(candidate.features) &&
+    Array.isArray(candidate.extensions) &&
+    candidate.extensions.every(extension => typeof extension === 'string') &&
+    typeof candidate._synthetic === 'boolean'
+  );
+}
+
 /**
  * Internal single-agent client implementation
  *
@@ -1661,6 +1703,9 @@ export class SingleAgentClient {
   private canonicalBaseUrl?: string; // Cache canonical base URL (from agent card or stripped /mcp)
   private cachedCapabilities?: AdcpCapabilities; // Cache detected server capabilities
   private cachedToolSchemas?: Map<string, Record<string, unknown>>; // inputSchema.properties per tool name
+  private primedCapabilitiesExpiresAt?: number; // Freshness bound for application-owned evidence only
+  private capabilityEvidenceScopeKey = randomUUID();
+  private capabilityEvidenceAuthMaterial?: string;
   private _v2WarningFired = false; // Gate: emit the v2-sunset warning once per client instance
   private _syntheticV3WarningFired = false; // Gate: emit the synthetic-v3 warning once per client instance
   private _syntheticV2WarningFired = false; // Gate: emit the synthetic-v2 warning once per client instance
@@ -1743,6 +1788,7 @@ export class SingleAgentClient {
 
     // Normalize agent URL for MCP protocol
     this.normalizedAgent = this.normalizeAgentConfig(this.agent);
+    this.capabilityEvidenceAuthMaterial = this.currentCapabilityEvidenceAuthMaterial();
 
     this.executor = new TaskExecutor({
       workingTimeout: config.workingTimeout || 120000, // Max 120s for working status
@@ -8239,9 +8285,19 @@ export class SingleAgentClient {
    */
   async getCapabilities(options?: ReadRequestOptions): Promise<AdcpCapabilities> {
     throwIfAborted(options?.signal);
+    this.synchronizeCapabilityEvidenceAuthorizationScope();
     const discoveryContext = (options as InternalReadRequestOptions | undefined)?.[CAPABILITY_DISCOVERY_CONTEXT];
     const transport = normalizeTransportOptions(options?.transport ?? this.config.transport);
     const usesScopedFetch = transport?.trustedFetchFn !== undefined;
+    // Application-owned evidence keeps its declared freshness bound after it
+    // has been installed. Once expired, discard both capability and schema
+    // evidence and perform ordinary discovery below.
+    if (this.primedCapabilitiesExpiresAt !== undefined && this.primedCapabilitiesExpiresAt <= Date.now()) {
+      this.cachedCapabilities = undefined;
+      this.cachedToolSchemas = undefined;
+      this.primedCapabilitiesExpiresAt = undefined;
+    }
+
     // Return cached if available
     if (!usesScopedFetch && this.cachedCapabilities) {
       if (discoveryContext) discoveryContext.toolSchemas = this.cachedToolSchemas;
@@ -8437,6 +8493,127 @@ export class SingleAgentClient {
   }
 
   /**
+   * Return the client-bound scope required by {@link primeCapabilities}.
+   *
+   * Obtain this scope before an application-owned, tenant-scoped preflight and
+   * attach it unchanged to the resulting snapshot. The opaque key prevents a
+   * snapshot collected for another client, credential, or transport instance
+   * from being installed accidentally.
+   */
+  getCapabilityEvidenceScope(): CapabilityEvidenceScope {
+    this.synchronizeCapabilityEvidenceAuthorizationScope();
+    return Object.freeze({
+      agentUri: this.normalizedAgent.agent_uri,
+      adcpVersion: this.resolvedAdcpVersion,
+      scopeKey: this.capabilityEvidenceScopeKey,
+    });
+  }
+
+  private currentCapabilityEvidenceAuthMaterial(): string {
+    // OAuth refresh updates the normalized transport agent in place/replaces
+    // its token bundle. Bind evidence to that effective credential state,
+    // rather than the constructor argument that may now be stale.
+    const effectiveAgent = this.normalizedAgent;
+    return canonicalizeJson({
+      authToken: effectiveAgent.auth_token ?? null,
+      headers: effectiveAgent.headers ?? null,
+      oauthTokens: effectiveAgent.oauth_tokens ?? null,
+      oauthClient: effectiveAgent.oauth_client ?? null,
+      oauthResource: effectiveAgent.oauth_resource ?? null,
+      oauthClientCredentials: effectiveAgent.oauth_client_credentials ?? null,
+      oauthCodeVerifier: effectiveAgent.oauth_code_verifier ?? null,
+    });
+  }
+
+  private synchronizeCapabilityEvidenceAuthorizationScope(): void {
+    const current = this.currentCapabilityEvidenceAuthMaterial();
+    if (this.capabilityEvidenceAuthMaterial === undefined) {
+      this.capabilityEvidenceAuthMaterial = current;
+      return;
+    }
+    if (current === this.capabilityEvidenceAuthMaterial) return;
+    this.capabilityEvidenceAuthMaterial = current;
+    this.cachedCapabilities = undefined;
+    this.cachedToolSchemas = undefined;
+    this.primedCapabilitiesExpiresAt = undefined;
+    this.capabilityEvidenceScopeKey = randomUUID();
+  }
+
+  /**
+   * Reuse a fresh capability observation made by the embedding application.
+   *
+   * Returns `false` and leaves discovery cold when the scope, endpoint,
+   * configured release, or freshness window does not match. Per-call scoped
+   * transports (`trustedFetchFn`) continue to bypass this cache and discover
+   * within their own request scope.
+   */
+  primeCapabilities(snapshot: CapabilityEvidenceSnapshot): boolean {
+    const expected = this.getCapabilityEvidenceScope();
+    const scope = snapshot?.scope;
+    const capabilities = snapshot?.capabilities;
+    const observedAt = Date.parse(typeof snapshot?.observedAt === 'string' ? snapshot.observedAt : '');
+    const expiresAt = Date.parse(typeof snapshot?.expiresAt === 'string' ? snapshot.expiresAt : '');
+    const now = Date.now();
+    const matchesScope =
+      typeof scope === 'object' &&
+      scope !== null &&
+      scope.scopeKey === expected.scopeKey &&
+      scope.agentUri === expected.agentUri &&
+      scope.adcpVersion === expected.adcpVersion;
+    const isFresh =
+      Number.isFinite(observedAt) &&
+      Number.isFinite(expiresAt) &&
+      observedAt <= now &&
+      expiresAt > now &&
+      expiresAt >= observedAt;
+    const hasCapabilities = isCapabilityEvidence(capabilities);
+    const hasValidToolSchemas =
+      snapshot?.toolSchemas === undefined ||
+      (typeof snapshot.toolSchemas === 'object' &&
+        snapshot.toolSchemas !== null &&
+        Object.values(snapshot.toolSchemas).every(
+          properties => typeof properties === 'object' && properties !== null && !Array.isArray(properties)
+        ));
+    const configuredScopedFetch = normalizeTransportOptions(this.config.transport)?.trustedFetchFn !== undefined;
+    const hasToolEvidence = snapshot?.toolSchemas !== undefined || Array.isArray(capabilities?.discoveredTools);
+    if (
+      !matchesScope ||
+      !isFresh ||
+      !hasCapabilities ||
+      !hasValidToolSchemas ||
+      !hasToolEvidence ||
+      configuredScopedFetch
+    ) {
+      this.cachedCapabilities = undefined;
+      this.cachedToolSchemas = undefined;
+      this.primedCapabilitiesExpiresAt = undefined;
+      return false;
+    }
+
+    try {
+      const observedTools = [
+        ...new Set([...(capabilities.discoveredTools ?? []), ...Object.keys(snapshot.toolSchemas ?? {})]),
+      ].map(name => ({ name }));
+      this.cachedCapabilities = augmentCapabilitiesFromTools(structuredClone(capabilities), observedTools);
+      this.primedCapabilitiesExpiresAt = expiresAt;
+      this.cachedToolSchemas = snapshot.toolSchemas
+        ? new Map(
+            Object.entries(snapshot.toolSchemas).map(([tool, properties]) => [
+              tool,
+              structuredClone(properties) as Record<string, unknown>,
+            ])
+          )
+        : undefined;
+      return true;
+    } catch {
+      this.cachedCapabilities = undefined;
+      this.cachedToolSchemas = undefined;
+      this.primedCapabilitiesExpiresAt = undefined;
+      return false;
+    }
+  }
+
+  /**
    * Emit a one-time warning when the agent reports v2 capabilities.
    *
    * v2 went unsupported on 2026-04-20 (AdCP 3.0 GA — adcp#2220). We still
@@ -8617,6 +8794,9 @@ export class SingleAgentClient {
    */
   async refreshCapabilities(): Promise<AdcpCapabilities> {
     this.cachedCapabilities = undefined;
+    this.cachedToolSchemas = undefined;
+    this.primedCapabilitiesExpiresAt = undefined;
+    this.capabilityEvidenceScopeKey = randomUUID();
     return this.getCapabilities();
   }
 

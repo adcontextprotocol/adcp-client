@@ -140,8 +140,10 @@ try {
   const requiredGuides = [
     'package/docs/migration-12-to-14.md',
     'package/docs/migration-13-to-14.md',
+    'package/docs/migration-14.x-rc-worksheet.md',
     'package/docs/migration-12-to-13.md',
     'package/docs/guides/PROPOSAL-TERMS-VERIFICATION.md',
+    'package/docs/guides/EXISTING-PLATFORM.md',
     'package/MIGRATION-v8.md',
   ];
   for (const guide of requiredGuides) {
@@ -230,6 +232,18 @@ try {
     }
   );
   console.log('  starter initializes without source-tree access or invented inventory');
+
+  console.log('🧩 Existing-platform smoke executes from the installed tarball:');
+  run(
+    path.join(REPO_ROOT, 'node_modules', '.bin', 'tsx'),
+    [path.join(tmpDir, 'node_modules', '@adcp', 'sdk', 'examples', 'existing-platform-thin.ts')],
+    {
+      cwd: tmpDir,
+      stdio: 'inherit',
+      env: { ...process.env, ADCP_EXAMPLE_CHECK: '1' },
+    }
+  );
+  console.log('  scoped evidence and submitted-task recovery pass without provider credentials');
 
   console.log('🏗️  Packed CLI scaffolds a clean, compilable PostgreSQL seller:');
   const scaffoldDir = path.join(tmpDir, 'packed-seller');

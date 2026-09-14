@@ -282,6 +282,8 @@ export {
   UnsupportedFeatureError,
 } from './core/SingleAgentClient';
 export type {
+  CapabilityEvidenceScope,
+  CapabilityEvidenceSnapshot,
   ClientProductPropertyPolicy,
   CreativeDeliveryTaskOptions,
   SingleAgentClientConfig,
@@ -1595,6 +1597,8 @@ export {
   closeMCPConnections,
   closeOAuthConnections,
   bundleSupportsAdcpVersionField,
+  BODY_SNIPPET_TIMEOUT_MS,
+  OBSERVER_FLUSH_TIMEOUT_MS,
   sanitizeTransportHeaders,
   sanitizeTransportUrl,
 } from './protocols';

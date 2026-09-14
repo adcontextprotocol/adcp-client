@@ -12,6 +12,7 @@ const {
   ProtocolFeatureUnsupportedError,
   getClientPreflightAdcpError,
   mapSdkErrorCodeToProtocolErrorCode,
+  AgentClient,
   SingleAgentClient,
   ProtocolClient,
   TASK_FEATURE_MAP,
@@ -287,6 +288,286 @@ describe('SingleAgentClient feature API exists', () => {
       protocol: 'mcp',
     });
     assert.strictEqual(typeof client.refreshCapabilities, 'function');
+  });
+
+  test('reuses fresh scoped evidence with synthetic provenance and tool schemas intact', async () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    const scope = client.getCapabilityEvidenceScope();
+    client.ensureEndpointDiscovered = async () => client.getAgent();
+    const capabilities = makeCapabilities({
+      _synthetic: true,
+      discoveredTools: ['get_adcp_capabilities', 'list_products', 'tasks_get'],
+      mediaBuyLifecycleTools: ['list_products'],
+    });
+    const originalCallTool = ProtocolClient.callTool;
+    let dispatchedParams;
+    ProtocolClient.callTool = async (_agent, taskName, params) => {
+      assert.strictEqual(taskName, 'list_products');
+      dispatchedParams = params;
+      return { status: 'completed', products: [] };
+    };
+
+    try {
+      const primed = client.primeCapabilities({
+        scope,
+        capabilities,
+        observedAt: new Date(Date.now() - 1_000).toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        toolSchemas: {
+          list_products: { account: {}, brand: {} },
+        },
+      });
+
+      assert.strictEqual(primed, true);
+      assert.deepStrictEqual(await client.getCapabilities(), capabilities);
+      const result = await client.executeTaskLegacy('list_products', {
+        account: { account_id: 'account-1' },
+        brand: { domain: 'example.com' },
+        application_only: true,
+      });
+      assert.strictEqual(result.success, true, JSON.stringify(result));
+      assert.strictEqual(result.metadata.serverVersionSynthetic, true);
+      assert.deepStrictEqual(dispatchedParams, {
+        account: { account_id: 'account-1' },
+        brand: { domain: 'example.com' },
+      });
+    } finally {
+      ProtocolClient.callTool = originalCallTool;
+    }
+  });
+
+  test('AgentClient exposes the scoped evidence seam used by the public thin-client API', async () => {
+    const client = new AgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    const capabilities = makeCapabilities({ discoveredTools: [] });
+    assert.strictEqual(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities,
+        observedAt: new Date(Date.now() - 1_000).toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      true
+    );
+    assert.deepStrictEqual(await client.getCapabilities(), capabilities);
+  });
+
+  test('refuses stale or differently scoped capability evidence', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    const otherClient = new SingleAgentClient({
+      id: 'other',
+      name: 'Other',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    const capabilities = makeCapabilities();
+    const freshWindow = {
+      capabilities,
+      observedAt: new Date(Date.now() - 2_000).toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+
+    assert.strictEqual(
+      client.primeCapabilities({ ...freshWindow, scope: otherClient.getCapabilityEvidenceScope() }),
+      false
+    );
+    assert.strictEqual(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities,
+        observedAt: new Date(Date.now() - 60_000).toISOString(),
+        expiresAt: new Date(Date.now() - 1_000).toISOString(),
+      }),
+      false
+    );
+    assert.strictEqual(client.primeCapabilities({}), false);
+    assert.strictEqual(
+      client.primeCapabilities({
+        ...freshWindow,
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities: {},
+      }),
+      false
+    );
+    assert.strictEqual(
+      client.primeCapabilities({
+        ...freshWindow,
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities: undefined,
+      }),
+      false
+    );
+  });
+
+  test('refused evidence clears a warm cache so the next read rediscovers', async () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    let discoveryCalls = 0;
+    client.getAgentInfo = async () => {
+      discoveryCalls += 1;
+      return { tools: [] };
+    };
+
+    await client.getCapabilities();
+    assert.strictEqual(discoveryCalls, 1);
+    assert.strictEqual(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities: makeCapabilities(),
+        observedAt: new Date(Date.now() - 2_000).toISOString(),
+        expiresAt: new Date(Date.now() - 1_000).toISOString(),
+      }),
+      false
+    );
+    await client.getCapabilities();
+    assert.strictEqual(discoveryCalls, 2);
+  });
+
+  test('rotates the evidence scope when authorization headers change', () => {
+    const headers = { 'x-org-id': 'tenant-a' };
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+      headers,
+    });
+
+    const firstScope = client.getCapabilityEvidenceScope();
+    headers['x-org-id'] = 'tenant-b';
+    const nextScope = client.getCapabilityEvidenceScope();
+
+    assert.notStrictEqual(nextScope.scopeKey, firstScope.scopeKey);
+    assert.strictEqual(client.getAgent().headers['x-org-id'], 'tenant-b');
+  });
+
+  test('keeps authorization material out of public capability evidence scopes', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+      auth_token: 'bearer-secret-value',
+      headers: { 'x-org-secret': 'header-secret-value' },
+    });
+
+    const serializedScope = JSON.stringify(client.getCapabilityEvidenceScope());
+    assert.ok(!serializedScope.includes('bearer-secret-value'));
+    assert.ok(!serializedScope.includes('header-secret-value'));
+  });
+
+  test('rotates the evidence scope when refreshed transport OAuth tokens replace the bundle', () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+      oauth_tokens: { access_token: 'old-token', token_type: 'Bearer' },
+    });
+    const firstScope = client.getCapabilityEvidenceScope();
+
+    client.normalizedAgent.oauth_tokens = { access_token: 'new-token', token_type: 'Bearer' };
+
+    assert.notStrictEqual(client.getCapabilityEvidenceScope().scopeKey, firstScope.scopeKey);
+  });
+
+  test('refuses priming when a client-level scoped fetch must own discovery', () => {
+    const client = new SingleAgentClient(
+      {
+        id: 'test',
+        name: 'Test',
+        agent_uri: 'https://seller.example.com/mcp',
+        protocol: 'mcp',
+      },
+      { transport: { trustedFetchFn: async () => new Response() } }
+    );
+
+    assert.strictEqual(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities: makeCapabilities(),
+        observedAt: new Date(Date.now() - 1_000).toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      false
+    );
+  });
+
+  test('rediscovers after primed capability evidence expires', async () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    const primedCapabilities = makeCapabilities({ discoveredTools: [] });
+    let discoveryCalls = 0;
+    client.getAgentInfo = async () => {
+      discoveryCalls += 1;
+      return { tools: [] };
+    };
+
+    assert.strictEqual(
+      client.primeCapabilities({
+        scope: client.getCapabilityEvidenceScope(),
+        capabilities: primedCapabilities,
+        observedAt: new Date(Date.now() - 1_000).toISOString(),
+        expiresAt: new Date(Date.now() + 20).toISOString(),
+      }),
+      true
+    );
+    assert.deepStrictEqual(await client.getCapabilities(), primedCapabilities);
+    assert.strictEqual(discoveryCalls, 0);
+
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const rediscovered = await client.getCapabilities();
+
+    assert.strictEqual(discoveryCalls, 1);
+    assert.strictEqual(rediscovered._synthetic, true);
+    assert.notDeepStrictEqual(rediscovered, primedCapabilities);
+  });
+
+  test('refresh invalidates capability evidence issued before the refresh', async () => {
+    const client = new SingleAgentClient({
+      id: 'test',
+      name: 'Test',
+      agent_uri: 'https://seller.example.com/mcp',
+      protocol: 'mcp',
+    });
+    const capabilities = makeCapabilities();
+    const oldScope = client.getCapabilityEvidenceScope();
+    client.getCapabilities = async () => capabilities;
+
+    await client.refreshCapabilities();
+
+    assert.notStrictEqual(client.getCapabilityEvidenceScope().scopeKey, oldScope.scopeKey);
+    assert.strictEqual(
+      client.primeCapabilities({
+        scope: oldScope,
+        capabilities,
+        observedAt: new Date(Date.now() - 1_000).toISOString(),
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      false
+    );
   });
 });
 

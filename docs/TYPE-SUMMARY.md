@@ -39,10 +39,35 @@ interface TransportOptions {
 }
 
 interface TaskOptions {
+  timeout?: number;             // Absolute whole-task deadline
+  signal?: AbortSignal;         // Caller cancellation
   // Trusted local receiver policy; snapshotted and persisted with generated
   // webhook registrations, never inferred from or sent in task arguments.
   delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   // ...deadline, cancellation, transport, and conversation options...
+}
+
+interface ValidateAdAgentsOptions {
+  timeoutMs?: number;           // Per-request ceiling
+  signal?: AbortSignal;         // One signal/deadline across the complete discovery flow
+  maxBodyBytes?: number;
+  userAgent?: string;
+  logLevel?: LogLevel;
+  urlForDomain?: (domain: string, path: string) => string;
+}
+
+interface CapabilityEvidenceScope {
+  agentUri: string;
+  adcpVersion: string;
+  scopeKey: string;             // Opaque, client-bound authorization/transport scope
+}
+
+interface CapabilityEvidenceSnapshot {
+  scope: CapabilityEvidenceScope;
+  capabilities: AdcpCapabilities;
+  observedAt: string;
+  expiresAt: string;
+  toolSchemas?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
 
 interface TaskResult<T = any> {

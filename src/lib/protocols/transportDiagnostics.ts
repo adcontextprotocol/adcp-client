@@ -49,6 +49,10 @@ interface TransportDiagnosticsSlot extends TransportActivityContext {
 }
 
 const BODY_SNIPPET_LIMIT = 64 * 1024;
+/** Maximum time diagnostics may spend waiting for a response-body preview. */
+export const BODY_SNIPPET_TIMEOUT_MS = 1_000;
+/** Maximum time a request waits for asynchronous diagnostics observers to flush. */
+export const OBSERVER_FLUSH_TIMEOUT_MS = 5_000;
 const REDACTED = '[redacted]';
 
 const SAFE_HEADER_NAMES = new Set([
@@ -97,7 +101,7 @@ export function withTransportDiagnostics<T>(
     try {
       return await fn();
     } finally {
-      await Promise.allSettled(slot.pending);
+      await settleWithin(Promise.allSettled(slot.pending), OBSERVER_FLUSH_TIMEOUT_MS);
     }
   });
 }
@@ -274,10 +278,38 @@ async function responseBodySnippet(response: Response): Promise<{ body: string; 
   const contentType = response.headers.get('content-type') ?? '';
   if (!isDiagnosticTextContentType(contentType)) return undefined;
   try {
-    const { text, truncated } = await readResponseTextBounded(response.clone(), BODY_SNIPPET_LIMIT);
+    const captureAbort = new AbortController();
+    const captured = await settleWithin(
+      readResponseTextBounded(response.clone(), BODY_SNIPPET_LIMIT, captureAbort.signal),
+      BODY_SNIPPET_TIMEOUT_MS,
+      () => captureAbort.abort()
+    );
+    if (captured === undefined) return undefined;
+    const { text, truncated } = captured;
     return { body: redactSensitiveJsonOrText(text), truncated };
   } catch {
     return undefined;
+  }
+}
+
+async function settleWithin<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  onTimeout?: () => void
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<undefined>(resolve => {
+        timer = setTimeout(() => {
+          onTimeout?.();
+          resolve(undefined);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -342,7 +374,8 @@ function isDiagnosticTextContentType(contentType: string): boolean {
 
 async function readResponseTextBounded(
   response: Response,
-  limit: number
+  limit: number,
+  signal?: AbortSignal
 ): Promise<{ text: string; truncated: boolean }> {
   if (!response.body) {
     const text = await response.text();
@@ -353,6 +386,14 @@ async function readResponseTextBounded(
   const decoder = new TextDecoder();
   let text = '';
   let truncated = false;
+  const cancel = () => {
+    // This reader owns only the cloned diagnostics branch. Do not await tee
+    // cancellation because the caller may not consume the original until the
+    // wrapper returns.
+    void reader.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
 
   try {
     while (text.length <= limit) {
@@ -373,6 +414,7 @@ async function readResponseTextBounded(
     }
     if (!truncated) text += decoder.decode();
   } finally {
+    signal?.removeEventListener('abort', cancel);
     reader.releaseLock();
   }
 

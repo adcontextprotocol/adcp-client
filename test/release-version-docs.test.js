@@ -13,10 +13,12 @@ test('Changesets release versioning regenerates agent docs after the package ver
   const bumpIndex = commands.indexOf('changeset version');
   const syncIndex = commands.indexOf('npm run sync-version');
   const docsIndex = commands.indexOf('npm run generate-agent-docs');
+  const worksheetIndex = commands.indexOf('npm run generate-release-worksheet');
 
   assert.notEqual(bumpIndex, -1, 'release versioning must invoke Changesets');
   assert.ok(syncIndex > bumpIndex, 'runtime version metadata must update after the package version bump');
   assert.ok(docsIndex > syncIndex, 'agent docs must regenerate from the updated runtime version metadata');
+  assert.ok(worksheetIndex > docsIndex, 'the release worksheet must regenerate after agent docs');
 
   const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'release.yml'), 'utf8');
   assert.match(workflow, /^\s+version:\s*['"]?npm run version['"]?\s*$/m);
@@ -72,7 +74,7 @@ test('the release version workflow leaves generated agent docs current', { timeo
 
     // Changesets stages the release-PR output before CI checks it. Staging the
     // generated docs makes ci:docs-check report only regeneration drift.
-    run('git', ['add', 'docs/llms.txt', 'docs/TYPE-SUMMARY.md']);
+    run('git', ['add', 'docs/llms.txt', 'docs/TYPE-SUMMARY.md', 'docs/migration-14.x-rc-worksheet.md']);
     run('npm', ['run', 'ci:docs-check']);
   } finally {
     if (worktreeCreated) {

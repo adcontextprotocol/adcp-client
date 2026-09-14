@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T17:49:02.914Z
+// Generated at: 2026-09-14T18:54:10.665Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1180,7 +1180,7 @@ export const PostalCountrySystemSchema = z.union([z.object({
         country: z.literal("ZA").optional(),
         system: z.literal("postal_code").optional()
     }).passthrough(), z.object({
-        country: z.object({}).passthrough().optional(),
+        country: z.string().regex(new RegExp("^[A-Z]{2}$")).refine(country => !["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"].includes(country)).optional(),
         system: z.union([z.literal("postal_code"), z.literal("custom")]).optional()
     }).passthrough()]).and(z.object({
     country: z.string().regex(new RegExp("^[A-Z]{2}$")),
