@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
 import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReportingStatusResponse } from '../../types';
 import { canonicalJsonSha256 } from '../../utils/jcs';
-import { getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
+import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { validateSyncReportingStatusEnvelope } from '../../validation/sync-reporting-status-envelope';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
+import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import {
   reportingLedgerConfigurationMatchesScope,
   reportingLedgerEffectivePeriod,
@@ -119,6 +120,7 @@ export type FailedReportingConsumerStatusV1 = {
     {
       code: string;
       recovery?: ErrorRecovery;
+      retry_after?: number;
       message: string;
       field?: string;
       issues?: Array<{ pointer: string; message: string; keyword: string }>;
@@ -127,6 +129,7 @@ export type FailedReportingConsumerStatusV1 = {
     ...Array<{
       code: string;
       recovery?: ErrorRecovery;
+      retry_after?: number;
       message: string;
       field?: string;
       issues?: Array<{ pointer: string; message: string; keyword: string }>;
@@ -176,12 +179,13 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
     const envelope = validateSyncReportingStatusEnvelope(requestInput);
     if (!envelope.valid) {
       const ids = requestStatusIds(requestInput);
+      const issue = envelope.issues[0];
       return failed(
         ids,
         'VALIDATION_ERROR',
-        'Reporting consumer status request is invalid',
-        envelope.issues[0]?.pointer,
-        envelope.issues[0]?.keyword
+        issue?.message ?? 'Reporting consumer status request is invalid',
+        issue?.pointer,
+        issue?.keyword
       );
     }
     const request = requestInput;
@@ -199,7 +203,15 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       releaseReadSlot = acquireAccountReadSlot(activeReadsByAccount, accountId, 16, 256);
     } catch (error) {
       if (!(error instanceof ReportingReadCapacityError)) throw error;
-      return failed(statusIds, 'RATE_LIMITED', 'Reporting consumer status read capacity is temporarily exhausted');
+      return failed(
+        statusIds,
+        'RATE_LIMITED',
+        'Reporting consumer status read capacity is temporarily exhausted',
+        undefined,
+        undefined,
+        'transient',
+        1
+      );
     }
     try {
       // Item parsing and canonical hashing are deliberately inside the
@@ -242,7 +254,8 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
           if (!parsedStatus.success || hasPrototypeKey) {
             const issue = !parsedStatus.success ? parsedStatus.error.issues[0] : undefined;
             const path = hasPrototypeKey ? ['__proto__'] : issue?.path;
-            const validationField = path?.length ? zodPathToPointer(['statuses', index, ...path]) : undefined;
+            const validationField =
+              issue || hasPrototypeKey ? zodPathToPointer(['statuses', index, ...(path ?? [])]) : undefined;
             const identity = reportingStatusIdentity(rawStatus);
             entries.push({
               reporting_status_id: identity.value,
@@ -491,13 +504,20 @@ function failed(
   message: string,
   field?: string,
   keyword?: string,
-  recovery: ErrorRecovery = getErrorRecovery(code) ?? 'terminal'
+  recovery: ErrorRecovery = getErrorRecovery(code) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+  retryAfter?: number
 ): SyncReportingStatusResponseV1 {
   const results = ids.map(reporting_status_id => ({
     result: 'failed' as const,
     reporting_status_id,
     errors: [
-      { code, recovery, message, ...wireValidationDiagnostic(field, message, keyword) },
+      {
+        code,
+        recovery,
+        ...(retryAfter !== undefined ? { retry_after: retryAfter } : {}),
+        message,
+        ...wireValidationDiagnostic(field, message, keyword),
+      },
     ] as FailedReportingConsumerStatusV1['errors'],
   }));
   if (results.length === 0) throw new TypeError('sync_reporting_status requires at least one result');
@@ -524,7 +544,8 @@ function completed(
           errors: [
             {
               code: result.errorCode,
-              recovery: result.recovery ?? getErrorRecovery(result.errorCode) ?? 'terminal',
+              recovery: result.recovery ?? getErrorRecovery(result.errorCode) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+              ...(result.retryAfter !== undefined ? { retry_after: result.retryAfter } : {}),
               message: result.safeMessage,
               ...wireValidationDiagnostic(result.errorField, result.safeMessage, result.errorKeyword),
             },
@@ -585,7 +606,7 @@ function zodPathToPointer(path: PropertyKey[]): string | undefined {
     // PostgreSQL jsonb rejects NUL and lone UTF-16 surrogates even though
     // JSON.stringify can escape them. Omit the optional diagnostic rather
     // than turning one malformed item into a transaction-wide failure.
-    if (raw.includes('\u0000') || hasUnpairedSurrogate(raw)) return undefined;
+    if (raw.includes('\u0000') || !isWellFormedUnicodeString(raw)) return undefined;
     if (Buffer.byteLength(raw, 'utf8') > REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES) return undefined;
     const segment = raw.replace(/~/g, '~0').replace(/\//g, '~1');
     const next = `${pointer}/${segment}`;
@@ -630,34 +651,33 @@ function jsonPointerToJsonPathLite(pointer: string): string | undefined {
   return Buffer.byteLength(field, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES ? field : undefined;
 }
 
-function hasUnpairedSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const low = index + 1 < value.length ? value.charCodeAt(index + 1) : undefined;
-      if (low === undefined || low < 0xdc00 || low > 0xdfff) return true;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function zodIssueKeyword(issue: { code?: string; origin?: string; message?: string } | undefined): string {
+function zodIssueKeyword(
+  issue: { code?: string; origin?: string; message?: string; format?: string } | undefined
+): string {
   switch (issue?.code) {
     case 'invalid_type':
-      return 'type';
+      return issue.message?.includes('received undefined') ? 'required' : 'type';
+    case 'invalid_union':
+      return 'oneOf';
+    case 'invalid_value':
+      return 'enum';
+    case 'not_multiple_of':
+      return 'multipleOf';
     case 'too_small':
       return issue.origin === 'array' ? 'minItems' : issue.origin === 'string' ? 'minLength' : 'minimum';
     case 'too_big':
       return issue.origin === 'array' ? 'maxItems' : issue.origin === 'string' ? 'maxLength' : 'maximum';
     case 'invalid_format':
-      return 'format';
+      return issue.format === 'regex' ? 'pattern' : 'format';
     case 'unrecognized_keys':
       return 'additionalProperties';
     case 'custom':
-      return issue.message?.includes('unsupported field') ? 'additionalProperties' : 'allOf';
+      if (issue.message?.includes('unsupported field') || issue.message?.includes('Unrecognized key')) {
+        return 'additionalProperties';
+      }
+      if (issue.message?.includes('RFC 3339') || issue.message?.includes('date-time')) return 'format';
+      if (issue.message?.includes('response-only')) return 'not';
+      return 'allOf';
     default:
       return 'allOf';
   }

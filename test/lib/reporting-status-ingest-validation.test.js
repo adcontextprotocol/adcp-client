@@ -94,10 +94,59 @@ describe('reporting consumer status validation', () => {
       {
         pointer: '/statuses/0/recorded_at',
         message: 'Reporting consumer status request is invalid',
-        keyword: 'allOf',
+        keyword: 'not',
       },
     ]);
     assert.equal(result.results[0].errors[0].recovery, 'correctable');
+  });
+
+  test('returns precise schema keywords for envelope and item failures', async () => {
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ entries }) =>
+          entries.map(entry => ({
+            inserted: false,
+            reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+            errorCode: 'VALIDATION_ERROR',
+            recovery: 'correctable',
+            safeMessage: entry.validationError,
+            errorField: entry.validationField,
+            errorKeyword: entry.validationKeyword,
+          })),
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const context = { account: { id: 'account-1' } };
+    const itemResult = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-keywords-items',
+        statuses: [
+          consumerStatus({ consumer_status: 'bogus' }),
+          consumerStatus({ reporting_status_id: 'reporting_status_0002', report_definition_id: undefined }),
+          consumerStatus({ reporting_status_id: 'reporting_status_0003', status_as_of: 'not-an-instant' }),
+        ],
+      },
+      context
+    );
+    assert.deepEqual(
+      itemResult.results.map(result => result.errors[0].issues[0].keyword),
+      ['oneOf', 'required', 'format']
+    );
+
+    const envelopeResult = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-keywords-envelope',
+        statuses: [consumerStatus()],
+        unsupported: true,
+      },
+      context
+    );
+    assert.equal(envelopeResult.results[0].errors[0].field, '$');
+    assert.equal(envelopeResult.results[0].errors[0].issues[0].keyword, 'additionalProperties');
   });
 
   test('omits an oversized malformed-property pointer from stored and returned diagnostics', async () => {
@@ -228,6 +277,9 @@ describe('reporting consumer status validation', () => {
     assert.equal(storeCalled, false);
     assert.equal(result.results[0].result, 'failed');
     assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
+    assert.equal(result.results[0].errors[0].field, 'statuses[0].ext["example.invalid"]');
+    assert.equal(result.results[0].errors[0].issues[0].keyword, 'x-adcp-max-json-bytes');
+    assert.equal(result.results[0].errors[0].message, 'sync_reporting_status exceeds the 8 MiB request bound');
 
     const escapedSurrogateResult = await handler(
       {
@@ -240,6 +292,7 @@ describe('reporting consumer status validation', () => {
     assert.equal(storeCalled, false);
     assert.equal(escapedSurrogateResult.results[0].result, 'failed');
     assert.equal(escapedSurrogateResult.results[0].errors[0].code, 'VALIDATION_ERROR');
+    assert.equal(escapedSurrogateResult.results[0].errors[0].issues[0].keyword, 'x-adcp-max-json-bytes');
   });
 
   test('does not expose custom-store conflict messages', async () => {
@@ -261,6 +314,35 @@ describe('reporting consumer status validation', () => {
     );
     assert.equal(result.results[0].errors[0].message, 'Reporting status idempotency conflict');
     assert.doesNotMatch(JSON.stringify(result), /secret|internal\.example/);
+  });
+
+  test('preserves retry_after for transient per-item failures', async () => {
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [],
+        syncConsumerStatusBatch: async ({ entries }) => [
+          {
+            inserted: false,
+            reporting_status_id: entries[0].status?.reporting_status_id ?? entries[0].reporting_status_id,
+            errorCode: 'RATE_LIMITED',
+            recovery: 'transient',
+            retryAfter: 7,
+            safeMessage: 'Retry later',
+          },
+        ],
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-retry-after-0001',
+        statuses: [consumerStatus()],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(result.results[0].errors[0].retry_after, 7);
   });
 
   test('rejects date-time extensions unsupported by reporting instant arithmetic', () => {

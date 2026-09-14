@@ -1330,8 +1330,8 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
         mixed.results.map(value => value.result),
         ['unchanged', 'failed']
       );
-      assert.equal(mixed.results[1].errors[0].code, 'RATE_LIMITED');
-      assert.equal(mixed.results[1].errors[0].recovery, 'transient');
+      assert.equal(mixed.results[1].errors[0].code, 'REPORTING_STATUS_CAPACITY_EXHAUSTED');
+      assert.equal(mixed.results[1].errors[0].recovery, 'terminal');
       const leaves = await pool.query(
         `SELECT consumer_status_id FROM adcp_reporting_consumer_statuses
           WHERE account_id = $1 AND consumer_id = $2 AND is_current`,
@@ -1440,21 +1440,74 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
       requestFingerprint: 'fixture-custom-diagnostic-fingerprint',
       entries: [
         {
-          reporting_status_id: 'fixture-custom-diagnostic-status',
+          reporting_status_id: 'unsafe\u0000status-id',
+          validationError: 'unsafe identifier',
+        },
+        {
+          reporting_status_id: 'invalid-reporting-status-id-1',
           validationError: `unsafe\u0000${String.fromCharCode(0xd800)}${'x'.repeat(2_000)}`,
-          validationField: `/statuses/0/unsafe\u0000${String.fromCharCode(0xd800)}`,
+          validationField: `/statuses/1/unsafe\u0000${String.fromCharCode(0xd800)}`,
           validationKeyword: 'unsafe keyword',
+        },
+        {
+          reporting_status_id: `unsafe${String.fromCharCode(0xd800)}status-id`,
+          validationError: 'unsafe identifier',
+        },
+        {
+          reporting_status_id: `oversized-${'x'.repeat(200_000)}`,
+          validationError: 'oversized identifier',
+        },
+        {
+          status: {
+            reporting_status_id: 'fixture-oversized-status-0001',
+            account_id: request.account.account_id,
+            consumerId: 'fixture-consumer-custom-diagnostic',
+            delivery_config_id: obligation.delivery_config_id,
+            delivery_config_version: obligation.delivery_config_version,
+            report_definition_id: obligation.report_definition_id,
+            period: {
+              start: obligation.period.start,
+              end: obligation.period.end,
+              source_timezone: obligation.period.sourceTimezone,
+            },
+            consumer_status: 'obligation_missing',
+            status_as_of: new Date(Date.parse(obligation.period.end) + 86_400_000).toISOString(),
+            ext: { 'example.invalid': 'x'.repeat(70_000) },
+          },
         },
       ],
       replayOriginalResults: true,
     };
     const first = await reference.store.syncConsumerStatusBatch(input);
-    assert.equal(first[0].inserted, false);
-    assert.ok(Buffer.byteLength(first[0].safeMessage, 'utf8') <= 1_024);
-    assert.equal(first[0].safeMessage.includes('\u0000'), false);
-    assert.equal(first[0].safeMessage.includes(String.fromCharCode(0xd800)), false);
-    assert.equal(first[0].errorField, undefined);
-    assert.equal(first[0].errorKeyword, undefined);
+    assert.equal(first.length, 5);
+    assert.deepEqual(
+      first.map(result => result.reporting_status_id),
+      [
+        'invalid-reporting-status-id-1-1',
+        'invalid-reporting-status-id-1',
+        'invalid-reporting-status-id-3',
+        'invalid-reporting-status-id-4',
+        'fixture-oversized-status-0001',
+      ]
+    );
+    assert.ok(first.every(result => result.inserted === false));
+    assert.ok(Buffer.byteLength(first[1].safeMessage, 'utf8') <= 1_024);
+    assert.equal(first[1].safeMessage.includes('\u0000'), false);
+    assert.equal(first[1].safeMessage.includes(String.fromCharCode(0xd800)), false);
+    assert.equal(first[1].errorField, undefined);
+    assert.equal(first[1].errorKeyword, undefined);
+    assert.equal(first[4].errorCode, 'REPORTING_STATUS_TOO_LARGE');
+    assert.equal(first[4].recovery, 'correctable');
+    const stored = await pool.query(
+      `SELECT status_ids, results FROM adcp_reporting_consumer_status_batches
+       WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+      [input.account_id, input.consumerId, input.idempotencyKey]
+    );
+    assert.deepEqual(
+      stored.rows[0].status_ids,
+      first.map(result => result.reporting_status_id)
+    );
+    assert.ok(Buffer.byteLength(JSON.stringify(stored.rows[0].results), 'utf8') <= 64 * 1024);
     assert.deepEqual(
       await reference.store.getConsumerStatusBatchReplay({
         account_id: input.account_id,

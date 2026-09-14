@@ -1,6 +1,9 @@
 import { ADCP_VERSION } from '../version';
 import { MAX_JSON_DEPTH } from '../utils/json-depth';
-import { REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES } from '../reporting/ledger/types';
+import {
+  REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
+} from '../reporting/ledger/types';
 import { validateRequest } from './schema-validator';
 
 const MAX_STATUS_ITEMS = 100;
@@ -26,22 +29,21 @@ export function validateSyncReportingStatusEnvelope(
             {
               pointer: '/',
               message: `sync_reporting_status is unavailable for AdCP ${version}`,
-              keyword: 'schema_unavailable',
+              keyword: 'x-adcp-schema-unavailable',
               schemaPath: '',
             },
           ],
         }
       : outcome;
   };
-  if (!hasBoundedJsonShape(payload)) {
+  const shapeIssue = boundedJsonShapeIssue(payload);
+  if (shapeIssue) {
     return {
       valid: false,
       variant: 'request',
       issues: [
         {
-          pointer: '/statuses',
-          message: 'sync_reporting_status exceeds the 8 MiB, 10,000-node, or maximum-depth request bound',
-          keyword: 'maxLength',
+          ...shapeIssue,
           schemaPath: '',
         },
       ],
@@ -71,55 +73,110 @@ export function validateSyncReportingStatusEnvelope(
   return validateEnvelope({ ...payload, statuses });
 }
 
-function hasBoundedJsonShape(root: unknown): boolean {
+interface BoundedJsonShapeIssue {
+  pointer: string;
+  message: string;
+  keyword: string;
+}
+
+function boundedJsonShapeIssue(root: unknown): BoundedJsonShapeIssue | undefined {
   let nodes = 0;
   let pendingValues = 1;
   let bytes = 0;
-  const stack: Array<{ value: unknown; depth: number; exit?: boolean }> = [{ value: root, depth: 0 }];
+  const stack: Array<{ value: unknown; depth: number; pointer: string; exit?: boolean }> = [
+    { value: root, depth: 0, pointer: '/' },
+  ];
   const active = new WeakSet<object>();
   while (stack.length > 0) {
-    const { value, depth, exit } = stack.pop()!;
+    const { value, depth, pointer, exit } = stack.pop()!;
     if (!exit) {
       pendingValues -= 1;
-      if (++nodes > MAX_JSON_NODES) return false;
+      if (++nodes > MAX_JSON_NODES) {
+        return shapeIssue(
+          pointer,
+          'sync_reporting_status exceeds the 10,000-node request bound',
+          'x-adcp-max-json-nodes'
+        );
+      }
     }
     if (typeof value === 'string') {
       bytes += boundedJsonStringBytes(value, REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES - bytes);
-      if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) return false;
+      if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) {
+        return shapeIssue(pointer, 'sync_reporting_status exceeds the 8 MiB request bound', 'x-adcp-max-json-bytes');
+      }
       continue;
     }
     if (value === null || typeof value !== 'object') {
       bytes += 24;
-      if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) return false;
+      if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) {
+        return shapeIssue(pointer, 'sync_reporting_status exceeds the 8 MiB request bound', 'x-adcp-max-json-bytes');
+      }
       continue;
     }
     if (exit) {
       active.delete(value);
       continue;
     }
-    if (active.has(value)) return false;
+    if (active.has(value)) {
+      return shapeIssue(pointer, 'sync_reporting_status must contain acyclic JSON', 'x-adcp-acyclic-json');
+    }
     active.add(value);
-    if (depth > MAX_JSON_DEPTH) return false;
-    stack.push({ value, depth, exit: true });
-    let children: unknown[];
+    if (depth > MAX_JSON_DEPTH) {
+      return shapeIssue(pointer, 'sync_reporting_status exceeds the maximum JSON depth', 'x-adcp-max-json-depth');
+    }
+    stack.push({ value, depth, pointer, exit: true });
+    const children: Array<{ value: unknown; pointer: string }> = [];
     if (Array.isArray(value)) {
-      children = value;
+      for (let index = 0; index < value.length; index += 1) {
+        children.push({ value: value[index], pointer: childPointer(pointer, String(index)) });
+      }
     } else {
       const keys = Object.keys(value);
-      if (nodes + pendingValues + keys.length > MAX_JSON_NODES) return false;
+      if (nodes + pendingValues + keys.length > MAX_JSON_NODES) {
+        return shapeIssue(
+          pointer,
+          'sync_reporting_status exceeds the 10,000-node request bound',
+          'x-adcp-max-json-nodes'
+        );
+      }
       for (const key of keys) {
         bytes += boundedJsonStringBytes(key, REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES - bytes) + 1;
-        if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) return false;
+        const nextPointer = childPointer(pointer, key);
+        if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) {
+          return shapeIssue(
+            nextPointer,
+            'sync_reporting_status exceeds the 8 MiB request bound',
+            'x-adcp-max-json-bytes'
+          );
+        }
+        children.push({ value: (value as Record<string, unknown>)[key], pointer: nextPointer });
       }
-      children = keys.map(key => (value as Record<string, unknown>)[key]);
     }
     bytes += 2 + children.length;
-    if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) return false;
-    if (nodes + pendingValues + children.length > MAX_JSON_NODES) return false;
+    if (bytes > REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES) {
+      return shapeIssue(pointer, 'sync_reporting_status exceeds the 8 MiB request bound', 'x-adcp-max-json-bytes');
+    }
+    if (nodes + pendingValues + children.length > MAX_JSON_NODES) {
+      return shapeIssue(
+        pointer,
+        'sync_reporting_status exceeds the 10,000-node request bound',
+        'x-adcp-max-json-nodes'
+      );
+    }
     pendingValues += children.length;
-    for (const child of children) stack.push({ value: child, depth: depth + 1 });
+    for (const child of children) stack.push({ ...child, depth: depth + 1 });
   }
-  return true;
+  return undefined;
+}
+
+function childPointer(parent: string, segment: string): string {
+  const encoded = segment.replace(/~/g, '~0').replace(/\//g, '~1');
+  const pointer = `${parent === '/' ? '' : parent}/${encoded}`;
+  return Buffer.byteLength(pointer, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES ? pointer : '/';
+}
+
+function shapeIssue(pointer: string, message: string, keyword: string): BoundedJsonShapeIssue {
+  return { pointer, message, keyword };
 }
 
 function boundedJsonStringBytes(value: string, remaining: number): number {

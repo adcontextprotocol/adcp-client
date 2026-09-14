@@ -243,6 +243,7 @@ export type ReportingConsumerStatusBatchResultV1 =
       reporting_status_id: string;
       errorCode: string;
       recovery?: ErrorRecovery;
+      retryAfter?: number;
       safeMessage: string;
       errorField?: string;
       errorKeyword?: string;

@@ -107,12 +107,20 @@ the caller-controlled field. Obligation, revision, and snapshot mismatches are
 intentionally indistinguishable so consumer status ingest cannot become an
 existence oracle across retained ledger objects.
 
+Per-item failures carry an explicit recovery classification. Schema and
+authorization failures are `correctable`; an exhausted transient read slot is
+`RATE_LIMITED`/`transient` with `retry_after`; oversized durable statements are
+`REPORTING_STATUS_TOO_LARGE`/`correctable`; and exhausted append-only store
+capacity is `REPORTING_STATUS_CAPACITY_EXHAUSTED`/`terminal`. The last two are
+open-vocabulary AdCP extension codes, so clients must use their accompanying
+`recovery` value rather than a closed code switch.
+
 The PostgreSQL store compares the exact current leaf for each consumer/configuration/report-definition/period chain in the same transaction that appends the new statement. An exact batch replay returns its original results; an identical status ID already recorded through another batch returns `unchanged`. Stale or omitted supersession fails without forking the chain. Periods readback includes only the authenticated consumer's history. A negative current statement—or a received statement naming a revision superseded by a later seller restatement—adds `CONSUMER_STATUS_MISMATCH` to that consumer's projection without changing seller-authored ledger evidence.
 
-Core revisions do not carry `feed_purpose`. A direct-Core deployment without
-managed materializations must therefore give each feed purpose a distinct
-report definition or reporting profile; the buyer reconciler rejects an
-ambiguous revision scope instead of assigning one revision to multiple feeds.
+Core revisions intentionally omit feed purpose, destination, obligation, and
+recipient identity. Obligations sharing the same account, report definition,
+period, media-buy scope, and canonical content therefore reuse one revision,
+including fan-out across direct-Core and managed-materialization consumers.
 
 For account-local calendar periods, expand each boundary externally into an
 immutable configuration generation. Do not model a local day as a constant

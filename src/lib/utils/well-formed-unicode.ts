@@ -1,9 +1,14 @@
+/** Return whether a string can cross UTF-8 or JSONB boundaries without replacement. */
+export function isWellFormedUnicodeString(value: string): boolean {
+  return Buffer.from(value, 'utf8').toString('utf8') === value;
+}
+
 /** Reject unpaired UTF-16 surrogates before values cross UTF-8 or hash boundaries. */
 export function assertWellFormedUnicode(value: unknown, label: string): void {
   const active = new WeakSet<object>();
   const visit = (current: unknown): void => {
     if (typeof current === 'string') {
-      if (Buffer.from(current, 'utf8').toString('utf8') !== current) {
+      if (!isWellFormedUnicodeString(current)) {
         throw new TypeError(`${label} must contain well-formed Unicode`);
       }
       return;

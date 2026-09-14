@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
-import { getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
+import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { canonicalJsonV1 } from '../source';
+import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import {
   evaluateReportingLedgerCoverageV1,
   reportingLedgerEffectivePeriod,
@@ -274,6 +275,7 @@ const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CONSUMER_STATUS_ID_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 
 type JsonRow<T> = QueryResultRow & { data: T };
 type StoredConsumerStatusBatchResult = {
@@ -281,6 +283,7 @@ type StoredConsumerStatusBatchResult = {
   id: string;
   errorCode?: string;
   recovery?: ErrorRecovery;
+  retryAfter?: number;
   safeMessage?: string;
   errorField?: string;
   errorKeyword?: string;
@@ -780,6 +783,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           id: string;
           errorCode?: string;
           recovery?: ErrorRecovery;
+          retryAfter?: number;
           safeMessage?: string;
           errorField?: string;
           errorKeyword?: string;
@@ -802,6 +806,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           reporting_status_id: result.id,
           errorCode: result.errorCode ?? 'VALIDATION_ERROR',
           recovery: result.recovery,
+          retryAfter: result.retryAfter,
           safeMessage: boundedConsumerStatusSafeMessage(result.safeMessage ?? 'Reporting consumer status was rejected'),
           ...boundedConsumerStatusErrorField(result.errorField),
           ...boundedConsumerStatusErrorKeyword(result.errorKeyword),
@@ -843,6 +848,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 reporting_status_id: result.id,
                 errorCode: result.errorCode ?? 'VALIDATION_ERROR',
                 recovery: result.recovery,
+                retryAfter: result.retryAfter,
                 safeMessage: boundedConsumerStatusSafeMessage(
                   result.safeMessage ?? 'Reporting consumer status was rejected'
                 ),
@@ -865,6 +871,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           return replay;
         }
 
+        const normalizedIds = normalizedConsumerStatusIds(input.entries);
         const chainKeys = input.entries.map(entry =>
           'status' in entry
             ? consumerStatusChainKey(entry.status)
@@ -879,15 +886,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           )
         );
         const duplicateStatusIds = new Set(
-          input.entries
-            .map(value =>
-              'status' in value || !value.syntheticReportingStatusId
-                ? 'status' in value
-                  ? value.status.reporting_status_id
-                  : value.reporting_status_id
-                : undefined
-            )
-            .filter((value): value is string => value !== undefined)
+          normalizedIds.values
+            .filter((_, index) => !normalizedIds.invalidIndexes.has(index))
             .filter((value, index, values) => values.indexOf(value) !== index || values.lastIndexOf(value) !== index)
         );
         const capacity = await client.query<QueryResultRow & { batches: string; statuses: string }>(
@@ -907,8 +907,9 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           errorCode: string,
           safeMessage: string,
           errorField?: string,
-          recovery: ErrorRecovery = getErrorRecovery(errorCode) ?? 'terminal',
-          errorKeyword?: string
+          recovery: ErrorRecovery = getErrorRecovery(errorCode) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+          errorKeyword?: string,
+          retryAfter?: number
         ) => {
           const boundedErrorField = boundedConsumerStatusErrorField(errorField);
           const boundedErrorKeyword = boundedConsumerStatusErrorKeyword(errorKeyword);
@@ -918,6 +919,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             reporting_status_id: statusId,
             errorCode,
             recovery,
+            retryAfter,
             safeMessage: boundedSafeMessage,
             ...boundedErrorField,
             ...boundedErrorKeyword,
@@ -927,13 +929,18 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             id: statusId,
             errorCode,
             recovery,
+            retryAfter,
             safeMessage: boundedSafeMessage,
             ...boundedErrorField,
             ...boundedErrorKeyword,
           });
         };
         for (const [index, entry] of input.entries.entries()) {
-          const statusId = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
+          const statusId = normalizedIds.values[index]!;
+          if (normalizedIds.invalidIndexes.has(index)) {
+            fail(statusId, 'VALIDATION_ERROR', 'reporting_status_id is invalid', undefined, 'correctable', 'pattern');
+            continue;
+          }
           if (duplicateStatusIds.has(statusId)) {
             fail(statusId, 'VALIDATION_ERROR', 'reporting_status_id must be unique in a batch');
             continue;
@@ -997,17 +1004,17 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
               'REPORTING_STATUS_TOO_LARGE',
               'Reporting consumer status exceeds 64 KiB',
               undefined,
-              'terminal'
+              'correctable'
             );
             continue;
           }
           if (batchCapacityExhausted || remainingStatements <= 0) {
             fail(
               status.reporting_status_id,
-              'RATE_LIMITED',
+              'REPORTING_STATUS_CAPACITY_EXHAUSTED',
               'Reporting consumer status capacity is exhausted',
               undefined,
-              'transient'
+              'terminal'
             );
             continue;
           }
@@ -1083,9 +1090,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
               input.idempotencyKey,
               input.requestFingerprint,
               JSON.stringify(
-                input.entries.map(value =>
-                  'status' in value ? value.status.reporting_status_id : value.reporting_status_id
-                )
+                results.map(value => ('value' in value ? value.value.reporting_status_id : value.reporting_status_id))
               ),
               JSON.stringify(storedResults),
             ]
@@ -2154,10 +2159,45 @@ function consumerStatusFingerprint(
   return digest(JSON.parse(JSON.stringify(semanticValue)) as Record<string, unknown>);
 }
 
+function normalizedConsumerStatusIds(entries: ReportingConsumerStatusBatchInputV1['entries']): {
+  values: string[];
+  invalidIndexes: Set<number>;
+} {
+  const invalidIndexes = new Set<number>();
+  const reserved = new Set<string>();
+  for (const entry of entries) {
+    const value = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
+    if (
+      typeof value === 'string' &&
+      CONSUMER_STATUS_ID_PATTERN.test(value) &&
+      !('syntheticReportingStatusId' in entry && entry.syntheticReportingStatusId)
+    ) {
+      reserved.add(value);
+    }
+  }
+  const values = entries.map((entry, index) => {
+    const value = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
+    if (
+      typeof value === 'string' &&
+      CONSUMER_STATUS_ID_PATTERN.test(value) &&
+      !('syntheticReportingStatusId' in entry && entry.syntheticReportingStatusId)
+    ) {
+      return value;
+    }
+    invalidIndexes.add(index);
+    let candidate = `invalid-reporting-status-id-${index + 1}`;
+    let suffix = 1;
+    while (reserved.has(candidate)) candidate = `invalid-reporting-status-id-${index + 1}-${suffix++}`;
+    reserved.add(candidate);
+    return candidate;
+  });
+  return { values, invalidIndexes };
+}
+
 function boundedConsumerStatusErrorField(errorField?: string): { errorField?: string } {
   return errorField &&
     !errorField.includes('\u0000') &&
-    !hasUnpairedSurrogate(errorField) &&
+    isWellFormedUnicodeString(errorField) &&
     Buffer.byteLength(errorField, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
     ? { errorField }
     : {};
@@ -2183,20 +2223,6 @@ function boundedConsumerStatusSafeMessage(safeMessage: string): string {
     bytes += characterBytes;
   }
   return bounded || 'Reporting consumer status was rejected';
-}
-
-function hasUnpairedSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const low = index + 1 < value.length ? value.charCodeAt(index + 1) : undefined;
-      if (low === undefined || low < 0xdc00 || low > 0xdfff) return true;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function storedResultsJsonBytes(results: unknown[]): number {

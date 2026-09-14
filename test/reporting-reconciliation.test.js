@@ -464,7 +464,7 @@ test('loads a scope-matched Core revision without a managed materialization', as
   assert.ok(evaluated.obligations[0].reasons.includes('MISSING_VERIFIED_MATERIALIZATION'));
 });
 
-test('rejects an ambiguous direct-Core revision scope across feed purposes', async () => {
+test('reuses one canonical direct-Core revision across feed purposes for the same logical slice', async () => {
   const raw = response([]);
   const first = raw.periods[0];
   first.reconciliation_mode = 'delivery_only';
@@ -481,20 +481,19 @@ test('rejects an ambiguous direct-Core revision scope across feed purposes', asy
   raw.materializations = [];
   raw.pagination.total_count = raw.periods.length + raw.revisions.length;
 
-  await assert.rejects(
-    loadReportingLedger(
-      {
-        async getReportingStatus() {
-          return raw;
-        },
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
       },
-      { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
-    ),
-    error => error.code === 'LEDGER_GRAPH_INTEGRITY_FAILED'
+    },
+    { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
   );
+  assert.equal(ledger.obligations.length, 2);
+  assert.equal(ledger.revisions.length, 1);
 });
 
-test('rejects an ambiguous direct-Core scope when a managed materialization references the revision', async () => {
+test('reuses one canonical revision for direct-Core and managed materialization consumers', async () => {
   const raw = response([]);
   const directCore = feedPurpose => {
     const item = obligation(`obligation-direct-${feedPurpose}`);
@@ -511,17 +510,17 @@ test('rejects an ambiguous direct-Core scope when a managed materialization refe
   raw.periods.push(directCore('analytics'));
   raw.pagination.total_count = raw.periods.length + raw.revisions.length + raw.materializations.length;
 
-  await assert.rejects(
-    loadReportingLedger(
-      {
-        async getReportingStatus() {
-          return raw;
-        },
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
       },
-      { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
-    ),
-    error => error.code === 'LEDGER_GRAPH_INTEGRITY_FAILED'
+    },
+    { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
   );
+  assert.equal(ledger.obligations.length, 2);
+  assert.equal(ledger.revisions.length, 1);
+  assert.equal(ledger.materializations.length, 1);
 });
 
 test('fails closed when healthy obligations omit conditionally required history counts', () => {
