@@ -226,8 +226,9 @@ export function buildRequestContext<TCtxMeta = Record<string, unknown>>(
   // — adopters writing handlers for the 90% case (tools with `account` on
   // the wire) shouldn't have to optional-chain everywhere. Adopters of
   // no-account tools either:
-  //   1. Declare `resolution: 'derived'` and return a singleton from
-  //      `accounts.resolve(undefined)` — `ctx.account` is always set
+  //   1. Declare `resolution: 'derived'` and resolve the credential's
+  //      single reachable account from `accounts.resolve(undefined)` —
+  //      `ctx.account` is set whenever that credential reaches exactly one
   //   2. Implement only `'explicit'` and never claim no-account
   //      specialisms — the tool is unreachable
   //   3. Read `ctx.account` defensively (`as Account | undefined` cast)

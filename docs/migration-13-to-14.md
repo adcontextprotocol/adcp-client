@@ -297,6 +297,166 @@ An unmet predicate produces one whole-storyboard `not_applicable` result and no
 steps are dispatched. Empty and single-entry lists fail during storyboard
 loading; keep using `requires_capability` for a singular predicate.
 
+## `derived` account resolution is now an upstream-managed account-id namespace
+
+**Breaking, and the fix is mechanical.** SDK 13 documented
+`AccountStore.resolution: 'derived'` as "single-tenant; there is no
+`account_id` on the wire", and the framework refused inline `account_id`
+references for it (`INVALID_REQUEST`, `field: 'account.account_id'`). Those
+wire semantics were inverted relative to the adopters the mode exists for.
+Upstream [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062)
+settled the account-reference model, and SDK 14 corrects the SDK to match
+(adcp-client#1647, which also resolves adcp-client#1628):
+
+| | SDK 13 (`'derived'`) | SDK 14 (`'derived'`) |
+|---|---|---|
+| Durable wire reference | none — account came from the credential | `{ account_id }` |
+| Inline `account_id` | refused with `INVALID_REQUEST` | **accepted**, and verified against the caller's reachable set |
+| `{ brand, operator }` arm | accepted, passed to your resolver | **refused** with `INVALID_REQUEST` (`field: 'account.brand'`) + a `list_accounts` suggestion |
+| `accounts.list` | optional | **required** — `createAdcpServerFromPlatform` throws `PlatformConfigError` without it |
+| `sync_accounts` | whatever your `upsert` did | natural-key provisioning entries fail per-row with `UNSUPPORTED_PROVISIONING`; `account: { account_id }` settings-update entries pass through |
+| `get_adcp_capabilities` | `require_operator_auth` unset | projects `account.require_operator_auth: true`, like a declared `'explicit'` (which also emits `supported_billing`, defaulting to `['agent']` — declare `capabilities.supportedBillings`) |
+| `accounts.resolve` returning a different id than the buyer named | served | refused with `ACCOUNT_NOT_FOUND` (framework-side backstop) |
+
+Why it had to change: an upstream-managed adapter (Meta / Snap ad accounts,
+AudioStack workspaces, a retail-media proxy) has no way to accept the id its
+own upstream assigned — buyers who called `list_accounts` got ids that every
+subsequent call rejected. The old contract was only usable by ignoring `ref`
+entirely, which is a tenant-isolation bug the moment a deployment serves more
+than one account.
+
+No alias spelling is introduced: `'derived'` stays the single name for the
+mode. A second spelling would silently defeat adopter code written as
+`resolution === 'derived'` without buying anything on the wire (`resolution`
+is SDK-local config), and `'account-id-namespace'` wouldn't discriminate
+anyway — under adcp#5062 both `'explicit'` and `'derived'` are account-id
+namespaces. An unrecognized `resolution` value is now a
+`PlatformConfigError` at construction rather than silently inheriting
+another mode's enforcement.
+
+### Recipe 1 — one account per credential (audiostack / flashtalking shape)
+
+Before:
+
+```ts
+const accounts = createDerivedAccountStore<MyMeta>({
+  toAccount: ctx => ({ id: 'audiostack', name: 'AudioStack', status: 'active', ctx_metadata: {} }),
+});
+```
+
+After — unchanged call shape. The factory now also publishes the one-row
+`list_accounts` the mode requires, verifies any buyer-supplied `account_id`
+against `toAccount(ctx).id` (mismatch → `ACCOUNT_NOT_FOUND`), and auto-selects
+the account on ref-less tools. Make sure `id` is the id you want buyers to
+read from `list_accounts` and send back — it is now on the wire in both
+directions.
+
+### Recipe 2 — many accounts per credential (Meta / Snap shape)
+
+This shape had no working Shape D before. Supply `listAccounts` instead of
+`toAccount`:
+
+```ts
+const accounts = createDerivedAccountStore<{ upstreamId: string }>({
+  // Scope by the caller's credential — this is the tenant-isolation boundary.
+  listAccounts: async ctx => {
+    const rows = await meta.adAccountsFor(ctx?.authInfo);
+    return rows.map(r => ({ id: r.account_id, name: r.name, status: 'active', ctx_metadata: { upstreamId: r.id } }));
+  },
+  // Optional, for rosters too large to enumerate per request. MUST filter by caller.
+  lookupAccount: (id, ctx) => meta.adAccountForCaller(id, ctx?.authInfo),
+});
+```
+
+`toAccount` and `listAccounts` are mutually exclusive; supplying both (or
+neither) throws `TypeError` at construction.
+
+### Recipe 3 — hand-rolled `'derived'` stores
+
+Two things to add:
+
+```ts
+import { refAccountId } from '@adcp/sdk/server';
+
+accounts: {
+  resolution: 'derived',
+  resolve: async (ref, ctx) => {
+    const reachable = await upstream.accountsFor(ctx?.authInfo); // credential-scoped
+    const id = refAccountId(ref);
+    if (id !== undefined) return reachable.find(a => a.id === id) ?? null; // verify, fail closed
+    return reachable.length === 1 ? reachable[0] : null;                   // no arbitrary default
+  },
+  // Required — construction throws without it. `opts.accounts.listAccounts`
+  // at the merge seam satisfies it too. The framework does not filter or
+  // page for you: honor req.account / req.status / req.sandbox and
+  // req.pagination in your own query.
+  list: async (req, ctx) => ({ items: await upstream.accountsFor(ctx?.authInfo) }),
+}
+```
+
+Belt and braces: if a `'derived'` resolver returns an account whose `id`
+isn't the one the buyer named, the framework refuses it with
+`ACCOUNT_NOT_FOUND` (and warns outside production) rather than serving the
+request against the wrong account. Don't rely on that instead of verifying —
+it can't tell whether *your* lookup was credential-scoped.
+
+If your ids are only ever issued out-of-band and there is nothing to
+enumerate, you are a seller-defined account-id namespace: declare
+`'explicit'`. Note two consequences: `'explicit'` applies **no** framework
+reference-shape enforcement, so a resolver that ignores `ref` will happily
+serve any `account_id` a buyer sends — keep the verification from the snippet
+above — and a *declared* `'explicit'` also projects
+`account.require_operator_auth: true`, like `'derived'`.
+
+### Recipe 3b — `sync_accounts` / `sync_governance` entries are verified
+
+Both tools carry their account reference inside the batch, so they never went
+through `accounts.resolve`. On a `'derived'` platform the framework now
+resolves each entry's `account_id` against the caller's reachable set before
+any write runs:
+
+- `sync_accounts` — an unreachable id fails the whole operation with
+  `ACCOUNT_NOT_FOUND` before `accounts.upsert` is called (the response row
+  schema requires `brand` + `operator`, which we don't have for an account we
+  refused to resolve, and failing the batch means no partial writes).
+- `sync_governance` — the individual row fails with `ACCOUNT_NOT_FOUND`;
+  reachable entries in the same batch still persist.
+
+Entries are also normalized to exactly one account reference first: an entry
+carrying two (a root `account_id` plus a nested `account`, or an `account`
+mixing `account_id` with `brand`/`operator`) is refused with
+`INVALID_REQUEST` rather than disambiguated by precedence. The schema's
+per-entry `oneOf` already forbids those shapes, but request validation is
+relaxable and a gate that reads one reference while the write uses another
+is a bypass.
+
+This applies to the merge-seam wiring (`opts.accounts.syncAccounts` /
+`syncGovernance`) as well as the platform interface. If you were relying on
+your own per-entry tenant gate, keep it — this is a framework floor, not a
+replacement.
+
+Settings-update rows you return must carry `brand` + `operator` (required by
+`sync-accounts-response.json`); echo them from your own account record. If
+your upstream accounts have no brand/operator you can express, don't wire
+`upsert` — tracked upstream at
+[adcontextprotocol/adcp#7517](https://github.com/adcontextprotocol/adcp/issues/7517).
+
+### Recipe 4 — buyers
+
+Buyers that special-cased "derived agents reject `account_id`" can drop the
+branch: against an SDK 14 derived agent, call `list_accounts`, then send
+`account: { account_id }` like any other account-id-namespace seller. Buyers
+that sent `{ brand, operator }` to a derived agent now get `INVALID_REQUEST`
+with a `list_accounts` suggestion in `error.suggestion`.
+
+### Conformance
+
+The cross-storyboard account-discovery gate no longer accepts `sync_accounts`
+as discovery for an agent declaring `account.require_operator_auth: true` —
+those agents must advertise `list_accounts`. Agents whose capabilities can't
+be read are classified as before (no new failures from an unparseable
+`get_adcp_capabilities`).
+
 ## Upgrade checklist
 
 1. Pin SDK 14 with the `beta` tag or an exact `14.0.0-beta.*` version. Do not rely on npm `latest` for beta rollout.
@@ -307,15 +467,16 @@ loading; keep using `requires_capability` for a singular predicate.
 6. Re-run TypeScript against generated schema imports. Prefer per-tool type slices if the complete schema barrel exhausts the default Node heap.
 7. Exercise mixed-version tests before rollout: 14→3.0, 14→3.1, 14→3.2 beta, and older buyer→14 server where applicable.
 8. If a legacy brief may return products without a proposal, configure a durable `LegacyPurchaseContinuationStore`, stable `principalScope`, and application-owned `reconcileLegacyPurchase(record, exactInput)` callback before offering `continueLegacyPurchase()`. Keep reverse compact-seller → older-buyer handlers application-owned.
-9. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Add store-clock `completedAt` and `retainUntil` fields to refinement/decline completion tombstones, index `retainUntil`, and retain each proof for at least `ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS`. Conservatively backfill pre-upgrade tombstones to a future seven-day horizon, then run a database-clock sweeper that atomically prunes only expired rows. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
-10. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
-11. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
-12. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
-13. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
-14. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
-15. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or after reading back an `already_terminal` task and proving its exact result/error artifact. Matching terminal status alone is insufficient. Retry or dead-letter scoped misses and conflicting terminal outcomes. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
-16. For out-of-process settlement, return `ctx.handoffToTask(producer, { settlement: 'external' })`; the producer must durably queue the complete handle before returning, and the framework withholds `submitted` until that commit succeeds. External settlement is polling-only: omit `push_notification_config`. Its custom durable registry must expose a stable non-empty `registryId` and return that exact ID in every `create()` reference; a mismatch is a custom create-contract violation, rejected before the producer runs or `submitted` is acknowledged. Framework-settled push handoffs configure production `webhooks`; `taskWebhookEmitter` is test/development-only. `dispatchHitl` owns their terminal task mutation and delivery. `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()`, `failScopedPushTask()`, or `rejectScopedPushTask()` is a lower-level application-managed push-settlement path, not a requirement for framework-settled handoffs and not a way to make external settlement push-capable. Before first use of rejection, run `getDecisioningTaskRegistryStatusWidenV61Migration()` against legacy task tables; its bounded `ACCESS EXCLUSIVE` lock can briefly block task reads and writes. See [task registry scope migration](./migration-task-registry-scoping.md#out-of-process-settlement).
-17. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
+9. If you declare `accounts.resolution: 'derived'`, wire `accounts.list` (or move to `createDerivedAccountStore`), make `accounts.resolve` verify buyer-supplied `account_id` values, and expect `account.require_operator_auth: true` in your capability payload. See [`derived` account resolution is now an upstream-managed account-id namespace](#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace).
+10. If established 3.0/3.1 proposal discovery and mutation can land on different processes, configure the same durable `EstablishedProposalStore`, stable `principalScope`, and stable non-secret `legacyPurchaseSellerSessionScope` on every coordinator. Add store-clock `completedAt` and `retainUntil` fields to refinement/decline completion tombstones, index `retainUntil`, and retain each proof for at least `ESTABLISHED_PROPOSAL_COMPLETION_TOMBSTONE_RETENTION_MS`. Conservatively backfill pre-upgrade tombstones to a future seven-day horizon, then run a database-clock sweeper that atomically prunes only expired rows. Recover submitted work with `reconcileEstablishedProposalTask({ account, sellerTaskId })`; see [Media-buy compatibility: durable established proposal state](./guides/MEDIA-BUY-3.2-COMPATIBILITY.md#durable-established-proposal-state). The bundled in-memory store is a non-durable reference implementation.
+11. Upgrade durable idempotency storage before application traffic: add the nullable PostgreSQL `retain_until` column/index, preserve `IdempotencyCacheEntry.retainUntil`, and add atomic `putIfAbsent()`, `replaceIfPayloadHash()`, `replaceIfPayloadHashAndExpired()`, and `deleteIfPayloadHash()` to every custom backend.
+12. Upgrade custom deferred-task storage with `putForSettlementOperationIfAbsent()`, `getBySettlementOperationId()`, and `replaceForSettlementOperationIfVersion()`. The initial token/index write and nested A→B index move must each be atomic.
+13. Replace webhook emitter `operation_id` arguments with SDK-local `delivery_id` values and upgrade custom stores to `WebhookDeliveryStore`. One delivery ID binds one canonical payload and key; use a fresh delivery ID for each changed status observation while retaining the AdCP `operation_id` inside the payload.
+14. Ensure custom 3.2 buyers include `push_notification_config.operation_id`, and update A2A integrations to keep the AdCP registration in skill parameters even when native A2A push configuration is also present.
+15. Treat failed/rejected task results as canonical terminal artifacts when `include_result` is requested; do not discard them while preserving only the summary error.
+16. Persist the complete `ScopedTaskRef` for out-of-process task settlement and acknowledge durable queue items only after `applied` or after reading back an `already_terminal` task and proving its exact result/error artifact. Matching terminal status alone is insufficient. Retry or dead-letter scoped misses and conflicting terminal outcomes. Upgrade populated PostgreSQL task registries with the phased [`getDecisioningTaskRegistryScopeV1Upgrade()` runbook](./migration-task-registry-scoping.md#populated-postgresql-upgrade), not application-boot bootstrap DDL.
+17. For out-of-process settlement, return `ctx.handoffToTask(producer, { settlement: 'external' })`; the producer must durably queue the complete handle before returning, and the framework withholds `submitted` until that commit succeeds. External settlement is polling-only: omit `push_notification_config`. Its custom durable registry must expose a stable non-empty `registryId` and return that exact ID in every `create()` reference; a mismatch is a custom create-contract violation, rejected before the producer runs or `submitted` is acknowledged. Framework-settled push handoffs configure production `webhooks`; `taskWebhookEmitter` is test/development-only. `dispatchHitl` owns their terminal task mutation and delivery. `createPostgresTaskSettlementCoordinator()` with `completeScopedPushTask()`, `failScopedPushTask()`, or `rejectScopedPushTask()` is a lower-level application-managed push-settlement path, not a requirement for framework-settled handoffs and not a way to make external settlement push-capable. Before first use of rejection, run `getDecisioningTaskRegistryStatusWidenV61Migration()` against legacy task tables; its bounded `ACCESS EXCLUSIVE` lock can briefly block task reads and writes. See [task registry scope migration](./migration-task-registry-scoping.md#out-of-process-settlement).
+18. Upgrade to Node `^20.19.0 || >=22.12.0`, whose two boundaries enable the `require(esm)` support needed by the SDK's CommonJS dependency graph. Node 21 and Node 22.0–22.11 are not supported. Keep Undici 6 for the fully supported configuration, or use the tested best-effort Undici 7 override on Node 20.19+. See the [Node/Undici compatibility policy](./guides/NODE-UNDICI-COMPATIBILITY.md).
 
 ### Webhook delivery identity and retry horizons
 

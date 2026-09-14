@@ -13,6 +13,7 @@
  */
 
 import type { DecisioningPlatform } from '../platform';
+import { isAccountResolutionMode } from '../account';
 import type { AdCPSpecialism } from '../../../types/tools.generated';
 
 // Sales specialisms require channels + pricingModels on capabilities because
@@ -165,6 +166,20 @@ export function validatePlatform(
         `capabilities.pricingModels is required for media-buy platforms (claimed: ${claimedSales.join(', ')})`
       );
     }
+  }
+
+  // 3. `resolution` must be a recognized mode.
+  //
+  // Untyped adopters can put anything here, and a typo must not silently
+  // inherit a different mode's wire enforcement — `'Derived'` or `'implict'`
+  // would otherwise normalize to `'explicit'` and quietly drop the
+  // reference-shape contract the adopter meant to declare.
+  const declaredResolution = platform.accounts?.resolution;
+  if (declaredResolution !== undefined && !isAccountResolutionMode(declaredResolution)) {
+    errors.push(
+      `accounts.resolution: '${String(declaredResolution)}' is not a recognized resolution mode ` +
+        `('explicit' | 'implicit' | 'derived')`
+    );
   }
 
   if (errors.length > 0) {

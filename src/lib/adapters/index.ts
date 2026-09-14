@@ -77,8 +77,17 @@ export { createOAuthPassthroughResolver, type OAuthPassthroughResolverOptions } 
 // where the roster lives.
 export { createRosterAccountStore, type RosterAccountStoreOptions } from './roster-account-store';
 
-// Derived AccountStore — Shape D factory for `resolution: 'derived'` single-
-// tenant agents (no account_id on the wire; auth principal alone identifies
-// the tenant). Closes adcp-client#1462. Replaces ~25–30 LOC of bearer-extract +
-// throw-AUTH_REQUIRED + return-singleton boilerplate Shape D adopters write today.
-export { createDerivedAccountStore, type DerivedAccountStoreOptions } from './derived-account-store';
+// Derived AccountStore — Shape D factory for `resolution: 'derived'` agents
+// fronting an upstream-managed account namespace (the upstream owns the
+// roster; buyers discover ids via `list_accounts` and send `{ account_id }`).
+// Verifies buyer-supplied ids against what the caller's credential can reach
+// and wires `list_accounts` for both the credential-bound singleton
+// (`toAccount`) and roster (`listAccounts`) shapes. Closes adcp-client#1462;
+// reworked by adcp-client#1647.
+export {
+  createDerivedAccountStore,
+  type DerivedAccountStoreOptions,
+  type DerivedAccountStoreBaseOptions,
+  type DerivedSingletonAccountStoreOptions,
+  type DerivedRosterAccountStoreOptions,
+} from './derived-account-store';

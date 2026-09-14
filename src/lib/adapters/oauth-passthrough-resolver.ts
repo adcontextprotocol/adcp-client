@@ -22,8 +22,9 @@
  *   (this file, Shape B, returns just `resolve`).
  * - **Publisher ops curates the roster** → `createRosterAccountStore`
  *   (Shape C, complete AccountStore).
- * - **No account concept — auth principal IS the tenant** → `createDerivedAccountStore`
- *   (Shape D, `resolution: 'derived'`).
+ * - **An upstream platform owns the roster and you front it** → `createDerivedAccountStore`
+ *   (Shape D, `resolution: 'derived'` — same upstream-managed model as this
+ *   resolver, plus verified `account_id` resolution and `list_accounts`).
  *
  * @public
  */

@@ -45,16 +45,6 @@
     "messagePrefix": "Cannot find name 'server'. Did you mean 'serve'?"
   },
   {
-    "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
-    "errorCode": "TS2322",
-    "messagePrefix": "Type 'Promise<{ id: string; name: string; status: \"active\"; metadata: {}; authIn"
-  },
-  {
-    "source": "skills/build-decisioning-platform/advanced/REFERENCE.md",
-    "errorCode": "TS2345",
-    "messagePrefix": "Argument of type '{ capabilities: { specialisms: readonly [\"sales-non-guaranteed"
-  },
-  {
     "source": "skills/build-decisioning-platform/SKILL.md",
     "errorCode": "TS1309",
     "messagePrefix": "The current file is a CommonJS module and cannot use 'await' at the top level."

@@ -19,7 +19,18 @@
  *   agent (any specialism in `sales-*` / `audience-sync` / `governance-*`)
  *   MUST advertise at least one of `list_accounts` or `sync_accounts`.
  *   Spec normative as of AdCP 3.0.9; the requirement existed before the
- *   explicit MUST landed. The runner honors AdCP 3.1
+ *   explicit MUST landed.
+ *
+ *   Deliberately NOT tightened for account-id namespaces (adcp-client#1647).
+ *   adcp#5062 makes `list_accounts` a MUST only when a credential can reach
+ *   more than one account, and a SHOULD (with an explicit out-of-band
+ *   escape) for credential-bound singletons — neither condition is
+ *   observable from a static `get_adcp_capabilities` read, and
+ *   `require_operator_auth: true` covers seller-defined namespaces that
+ *   legitimately hand out ids out-of-band. Keying a run-blocking gate on
+ *   that bit would fail conformant sellers. The SDK enforces the stricter
+ *   rule where it *is* knowable — at `createAdcpServerFromPlatform`, where
+ *   a declared `resolution: 'derived'` requires `list_accounts`. The runner honors AdCP 3.1
  *   `required_any_of_tools` tags when present, but this fallback remains
  *   until upstream storyboards carry the tag consistently.
  */
@@ -91,6 +102,24 @@ export function isAccountBearingSpecialism(specialism: string): boolean {
  * storyboards in `compliance/cache/` carry `required_any_of_tools`
  * consistently for every account-bearing scenario.
  */
+/**
+ * True when the agent's capabilities declare an account-id namespace —
+ * `account.require_operator_auth: true`. Read from `raw_capabilities`
+ * because the normalized `AgentProfile` doesn't carry the account block.
+ *
+ * Used only to steer the failure *message* toward the right remedy. It
+ * deliberately does not change whether the gate fires — see the
+ * module-level note on why the account-id-namespace rule isn't enforced
+ * from a static capability read.
+ */
+function declaresAccountIdNamespace(profile: AgentProfile): boolean {
+  const raw = profile.raw_capabilities;
+  if (raw === null || typeof raw !== 'object') return false;
+  const account = (raw as { account?: unknown }).account;
+  if (account === null || typeof account !== 'object') return false;
+  return (account as { require_operator_auth?: unknown }).require_operator_auth === true;
+}
+
 export function checkAccountDiscoveryGate(profile: AgentProfile, agentUrl: string): StoryboardResult | null {
   const accountBearing = (profile.specialisms ?? []).filter(isAccountBearingSpecialism);
   if (accountBearing.length === 0) return null;
@@ -103,7 +132,11 @@ export function checkAccountDiscoveryGate(profile: AgentProfile, agentUrl: strin
   const detail =
     `Agent declared account-bearing specialism(s) [${accountBearing.join(', ')}] but advertises ` +
     `neither list_accounts nor sync_accounts. AdCP 3.0.9 §accounts/overview requires every seller ` +
-    `agent to expose at least one of these tools. Agent tools: [${profile.tools.join(', ')}].`;
+    `agent to expose at least one of these tools. Agent tools: [${profile.tools.join(', ')}].` +
+    (declaresAccountIdNamespace(profile)
+      ? ` This agent declares account.require_operator_auth: true, so list_accounts is the discovery ` +
+        `tool that fits its account model — buyers reference these accounts by account_id.`
+      : '');
 
   return {
     storyboard_id: ACCOUNT_DISCOVERY_GATE_STORYBOARD_ID,

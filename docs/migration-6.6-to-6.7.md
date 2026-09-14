@@ -13,7 +13,11 @@
 >   applies to derived-mode (single-tenant) platforms — buyers passing
 >   inline `{account_id}` against a derived-mode agent reject with
 >   `INVALID_REQUEST` instead of being silently dropped. See recipe
->   **#10b**.
+>   **#10b**. **Superseded in SDK 14** — the derived-mode polarity was
+>   inverted and `account_id` is now the durable reference for that mode.
+>   Read
+>   [13 → 14 § derived account resolution](./migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace)
+>   before applying #10b on a modern SDK.
 > - **Adopters with `: SalesPlatform<Meta>` field annotations claiming
 >   `sales-guaranteed` / `sales-non-guaranteed` / `sales-broadcast-tv` /
 >   `sales-catalog-driven`**: `SalesPlatform` is now structurally
@@ -42,7 +46,9 @@ Everything else is additive and can be applied incrementally.
   single-tenant agents. Buyers passing inline `account_id` against a
   declared `'derived'` platform now reject with `INVALID_REQUEST`
   instead of being silently dropped. The `{brand, operator}` arm is
-  still permitted.
+  still permitted. **Historical — reversed in SDK 14** (adcp-client#1647):
+  derived mode now accepts `account_id` and refuses the `{brand,
+  operator}` arm. This recipe describes 6.7-era behavior only.
 - **#11 — `SalesPlatform` split into `SalesCorePlatform &
   SalesIngestionPlatform`** (TS-only, self-announcing under
   `tsc --noEmit`). Adopters with `: SalesPlatform<Meta>` field
@@ -566,6 +572,8 @@ platforms now reject inline `{account_id}` references with
 `{brand, operator}` arm is still permitted (it's used during the
 initial `sync_accounts` flow).
 
+> **Historical — reversed in SDK 14.** `'derived'` now accepts `{ account_id }` and refuses the `{ brand, operator }` arm (adcp-client#1647). Read [13 → 14 § derived account resolution](./migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace) before applying anything in this section on a modern SDK.
+
 **Action required.** Audit `accounts.resolution`:
 
 | Your pre-6.7 setup                                                                       | What to do                                                                                                                                       |
@@ -730,7 +738,7 @@ The four-shape map adopters now reach for:
 | **A**  | `'implicit'`  | `InMemoryImplicitAccountStore`        | Buyer drives onboarding via `sync_accounts`; framework owns the linkage map.    |
 | **B**  | `'explicit'`  | `createOAuthPassthroughResolver`      | Adapter fronts a vendor OAuth + `/me/adaccounts` listing endpoint (Snap, Meta). |
 | **C**  | `'explicit'`  | `createRosterAccountStore`            | Publisher owns the roster (storefront table, admin UI). Adopter brings `lookup`. |
-| **D**  | `'derived'`   | `createDerivedAccountStore`           | Single-tenant agent — auth principal IS the tenant; no `account_id` on the wire (audiostack, flashtalking, single-namespace retail-media). |
+| **D**  | `'derived'`   | `createDerivedAccountStore`           | **(SDK 14: upstream-managed account-id namespace — see 13 → 14.)** Single-tenant agent — auth principal IS the tenant; no `account_id` on the wire (audiostack, flashtalking, single-namespace retail-media). |
 
 ### 11. **breaking** (TS-only) — `SalesPlatform` split into core + ingestion
 

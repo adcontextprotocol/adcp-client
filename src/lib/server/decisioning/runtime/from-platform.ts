@@ -72,12 +72,16 @@ import type { DecisioningPlatform, RequiredPlatformsFor, RequiredCapabilitiesFor
 import type { ComplianceTestingCapabilities } from '../capabilities';
 import { normalizeTargetingCapabilities } from '../capabilities';
 import { isAdcpVersionAtLeast } from '../../../utils/adcp-version-config';
-import type { Account, ResolvedAuthInfo, ResolveContext } from '../account';
+import type { Account, AccountResolutionMode, ResolvedAuthInfo, ResolveContext } from '../account';
 import {
   AccountNotFoundError,
+  normalizeAccountResolution,
   refAccountId,
+  refHasNaturalKey,
   toWireAccount,
   toWireSyncAccountRow,
+  type WireSyncAccountRow,
+  type WireSyncGovernanceRow,
   toWireSyncGovernanceRow,
   type SyncAccountsResultRow,
 } from '../account';
@@ -1778,33 +1782,38 @@ function asProductResponseForWire<T extends { products?: unknown[] }>(
 }
 
 /**
- * Enforce the documented inline-`account_id` refusal for resolution modes
- * that declare the field meaningless on the wire — `'implicit'` (since
- * #1364) and `'derived'` (since adcp-client#1468). Both modes share the
- * same wire contract: the buyer does not pass `account_id` inline; the
- * framework derives the tenant from the authenticated principal (after a
- * `sync_accounts` step for `'implicit'`; directly for `'derived'`).
+ * Enforce the account-reference shape each resolution mode declares durable
+ * on the wire, before the adopter's `accounts.resolve` runs. Keeps one
+ * consistent envelope across modes instead of every adopter reimplementing
+ * `if (ref?.account_id) return null`.
  *
- * Throws `AdcpError('INVALID_REQUEST')` before reaching the adopter's
- * `accounts.resolve`, so each adopter doesn't reimplement the same
- * `if (ref?.account_id) return null` branch and the wire response is
- * consistent across both modes. The brand+operator union arm is
- * permitted — only `account_id`-shaped references are refused.
+ * - `'implicit'` (#1364) — buyer-declared accounts. The `{ brand, operator }`
+ *   natural key is the durable reference; inline `account_id` is refused
+ *   (`field: 'account.account_id'`) with `sync_accounts`-first guidance.
+ * - `'derived'` (#1647, upstream adcp#5062) — an upstream-managed account-id
+ *   namespace. `account_id` is the durable reference and is **accepted**;
+ *   the natural-key arm is refused (`field: 'account.brand'`) because
+ *   `(brand, operator)` is not a key into a roster this agent doesn't own.
+ *   Buyers recover with `list_accounts`.
+ * - `'explicit'` — seller-owned namespace; no shape constraint, both arms
+ *   reach the resolver.
  *
- * Mode-specific message and suggestion: `'implicit'` adopters get the
- * `sync_accounts`-first guidance; `'derived'` adopters get the single-
- * tenant explanation (no `sync_accounts` step exists in derived mode —
- * the auth principal alone identifies the tenant).
+ * Before SDK 14 this function refused `account_id` for `'derived'` too. That
+ * was the inverted contract corrected by adcp-client#1647: it made the mode
+ * unusable for the adapters it exists for (the upstream hands out ids; the
+ * buyer had no way to send one back) and left `list_accounts` results
+ * un-referenceable.
  *
- * Documented at `AccountStore.resolution` in `account.ts`.
+ * Throws `AdcpError('INVALID_REQUEST')`. Documented at
+ * `AccountStore.resolution` in `account.ts`.
  */
-function refuseInlineAccountIdWhenForbidden(
-  resolution: 'explicit' | 'implicit' | 'derived' | undefined,
+function enforceAccountRefShapeForResolution(
+  resolution: AccountResolutionMode | undefined,
   ref: AccountReference | undefined
 ): void {
-  if (resolution !== 'implicit' && resolution !== 'derived') return;
-  if (refAccountId(ref) === undefined) return;
-  if (resolution === 'implicit') {
+  const mode = normalizeAccountResolution(resolution);
+  if (mode === 'implicit') {
+    if (refAccountId(ref) === undefined) return;
     throw new AdcpError('INVALID_REQUEST', {
       message:
         'This platform resolves accounts from the authenticated principal — call sync_accounts first; do not pass account.account_id inline.',
@@ -1813,12 +1822,77 @@ function refuseInlineAccountIdWhenForbidden(
         'Call sync_accounts to associate accounts with your principal, then omit account_id on subsequent calls.',
     });
   }
+  // 'derived' — upstream-managed account-id namespace. Branch explicitly
+  // rather than as an `else`: an unrecognized mode must not inherit this
+  // enforcement (it normalizes to `'explicit'`, which constrains nothing).
+  if (mode !== 'derived') return;
+  if (refAccountId(ref) !== undefined) return;
+  if (!refHasNaturalKey(ref)) return;
   throw new AdcpError('INVALID_REQUEST', {
     message:
-      'This single-tenant agent identifies the tenant from the authenticated principal alone — do not pass account.account_id inline; the field is meaningless on the wire for derived-resolution agents.',
-    field: 'account.account_id',
-    suggestion: 'Omit the account field; the framework derives the tenant from your authenticated credential.',
+      'This agent fronts an upstream-managed account namespace: accounts are addressed by account.account_id, ' +
+      'not by the brand + operator natural key. The upstream owns the roster, so (brand, operator) is not a ' +
+      'durable reference here.',
+    field: 'account.brand',
+    suggestion:
+      'Call list_accounts to discover the account_id visible to your credential, then send account: { account_id }.',
   });
+}
+
+/**
+ * Recovery hint for an unresolved account, by resolution mode. The envelope
+ * itself stays the spec's fixed `ACCOUNT_NOT_FOUND` (no signal about whether
+ * the named account exists); only the remedy differs, and on an
+ * upstream-managed namespace the remedy is always the same one sentence.
+ */
+function accountNotFoundSuggestion(resolution: AccountResolutionMode | undefined): string | undefined {
+  switch (normalizeAccountResolution(resolution)) {
+    case 'derived':
+      return 'Call list_accounts to discover the accounts your credential can reach, then send account: { account_id }.';
+    case 'implicit':
+      return 'Call sync_accounts to associate this brand + operator with your principal first.';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Defense in depth for `resolution: 'derived'`: the account a resolver hands
+ * back for a buyer-named `{ account_id }` MUST be that account.
+ *
+ * On an upstream-managed namespace the id is a buyer-supplied claim, so
+ * verification is the resolver's job — but "verify the ref" is a contract an
+ * adopter can forget, and the pre-SDK-14 shape of this mode actively taught
+ * the opposite (the framework refused `account_id`, so ignoring `ref` and
+ * returning the one account was safe). An un-updated resolver would
+ * otherwise serve caller A's request against whatever account it returns,
+ * silently, the first time a deployment holds more than one.
+ *
+ * A mismatch resolves to `null`, which the callers map to the spec's fixed
+ * `ACCOUNT_NOT_FOUND` envelope — no signal about whether the named account
+ * exists. `createDerivedAccountStore` already fails closed here; this makes
+ * hand-rolled stores fail closed too.
+ */
+function assertResolvedAccountMatchesRef<T extends { id: string }>(
+  resolution: AccountResolutionMode | undefined,
+  ref: AccountReference | undefined,
+  account: T | null,
+  logger: AdcpLogger
+): T | null {
+  if (account == null) return null;
+  if (normalizeAccountResolution(resolution) !== 'derived') return account;
+  const requestedId = refAccountId(ref);
+  if (requestedId === undefined || account.id === requestedId) return account;
+  if (process.env.NODE_ENV !== 'production') {
+    logger.warn(
+      `[adcp/sdk] accounts.resolve returned account '${account.id}' for a request naming ` +
+        `'${requestedId}' on a resolution: 'derived' platform. The framework is refusing it with ` +
+        `ACCOUNT_NOT_FOUND. A 'derived' resolver must look the buyer-supplied account_id up against ` +
+        `what the caller's credential can reach and return null on a miss — see AccountStore.resolve, ` +
+        `or use createDerivedAccountStore which does it for you.`
+    );
+  }
+  return null;
 }
 
 /**
@@ -2506,6 +2580,36 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     }
   }
 
+  // Upstream-managed account namespaces must expose account discovery.
+  //
+  // `resolution: 'derived'` declares "the platform I front owns the account
+  // roster; buyers address accounts by `account_id`". `list_accounts` is the
+  // only way a buyer can learn those ids, so it is the discovery contract
+  // for the mode, not optional polish (adcp#5062; adcp-client#1647). A
+  // credential bound to exactly one account still lists it — one row — so
+  // buyer SDKs can auto-select and send an explicit ref on required-account
+  // tasks.
+  //
+  // Checked here rather than in `validatePlatform` because `list_accounts`
+  // can legitimately be served from the merge seam
+  // (`opts.accounts.listAccounts`) instead of the platform interface.
+  //
+  // If your ids are only ever handed out out-of-band and there is nothing to
+  // enumerate, you are a seller-defined account-id namespace: declare
+  // `'explicit'`. `createDerivedAccountStore` wires `list` for you.
+  if (
+    normalizeAccountResolution(platform.accounts.resolution) === 'derived' &&
+    platform.accounts.list == null &&
+    runtimeOpts.accounts?.listAccounts == null
+  ) {
+    throw new PlatformConfigError(
+      `accounts.resolution: 'derived' requires list_accounts — it is the discovery contract for an ` +
+        `upstream-managed account namespace (buyers cannot learn an account_id otherwise). Wire ` +
+        `accounts.list (or opts.accounts.listAccounts), use createDerivedAccountStore (which provides it), ` +
+        `or declare resolution: 'explicit' if account ids are only issued out-of-band.`
+    );
+  }
+
   // Compliance-testing capability/adapter consistency.
   //
   // Two failure modes the framework refuses to ship:
@@ -2752,9 +2856,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // Account-mode capability projection. Two redundant adopter signals
   // resolve into the same wire bit:
   //   - `capabilities.requireOperatorAuth: true` — explicit override
-  //   - `accounts.resolution: 'explicit'` — derived from the account-store
-  //     model (operators authenticate independently with the seller; the
-  //     buyer discovers accounts via `list_accounts`, NOT `sync_accounts`).
+  //   - an account-id-namespace `accounts.resolution` — `'explicit'`
+  //     (seller-owned ids) or `'derived'` (upstream-managed roster,
+  //     discovered via `list_accounts`). In both, operators authenticate
+  //     independently and account-scoped calls carry `{ account_id }`
+  //     rather than provisioning by natural key through `sync_accounts`.
+  //     Per adcp#5062 `require_operator_auth: true` is the capability bit
+  //     for account-id namespaces; only `'implicit'` (buyer-declared
+  //     accounts) projects false. Derived joined this branch in
+  //     adcp-client#1647.
   // Either, taken alone, projects to `account.require_operator_auth: true`.
   // The conformance storyboard runner reads this bit at step time and
   // grades `sync_accounts` steps as `'not_applicable'` (rather than the
@@ -2766,7 +2876,16 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // operator (retail-media model) or the buying agent (pass-through). Without
   // the projection, retail-media adopters that declared `['operator']` saw
   // their buyers default-route to agent-billed flows.
-  const requireOperatorAuth = platform.capabilities.requireOperatorAuth ?? platform.accounts.resolution === 'explicit';
+  // Only an explicitly declared account-id-namespace mode projects the bit;
+  // an omitted `resolution` keeps the pre-existing "no projection" behavior
+  // even though it defaults to `'explicit'` for dispatch purposes. Adopters
+  // who want the capability emitted declare the mode (or set
+  // `capabilities.requireOperatorAuth`) rather than inheriting it silently.
+  const declaredResolution =
+    platform.accounts.resolution === undefined ? undefined : normalizeAccountResolution(platform.accounts.resolution);
+  const requireOperatorAuth =
+    platform.capabilities.requireOperatorAuth ??
+    (declaredResolution === 'explicit' || declaredResolution === 'derived');
   const supportedBillings = platform.capabilities.supportedBillings;
   const hasAccountProjection = requireOperatorAuth === true || (supportedBillings?.length ?? 0) > 0;
   // Schema requires `supported_billing` (minItems: 1) whenever the account
@@ -3027,15 +3146,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       let resolvedAccountId: string | undefined;
       try {
         // Enforce the JSDoc contract documented at `AccountStore.resolution`:
-        // implicit-mode and derived-mode platforms refuse inline `account_id`
-        // references. Implicit: buyers call sync_accounts first, then the
-        // framework resolves from the auth principal. Derived: single-tenant;
-        // the principal alone identifies the tenant. The brand+operator union
-        // arm is permitted (implicit's sync_accounts onboarding flow); only
-        // the `{ account_id }` arm is refused. Closes adcp-client#1364
-        // (implicit) and adcp-client#1468 (derived).
-        refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref);
-        const account = await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input));
+        // each mode declares one durable reference shape and the framework
+        // refuses the other before the adopter's resolver runs. Implicit
+        // (#1364): natural key is durable, inline `account_id` refused.
+        // Derived (#1647): `account_id` is durable (discovered via
+        // `list_accounts` on the upstream-managed roster), natural key
+        // refused. Explicit: no constraint.
+        enforceAccountRefShapeForResolution(platform.accounts.resolution, ref);
+        const account = assertResolvedAccountMatchesRef(
+          platform.accounts.resolution,
+          ref,
+          await platform.accounts.resolve(ref, toResolveCtx(ctx, ctx.toolName, ctx.input)),
+          fwLogger
+        );
         resolved = account != null;
         resolvedAccountId = account?.id;
         return account;
@@ -3063,7 +3186,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // with `undefined` ref + `authInfo` available — adopters of any
     // `resolution` mode can return a non-null Account here:
     //
-    //   - `'derived'` — return the singleton.
+    //   - `'derived'` — return the one account the caller's credential
+    //     reaches; `null` when it reaches several (ambiguity is not a
+    //     default) or none.
     //   - `'implicit'` — look up by `ctx.authInfo.clientId`.
     //   - `'explicit'` — also handle the `undefined` ref branch by
     //     looking up via `ctx.authInfo.clientId` (or whichever principal
@@ -3193,7 +3318,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       'governance',
       mergeOpts
     ),
-    accounts: mergeHandlers(opts.accounts, buildAccountHandlers(platform, ctxFor), 'accounts', mergeOpts),
+    accounts: (() => {
+      const platformAccountHandlers = buildAccountHandlers(platform, ctxFor, fwLogger);
+      const merged = mergeHandlers(opts.accounts, platformAccountHandlers, 'accounts', mergeOpts);
+      return guardDerivedSyncGovernance(
+        guardAdopterSyncAccounts(merged, platform, platformAccountHandlers, fwLogger),
+        platform,
+        fwLogger
+      );
+    })(),
     brandRights: mergeHandlers(
       runtimeLegacyHandlers.brandRights,
       buildBrandRightsHandlers(platform, ctxFor, effectiveCtxMetadata, fwLogger),
@@ -3511,6 +3644,15 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           const refFromContext = (input.context as { account?: AccountReference } | undefined)?.account;
           const accountRef = refFromTop ?? refFromContext;
 
+          // Same per-mode reference-shape contract the buyer-facing
+          // dispatchers enforce. Outside the try below on purpose: a refused
+          // reference is a buyer-fixable INVALID_REQUEST, not a resolver
+          // failure to swallow. This call site historically skipped the
+          // check; with `'derived'` now accepting `{ account_id }`, the
+          // controller must not be the one path where a reference bypasses
+          // it.
+          enforceAccountRefShapeForResolution(platform.accounts.resolution, accountRef);
+
           let resolvedAccount: Account | null = null;
           const agent = principalAuthority.agent;
           try {
@@ -3533,6 +3675,12 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
             // Treat as "no account resolved" — fail-closed by default unless a
             // fallback admits.
           }
+          resolvedAccount = assertResolvedAccountMatchesRef(
+            platform.accounts.resolution,
+            accountRef,
+            resolvedAccount,
+            fwLogger
+          );
 
           // Record the resolved account's explicit mode (if any). Used by the
           // env-fallback fail-closed guard below.
@@ -3545,7 +3693,18 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
           // returned `null` — if the resolver names the account, the
           // resolver wins. The buyer's wire claim never overrides a
           // resolved live account.
-          const refSandbox = (accountRef as { sandbox?: unknown } | undefined)?.sandbox === true;
+          //
+          // The fallback is scoped to refs that name no account: a buyer who
+          // DID name an account and had it refused by the resolver must not
+          // re-admit themselves by asserting `sandbox: true` alongside it.
+          // Fail-closed resolvers (`createDerivedAccountStore` and any
+          // verified `'derived'` store) make `resolvedAccount == null`
+          // reachable on demand — without this scoping, naming another
+          // tenant's account id plus `sandbox: true` would admit the
+          // controller with no framework account authority attached.
+          const refSandbox =
+            (accountRef as { sandbox?: unknown } | undefined)?.sandbox === true &&
+            refAccountId(accountRef) === undefined;
           const envSandbox = process.env.ADCP_SANDBOX === '1';
 
           const wouldAdmitOnlyViaEnv = envSandbox && !accountIsSandbox && !(resolvedAccount == null && refSandbox);
@@ -3944,14 +4103,27 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
       let resolvedAccountId: string | undefined;
       let resolvedAccount: Account | undefined;
       if (ref) {
-        refuseInlineAccountIdWhenForbidden(platform.accounts.resolution, ref as AccountReference);
+        enforceAccountRefShapeForResolution(platform.accounts.resolution, ref as AccountReference);
         try {
-          const resolved = await platform.accounts.resolve(ref as AccountReference, resolveCtx);
+          const resolved = assertResolvedAccountMatchesRef(
+            platform.accounts.resolution,
+            ref as AccountReference,
+            await platform.accounts.resolve(ref as AccountReference, resolveCtx),
+            logger
+          );
           if (resolved) {
             resolvedAccountId = resolved.id;
             resolvedAccount = resolved;
           }
         } catch (err) {
+          if (err instanceof AdcpError) {
+            // Typed adopter/framework errors carry their own buyer-facing
+            // verdict — `AUTH_REQUIRED` from a credential-gated store is the
+            // common one. Mapping those to SERVICE_UNAVAILABLE told an
+            // unauthenticated poller "server problem" instead of
+            // "authenticate", which is what the main dispatcher does.
+            throw err;
+          }
           if (!(err instanceof AccountNotFoundError)) {
             logger.error?.('Account resolution failed during tasks_get poll', {
               error: err instanceof Error ? err.message : String(err),
@@ -3960,9 +4132,11 @@ function buildTasksGetTool<P extends DecisioningPlatform<any, any>>(
           }
         }
         if (!resolvedAccountId) {
+          const suggestion = accountNotFoundSuggestion(platform.accounts.resolution);
           return adcpError('ACCOUNT_NOT_FOUND', {
             message: 'The specified account does not exist',
             field: 'account',
+            ...(suggestion !== undefined && { suggestion }),
           });
         }
       } else {
@@ -7902,6 +8076,473 @@ function entryHasAccountId(entry: SyncAccountsEntry): boolean {
   return entry.account !== undefined && refAccountId(entry.account) !== undefined;
 }
 
+/**
+ * Per-entry refusal for `sync_accounts` against an upstream-managed
+ * account-id namespace (`resolution: 'derived'`), per adcp#5062.
+ *
+ * Natural-key provisioning — `{ brand, operator, billing }` at the entry
+ * root, or a settings-update entry whose `account` ref is the natural key —
+ * is out of scope for a namespace this agent doesn't own: there is nothing
+ * for the seller to provision and `(brand, operator)` doesn't address an
+ * upstream row. The spec's per-entry code for "the seller does not support
+ * the mode this entry requested" is `UNSUPPORTED_PROVISIONING`.
+ *
+ * Settings-update entries keyed by `account: { account_id }` are NOT
+ * refused: #5062 keeps that mode available when the seller exposes it, so
+ * an adopter who wires `accounts.upsert` still receives them. This is the
+ * narrower rule that replaced "derived forbids sync_accounts outright".
+ */
+/**
+ * Per-entry `UNSUPPORTED_PROVISIONING` for natural-key provisioning against
+ * an upstream-managed account namespace. Spec code for "the seller does not
+ * support the `sync_accounts` mode this entry requested" (adcp#5062).
+ */
+function buildUnsupportedProvisioningError(index: number): AdcpStructuredError {
+  return new AdcpError('UNSUPPORTED_PROVISIONING', {
+    message:
+      'This agent fronts an upstream-managed account namespace: sync_accounts cannot provision ' +
+      'accounts by the brand + operator natural key. Accounts are created on the upstream platform and ' +
+      'discovered through list_accounts.',
+    recovery: 'correctable',
+    field: `accounts[${index}].brand`,
+    suggestion:
+      'Call list_accounts to discover the account_id, then re-issue settings-update entries as ' +
+      'account: { account_id } — or drop the entry if you only meant to provision.',
+  }).toStructuredError();
+}
+
+/**
+ * Normalize a `sync_accounts` entry to the single account reference it
+ * carries — or report that it carries none, or more than one.
+ *
+ * The schema models entry keys as a per-entry `oneOf` (provisioning trio at
+ * the root XOR an `account` ref), but request validation is relaxable, and a
+ * gate that reads one location while a later step reads another is a
+ * bypass: an entry carrying a root `account_id` *and* a nested
+ * `account: { brand, operator }` would be accepted on the id it never uses
+ * and then written against the natural key nobody verified. So the
+ * reference location is resolved exactly once, here, and anything
+ * ambiguous is refused rather than disambiguated by precedence.
+ */
+function normalizeSyncAccountsReference(
+  entry: SyncAccountsEntry
+):
+  | { kind: 'account_id'; accountId: string }
+  | { kind: 'natural_key_provisioning' }
+  | { kind: 'natural_key_reference' }
+  | { kind: 'ambiguous' }
+  | { kind: 'none' } {
+  const rootAccountId = refAccountId(entry);
+  const rootNaturalKey = entry.brand !== undefined || entry.operator !== undefined;
+  const nested = entry.account;
+  const nestedAccountId = refAccountId(nested);
+  const nestedNaturalKey = refHasNaturalKey(nested);
+
+  const locations = [rootAccountId !== undefined, rootNaturalKey, nested !== undefined].filter(Boolean).length;
+  if (locations > 1) return { kind: 'ambiguous' };
+  if (nestedAccountId !== undefined && nestedNaturalKey) return { kind: 'ambiguous' };
+
+  if (rootAccountId !== undefined) return { kind: 'account_id', accountId: rootAccountId };
+  if (rootNaturalKey) return { kind: 'natural_key_provisioning' };
+  if (nestedAccountId !== undefined) return { kind: 'account_id', accountId: nestedAccountId };
+  if (nestedNaturalKey) return { kind: 'natural_key_reference' };
+  return { kind: 'none' };
+}
+
+/**
+ * Classify one `sync_accounts` entry against the upstream-managed
+ * (`resolution: 'derived'`) account model, per adcp#5062.
+ *
+ * - exactly one `account_id` (root or under `account`) — settings-update
+ *   mode. Accepted; the seller's own `upsert` decides whether it supports
+ *   the write. The resolved id is returned so the reachability check reads
+ *   the same reference this classification accepted.
+ * - flat `{ brand, operator, billing }` — natural-key provisioning. Refused
+ *   with the spec's per-entry `UNSUPPORTED_PROVISIONING`: there is nothing
+ *   to provision in a namespace the agent doesn't own.
+ * - `account: { brand, operator }` — a natural-key *reference* into an
+ *   account-id namespace. Refused as `INVALID_REQUEST` (not
+ *   `UNSUPPORTED_PROVISIONING`, which is about the mode, not the ref shape)
+ *   with the same field pointer discipline as the task-level refusal.
+ * - more than one reference, or none — malformed against the request
+ *   schema's per-entry `oneOf`. `INVALID_REQUEST`, raised at operation level
+ *   when no response row can be built for it (`sync-accounts-response.json`
+ *   requires `brand` + `operator` on every row).
+ */
+function classifyUpstreamManagedSyncEntry(
+  entry: SyncAccountsEntry,
+  index: number
+): { accepted: true; accountId: string } | { accepted: false; error: AdcpStructuredError } {
+  const reference = normalizeSyncAccountsReference(entry);
+
+  switch (reference.kind) {
+    case 'account_id':
+      return { accepted: true, accountId: reference.accountId };
+
+    case 'natural_key_reference':
+      return {
+        accepted: false,
+        error: new AdcpError('INVALID_REQUEST', {
+          message:
+            'This agent fronts an upstream-managed account namespace: accounts are addressed by ' +
+            'account.account_id, not by the brand + operator natural key.',
+          recovery: 'correctable',
+          field: `accounts[${index}].account.brand`,
+          suggestion: 'Call list_accounts to discover the account_id, then send account: { account_id }.',
+        }).toStructuredError(),
+      };
+
+    case 'natural_key_provisioning':
+      if (entryBrandOperator(entry) === undefined) {
+        // Half a natural key (brand without operator, or vice versa). That's
+        // a malformed entry, not an unsupported mode — and no response row
+        // can be built for it, so it's operation-level.
+        throw new AdcpError('INVALID_REQUEST', {
+          message: `sync_accounts entry ${index} carries an incomplete natural key: brand and operator are both required.`,
+          recovery: 'correctable',
+          field: `accounts[${index}]`,
+          suggestion: 'Send account: { account_id } — this agent addresses accounts by id.',
+        });
+      }
+      return { accepted: false, error: buildUnsupportedProvisioningError(index) };
+
+    case 'ambiguous':
+      // Never disambiguate by precedence — the entry claims two account
+      // references and we cannot know which one the buyer meant to write to.
+      throw new AdcpError('INVALID_REQUEST', {
+        message:
+          `sync_accounts entry ${index} carries more than one account reference. Send exactly one: either ` +
+          `a brand + operator natural key at the entry root, or account: { account_id }.`,
+        recovery: 'correctable',
+        field: `accounts[${index}]`,
+        suggestion: 'Drop the extra reference — this agent addresses accounts by account.account_id.',
+      });
+
+    default:
+      throw new AdcpError('INVALID_REQUEST', {
+        message: `sync_accounts entry ${index} carries neither a brand + operator natural key nor an account reference.`,
+        recovery: 'correctable',
+        field: `accounts[${index}]`,
+        suggestion: 'Send account: { account_id } — this agent addresses accounts by id.',
+      });
+  }
+}
+
+/**
+ * Verify every accepted (`account_id`-keyed) `sync_accounts` entry against
+ * what the caller's credential can actually reach, before any write runs.
+ *
+ * `sync_accounts` and `sync_governance` are the two account-scoped surfaces
+ * that never called `accounts.resolve` — the account reference travels
+ * inside the batch rather than as the request's `account`. On an
+ * upstream-managed namespace `account_id` is now the *only* accepted entry
+ * shape, so without this every accepted entry would be an unverified,
+ * buyer-chosen write target (settings, payment terms, notification webhook
+ * destinations) on someone else's account.
+ *
+ * Operation-level `ACCOUNT_NOT_FOUND` rather than a per-entry row: the
+ * response row schema requires `brand` + `operator`, which by definition we
+ * don't have for an account we just refused to resolve. Failing the batch
+ * also means no partial writes ran before the refusal.
+ */
+async function assertDerivedSyncAccountEntriesReachable(
+  accounts: DecisioningPlatform<any, any>['accounts'],
+  entries: readonly SyncAccountsEntry[],
+  resolveCtx: ResolveContext,
+  logger: AdcpLogger
+): Promise<void> {
+  for (const [index, entry] of entries.entries()) {
+    // Re-normalize rather than trusting a caller-passed id: this and the
+    // classification above must read the same reference, or the gate can
+    // accept on one claim and write against another.
+    const verdict = classifyUpstreamManagedSyncEntry(entry, index);
+    if (!verdict.accepted) {
+      // Unreachable via the two call sites (both filter refusals out first);
+      // fail closed rather than silently skipping an unverified entry.
+      throw new AdcpError(verdict.error.code, {
+        message: verdict.error.message,
+        recovery: verdict.error.recovery,
+        ...(verdict.error.field !== undefined && { field: verdict.error.field }),
+        ...(verdict.error.suggestion !== undefined && { suggestion: verdict.error.suggestion }),
+      });
+    }
+    let resolved: Account | null = null;
+    try {
+      resolved = assertResolvedAccountMatchesRef(
+        accounts.resolution,
+        { account_id: verdict.accountId },
+        await accounts.resolve({ account_id: verdict.accountId }, resolveCtx),
+        logger
+      );
+    } catch (err) {
+      if (!(err instanceof AccountNotFoundError)) throw err;
+      resolved = null;
+    }
+    if (resolved == null) {
+      // Unindexed pointer on purpose: this helper sees the post-refusal
+      // subset, so an index here would not be the buyer's request index.
+      throw new AdcpError('ACCOUNT_NOT_FOUND', {
+        message: 'The specified account does not exist',
+        recovery: 'terminal',
+        field: 'accounts[].account.account_id',
+        suggestion: 'Call list_accounts to discover the accounts your credential can reach.',
+      });
+    }
+  }
+}
+
+/**
+ * Apply the upstream-managed account gate to an **adopter-supplied**
+ * `sync_accounts` handler (`opts.accounts.syncAccounts` at the merge seam).
+ *
+ * The platform-derived handler applies the same rules inside
+ * `enforceSyncAccountsCommercialPolicy`, where it can keep per-entry error
+ * indices aligned with the buyer's request. This wrapper exists because the
+ * merge seam is a documented wiring: gating only the platform path left an
+ * adopter handler receiving natural-key provisioning entries the contract
+ * says it never sees.
+ *
+ * Refused entries never reach the inner handler — the refusal is a key-shape
+ * verdict, so no provisioning side effects may run for them. Their rows are
+ * spliced back at their original request indices so the response stays
+ * positionally aligned with `accounts[]`. The inner handler sees a filtered
+ * array, so any index it reports in its own per-entry errors is relative to
+ * that array; adopters who need request-aligned indices should key errors
+ * off the entry's account reference instead.
+ */
+function guardAdopterSyncAccounts<TAccount>(
+  handlers: AccountHandlers<TAccount> | undefined,
+  platform: DecisioningPlatform<any, any>,
+  platformDerived: AccountHandlers<Account>,
+  logger: AdcpLogger
+): AccountHandlers<TAccount> | undefined {
+  const inner = handlers?.syncAccounts;
+  if (handlers === undefined || inner === undefined) return handlers;
+  if (normalizeAccountResolution(platform.accounts.resolution) !== 'derived') return handlers;
+  // Platform-derived handler won the merge — its own policy pass already
+  // applies the gate with request-aligned indices. Don't double-wrap.
+  if ((inner as unknown) === (platformDerived.syncAccounts as unknown)) return handlers;
+
+  return {
+    ...handlers,
+    syncAccounts: async (params, ctx) => {
+      const entries = (Array.isArray(params.accounts) ? params.accounts : []) as SyncAccountsEntry[];
+      const refusedRows = new Map<number, WireSyncAccountRow>();
+      const accepted: SyncAccountsEntry[] = [];
+      entries.forEach((entry, index) => {
+        const verdict = classifyUpstreamManagedSyncEntry(entry, index);
+        if (verdict.accepted) {
+          accepted.push(entry);
+          return;
+        }
+        refusedRows.set(index, toWireSyncAccountRow(failedSyncAccountRow(entry, verdict.error)));
+      });
+
+      const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params as Record<string, unknown>);
+      await assertDerivedSyncAccountEntriesReachable(platform.accounts, accepted, resolveCtx, logger);
+
+      if (refusedRows.size === 0) return inner(params, ctx);
+
+      const dryRun = (params as { dry_run?: unknown }).dry_run === true;
+      if (accepted.length === 0) {
+        return {
+          ...(dryRun && { dry_run: true }),
+          accounts: entries.map((_entry, index) => refusedRows.get(index)!),
+        } as Awaited<ReturnType<NonNullable<AccountHandlers<TAccount>['syncAccounts']>>>;
+      }
+
+      const result = await inner({ ...params, accounts: accepted } as typeof params, ctx);
+      const rows = readSyncAccountRows(result);
+      if (rows === undefined) {
+        // The inner handler already failed the operation (error envelope) —
+        // there is nothing to splice into and the whole batch failed anyway;
+        // surface its verdict unchanged.
+        if (isErrorShapedResult(result)) return result;
+        throw new Error(
+          'sync_accounts: cannot apply the upstream-managed account gate — the handler returned no accounts[] ' +
+            'array to merge the per-entry refusal rows into.'
+        );
+      }
+      if (rows.length !== accepted.length) {
+        throw new Error(
+          `sync_accounts: handler returned ${rows.length} row(s) for ${accepted.length} accepted entry/entries; ` +
+            'cannot realign the per-entry refusal rows with the request.'
+        );
+      }
+      let acceptedIndex = 0;
+      const combined = entries.map((_entry, index) => refusedRows.get(index) ?? rows[acceptedIndex++]!);
+      // New objects throughout: adopter handlers legitimately return cached
+      // or frozen results (the standard idempotency-replay shape), and
+      // splicing into their array would corrupt the cache.
+      return withSyncAccountRows(result, combined);
+    },
+  };
+}
+
+/**
+ * Apply the upstream-managed account gate to the merged `sync_governance`
+ * handler (`resolution: 'derived'` only).
+ *
+ * Same reasoning as `sync_accounts`: the account reference travels inside
+ * the batch, so `accounts.resolve` never ran for it, and `sync_governance`
+ * writes the governance agent that authorizes spend on the account. Every
+ * entry is therefore verified against what the caller's credential can
+ * reach before the seller persists anything.
+ *
+ * Per-entry here (unlike `sync_accounts`) because the response row echoes
+ * the `account` reference — `sync-governance-response.json` needs no
+ * natural key — so a refusal is expressible without inventing one. Refused
+ * entries never reach the inner handler; their rows are spliced back at
+ * their original request indices.
+ */
+function guardDerivedSyncGovernance<TAccount>(
+  handlers: AccountHandlers<TAccount> | undefined,
+  platform: DecisioningPlatform<any, any>,
+  logger: AdcpLogger
+): AccountHandlers<TAccount> | undefined {
+  const inner = handlers?.syncGovernance;
+  if (handlers === undefined || inner === undefined) return handlers;
+  if (normalizeAccountResolution(platform.accounts.resolution) !== 'derived') return handlers;
+
+  return {
+    ...handlers,
+    syncGovernance: async (params, ctx) => {
+      const entries = (Array.isArray(params.accounts) ? params.accounts : []) as SyncGovernanceRequest['accounts'];
+      const resolveCtx = toResolveCtx(ctx, 'sync_governance', params as Record<string, unknown>);
+      const refusedRows = new Map<number, WireSyncGovernanceRow>();
+      const accepted: SyncGovernanceRequest['accounts'] = [];
+
+      for (const [index, entry] of entries.entries()) {
+        const ref = entry.account as AccountReference | undefined;
+        const accountId = refAccountId(ref);
+        // An entry claiming both arms is refused rather than resolved by
+        // precedence: we would verify the id while the adopter routes on the
+        // natural key (or vice versa). Same rule as `sync_accounts`.
+        if (accountId !== undefined && refHasNaturalKey(ref)) {
+          refusedRows.set(index, {
+            account: ref as WireSyncGovernanceRow['account'],
+            status: 'failed',
+            errors: [
+              new AdcpError('INVALID_REQUEST', {
+                message:
+                  `sync_governance entry ${index} carries both an account_id and a brand + operator natural ` +
+                  `key. Send exactly one — this agent addresses accounts by account_id.`,
+                recovery: 'correctable',
+                field: `accounts[${index}].account`,
+                suggestion: 'Drop the brand + operator fields and send account: { account_id }.',
+              }).toStructuredError(),
+            ],
+          });
+          continue;
+        }
+        if (accountId === undefined) {
+          refusedRows.set(index, {
+            account: ref as WireSyncGovernanceRow['account'],
+            status: 'failed',
+            errors: [
+              new AdcpError('INVALID_REQUEST', {
+                message:
+                  'This agent fronts an upstream-managed account namespace: accounts are addressed by ' +
+                  'account.account_id, not by the brand + operator natural key.',
+                recovery: 'correctable',
+                field: `accounts[${index}].account.brand`,
+                suggestion: 'Call list_accounts to discover the account_id, then send account: { account_id }.',
+              }).toStructuredError(),
+            ],
+          });
+          continue;
+        }
+        let resolved: Account | null = null;
+        try {
+          resolved = assertResolvedAccountMatchesRef(
+            platform.accounts.resolution,
+            { account_id: accountId },
+            await platform.accounts.resolve({ account_id: accountId }, resolveCtx),
+            logger
+          );
+        } catch (err) {
+          if (!(err instanceof AccountNotFoundError)) throw err;
+        }
+        if (resolved == null) {
+          refusedRows.set(index, {
+            account: ref as WireSyncGovernanceRow['account'],
+            status: 'failed',
+            errors: [
+              new AdcpError('ACCOUNT_NOT_FOUND', {
+                message: 'The specified account does not exist',
+                recovery: 'terminal',
+                field: `accounts[${index}].account.account_id`,
+                suggestion: 'Call list_accounts to discover the accounts your credential can reach.',
+              }).toStructuredError(),
+            ],
+          });
+          continue;
+        }
+        accepted.push(entry);
+      }
+
+      if (refusedRows.size === 0) return inner(params, ctx);
+      if (accepted.length === 0) {
+        return { accounts: entries.map((_entry, index) => refusedRows.get(index)!) } as Awaited<
+          ReturnType<NonNullable<AccountHandlers<TAccount>['syncGovernance']>>
+        >;
+      }
+
+      const result = await inner({ ...params, accounts: accepted } as typeof params, ctx);
+      const rows = readSyncAccountRows(result);
+      if (rows === undefined) {
+        if (isErrorShapedResult(result)) return result;
+        throw new Error(
+          'sync_governance: cannot apply the upstream-managed account gate — the handler returned no accounts[] ' +
+            'array to merge the per-entry refusal rows into.'
+        );
+      }
+      if (rows.length !== accepted.length) {
+        throw new Error(
+          `sync_governance: handler returned ${rows.length} row(s) for ${accepted.length} accepted entry/entries; ` +
+            'cannot realign the per-entry refusal rows with the request.'
+        );
+      }
+      let acceptedIndex = 0;
+      const combined = entries.map((_entry, index) => refusedRows.get(index) ?? rows[acceptedIndex++]!);
+      return withSyncAccountRows(result, combined);
+    },
+  };
+}
+
+/**
+ * Read the `accounts[]` row array off a `sync_accounts` handler result —
+ * either a bare result object or an MCP tool response carrying
+ * `structuredContent`.
+ */
+function readSyncAccountRows(result: unknown): readonly unknown[] | undefined {
+  if (!isPlainObject(result)) return undefined;
+  if (Array.isArray(result.accounts)) return result.accounts;
+  const structured = (result as { structuredContent?: unknown }).structuredContent;
+  if (isPlainObject(structured) && Array.isArray(structured.accounts)) return structured.accounts;
+  return undefined;
+}
+
+/** Rebuild a handler result with a replacement `accounts[]` array. */
+function withSyncAccountRows<T>(result: T, rows: readonly unknown[]): T {
+  if (!isPlainObject(result)) return result;
+  if (Array.isArray(result.accounts)) return { ...result, accounts: [...rows] } as T;
+  const structured = (result as { structuredContent?: unknown }).structuredContent;
+  if (isPlainObject(structured) && Array.isArray(structured.accounts)) {
+    return { ...result, structuredContent: { ...structured, accounts: [...rows] } } as T;
+  }
+  return result;
+}
+
+/** True when a handler result is already an error envelope. */
+function isErrorShapedResult(result: unknown): boolean {
+  if (!isPlainObject(result)) return false;
+  if (result.isError === true) return true;
+  if (result.adcp_error !== undefined) return true;
+  const structured = (result as { structuredContent?: unknown }).structuredContent;
+  return isPlainObject(structured) && structured.adcp_error !== undefined;
+}
+
 function failedSyncAccountRow(entry: SyncAccountsEntry, error: AdcpStructuredError): SyncAccountsResultRow {
   const key = entryBrandOperator(entry);
   if (key === undefined) {
@@ -7965,7 +8606,22 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
   const failedRows = new Map<number, SyncAccountsResultRow>();
   const acceptedEntries: SyncAccountsEntry[] = [];
 
+  const isUpstreamManagedNamespace = normalizeAccountResolution(platform.accounts.resolution) === 'derived';
+
   entries.forEach((entry, index) => {
+    // Account-model gate first: an entry is refused on its key shape
+    // regardless of whether its billing values would have passed. Per-entry
+    // (not operation-level) so a mixed batch still applies the entries the
+    // seller can honor, and evaluated here — inside the policy pass — so the
+    // `accounts[i]` pointers stay aligned with the buyer's request array.
+    if (isUpstreamManagedNamespace) {
+      const verdict = classifyUpstreamManagedSyncEntry(entry, index);
+      if (!verdict.accepted) {
+        failedRows.set(index, failedSyncAccountRow(entry, verdict.error));
+        return;
+      }
+    }
+
     const hasBillableFields =
       entry.billing !== undefined || entry.payment_terms !== undefined || entry.billing_entity !== undefined;
     if (hasBillableFields && entryBrandOperator(entry) === undefined && !entryHasAccountId(entry)) {
@@ -8024,7 +8680,8 @@ function enforceSyncAccountsCommercialPolicy<P extends DecisioningPlatform<any, 
 
 function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
   platform: P,
-  ctxFor: CtxForFn
+  ctxFor: CtxForFn,
+  logger: AdcpLogger = DEFAULT_FRAMEWORK_LOGGER
 ): AccountHandlers<Account> {
   const accounts = platform.accounts;
 
@@ -8044,6 +8701,9 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
     handlers.syncAccounts = async (params, ctx) => {
       const resolveCtx = toResolveCtx(ctx, 'sync_accounts', params);
       const policy = enforceSyncAccountsCommercialPolicy(platform, params as Record<string, unknown>, resolveCtx);
+      if (normalizeAccountResolution(accounts.resolution) === 'derived') {
+        await assertDerivedSyncAccountEntriesReachable(accounts, policy.acceptedEntries, resolveCtx, logger);
+      }
       const dispatchCtx =
         policy.failedRows.size === 0 ? resolveCtx : toResolveCtx(ctx, 'sync_accounts', policy.acceptedParams);
       return projectSync(
@@ -8136,12 +8796,19 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       const request = params as ListAccountChangesRequest;
       const resolveCtx = toResolveCtx(ctx, 'list_account_changes', params);
       const accountRef = asValidatedDomainRequest<AccountReference>(params.account);
-      refuseInlineAccountIdWhenForbidden(accounts.resolution, accountRef);
-      const resolved = await accounts.resolve(accountRef, resolveCtx);
+      enforceAccountRefShapeForResolution(accounts.resolution, accountRef);
+      const resolved = assertResolvedAccountMatchesRef(
+        accounts.resolution,
+        accountRef,
+        await accounts.resolve(accountRef, resolveCtx),
+        logger
+      );
       if (!resolved) {
+        const suggestion = accountNotFoundSuggestion(accounts.resolution);
         throw new AdcpError('ACCOUNT_NOT_FOUND', {
           message: 'Account not found',
           recovery: 'terminal',
+          ...(suggestion !== undefined && { suggestion }),
         });
       }
       const account = cloneAccountForRequest(resolved);
@@ -8172,12 +8839,19 @@ function buildAccountHandlers<P extends DecisioningPlatform<any, any>>(
       // having to re-resolve from `params.account`.
       const resolveCtx = toResolveCtx(ctx, 'get_account_financials', params);
       const accountRef = asValidatedDomainRequest<AccountReference | undefined>(params.account);
-      refuseInlineAccountIdWhenForbidden(accounts.resolution, accountRef);
-      const resolved = await accounts.resolve(accountRef, resolveCtx);
+      enforceAccountRefShapeForResolution(accounts.resolution, accountRef);
+      const resolved = assertResolvedAccountMatchesRef(
+        accounts.resolution,
+        accountRef,
+        await accounts.resolve(accountRef, resolveCtx),
+        logger
+      );
       if (!resolved) {
+        const suggestion = accountNotFoundSuggestion(accounts.resolution);
         throw new AdcpError('ACCOUNT_NOT_FOUND', {
           message: 'Account not found',
           recovery: 'terminal',
+          ...(suggestion !== undefined && { suggestion }),
         });
       }
       // Request-local clone: refreshToken mutates account.authInfo before the

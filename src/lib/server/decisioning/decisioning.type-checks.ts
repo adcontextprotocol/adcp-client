@@ -340,7 +340,7 @@ function _account_not_found_throw_pattern(): Promise<Account<GAMAccountMeta> | n
   throw new AccountNotFoundError();
 }
 
-// ── AccountStore.resolution is 'explicit' | 'implicit' (or absent) ────
+// ── AccountStore.resolution modes ────────────────────────────────────
 
 function _account_store_resolution_implicit(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
   return { resolution: 'implicit' };
@@ -353,6 +353,14 @@ function _account_store_resolution_derived(): Pick<AccountStore<GAMAccountMeta>,
 function _account_store_resolution_invalid_value(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
   // @ts-expect-error — only 'explicit' | 'implicit' | 'derived' allowed.
   return { resolution: 'auto' };
+}
+
+function _account_store_resolution_rejects_namespace_aliases(): Pick<AccountStore<GAMAccountMeta>, 'resolution'> {
+  // @ts-expect-error — 'derived' has exactly one spelling. No
+  // 'account-id-namespace' (it doesn't discriminate 'explicit' from
+  // 'derived') and no 'upstream-managed' (a second spelling silently
+  // defeats adopter `resolution === 'derived'` comparisons).
+  return { resolution: 'upstream-managed' };
 }
 
 // ── Signals-only platforms omit media-buy fields ─────────────────────

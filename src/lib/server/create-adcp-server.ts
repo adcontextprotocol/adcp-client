@@ -1822,9 +1822,10 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * (`provide_performance_feedback`, `list_creative_formats`, the
    * `tasks/get` polling path, etc.), the framework can't extract a wire
    * ref. When this resolver is configured, the framework calls it with the
-   * caller's `authInfo` instead so single-tenant agents (`resolution: 'derived'`)
-   * and principal-keyed agents (`resolution: 'implicit'`) still get a
-   * tenant-scoped `ctx.account`.
+   * caller's `authInfo` instead so upstream-managed-namespace agents
+   * (`resolution: 'derived'`, when the credential reaches exactly one
+   * account) and principal-keyed agents (`resolution: 'implicit'`) still get
+   * a tenant-scoped `ctx.account`.
    *
    * Returns `null` when no account can be derived. The handler then runs
    * with `ctx.account` undefined — appropriate for tools that legitimately

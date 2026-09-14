@@ -70,6 +70,7 @@ The full export list is in `@adcp/sdk/server`. Surfaces marked `@deprecated` wil
 import {
   createAdcpServerFromPlatform,
   createCtxMetadataStore,
+  createDerivedAccountStore,
   memoryCtxMetadataStore,
   DEFAULT_REPORTING_CAPABILITIES,
   PackageNotFoundError,
@@ -92,12 +93,12 @@ class MyPlatform implements DecisioningPlatform {
     idempotency: { replay_ttl_seconds: 86400 },
   };
 
-  accounts = {
-    resolution: 'derived' as const, // single tenant; framework returns the same Account every call
-    resolve: async () => ({ id: 'pub_main', operator: 'mypub', ctx_metadata: {} }),
-    upsert: async () => ({ ok: true, items: [] }),
-    list: async () => ({ items: [], nextCursor: null }),
-  };
+  // 'derived' = account-id namespace discovered through list_accounts. The
+  // factory publishes the row, verifies buyer-supplied account_ids against
+  // what the credential can reach, and auto-selects it on ref-less tools.
+  accounts = createDerivedAccountStore({
+    toAccount: () => ({ id: 'pub_main', name: 'My Publisher', status: 'active' as const, ctx_metadata: {} }),
+  });
 
   sales: SalesPlatform = {
     // 1. Catalog lookup. Brief in, products out.
