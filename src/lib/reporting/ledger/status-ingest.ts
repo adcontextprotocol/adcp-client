@@ -366,7 +366,11 @@ async function validateStatus(
   }
   if (status.reporting_revision_id) {
     const revision = await store.getRevisionMetadata(status.reporting_revision_id, accountId);
-    if (!revision || revision.reporting_obligation_id !== status.reporting_obligation_id)
+    if (
+      !revision ||
+      revision.wireRevision.account_id !== accountId ||
+      revision.reporting_obligation_id !== status.reporting_obligation_id
+    )
       throw new ReportingStatusValidationError('revision mismatch');
     if (
       status.consumer_status === 'received' &&

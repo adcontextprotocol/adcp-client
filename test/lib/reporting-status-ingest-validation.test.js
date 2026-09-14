@@ -761,6 +761,81 @@ describe('reporting consumer status validation', () => {
     assert.equal(missingSnapshotReader.results[0].errors[0].code, 'VALIDATION_ERROR');
   });
 
+  test('rejects revision metadata returned outside the authenticated account scope', async () => {
+    const configuration = {
+      configurationId: 'revision-account-configuration',
+      account: { account_id: 'account-1' },
+      delivery_config_id: 'delivery_config_0001',
+      delivery_config_version: 1,
+      report_definition_id: 'report_definition_0001',
+      sourceTimezone: 'UTC',
+      requiredFinality: 'snapshot',
+      installedAt: '2026-09-01T00:00:00Z',
+      schedule: {
+        anchor: '2026-09-01T00:00:00Z',
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+      },
+    };
+    let validationError;
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async () => [configuration],
+        getObligation: async () => ({
+          account: { account_id: 'account-1' },
+          delivery_config_id: 'delivery_config_0001',
+          delivery_config_version: 1,
+          report_definition_id: 'report_definition_0001',
+          period: {
+            start: '2026-09-01T00:00:00Z',
+            end: '2026-09-02T00:00:00Z',
+            sourceTimezone: 'UTC',
+          },
+        }),
+        getRevisionMetadata: async (...args) => {
+          assert.deepEqual(args, ['reporting-revision-0001', 'account-1']);
+          return {
+            reporting_obligation_id: 'reporting-obligation-0001',
+            wireRevision: {
+              account_id: 'account-2',
+              revision_content_sha256: 'a'.repeat(64),
+            },
+          };
+        },
+        syncConsumerStatusBatch: async ({ entries }) => {
+          validationError = entries[0].validationError;
+          return entries.map(entry => ({
+            inserted: false,
+            reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+            errorCode: 'VALIDATION_ERROR',
+            safeMessage: entry.validationError,
+          }));
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1', now: () => new Date('2026-09-03T00:00:00Z') }
+    );
+
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-foreign-revision-0001',
+        statuses: [
+          consumerStatus({
+            consumer_status: 'received',
+            reporting_obligation_id: 'reporting-obligation-0001',
+            reporting_revision_id: 'reporting-revision-0001',
+            observed_revision_content_sha256: 'a'.repeat(64),
+          }),
+        ],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(validationError, 'Reporting consumer status does not match the seller ledger');
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
+  });
+
   test('rejects configurations returned outside the authenticated account scope', async () => {
     let synchronized = false;
     const handler = createSyncReportingStatusHandler(
