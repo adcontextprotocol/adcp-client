@@ -51,7 +51,10 @@ export function assertRegistrySupplyPathResult(
   const fail = (): never => {
     throw new TypeError('Invalid registry supply-path response');
   };
-  if (!record(value) || value.semantics_version !== '1' || !record(value.legs) || !record(value.sources)) return fail();
+  if (!record(value)) return fail();
+  if (value.semantics_version !== '1')
+    throw new TypeError('Invalid registry supply-path response: semantics_version 1 required; upgrade the registry');
+  if (!record(value.legs) || !record(value.sources)) return fail();
   if (!['verified_owner_sold', 'host_delegated', 'owner_attested', 'unverified'].includes(String(value.state)))
     return fail();
   if (
@@ -76,24 +79,36 @@ export function assertRegistrySupplyPathResult(
       return fail();
     }
   }
-  const failures: Record<string, string[]> = {
-    owner_collection_declared: ['manifest_not_found', 'no_collections_declared', 'collection_not_declared'],
-    owner_distribution_carriage: [
-      'collection_leg_failed',
-      'no_distribution_for_host',
-      'property_ids_unresolved',
-      'host_manifest_not_found',
-    ],
-    owner_agent_declared: ['manifest_not_found', 'agent_not_declared_by_owner'],
-    host_authorization: [
-      'manifest_not_found',
-      'no_agent_entry',
-      'collection_scope_mismatch',
-      'property_scope_mismatch',
-    ],
-    inventory_partner_domain: ['not_declared', 'ads_txt_unavailable'],
-  };
-  for (const key of Object.keys(failures)) {
+  for (const key of ['owner_fetched_at', 'host_fetched_at']) {
+    const timestamp = value.sources[key];
+    if (timestamp !== null && (typeof timestamp !== 'string' || !Number.isFinite(Date.parse(timestamp)))) return fail();
+  }
+  for (const key of ['owner_resolved_url', 'host_resolved_url']) {
+    const location = value.sources[key];
+    if (location === null) continue;
+    if (typeof location !== 'string' || location.length > 8192) return fail();
+    try {
+      const parsed = new URL(location);
+      if (
+        parsed.protocol !== 'https:' ||
+        parsed.username ||
+        parsed.password ||
+        parsed.hash ||
+        (parsed.port && parsed.port !== '443')
+      )
+        return fail();
+    } catch {
+      return fail();
+    }
+  }
+  const legNames = [
+    'owner_collection_declared',
+    'owner_distribution_carriage',
+    'owner_agent_declared',
+    'host_authorization',
+    'inventory_partner_domain',
+  ];
+  for (const key of legNames) {
     const leg = value.legs[key];
     if (!record(leg) || typeof leg.ok !== 'boolean' || (leg.detail !== undefined && typeof leg.detail !== 'string'))
       return fail();
@@ -104,6 +119,15 @@ export function assertRegistrySupplyPathResult(
     }
   }
   const ok = (key: string) => (value.legs as Record<string, Record<string, unknown>>)[key]?.ok === true;
+  if (ok('owner_collection_declared')) {
+    if (
+      typeof value.resolved_collection_id !== 'string' ||
+      !value.resolved_collection_id.trim() ||
+      value.resolved_collection_id.length > 256 ||
+      (request.collection_id !== undefined && value.resolved_collection_id !== request.collection_id)
+    )
+      return fail();
+  } else if (value.resolved_collection_id !== undefined) return fail();
   // Check the registry's documented ladder; do not silently recompute a remote
   // verdict using assumptions about evidence that was not returned.
   if (

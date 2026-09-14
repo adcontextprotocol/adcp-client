@@ -12,7 +12,7 @@ import {
   supplyPathAdsTxtPolicy,
   parseInventoryPartnerDomains,
 } from './evaluate';
-import { validateSupplyPathRequest } from './validation';
+import { assertRegistrySupplyPathResult, validateSupplyPathRequest } from './validation';
 import type {
   SupplyPathRequest,
   VerifySupplyPathOptions,
@@ -40,7 +40,11 @@ export async function verifySupplyPath(
   options: VerifySupplyPathOptions = { source: 'authoritative' }
 ): Promise<RegistrySupplyPathResult | AuthoritativeSupplyPathResult> {
   const normalized = validateSupplyPathRequest(request);
-  if (options.source === 'registry') return (options.registry ?? new RegistryClient()).verifySupplyPath(normalized);
+  if (options.source === 'registry') {
+    const result = await (options.registry ?? new RegistryClient()).verifySupplyPath(normalized);
+    assertRegistrySupplyPathResult(result, normalized);
+    return result;
+  }
   if (options.source !== 'authoritative') throw new TypeError('source must be registry or authoritative');
   const session = new SupplyPathEvidenceSession(options);
   try {
@@ -69,6 +73,8 @@ export async function verifyAuthoritativeSupplyPath(
     collectionId: normalized.collection_id,
     ownerManifest,
     hostManifest,
+    requireExplicitOwnerPublisherDomain: session.crossOriginAuthorities.has(normalized.owner_domain),
+    requireExplicitHostPublisherDomain: session.crossOriginAuthorities.has(normalized.host_domain),
     hostInventoryPartnerDomains: null as string[] | null,
     hostInventoryPartnerDomainsByFile:
       undefined as import('./types').SupplyPathInput['hostInventoryPartnerDomainsByFile'],
@@ -83,7 +89,9 @@ export async function verifyAuthoritativeSupplyPath(
       throw new TypeError('propertySelectors must be non-empty');
     const ids = new Set<string>();
     const properties = records(hostManifest?.properties).filter(
-      p => p.publisher_domain === undefined || domain(p.publisher_domain) === normalized.host_domain
+      p =>
+        (p.publisher_domain === undefined && !input.requireExplicitHostPublisherDomain) ||
+        domain(p.publisher_domain) === normalized.host_domain
     );
     let unresolved = false;
     for (const raw of options.propertySelectors) {

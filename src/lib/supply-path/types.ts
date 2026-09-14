@@ -83,6 +83,10 @@ export interface SupplyPathInput {
   collectionId?: string;
   /** Optional concrete product scope, resolved from the host manifest. Empty means unresolved. */
   requiredHostPropertyIds?: string[];
+  /** Cross-origin authoritative documents must explicitly attribute every host property. */
+  requireExplicitHostPublisherDomain?: boolean;
+  /** Cross-origin owner catalogs must explicitly attribute collections and owner agent grants. */
+  requireExplicitOwnerPublisherDomain?: boolean;
   ownerManifest: SupplyPathManifest | null;
   hostManifest: SupplyPathManifest | null;
   /**
@@ -109,7 +113,16 @@ export interface SupplyPathRequest {
 
 export interface RegistrySupplyPathResult extends SupplyPathRequest, Omit<SupplyPathVerdict, 'legs'> {
   legs: { [K in keyof SupplyPathLegs]: Omit<SupplyPathLegs[K], 'failure'> & { failure?: string } };
-  sources: { owner_adagents_url: string; host_adagents_url: string; cached: boolean };
+  sources: {
+    owner_adagents_url: string;
+    host_adagents_url: string;
+    cached: boolean;
+    /** Cache observation times, distinct from the verdict's checked_at. */
+    owner_fetched_at: string | null;
+    host_fetched_at: string | null;
+    owner_resolved_url: string | null;
+    host_resolved_url: string | null;
+  };
   checked_at: string;
 }
 
@@ -131,11 +144,11 @@ export interface SupplyPathEvidence {
   body_base64?: string;
 }
 
-export interface AuthoritativeSupplyPathResult extends RegistrySupplyPathResult {
+export interface AuthoritativeSupplyPathResult extends Omit<RegistrySupplyPathResult, 'sources'> {
   source: 'authoritative';
   legs: SupplyPathLegs;
   property_selectors?: import('../discovery/types').SinglePublisherPropertySelector[];
-  sources: RegistrySupplyPathResult['sources'] & {
+  sources: Pick<RegistrySupplyPathResult['sources'], 'owner_adagents_url' | 'host_adagents_url'> & {
     cached: false;
     evidence: SupplyPathEvidence[];
     held_revocations: Array<{ authority: string; entries: readonly import('./revocations').SupplyPathRevocation[] }>;
@@ -146,6 +159,8 @@ export interface AuthoritativeSupplyPathOptions {
   source: 'authoritative';
   /** Defaults to a process-local seven-day hold; supply durable storage across workers/restarts. */
   revocationStore?: import('./revocations').SupplyPathRevocationStore;
+  /** Pins authoritative locations. Changed pointers require independently confirmed migration. */
+  authorityStore?: import('./revocations').SupplyPathAuthorityStore;
   /** Optional product property scope. Every selected host property must be proven. */
   propertySelectors?: import('../discovery/types').SinglePublisherPropertySelector[];
   /** Overall deadline, including all evidence and redirect fetches. Default 15 seconds, max 60 seconds. */

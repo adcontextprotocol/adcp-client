@@ -5,11 +5,16 @@ const { createHash } = require('node:crypto');
 const sdk = require('../../dist/lib');
 const {
   evaluateSupplyPath,
-  verifySupplyPath,
+  verifySupplyPath: verifySupplyPathSdk,
   parseInventoryPartnerDomains,
   annotateProductsSupplyPaths,
   RegistryClient,
 } = sdk;
+const verifySupplyPath = (request, options = { source: 'authoritative' }) =>
+  verifySupplyPathSdk(
+    request,
+    options.source === 'registry' ? options : { authorityStore: new sdk.InMemorySupplyPathAuthorityStore(), ...options }
+  );
 const AGENT = 'https://sales.channel-owner.example';
 const OWNER = 'channel-owner.example';
 const HOST = 'hoststream.example';
@@ -21,10 +26,11 @@ function input() {
     collectionId: 'retro_news',
     hostInventoryPartnerDomains: null,
     ownerManifest: {
-      authorized_agents: [{ url: AGENT, authorized_for: 'Owner avails' }],
+      authorized_agents: [{ url: AGENT, authorized_for: 'Owner avails', collections: [{ publisher_domain: OWNER }] }],
       collections: [
         {
           collection_id: 'retro_news',
+          publisher_domain: OWNER,
           name: 'Retro News',
           kind: 'channel',
           distribution: [{ publisher_domain: HOST, property_ids: ['hoststream_ctv'] }],
@@ -70,6 +76,119 @@ function transport(changes = {}, requests = []) {
     return new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
   };
 }
+
+describe('authority and revocation trust boundaries', () => {
+  it('never lets a storage adapter erase a freshly observed denial', async () => {
+    const fixture = input();
+    fixture.hostManifest.revoked_publisher_domains = [{ publisher_domain: OWNER, revoked_at: '2026-09-01T00:00:00Z' }];
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      revocationStore: { observe: async () => [] },
+      trustedFetchFn: transport({ [`https://${HOST}/.well-known/adagents.json`]: fixture.hostManifest }),
+    });
+    assert.equal(result.state, 'owner_attested');
+    assert.equal(result.sources.held_revocations.find(r => r.authority === HOST).entries[0].publisher_domain, OWNER);
+  });
+  for (const publisher of [undefined, 'other.example', HOST]) {
+    it(`requires explicit matching host attribution in a shared authoritative document (${publisher})`, async () => {
+      const fixture = input();
+      fixture.hostManifest.properties[0].publisher_domain = publisher;
+      const result = await verifySupplyPath(request, {
+        source: 'authoritative',
+        trustedFetchFn: transport({
+          [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: 'https://cdn.example/host.json' },
+          'https://cdn.example/host.json': fixture.hostManifest,
+        }),
+      });
+      assert.equal(result.state, publisher === HOST ? 'verified_owner_sold' : 'owner_attested');
+    });
+  }
+  it('refuses changed authority locations before fetching them and supports independently approved migrations', async () => {
+    const authorityStore = new sdk.InMemorySupplyPathAuthorityStore();
+    const fixture = input();
+    fixture.hostManifest.properties[0].publisher_domain = HOST;
+    const verify = (location, requests = []) =>
+      verifySupplyPath(request, {
+        source: 'authoritative',
+        authorityStore,
+        trustedFetchFn: transport(
+          {
+            [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: location },
+            [location]: fixture.hostManifest,
+          },
+          requests
+        ),
+      });
+    assert.equal((await verify('https://cdn.example/host.json')).state, 'verified_owner_sold');
+    const requests = [];
+    await assert.rejects(verify('https://changed.example/host.json', requests), /Authoritative location changed/);
+    assert.equal(
+      requests.some(r => r.url === 'https://changed.example/host.json'),
+      false
+    );
+    authorityStore.approveChange(HOST, 'https://changed.example/host.json');
+    assert.equal((await verify('https://changed.example/host.json')).state, 'verified_owner_sold');
+  });
+  it('bounds authority persistence by the overall deadline', async () => {
+    await assert.rejects(
+      verifySupplyPath(request, {
+        source: 'authoritative',
+        timeoutMs: 25,
+        authorityStore: { check: () => new Promise(() => {}) },
+        trustedFetchFn: transport(),
+      }),
+      /deadline|abort/i
+    );
+  });
+  it('validates custom registry adapters and the concrete winning collection', async () => {
+    const valid = {
+      ...request,
+      ...evaluateSupplyPath(input()),
+      checked_at: new Date().toISOString(),
+      sources: {
+        owner_fetched_at: new Date().toISOString(),
+        host_fetched_at: new Date().toISOString(),
+        owner_resolved_url: null,
+        host_resolved_url: null,
+        cached: true,
+        owner_adagents_url: `https://${OWNER}/.well-known/adagents.json`,
+        host_adagents_url: `https://${HOST}/.well-known/adagents.json`,
+      },
+    };
+    for (const patch of [
+      { legs: {} },
+      { resolved_collection_id: undefined },
+      { resolved_collection_id: 42 },
+      { resolved_collection_id: 'other' },
+    ]) {
+      await assert.rejects(
+        verifySupplyPath(request, {
+          source: 'registry',
+          registry: { verifySupplyPath: async () => ({ ...valid, ...patch }) },
+        }),
+        /Invalid registry/
+      );
+    }
+    for (const malformed of [
+      { owner_fetched_at: undefined },
+      { host_fetched_at: 12345 },
+      { owner_resolved_url: 'http://owner.example/' },
+      { host_resolved_url: {} },
+    ]) {
+      await assert.rejects(
+        verifySupplyPath(request, {
+          source: 'registry',
+          registry: { verifySupplyPath: async () => ({ ...valid, sources: { ...valid.sources, ...malformed } }) },
+        }),
+        /Invalid registry/
+      );
+    }
+    assert.deepEqual(
+      await verifySupplyPath(request, { source: 'registry', registry: { verifySupplyPath: async () => valid } }),
+      valid
+    );
+  });
+});
 
 // This corpus is consumed verbatim by the upstream registry and this SDK.
 describe('canonical shared supply-path golden vectors', () => {
@@ -355,6 +474,10 @@ describe('registry wrapper and product discovery annotations', () => {
       ...request,
       ...evaluateSupplyPath(input()),
       sources: {
+        owner_fetched_at: new Date().toISOString(),
+        host_fetched_at: new Date().toISOString(),
+        owner_resolved_url: null,
+        host_resolved_url: null,
         owner_adagents_url: 'https://owner.example/',
         host_adagents_url: 'https://host.example/',
         cached: true,
@@ -532,14 +655,22 @@ describe('bounded evidence and complete product scope', () => {
           },
         },
       }),
-      /storage unavailable/
+      /revocation storage failed/
     );
   });
   it('rejects older registry semantics and inconsistent verified legs while preserving new diagnostic strings', async () => {
     const response = {
       ...request,
       ...evaluateSupplyPath(input()),
-      sources: { owner_adagents_url: `https://${OWNER}/`, host_adagents_url: `https://${HOST}/`, cached: true },
+      sources: {
+        owner_fetched_at: new Date().toISOString(),
+        host_fetched_at: new Date().toISOString(),
+        owner_resolved_url: null,
+        host_resolved_url: null,
+        owner_adagents_url: `https://${OWNER}/`,
+        host_adagents_url: `https://${HOST}/`,
+        cached: true,
+      },
       checked_at: new Date().toISOString(),
     };
     const registry = value =>
@@ -664,4 +795,198 @@ it('does not turn a malformed revocation list containing a valid denial into hos
     }),
     /Invalid publisher revocation evidence/
   );
+});
+
+// An invalid affirmative list must not discard independently meaningful denials.
+it('retains fresh revocations from a host document missing authorized_agents', async () => {
+  const result = await verifySupplyPath(request, {
+    source: 'authoritative',
+    revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+    trustedFetchFn: transport({
+      [`https://${HOST}/.well-known/adagents.json`]: { revoked_publisher_domains: [OWNER] },
+      [`https://${HOST}/ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+        headers: { 'content-type': 'text/plain' },
+      }),
+      [`https://${HOST}/app-ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+        headers: { 'content-type': 'text/plain' },
+      }),
+    }),
+  });
+  assert.equal(result.state, 'owner_attested');
+  assert.equal(result.sources.held_revocations.find(r => r.authority === HOST).entries[0].publisher_domain, OWNER);
+});
+
+it('isolates a single publisher authority from consuming the global revocation capacity', async () => {
+  const store = new sdk.InMemorySupplyPathRevocationStore();
+  const revoked = Array.from({ length: 1024 }, (_, i) => ({
+    publisher_domain: `publisher-${i}.example`,
+    revoked_at: '2026-09-01T00:00:00Z',
+  }));
+  await store.observe('attacker.example', revoked);
+  await assert.rejects(
+    store.observe('attacker.example', [{ publisher_domain: 'next.example', revoked_at: '2026-09-02T00:00:00Z' }]),
+    /authority revocation capacity/
+  );
+  assert.equal((await store.observe('attacker.example', [])).length, 1024);
+  assert.deepEqual(
+    await store.observe('innocent.example', [{ publisher_domain: OWNER, revoked_at: '2026-09-02T00:00:00Z' }]),
+    [{ publisher_domain: OWNER, revoked_at: '2026-09-02T00:00:00Z' }]
+  );
+});
+
+it('rate-bounds many-authority admission and retains all live default-store evidence at capacity', () => {
+  // A separate process exercises the actual module defaults without poisoning
+  // the other verification tests' process-wide stores.
+  const { execFileSync } = require('node:child_process');
+  execFileSync(
+    process.execPath,
+    [
+      '-e',
+      `
+    const assert = require('node:assert/strict');
+    let now = Date.parse('2026-09-01T00:00:00Z');
+    Date.now = () => now;
+    const { defaultSupplyPathRevocations: revocations, defaultSupplyPathAuthorities: pins } = require(${JSON.stringify(require.resolve('../../dist/lib/supply-path/revocations'))});
+    const denial = [{ publisher_domain: 'owner.example', revoked_at: '2026-09-01T00:00:00Z' }];
+    (async () => {
+      for (let i = 0; i < 10000; i++) {
+        if (i > 0 && i % 128 === 0) {
+          await assert.rejects(revocations.observe('rate-blocked.attacker.example', denial), /admission rate/);
+          await assert.rejects(pins.check('rate-blocked.attacker.example', 'https://cdn.example/blocked.json'), /admission rate/);
+          // Existing evidence remains readable during an admission-rate refusal.
+          assert.deepEqual(await revocations.observe('host-0.attacker.example', []), denial);
+          assert.equal(await pins.check('host-0.attacker.example', 'https://cdn.example/0.json'), true);
+          now += 60001;
+        }
+        const authority = 'host-' + i + '.attacker.example';
+        await revocations.observe(authority, denial);
+        await pins.check(authority, 'https://cdn.example/' + i + '.json');
+      }
+      now += 60001;
+      await assert.rejects(revocations.observe('innocent.example', denial), /capacity exceeded/);
+      await assert.rejects(pins.check('innocent.example', 'https://innocent.example/adagents.json'), /capacity exceeded/);
+      // Scan every retained authority: neither rate limiting nor total exhaustion
+      // may evict a live denial or adopt a different pinned location.
+      for (let i = 0; i < 10000; i++) {
+        const authority = 'host-' + i + '.attacker.example';
+        assert.deepEqual(await revocations.observe(authority, []), denial);
+        assert.equal(await pins.check(authority, 'https://cdn.example/' + i + '.json'), true);
+        assert.equal(await pins.check(authority, 'https://attacker.example/replacement'), false);
+      }
+    })().catch(error => { console.error(error); process.exitCode = 1; });
+  `,
+    ],
+    { timeout: 60000, stdio: 'pipe' }
+  );
+});
+
+it('retains denials in an ambiguous pointer envelope before considering IAB evidence', async () => {
+  const result = await verifySupplyPath(request, {
+    source: 'authoritative',
+    revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+    trustedFetchFn: transport({
+      [`https://${HOST}/.well-known/adagents.json`]: {
+        authoritative_location: 'https://cdn.example/host.json',
+        authorized_agents: [],
+        revoked_publisher_domains: [OWNER],
+      },
+      [`https://${HOST}/ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+        headers: { 'content-type': 'text/plain' },
+      }),
+      [`https://${HOST}/app-ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+        headers: { 'content-type': 'text/plain' },
+      }),
+    }),
+  });
+  assert.equal(result.state, 'owner_attested');
+  assert.equal(result.sources.held_revocations.find(r => r.authority === HOST).entries[0].publisher_domain, OWNER);
+});
+
+it('holds from first observation across changed timestamps and expires at the exact boundary', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-01T00:00:00Z') });
+  const store = new sdk.InMemorySupplyPathRevocationStore();
+  await store.observe(HOST, [{ publisher_domain: OWNER, revoked_at: '2026-09-01T00:00:00Z' }]);
+  t.mock.timers.tick(6 * 86400000);
+  await store.observe(HOST, [
+    { publisher_domain: OWNER, revoked_at: '2026-09-07T00:00:00Z' },
+    { publisher_domain: 'new.example', revoked_at: '2026-09-07T00:00:00Z' },
+  ]);
+  t.mock.timers.tick(86400000 - 1);
+  assert.equal((await store.observe(HOST, [])).length, 2);
+  t.mock.timers.tick(1);
+  assert.deepEqual(
+    (await store.observe(HOST, [])).map(r => r.publisher_domain),
+    ['new.example']
+  );
+});
+
+it('requires explicit owner attribution before a shared document can declare a collection', async () => {
+  for (const publisher of [undefined, 'other-owner.example', OWNER]) {
+    const fixture = input();
+    fixture.ownerManifest.collections[0].publisher_domain = publisher;
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+      trustedFetchFn: transport({
+        [`https://${OWNER}/.well-known/adagents.json`]: {
+          authoritative_location: 'https://cdn.example/shared-owner.json',
+        },
+        'https://cdn.example/shared-owner.json': fixture.ownerManifest,
+        [`https://${HOST}/app-ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+          headers: { 'content-type': 'text/plain' },
+        }),
+      }),
+    });
+    assert.equal(result.state, publisher === OWNER ? 'verified_owner_sold' : 'unverified');
+  }
+});
+
+it('does not borrow an unscoped owner agent grant from a shared catalog through inventory-partner evidence', async () => {
+  const fixture = input();
+  delete fixture.ownerManifest.authorized_agents[0].collections;
+  fixture.hostManifest.authorized_agents = [];
+  const result = await verifySupplyPath(request, {
+    source: 'authoritative',
+    revocationStore: new sdk.InMemorySupplyPathRevocationStore(),
+    trustedFetchFn: transport({
+      [`https://${OWNER}/.well-known/adagents.json`]: {
+        authoritative_location: 'https://cdn.example/shared-owner.json',
+      },
+      'https://cdn.example/shared-owner.json': fixture.ownerManifest,
+      [`https://${HOST}/.well-known/adagents.json`]: fixture.hostManifest,
+      [`https://${HOST}/app-ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+        headers: { 'content-type': 'text/plain' },
+      }),
+    }),
+  });
+  assert.equal(result.state, 'owner_attested');
+  assert.equal(result.legs.owner_agent_declared.failure, 'agent_not_declared_by_owner');
+});
+
+it('records malformed pointers as unavailable evidence while retaining their denials', async () => {
+  for (const location of ['not a URL', 'http://example.com/host.json', 'https://user:password@example.com/host.json']) {
+    const store = new sdk.InMemorySupplyPathRevocationStore();
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      revocationStore: store,
+      trustedFetchFn: transport({
+        [`https://${HOST}/.well-known/adagents.json`]: {
+          authoritative_location: location,
+          revoked_publisher_domains: [OWNER],
+        },
+        [`https://${HOST}/ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+          headers: { 'content-type': 'text/plain' },
+        }),
+        [`https://${HOST}/app-ads.txt`]: new Response(`inventorypartnerdomain=${OWNER}`, {
+          headers: { 'content-type': 'text/plain' },
+        }),
+      }),
+    });
+    assert.equal(result.state, 'owner_attested');
+    assert.ok(result.sources.evidence.some(item => item.error === 'invalid_authoritative_location'));
+    assert.deepEqual(
+      (await store.observe(HOST, [])).map(item => item.publisher_domain),
+      [OWNER]
+    );
+  }
 });
