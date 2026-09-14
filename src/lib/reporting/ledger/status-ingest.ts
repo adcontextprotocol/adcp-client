@@ -1,10 +1,8 @@
-import { createHash } from 'node:crypto';
-
 import { z } from 'zod';
 
 import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
 import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReportingStatusResponse } from '../../types';
-import { canonicalize } from '../../utils/jcs';
+import { canonicalJsonSha256PreservingLoneSurrogates } from '../../utils/jcs';
 import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { validateSyncReportingStatusEnvelope } from '../../validation/sync-reporting-status-envelope';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
@@ -653,34 +651,7 @@ function statusBatchFingerprint(request: {
     ...semanticRequest
   } = request;
   const wireValue = JSON.parse(JSON.stringify(semanticRequest)) as Record<string, unknown>;
-  // The shared canonicalizer preserves lone surrogates for legacy callers. Escape
-  // them at this boundary so distinct malformed requests cannot hash through the
-  // same UTF-8 replacement character; well-formed JCS bytes remain unchanged.
-  const canonical = escapeLoneSurrogates(canonicalize(wireValue));
-  return createHash('sha256').update(canonical, 'utf8').digest('hex');
-}
-
-function escapeLoneSurrogates(value: string): string {
-  let escaped = '';
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        escaped += value.charAt(index) + value.charAt(index + 1);
-        index += 1;
-        continue;
-      }
-      escaped += `\\u${code.toString(16).padStart(4, '0')}`;
-      continue;
-    }
-    if (code >= 0xdc00 && code <= 0xdfff) {
-      escaped += `\\u${code.toString(16).padStart(4, '0')}`;
-      continue;
-    }
-    escaped += value.charAt(index);
-  }
-  return escaped;
+  return canonicalJsonSha256PreservingLoneSurrogates(wireValue);
 }
 
 function reportingStatusId(value: unknown): string {

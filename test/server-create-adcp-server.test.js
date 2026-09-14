@@ -776,6 +776,47 @@ describe('createAdcpServer', () => {
       );
     });
 
+    it('does not replay reporting status across distinct malformed Unicode payloads', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createIdempotencyStore({ backend: memoryBackend() }),
+        resolveIdempotencyPrincipal: () => 'reporting-consumer-1',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async params => {
+            calls += 1;
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'failed',
+                reporting_status_id: status.reporting_status_id,
+                errors: [{ code: 'VALIDATION_ERROR', message: 'Item validation failed' }],
+              })),
+            };
+          },
+        },
+      });
+      const request = extra => ({
+        account: { account_id: 'account-reporting-status' },
+        idempotency_key: 'reporting-status-malformed-unicode-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-invalid-0001', extra }],
+      });
+
+      const first = await callToolRaw(server, 'sync_reporting_status', request('\ud800'));
+      assert.notEqual(first.isError, true);
+
+      const replayed = await callToolRaw(server, 'sync_reporting_status', request('\ud800'));
+      assert.equal(replayed.structuredContent.replayed, true);
+
+      const conflict = await callToolRaw(server, 'sync_reporting_status', request('\ud801'));
+      assert.equal(conflict.isError, true);
+      assert.equal(conflict.structuredContent.adcp_error.code, 'IDEMPOTENCY_CONFLICT');
+      assert.equal(calls, 1);
+    });
+
     it('keeps the reporting status envelope closed when general request validation is off', async () => {
       let calls = 0;
       const server = createAdcpServer({

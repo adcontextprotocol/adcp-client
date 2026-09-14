@@ -36,7 +36,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { canonicalJsonSha256 } from '../../utils/jcs';
+import { canonicalJsonSha256PreservingLoneSurrogates } from '../../utils/jcs';
 
 /**
  * Fields excluded from the canonical payload hash.
@@ -734,7 +734,7 @@ export function createIdempotencyStore(config: IdempotencyStoreConfig): Idempote
  * `reporting_webhook`) before hashing with RFC 8785 JCS + SHA-256.
  */
 export function hashPayload(payload: unknown): string {
-  return canonicalJsonSha256(stripExclusions(payload));
+  return canonicalJsonSha256PreservingLoneSurrogates(stripExclusions(payload));
 }
 
 function stripExclusions(payload: unknown): unknown {

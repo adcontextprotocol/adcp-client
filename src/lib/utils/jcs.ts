@@ -36,6 +36,44 @@ export function canonicalJsonSha256(value: unknown): string {
   return createHash('sha256').update(canonicalize(value)).digest('hex');
 }
 
+/**
+ * Hash a canonical value while preserving the identity of malformed UTF-16.
+ *
+ * RFC 8785 inputs are I-JSON and therefore cannot contain lone surrogates, but
+ * partial-success endpoints still need to fingerprint malformed items before
+ * rejecting them. Node's UTF-8 encoder otherwise maps every lone surrogate to
+ * U+FFFD, allowing distinct requests to collide. This is byte-identical to
+ * canonicalJsonSha256 for well-formed input.
+ */
+export function canonicalJsonSha256PreservingLoneSurrogates(value: unknown): string {
+  return createHash('sha256')
+    .update(escapeLoneSurrogates(canonicalize(value)), 'utf8')
+    .digest('hex');
+}
+
+function escapeLoneSurrogates(value: string): string {
+  let escaped = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        escaped += value.charAt(index) + value.charAt(index + 1);
+        index += 1;
+        continue;
+      }
+      escaped += `\\u${code.toString(16).padStart(4, '0')}`;
+      continue;
+    }
+    if (code >= 0xdc00 && code <= 0xdfff) {
+      escaped += `\\u${code.toString(16).padStart(4, '0')}`;
+      continue;
+    }
+    escaped += value.charAt(index);
+  }
+  return escaped;
+}
+
 function serialize(value: unknown): string {
   if (value === null) return 'null';
   if (value === true) return 'true';
