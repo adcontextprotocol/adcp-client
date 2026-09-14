@@ -2743,6 +2743,11 @@ const producer = createReportingProducer({ store, source, offerings, contact });
 await producer.planObligations();
 await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
+
+// AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.
+const syncReportingStatus = createSyncReportingStatusHandler(store, {
+  resolveConsumerId: context => context.agent.agent_url,
+});
 ```
 
 The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.

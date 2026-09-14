@@ -2015,6 +2015,11 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`await producer.planObligations();`);
   ln(`await producer.runWorker();`);
   ln(`const getReportingStatus = createReportingStatusHandler(store);`);
+  ln();
+  ln(`// AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.`);
+  ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
+  ln(`  resolveConsumerId: context => context.agent.agent_url,`);
+  ln(`});`);
   ln('```');
   ln();
   ln(

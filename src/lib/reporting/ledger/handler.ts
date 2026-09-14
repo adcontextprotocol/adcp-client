@@ -12,10 +12,12 @@ import {
   reportingLedgerScopeClosed,
 } from './coverage';
 import { aggregateReportingHealthV1, projectReportingObligationHealthV1 } from './health';
+import { compareReportingInstants } from './instant';
 import { ReportingLedgerSnapshotUnavailableError } from './types';
 import type {
   ReportingHealthV1,
   ReportingLedgerConfigurationV1,
+  ReportingLedgerConsumerStatementV1,
   ReportingLedgerCoverageV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
@@ -25,7 +27,14 @@ import type {
   ReportingStatusHandlerV1,
 } from './types';
 
-export function createReportingStatusHandler(store: ReportingLedgerStore): ReportingStatusHandlerV1 {
+export interface ReportingStatusConsumerScopeOptionsV1<TContext = unknown> {
+  resolveConsumerId(context: TContext): string | Promise<string>;
+}
+
+export function createReportingStatusHandler<TContext = unknown>(
+  store: ReportingLedgerStore,
+  options?: ReportingStatusConsumerScopeOptionsV1<TContext>
+): ReportingStatusHandlerV1 {
   const activeReadsByAccount = new Map<string, number>();
   return async (request, context) => {
     const raw = request as unknown as Record<string, unknown>;
@@ -38,6 +47,8 @@ export function createReportingStatusHandler(store: ReportingLedgerStore): Repor
           : undefined;
     if (!resolvedAccountId) throw new Error('get_reporting_status requires a resolved account');
     const accountId = resolvedAccountId;
+    const consumerId = options ? await options.resolveConsumerId(context as TContext) : undefined;
+    if (options && !consumerId) throw new Error('get_reporting_status requires an authenticated consumer');
     const view = raw.view;
     if (view !== 'summary' && view !== 'periods' && view !== 'revision') {
       throw new Error('Unsupported reporting status view');
@@ -52,6 +63,7 @@ export function createReportingStatusHandler(store: ReportingLedgerStore): Repor
     try {
       const query: ReportingLedgerSnapshotQueryV1 = {
         account_id: accountId,
+        ...(consumerId ? { consumer_id: consumerId } : {}),
         view,
         ...copyArray(raw, 'media_buy_ids'),
         ...copyArray(raw, 'delivery_config_ids'),
@@ -155,12 +167,30 @@ export function createReportingStatusHandler(store: ReportingLedgerStore): Repor
                 issue => issue.reporting_obligation_id === obligation.reporting_obligation_id && !issue.resolvedAt
               )
             : [];
+        const consumerStatusHistory = (page.snapshot.consumerStatuses ?? []).filter(value =>
+          consumerStatusMatchesObligation(value, obligation)
+        );
+        const consumerStatusProjection = (
+          page.snapshot.consumerStatusProjection ??
+          page.snapshot.consumerStatuses ??
+          []
+        ).filter(value => consumerStatusMatchesObligation(value, obligation));
+        const currentConsumerStatus = currentStatusLeaf(consumerStatusProjection);
+        const mismatch = consumerStatusMismatch(currentConsumerStatus, revisions, projection.health);
+        const mismatchIssue =
+          mismatch && currentConsumerStatus
+            ? consumerStatusMismatchIssue(obligation, currentConsumerStatus, page.snapshot.ledgerAsOf)
+            : undefined;
         return {
           obligation,
           revisions,
+          consumerStatusHistory,
+          consumerStatusProjection,
+          currentConsumerStatus,
           projection: {
             ...projection,
-            issues: uniqueIssues([...persistedIssues, ...projection.issues]),
+            ...(mismatch ? { health: 'action_required' as const } : {}),
+            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatchIssue ? [mismatchIssue] : [])]),
           },
         };
       });
@@ -204,6 +234,7 @@ export function createReportingStatusHandler(store: ReportingLedgerStore): Repor
           adjustments: page.adjustments
             .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
             .map(value => value.wireAdjustment),
+          ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
           adjustment_receipts: [],
           materializations: [],
           receipts: [],
@@ -234,13 +265,16 @@ export function createReportingStatusHandler(store: ReportingLedgerStore): Repor
               page.snapshot.adjustments.filter(
                 adjustment => adjustment.reporting_obligation_id === value.obligation.reporting_obligation_id
               ).length,
-              value.projection
+              value.projection,
+              value.currentConsumerStatus,
+              consumerId ? value.consumerStatusProjection.length : undefined
             )
           ),
           revisions: page.revisions
             .filter(value => !query.finality || query.finality.includes(value.finality))
             .map(value => value.wireRevision),
           adjustments: page.adjustments.map(value => value.wireAdjustment),
+          ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
           adjustment_receipts: [],
           materializations: [],
           receipts: [],
@@ -387,7 +421,9 @@ function wireObligation(
   obligation: ReportingLedgerObligationV1,
   revisionCount: number,
   adjustmentCount: number,
-  projection: ReturnType<typeof projectReportingObligationHealthV1>
+  projection: ReturnType<typeof projectReportingObligationHealthV1>,
+  currentConsumerStatus?: ReportingLedgerConsumerStatementV1,
+  consumerStatusCount?: number
 ) {
   return {
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -420,13 +456,86 @@ function wireObligation(
     production_status: projection.productionStatus,
     revision_count: revisionCount,
     adjustment_count: adjustmentCount,
+    ...(consumerStatusCount !== undefined
+      ? {
+          consumer_status_count: consumerStatusCount,
+          ...(currentConsumerStatus ? { current_consumer_status_id: currentConsumerStatus.reporting_status_id } : {}),
+        }
+      : {}),
     issues: projection.issues.map(wireIssue),
   };
 }
 
-class ReportingReadCapacityError extends Error {}
+function consumerStatusMatchesObligation(
+  status: ReportingLedgerConsumerStatementV1,
+  obligation: ReportingLedgerObligationV1
+): boolean {
+  return (
+    status.delivery_config_id === obligation.delivery_config_id &&
+    status.delivery_config_version === obligation.delivery_config_version &&
+    status.report_definition_id === obligation.report_definition_id &&
+    compareReportingInstants(status.period.start, obligation.period.start) === 0 &&
+    compareReportingInstants(status.period.end, obligation.period.end) === 0 &&
+    status.period.source_timezone === obligation.period.sourceTimezone
+  );
+}
 
-function acquireAccountReadSlot(
+function currentStatusLeaf(
+  statuses: ReportingLedgerConsumerStatementV1[]
+): ReportingLedgerConsumerStatementV1 | undefined {
+  const superseded = new Set(
+    statuses.map(value => value.supersedes_reporting_status_id).filter((value): value is string => Boolean(value))
+  );
+  return statuses.find(value => !superseded.has(value.reporting_status_id));
+}
+
+function consumerStatusMismatch(
+  status: ReportingLedgerConsumerStatementV1 | undefined,
+  revisions: Array<{ reporting_revision_id: string; revisionNumber: number }>,
+  sellerHealth: ReportingHealthV1
+): boolean {
+  if (!status || (sellerHealth !== 'healthy' && sellerHealth !== 'complete')) return false;
+  if (status.consumer_status !== 'received') return true;
+  const current = [...revisions].sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+  return !current || status.reporting_revision_id !== current.reporting_revision_id;
+}
+
+function consumerStatusMismatchIssue(
+  obligation: ReportingLedgerObligationV1,
+  status: ReportingLedgerConsumerStatementV1,
+  observedAt: string
+): ReportingLedgerIssueV1 {
+  const digest = createHash('sha256')
+    .update(
+      canonicalJsonV1({
+        kind: 'consumer_status_mismatch',
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        reporting_status_id: status.reporting_status_id,
+      })
+    )
+    .digest('hex')
+    .slice(0, 32);
+  return {
+    issueId: `rpti_${digest}`,
+    reporting_obligation_id: obligation.reporting_obligation_id,
+    reporting_status_id: status.reporting_status_id,
+    code: 'CONSUMER_STATUS_MISMATCH',
+    severity: 'action_required',
+    responsibleParty: status.consumer_status === 'unreadable' ? 'provider' : 'seller',
+    recommendedAction: status.consumer_status === 'unreadable' ? 'repair_access' : 'contact_seller',
+    openedAt: observedAt,
+    observedAt,
+  };
+}
+
+function wireConsumerStatus(status: ReportingLedgerConsumerStatementV1) {
+  const { consumerId: _consumerId, account_id: _accountId, ...wire } = status;
+  return wire;
+}
+
+export class ReportingReadCapacityError extends Error {}
+
+export function acquireAccountReadSlot(
   active: Map<string, number>,
   accountId: string,
   perAccountLimit = 16,
@@ -467,6 +576,7 @@ function wireIssue(issue: ReportingLedgerIssueV1) {
     severity: issue.severity,
     responsible_party: issue.responsibleParty,
     recommended_action: issue.recommendedAction,
+    ...(issue.reporting_status_id ? { reporting_status_id: issue.reporting_status_id } : {}),
     ...(issue.reporting_obligation_id === 'scope' ? {} : { reporting_obligation_id: issue.reporting_obligation_id }),
   };
 }

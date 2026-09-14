@@ -2977,7 +2977,6 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
   adcp_version: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_major_version: SHALLOW_HINT_FIELD_SCHEMA,
 } as unknown as ZodRawShapeCompat;
-
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
   return cachedToolInputShapes;
