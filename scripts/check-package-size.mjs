@@ -25,7 +25,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // sync_reporting_status tool slice adds four publishable runtime/declaration artifacts.
 // Its adapter-safe identity helpers add four module artifacts, and the portable
 // cross-SDK consumer-status vector adds one published JSON artifact.
-const MAX_PACKED_FILE_COUNT = 5_995;
+// Account-feed adoption adds five runtime/declaration module sets (20 files)
+// and one migration guide. Byte budgets remain unchanged.
+const MAX_PACKED_FILE_COUNT = 6_016;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

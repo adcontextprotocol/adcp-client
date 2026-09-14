@@ -15,6 +15,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 export const LOCAL_TEST_BATCH_SIZE = 25;
 
 export const SLOW_NODE_TESTS = new Set([
+  'test/lib/account-change-feed-packed.test.js',
   'test/canonical-creatives-a2a-e2e.test.js',
   'test/generate-zod-object-intersections.test.js',
   'test/generate-zod-reporting-status.test.js',

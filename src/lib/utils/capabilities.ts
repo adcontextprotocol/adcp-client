@@ -7,6 +7,12 @@
  */
 
 import { ConfigurationError } from '../errors';
+import type { GetAdCPCapabilitiesResponse } from '../types';
+
+/** Published wire declaration retained verbatim inside normalized capabilities. */
+export type AccountChangeFeedCapabilities = NonNullable<
+  NonNullable<GetAdCPCapabilitiesResponse['account']>['change_feed']
+>;
 
 export const IDEMPOTENCY_REPLAY_TTL_SECONDS_MIN = 3_600;
 export const IDEMPOTENCY_REPLAY_TTL_SECONDS_MAX = 604_800;
@@ -81,6 +87,8 @@ export interface MediaBuyFeatures {
  * Account management capabilities declared by the seller
  */
 export interface AccountCapabilities {
+  /** Optional account change feed; absence does not imply support. */
+  changeFeed?: AccountChangeFeedCapabilities;
   /**
    * Whether the seller requires operator-level credentials.
    * When false (default), the agent authenticates once and declares brands/operators via sync_accounts.
@@ -667,6 +675,7 @@ export function parseCapabilitiesResponse(response: any): AdcpCapabilities {
       defaultBilling: response.account.default_billing,
       requiredForProducts: response.account.required_for_products ?? false,
       sandbox: response.account.sandbox ?? false,
+      ...(response.account.change_feed !== undefined && { changeFeed: structuredClone(response.account.change_feed) }),
     };
   }
 

@@ -53,6 +53,7 @@ import { InMemoryRevocationStore, type RevocationStore } from '../../signing/rev
 import type { RequestLike } from '../../signing/canonicalize';
 import { getSchemaValidatorByRef } from '../../validation/schema-loader';
 import { ADCP_VERSION } from '../../version';
+import { ConfigurationError } from '../../errors';
 
 const RUN_STATE_REPLAY_KEY = '__webhook_signing_replay_store';
 const RUN_STATE_REVOCATION_KEY = '__webhook_signing_revocation_store';
@@ -141,6 +142,7 @@ function clampRetryPolicy(spec: { count?: number; http_status?: number } | undef
 }
 
 interface WebhookAssertionRunState {
+  stepRequestStarts?: Map<string, string>;
   contributions: Set<string>;
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
@@ -168,7 +170,8 @@ function collectNotificationConfigs(
   if (Array.isArray(record.notification_configs)) {
     for (const config of record.notification_configs) {
       if (config && typeof config === 'object' && !Array.isArray(config)) {
-        configs.push(config as Record<string, unknown>);
+        const account = record.account as Record<string, unknown> | undefined;
+        configs.push({ ...(config as Record<string, unknown>), account_id: account?.account_id });
       }
     }
   }
@@ -337,52 +340,129 @@ export async function executeWebhookAssertionStep(
   const receiver = runState.webhookReceiver;
   const runnerVars = runState.runnerVars;
   const filter = buildFilter(step, context, runnerVars);
+  let observedChanges: Set<string> | undefined;
+  let subscriptionFailure: ReturnType<typeof singleFailure> | undefined;
+  if (
+    step.task === 'expect_webhook' &&
+    filter.body?.notification_type === 'account.change_recorded' &&
+    typeof filter.body.subscriber_id === 'string' &&
+    filter.body.subscriber_id.length > 0
+  ) {
+    const config = [...runState.priorStepResults.values()]
+      .reverse()
+      .filter(prior => prior.passed && !prior.skipped && prior.task === 'sync_accounts')
+      .flatMap(prior => collectNotificationConfigs(prior.request?.payload))
+      .find(
+        candidate =>
+          candidate.subscriber_id === filter.body!.subscriber_id &&
+          (filter.body!.account_id === undefined || candidate.account_id === filter.body!.account_id)
+      );
+    const base = receiver.base_url.replace(/\/$/, '');
+    if (
+      typeof config?.url !== 'string' ||
+      config.active === false ||
+      !Array.isArray(config.event_types) ||
+      !config.event_types.includes('account.change_recorded') ||
+      !config.url.startsWith(`${base}/step/`)
+    ) {
+      subscriptionFailure = singleFailure(
+        step,
+        'no_webhook_received',
+        'No successful account-change registration targets this receiver.',
+        'registered subscriber URL',
+        null
+      );
+    } else {
+      filter.path = config.url.slice(base.length);
+    }
+    if (step.triggered_by) {
+      const started = runState.stepRequestStarts?.get(step.triggered_by);
+      const boundary = started === undefined ? NaN : Date.parse(started);
+      if (!Number.isFinite(boundary)) {
+        subscriptionFailure = singleFailure(
+          step,
+          'no_webhook_received',
+          'The triggering request has no recorded observation boundary.',
+          'trigger request start',
+          null
+        );
+      } else filter.received_at_or_after = boundary;
+    }
+    const key = `account-change-observations:${String(filter.body.subscriber_id)}`;
+    observedChanges = runnerVars.runState.get(key) as Set<string> | undefined;
+    if (!observedChanges) runnerVars.runState.set(key, (observedChanges = new Set()));
+    filter.exclude_account_changes = observedChanges;
+  }
 
   let validations: ValidationResult[];
   let passed: boolean;
 
-  switch (step.task) {
-    case 'expect_webhook': {
-      const outcome = await runExpectWebhook(step, filter, receiver);
-      validations = outcome.validations;
-      passed = outcome.passed;
-      break;
-    }
-    case 'expect_no_webhook': {
-      const outcome = await runExpectNoWebhook(step, filter, receiver);
-      validations = outcome.validations;
-      passed = outcome.passed;
-      break;
-    }
-    case 'expect_webhook_retry_keys_stable': {
-      const outcome = await runExpectRetryKeysStable(step, filter, receiver);
-      validations = outcome.validations;
-      passed = outcome.passed;
-      break;
-    }
-    case 'expect_webhook_signature_valid': {
-      const outcome = await runExpectSignatureValid(step, filter, receiver, options, runnerVars);
-      validations = outcome.validations;
-      passed = outcome.passed;
-      // When the verifier isn't configured, the spec says not_applicable
-      // rather than fail. Return the skipped shape.
-      if (outcome.skipped) {
-        return skippedResult(step, phaseId, context, start, {
-          skip_reason: 'unsatisfied_contract',
-          detail: outcome.skipReason ?? 'Signature verifier not configured.',
-          extraction,
-          request: requestRecord,
-          next,
-        });
+  if (subscriptionFailure) {
+    validations = subscriptionFailure.validations;
+    passed = false;
+  } else
+    switch (step.task) {
+      case 'expect_webhook': {
+        const outcome = await runExpectWebhook(step, filter, receiver);
+        validations = outcome.validations;
+        passed = outcome.passed;
+        if (passed && observedChanges && outcome.webhook) {
+          const body = outcome.webhook.body as { account_id: string; change_id: string };
+          if (
+            typeof body?.account_id !== 'string' ||
+            !body.account_id ||
+            typeof body?.change_id !== 'string' ||
+            !body.change_id
+          ) {
+            passed = false;
+            validations.push(
+              ...singleFailure(
+                step,
+                'schema_violation',
+                'Account-change observations require account_id and change_id.',
+                'logical account/change identity',
+                null
+              ).validations
+            );
+          } else observedChanges.add(JSON.stringify([body.account_id, body.change_id]));
+        }
+        break;
       }
-      break;
+      case 'expect_no_webhook': {
+        const outcome = await runExpectNoWebhook(step, filter, receiver);
+        validations = outcome.validations;
+        passed = outcome.passed;
+        break;
+      }
+      case 'expect_webhook_retry_keys_stable': {
+        const outcome = await runExpectRetryKeysStable(step, filter, receiver);
+        validations = outcome.validations;
+        passed = outcome.passed;
+        break;
+      }
+      case 'expect_webhook_signature_valid': {
+        const outcome = await runExpectSignatureValid(step, filter, receiver, options, runnerVars);
+        validations = outcome.validations;
+        passed = outcome.passed;
+        // When the verifier isn't configured, the spec says not_applicable
+        // rather than fail. Return the skipped shape.
+        if (outcome.skipped) {
+          return skippedResult(step, phaseId, context, start, {
+            skip_reason: 'unsatisfied_contract',
+            detail: outcome.skipReason ?? 'Signature verifier not configured.',
+            extraction,
+            request: requestRecord,
+            next,
+          });
+        }
+        break;
+      }
+      default: {
+        // Defensive — this function is only called for tasks in WEBHOOK_ASSERTION_TASKS.
+        validations = [];
+        passed = false;
+      }
     }
-    default: {
-      // Defensive — this function is only called for tasks in WEBHOOK_ASSERTION_TASKS.
-      validations = [];
-      passed = false;
-    }
-  }
 
   return {
     step_id: step.id,
@@ -408,7 +488,9 @@ function buildFilter(step: StoryboardStep, context: StoryboardContext, runnerVar
   const filter: WebhookFilter = {};
 
   // Default: scope to the triggering step's URL. Authors can override via
-  // an explicit `filter.operation_id` (useful for fan-in tests).
+  // an explicit `filter.operation_id` (useful for fan-in tests). Persistent
+  // account subscriptions use their registered URL, not the mutation's URL.
+  // triggered_by still gates on successful execution above.
   if (step.triggered_by) {
     filter.step_id = step.triggered_by;
     const priorOpId = runnerVars.stepOperationIds.get(step.triggered_by);
@@ -423,10 +505,28 @@ function buildFilter(step: StoryboardStep, context: StoryboardContext, runnerVar
       if (typeof resolved.operation_id === 'string') {
         filter.operation_id = resolved.operation_id;
       }
+      if (resolved.notification_type === 'account.change_recorded' && typeof resolved.subscriber_id === 'string') {
+        filter.body = { notification_type: resolved.notification_type, subscriber_id: resolved.subscriber_id };
+        if (resolved.change_id === '*') filter.present = ['change_id'];
+        else if (resolved.change_id !== undefined) filter.body.change_id = resolved.change_id;
+      }
       if (resolved.body && typeof resolved.body === 'object' && !Array.isArray(resolved.body)) {
-        filter.body = resolved.body as Record<string, unknown>;
+        const body = resolved.body as Record<string, unknown>;
+        if (filter.body && Object.keys(filter.body).some(key => key in body && body[key] !== filter.body![key])) {
+          throw new ConfigurationError('Conflicting flat and nested webhook selectors.', 'filter');
+        }
+        filter.body = { ...body, ...filter.body };
       }
     }
+  }
+  if (
+    step.task === 'expect_webhook' &&
+    filter.body?.notification_type === 'account.change_recorded' &&
+    typeof filter.body.subscriber_id === 'string' &&
+    filter.body.subscriber_id.length > 0
+  ) {
+    delete filter.step_id;
+    if (step.filter?.operation_id === undefined) delete filter.operation_id;
   }
   return filter;
 }
@@ -486,7 +586,7 @@ async function runExpectWebhook(
   step: StoryboardStep,
   filter: WebhookFilter,
   receiver: WebhookReceiver
-): Promise<{ validations: ValidationResult[]; passed: boolean }> {
+): Promise<{ validations: ValidationResult[]; passed: boolean; webhook?: CapturedWebhook }> {
   const timeoutMs = clampTimeoutSeconds(step.timeout_seconds, DEFAULT_TIMEOUT_SECONDS) * 1000;
   const checkIdempotency = step.expect_idempotency_key !== false;
   const capCount = step.expect_max_deliveries_per_logical_event;
@@ -555,6 +655,7 @@ async function runExpectWebhook(
       },
     ],
     passed: true,
+    webhook: first,
   };
 }
 

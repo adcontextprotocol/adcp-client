@@ -1,5 +1,8 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
+export * from '../notifications/account-change-recorded';
+export type { AdvisoryThroughCursor } from '../client/account-change-cursor';
+
 export {
   normalizeWholesaleFeedWebhookNotification,
   parseWholesaleFeedWebhookNotification,

@@ -1431,6 +1431,10 @@ export interface StoryboardValidation {
 
 /** Webhook-body match predicate. Dotted paths, deep equality. */
 export interface WebhookFilterSpec {
+  /** Published account-feed storyboard body selectors for a persistent subscription. */
+  notification_type?: string;
+  subscriber_id?: string;
+  change_id?: string;
   /** Match by `operation_id` echoed in the per-step URL path. */
   operation_id?: string;
   /** Match by dotted-path → value deep equality against the parsed body. */

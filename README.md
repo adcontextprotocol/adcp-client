@@ -74,6 +74,7 @@ Start with the persona guide that matches your job:
 
 - [Build a seller](./docs/guides/SELLER-QUICKSTART-3.2.md)
 - [Call a seller](./docs/guides/BUYER-QUICKSTART-3.2.md)
+- [Adopt the account change feed](./docs/migration-account-change-feed.md)
 - [Upgrade from SDK 13](./docs/migration-13-to-14.md)
 - [Run in production](./docs/guides/PRODUCTION-DURABILITY.md)
 
