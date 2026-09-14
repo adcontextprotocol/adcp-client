@@ -72,6 +72,124 @@ describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL UR
     }
   });
 
+  test('roundtrips every pinned consumer status through parsing, storage, replay, and readback', async () => {
+    const canonical = require('../../schemas/cache/latest/core/reporting-consumer-status.json');
+    const { SyncReportingStatusResponseSchema } = require('../../dist/lib/schemas/index.js');
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: context => context.consumer,
+    });
+    const read = ledger.createReportingStatusHandler(reference.store, {
+      resolveConsumerId: context => context.consumer,
+    });
+    const evidence = {
+      received: {
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        reporting_revision_id: revision.reporting_revision_id,
+        observed_revision_content_sha256: revision.wireRevision.revision_content_sha256,
+      },
+      obligation_missing: {},
+      revision_missing: { reporting_obligation_id: obligation.reporting_obligation_id },
+      unreadable: {
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        reporting_revision_id: revision.reporting_revision_id,
+        failure_code: 'integrity_mismatch',
+      },
+      content_mismatch: {
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        reporting_revision_id: revision.reporting_revision_id,
+        observed_revision_content_sha256: revision.wireRevision.revision_content_sha256,
+      },
+    };
+    for (const consumer_status of canonical.properties.consumer_status.enum) {
+      const codes = consumer_status === 'content_mismatch' ? canonical.properties.mismatch_code.enum : [undefined];
+      for (const mismatch_code of codes) {
+        const identity = `roundtrip-${consumer_status}-${mismatch_code ?? 'none'}`;
+        const context = { account: request.account, consumer: identity };
+        const item = {
+          reporting_status_id: identity,
+          delivery_config_id: obligation.delivery_config_id,
+          delivery_config_version: obligation.delivery_config_version,
+          report_definition_id: obligation.report_definition_id,
+          period: {
+            start: obligation.period.start,
+            end: obligation.period.end,
+            source_timezone: obligation.period.sourceTimezone,
+          },
+          consumer_status,
+          status_as_of: new Date().toISOString(),
+          ...evidence[consumer_status],
+          ...(mismatch_code ? { mismatch_code } : {}),
+        };
+        const input = { account: request.account, idempotency_key: identity, statuses: [item] };
+        const first = await sync(input, context);
+        assert.equal(first.results[0].result, 'recorded', JSON.stringify(first));
+        assert.equal(SyncReportingStatusResponseSchema.safeParse(first).success, true);
+        const recorded = first.results[0].consumer_status;
+        assert.deepEqual(recorded, { ...item, recorded_at: recorded.recorded_at });
+        assert.deepEqual(await sync(input, context), first, 'exact batch replay preserves fields');
+        const unchanged = await sync({ ...input, idempotency_key: `${identity}-retry` }, context);
+        assert.equal(unchanged.results[0].result, 'unchanged');
+        assert.deepEqual(unchanged.results[0].consumer_status, recorded);
+        const page = await read(
+          {
+            account: request.account,
+            view: 'periods',
+            period: { start: obligation.period.start, end: obligation.period.end },
+            pagination: { max_results: 100 },
+          },
+          context
+        );
+        assert.deepEqual(
+          page.consumer_statuses.find(value => value.reporting_status_id === identity),
+          recorded
+        );
+        if (consumer_status === 'content_mismatch') {
+          const period = page.periods.find(
+            value => value.reporting_obligation_id === obligation.reporting_obligation_id
+          );
+          assert.equal(period.health, 'action_required');
+          const issue = period.issues.find(value => value.code === 'CONSUMER_STATUS_MISMATCH');
+          assert.equal(issue.responsible_party, 'seller');
+          assert.equal(issue.recommended_action, 'contact_seller');
+          const changed = await sync(
+            {
+              ...input,
+              idempotency_key: `${identity}-conflict`,
+              statuses: [
+                { ...item, mismatch_code: mismatch_code === 'metric_missing' ? 'coverage_short' : 'metric_missing' },
+              ],
+            },
+            context
+          );
+          assert.equal(changed.results[0].errors[0].code, 'IDEMPOTENCY_CONFLICT');
+        }
+        if (consumer_status === 'received' || consumer_status === 'content_mismatch') {
+          const rejected = await sync(
+            {
+              ...input,
+              idempotency_key: `${identity}-wrong-binding`,
+              statuses: [
+                {
+                  ...item,
+                  reporting_status_id: `${identity}-wrong-binding`,
+                  supersedes_reporting_status_id: identity,
+                  observed_revision_content_sha256: '0'.repeat(64),
+                },
+              ],
+            },
+            context
+          );
+          assert.equal(rejected.results[0].result, 'failed');
+          assert.equal(rejected.results[0].errors[0].code, 'VALIDATION_ERROR');
+          assert.equal(
+            rejected.results[0].errors[0].message,
+            'Reporting consumer status does not match the seller ledger'
+          );
+        }
+      }
+    }
+  });
+
   test('enforces exact-leaf supersession and isolates mismatch readback by consumer', async () => {
     const revisionMetadata = await reference.store.getRevisionMetadata(
       revision.reporting_revision_id,

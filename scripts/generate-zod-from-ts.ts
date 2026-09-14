@@ -1941,17 +1941,59 @@ function postProcessReportingEvidenceStrictness(content: string): string {
 
 /**
  * Restore sync_reporting_status constraints that are context-sensitive in the
- * signed rc.2 schemas and are lost by the JSON Schema -> TypeScript -> Zod
+ * canonical schemas and are lost by the JSON Schema -> TypeScript -> Zod
  * projection. Keep this separate from the server's envelope-only dispatch
  * validator: custom integrations using the public schemas need exact wire
  * validation, while the built-in handler deliberately preserves valid
  * siblings in a mixed batch.
  */
-function postProcessReportingConsumerStatusConstraints(content: string): string {
+function postProcessReportingConsumerStatusConstraints(
+  content: string,
+  source = JSON.parse(
+    readFileSync(path.join(__dirname, '../schemas/cache/latest/core/reporting-consumer-status.json'), 'utf8')
+  )
+): string {
+  // Read the closed status arms from the pinned bundle. TypeScript flattens
+  // these if/then rules, so ts-to-zod alone cannot preserve their constraints.
+  const rules: Record<string, { required: string[]; forbidden: string[] }> = {};
+  for (const arm of source.allOf) {
+    const status = arm.if?.properties?.consumer_status?.const;
+    if (typeof status !== 'string') continue; // Snapshot pairing is handled below.
+    const required: string[] = arm.then.required ?? [];
+    const forbidden: string[] = arm.then.not?.anyOf
+      ? arm.then.not.anyOf.map((entry: { required: string[] }) => {
+          if (entry.required.length !== 1) throw new Error('Unexpected consumer-status forbidden field group');
+          return entry.required[0]!;
+        })
+      : (arm.then.not?.required ?? []);
+    const expectedNot = arm.then.not?.anyOf
+      ? { anyOf: forbidden.map(field => ({ required: [field] })) }
+      : forbidden.length === 1
+        ? { required: forbidden }
+        : undefined;
+    if (
+      rules[status] ||
+      !isDeepStrictEqual(arm.if, {
+        properties: { consumer_status: { const: status } },
+        required: ['consumer_status'],
+      }) ||
+      !isDeepStrictEqual(arm.then.not, expectedNot) ||
+      Object.keys(arm.then).some(key => !['required', 'not'].includes(key))
+    ) {
+      throw new Error('Unexpected consumer-status conditional constraints');
+    }
+    rules[status] = { required, forbidden };
+  }
+  if (
+    source.additionalProperties !== false ||
+    !isDeepStrictEqual(Object.keys(rules).sort(), [...source.properties.consumer_status.enum].sort())
+  ) {
+    throw new Error('Consumer-status constraints must cover every canonical status');
+  }
   const refine = (source: string, schemaName: string, refinement: string, preserveObjectMethods = false): string => {
     const target = findSchemaExportExpressions(source).find(entry => entry.name === schemaName);
     if (!target) throw new Error(`postProcessReportingConsumerStatusConstraints: ${schemaName} was not generated.`);
-    if (target.expression.includes('// reporting consumer status rc.2 parity')) return source;
+    if (target.expression.includes('// reporting consumer status canonical parity')) return source;
     const expression = preserveObjectMethods
       ? `(() => {
           const objectSchema = ${target.expression};
@@ -1971,7 +2013,7 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
   };
 
   const itemRefinement = `(value, ctx) => {
-      // reporting consumer status rc.2 parity
+      // reporting consumer status canonical parity
       const require = (field: string) => {
           if ((value as Record<string, unknown>)[field] === undefined) {
               ctx.addIssue({ code: "custom", path: [field], message: field + " is required" });
@@ -1982,13 +2024,7 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
               ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
           }
       };
-      const allowed = new Set([
-          "reporting_status_id", "supersedes_reporting_status_id", "delivery_config_id",
-          "delivery_config_version", "report_definition_id", "period", "reporting_obligation_id",
-          "reporting_revision_id", "observed_revision_content_sha256", "consumer_status",
-          "status_as_of", "failure_code", "consumer_commit_ref", "seller_ledger_snapshot_id",
-          "seller_ledger_as_of", "recorded_at"
-      ]);
+      const allowed = new Set(${JSON.stringify(Object.keys(source.properties))});
       for (const field of Object.keys(value as Record<string, unknown>)) {
           if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
       }
@@ -2000,21 +2036,13 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
               }
           }
       }
-      if (value.consumer_status === "received") {
-          require("reporting_obligation_id");
-          require("reporting_revision_id");
-          require("observed_revision_content_sha256");
-          forbid("failure_code");
-      } else if (value.consumer_status === "obligation_missing") {
-          ["reporting_obligation_id", "reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
-      } else if (value.consumer_status === "revision_missing") {
-          require("reporting_obligation_id");
-          ["reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
-      } else if (value.consumer_status === "unreadable") {
-          require("reporting_obligation_id");
-          require("reporting_revision_id");
-          require("failure_code");
-          forbid("observed_revision_content_sha256");
+      const rules: Record<string, { required: string[]; forbidden: string[] }> = ${JSON.stringify(rules)};
+      const rule = rules[value.consumer_status];
+      if (!rule) {
+          ctx.addIssue({ code: "custom", path: ["consumer_status"], message: "Unsupported consumer status" });
+      } else {
+          rule.required.forEach(require);
+          rule.forbidden.forEach(forbid);
       }
       if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
           ctx.addIssue({ code: "custom", path: ["seller_ledger_snapshot_id"], message: "snapshot identity and time must be paired" });
@@ -2026,7 +2054,7 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
     result,
     'SyncReportingStatusRequestSchema',
     `(value, ctx) => {
-      // reporting consumer status rc.2 parity
+      // reporting consumer status canonical parity
       const allowed = new Set(["account", "idempotency_key", "statuses", "adcp_version", "adcp_major_version", "context", "ext"]);
       for (const field of Object.keys(value as Record<string, unknown>)) {
           if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
@@ -2044,7 +2072,7 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
     result,
     'SyncReportingStatusResponseSchema',
     `(value, ctx) => {
-      // reporting consumer status rc.2 parity
+      // reporting consumer status canonical parity
       if (value.status === "completed" && value.results.length < 1) {
           ctx.addIssue({ code: "custom", path: ["results"], message: "Array must contain at least 1 element(s)" });
       }
@@ -5367,6 +5395,7 @@ if (require.main === module) {
 }
 
 export const __test__ = {
+  postProcessForPassthrough,
   postProcessTupleRestArrays,
   postProcessArrayMaxItems,
   relaxArrayCardinalityTypes,

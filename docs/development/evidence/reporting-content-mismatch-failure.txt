@@ -1,0 +1,6 @@
+2026-09-14T14:16:23.1125288Z 90ad47b67401d35e0a9ffc99fd0e76252e026a9a
+2026-09-14T14:40:03.0657113Z ##[error]src/lib/reporting/ledger/status-ingest.ts(288,13): error TS2322: Type '{ account_id: string; consumerId: string; reporting_status_id: string; delivery_config_id: string; delivery_config_version: number; report_definition_id: string; period: { [x: string]: unknown; start: string; end: string; source_timezone: string; }; ... 11 more ...; recorded_at?: string | undefined; }' is not assignable to type 'ReportingLedgerConsumerStatusInputV1'.
+2026-09-14T14:40:03.0664887Z   Types of property 'consumer_status' are incompatible.
+2026-09-14T14:40:03.0665683Z     Type '"received" | "obligation_missing" | "revision_missing" | "unreadable" | "content_mismatch"' is not assignable to type '"received" | "obligation_missing" | "revision_missing" | "unreadable"'.
+2026-09-14T14:40:03.0666534Z       Type '"content_mismatch"' is not assignable to type '"received" | "obligation_missing" | "revision_missing" | "unreadable"'.
+2026-09-14T14:40:03.2643199Z ##[error]Process completed with exit code 2.
