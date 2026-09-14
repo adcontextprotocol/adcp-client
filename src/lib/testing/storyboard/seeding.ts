@@ -314,7 +314,8 @@ export async function runControllerSeeding(
   storyboard: Storyboard,
   options: StoryboardRunOptions,
   context: StoryboardContext,
-  discoveryClient: TestClient = client
+  discoveryClient: TestClient = client,
+  discoveryOptions: StoryboardRunOptions = options
 ): Promise<ControllerSeedingResult | null> {
   if (options.skip_controller_seeding === true) return null;
   const calls = buildSeedCalls(storyboard.fixtures);
@@ -325,7 +326,15 @@ export async function runControllerSeeding(
         ? calls
         : calls.filter(call => call.scenario === 'seed_product' || call.scenario === 'seed_pricing_option');
     if (resolutionCalls.length === 0) return null;
-    return runDeclaredFixtureResolution(client, discoveryClient, storyboard, options, context, resolutionCalls);
+    return runDeclaredFixtureResolution(
+      client,
+      discoveryClient,
+      storyboard,
+      options,
+      context,
+      resolutionCalls,
+      discoveryOptions
+    );
   }
   if (storyboard.prerequisites?.controller_seeding !== true) return null;
 
@@ -438,7 +447,8 @@ async function runDeclaredFixtureResolution(
   storyboard: Storyboard,
   options: StoryboardRunOptions,
   context: StoryboardContext,
-  calls: SeedCall[]
+  calls: SeedCall[],
+  discoveryOptions: StoryboardRunOptions
 ): Promise<ControllerSeedingResult> {
   const start = Date.now();
   const authoringErrorResult = buildAuthoringErrorResult(storyboard, calls, context, start);
@@ -505,7 +515,7 @@ async function runDeclaredFixtureResolution(
     advertisedScenarios = await fetchControllerScenarioSet(seedClient, options, seedContext);
   }
   let catalogPromise: Promise<DiscoveryCatalogResult> | undefined;
-  const catalog = () => (catalogPromise ??= discoverProductCatalog(discoveryClient, options, context));
+  const catalog = () => (catalogPromise ??= discoverProductCatalog(discoveryClient, discoveryOptions, context));
 
   let passedCount = 0;
   let failedCount = 0;
@@ -611,7 +621,7 @@ async function runDeclaredFixtureResolution(
       }
 
       if (strategy === 'discover') {
-        if (options.agentTools && !options.agentTools.includes('get_products')) {
+        if (discoveryOptions.agentTools && !discoveryOptions.agentTools.includes('get_products')) {
           attempts.push({
             strategy,
             disposition: 'unavailable',

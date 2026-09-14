@@ -221,7 +221,7 @@ describe('Storyboard.requires gate (#1626)', () => {
     assert.equal(step.skip.requirement, 'controller', 'first unmet requirement is reported');
   });
 
-  test('mixed requires: multi_agent passes through to controller gate', async () => {
+  test('mixed requires: routed controller availability must be discovered despite caller agentTools', async () => {
     const sb = buildStoryboard({
       requires: ['multi_agent', 'controller'],
       phases: [
@@ -243,8 +243,10 @@ describe('Storyboard.requires gate (#1626)', () => {
     });
 
     const step = result.phases[0].steps[0];
-    assert.equal(step.skip_reason, 'missing_test_controller');
-    assert.equal(step.skip.requirement, 'controller');
+    assert.equal(step.passed, false);
+    assert.equal(step.skipped, false);
+    assert.equal(result.overall_passed, false);
+    assert.match(step.error, /discovery failed/i);
   });
 
   test('unknown requires values load and skip with requirement_unmet at runtime', async () => {

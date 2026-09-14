@@ -176,8 +176,13 @@ export function routedAgentOptions(
     // Scenario opt-in must be the selected agent's declaration too; a
     // comply() caller's controller cache belongs to its single agent.
     _controllerCapabilities:
-      Array.isArray(scenarios) && tools.includes('comply_test_controller')
-        ? { detected: true, scenarios: scenarios.filter((s): s is string => typeof s === 'string') }
+      scenarios && typeof scenarios === 'object' && tools.includes('comply_test_controller')
+        ? {
+            detected: true,
+            scenarios: Array.isArray(scenarios)
+              ? scenarios.filter((s): s is string => typeof s === 'string')
+              : Object.keys(scenarios),
+          }
         : { detected: false },
     profile,
     _profile: profile,

@@ -4,9 +4,9 @@ Reproduction/initial base: `39b07141d3bdf6ba650f3625db471ab017b89a33` (2026-09-1
 Integration base: `8ba12c2ace85a88533ce1d56efd35badea51a97c`; its tree
 `1771a8ef743b4ddcd89c836cee39563096dac82e` exactly matches frozen #2911,
 which landed at 17:23:15Z.
-Draft #2911 composition target: `a6834d67870253674178d099447af36dd6640b11`,
-tree `1771a8ef743b4ddcd89c836cee39563096dac82e`. Its owner confirmed this
-head is frozen and the paths do not overlap. The account and negotiation
+Historical Draft #2911 composition target: `a6834d67870253674178d099447af36dd6640b11`,
+tree `1771a8ef743b4ddcd89c836cee39563096dac82e`. Its owner confirmed that no reporting edits followed review. The final candidate
+is rebased onto the landed main commit; no composition overlay is retained. The account and negotiation
 workspaces were notified of the runner-only scope. No sibling branch was edited.
 
 ## Reproduction before SDK edits
@@ -72,10 +72,14 @@ an insertion-order primary profile. A whole-storyboard/phase capability skip is
 retained only when every selected route is known and inapplicable. Predicates
 for a particular role should be scoped to that role's phase. Cascade tool checks,
 creative-asset preflight, account checks, controller scenario declarations,
-authentication, and transport observations use the selected profile/options.
+authentication, OAuth metadata applicability, and transport observations use the selected profile/options.
+Validation-only coverage does not require a transport route. Phase-local repeated
+step IDs cannot share capability decisions. Fixture resolution binds each seed or
+discovery operation to that operation's selected agent toolset.
 Dynamic task references resolve before protocol routing and ambiguity checks, so a
-conflicting dynamic step cannot be discovered only after earlier calls have run. Unresolved routes and
-failed discovery remain failures, including through early applicability gates.
+conflicting dynamic step cannot be discovered only after earlier calls have run. Tool-family applicability and fixture-availability skips cannot conceal an
+unresolved route or failed discovery. Independent missing runtime adapters remain
+explicit requirement skips before wire execution.
 Runtime tool-family/controller availability remains a topology-level prerequisite;
 it cannot authorize a step that its selected agent does not advertise.
 
@@ -118,7 +122,10 @@ sets for split prerequisites, complete first/secondary agents, overlap, explicit
 overrides, missing routes, discovery failures, stale caller lists, account-mode
 isolation, root/phase/conjunctive capabilities in reversed agent-map order,
 stateful cascades, creative preflight, dynamic tasks, actual per-agent Authorization headers and anonymous overrides, and mixed MCP/A2A
-transport with both run-level transport defaults. Versioned declaration tests cover both
+transport with both run-level transport defaults. Additional tests cover OAuth
+metadata probes and 404 cascades, runtime adapters, validation-only rows, repeated
+step IDs, implicit signing opt-in, fixture route failures and unavailable fixtures.
+Versioned declaration tests cover both
 selection seams and canonical storyboard IDs versus bundle aliases. Tests also
 verify the full historical archives and the +43/+4 delta. These are negative
 compatibility tests, not a claim that the authored governance/provenance flows
