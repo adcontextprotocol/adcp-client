@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-rc.1
-// Generated at: 2026-09-05T10:48:18.479Z
+// Generated AdCP core types from official schemas v3.2.0-rc.2
+// Generated at: 2026-09-13T23:58:09.804Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -1953,6 +1953,11 @@ export type SpecialCategory =
 export type AdCPSpecialism =
   | 'audience-sync'
   | 'brand-rights'
+  | 'buyer-activation'
+  | 'buyer-discovery'
+  | 'buyer-monitoring'
+  | 'buyer-negotiation'
+  | 'buyer-recovery'
   | 'collection-lists'
   | 'content-standards'
   | 'creative-ad-server'
@@ -1971,6 +1976,7 @@ export type AdCPSpecialism =
   | 'sales-proposal-mode'
   | 'sales-social'
   | 'signal-marketplace'
+  | 'orchestrator-multi-agent'
   | 'signal-owned'
   | 'signed-requests'
   | 'sponsored-intelligence';
@@ -2051,6 +2057,7 @@ export type TaskType =
   | 'sync_agent_notification_configs'
   | 'sync_principal'
   | 'get_principal'
+  | 'sync_reporting_status'
   | 'sync_reporting_receipts';
 
 // TRACKEREXECUTIONACTOR CANONICAL ENUM
@@ -12906,7 +12913,7 @@ export interface Identifier {
  */
 export interface ValidatePropertyDeliveryResponse {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -12924,7 +12931,7 @@ export interface ValidatePropertyDeliveryResponse {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -16858,7 +16865,8 @@ export interface ReportingStatusIssue {
     | 'RECEIPT_REQUIRED'
     | 'RECEIPT_REJECTED'
     | 'ADJUSTMENT_RECEIPT_REQUIRED'
-    | 'ADJUSTMENT_RECEIPT_REJECTED';
+    | 'ADJUSTMENT_RECEIPT_REJECTED'
+    | 'CONSUMER_STATUS_MISMATCH';
   severity: ReportingStatusSeverity;
   responsible_party: 'buyer' | 'seller' | 'provider';
   recommended_action:
@@ -16875,6 +16883,10 @@ export interface ReportingStatusIssue {
    */
   message?: string;
   reporting_obligation_id?: string;
+  /**
+   * Current authenticated consumer status statement that caused this mismatch.
+   */
+  reporting_status_id?: string;
   delivery_config_id?: string;
   delivery_config_version?: number;
   feed_purpose?: ReportingFeedPurpose;
@@ -19975,6 +19987,17 @@ export type CanonicalReportingCommitment =
       effective_at?: string;
     };
 /**
+ * A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.
+ */
+export type ForecastRateRange = ForecastRange & {
+  low?: {
+  };
+  mid?: {
+  };
+  high?: {
+  };
+};
+/**
  * Standalone compact Product view for the AdCP 3.2 lifecycle. product_id and name are the only always-returned fields; requested detail fields are optional. Legacy named formats, coarse MediaBuy actions, and the legacy Product inheritance graph are absent.
  */
 export type CanonicalProduct = {
@@ -21222,7 +21245,7 @@ export interface MCPWebhookPayload {
    */
   message?: string;
   /**
-   * Session/conversation correlation identifier. This value alone is not continuation authority and MUST NOT be used to resume input-required or auth-required work without the verified native transport identity required by that transport.
+   * Compatibility metadata copied from the originating response when present. This value alone is not continuation authority and MUST NOT be used to resume input-required or auth-required work or to select session state.
    */
   context_id?: string;
   /**
@@ -21252,7 +21275,7 @@ export interface AdCPVersionEnvelope {
  */
 export interface ProtocolEnvelope {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -21270,7 +21293,7 @@ export interface ProtocolEnvelope {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -21813,16 +21836,14 @@ export interface CanonicalForecastPoint {
   dimensions?: ForecastPointDimensions;
   availability_status?: AvailabilityStatus;
   metrics: {
+    coverage_rate?: ForecastRateRange;
     [k: string]: ForecastRange | undefined;
   };
-  viewability?: {
-    vendor?: BrandKey;
-    measurable_impressions?: ForecastRange;
-    viewable_impressions?: ForecastRange;
-    viewable_rate?: ForecastRange;
-    viewed_seconds?: ForecastRange;
-    standard?: ViewabilityStandard;
-  };
+  viewability?:
+    | {
+      }
+    | {
+      };
   vendor_metric_values?: CanonicalForecastVendorMetricValue[];
 }
 /**
@@ -23746,7 +23767,7 @@ export interface AcquireRightsRequest {
  */
 export type AcquireRightsResponse = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -23764,7 +23785,7 @@ export type AcquireRightsResponse = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -23982,7 +24003,7 @@ export interface CreativeApprovalRequest {
  */
 export type CreativeApprovalResponse = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -24000,7 +24021,7 @@ export type CreativeApprovalResponse = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -24148,7 +24169,7 @@ export interface GetBrandIdentityRequest {
  */
 export type GetBrandIdentityResponse = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -24166,7 +24187,7 @@ export type GetBrandIdentityResponse = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -24611,7 +24632,7 @@ export interface GetRightsRequest {
  */
 export type GetRightsResponse = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -24629,7 +24650,7 @@ export type GetRightsResponse = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -25030,7 +25051,7 @@ export interface UpdateRightsRequest {
  */
 export type UpdateRightsResponse = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -25048,7 +25069,7 @@ export type UpdateRightsResponse = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -25228,7 +25249,7 @@ export interface VerifyTrademarkClaim {
  */
 export type VerifyBrandClaimResponse = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -25246,7 +25267,7 @@ export type VerifyBrandClaimResponse = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -25403,7 +25424,7 @@ export interface VerifyBrandClaimsRequestBulk {
  */
 export type VerifyBrandClaimsResponseBulk = {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -25421,7 +25442,7 @@ export type VerifyBrandClaimsResponseBulk = {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -30131,6 +30152,30 @@ export type IndividualCatalogAsset = BaseIndividualAsset & {
   asset_type: 'catalog';
 };
 /**
+ * Third-party display tag asset
+ */
+export type IndividualDisplayTagAsset = BaseIndividualAsset;
+/**
+ * Published post asset
+ */
+export type IndividualPublishedPostAsset = BaseIndividualAsset;
+/**
+ * Card asset
+ */
+export type IndividualCardAsset = BaseIndividualAsset;
+/**
+ * Pixel tracker asset
+ */
+export type IndividualPixelTrackerAsset = BaseIndividualAsset;
+/**
+ * VAST tracker asset
+ */
+export type IndividualVastTrackerAsset = BaseIndividualAsset;
+/**
+ * DAAST tracker asset
+ */
+export type IndividualDaastTrackerAsset = BaseIndividualAsset;
+/**
  * Image asset in group
  */
 export type GroupImageAsset = BaseGroupAsset & {
@@ -30218,6 +30263,38 @@ export type GroupWebhookAsset = BaseGroupAsset & {
   asset_type: 'webhook';
   requirements?: WebhookAssetRequirements;
 };
+/**
+ * Brief asset in group
+ */
+export type GroupBriefAsset = BaseGroupAsset;
+/**
+ * Catalog asset in group
+ */
+export type GroupCatalogAsset = BaseGroupAsset;
+/**
+ * Third-party display tag asset in group
+ */
+export type GroupDisplayTagAsset = BaseGroupAsset;
+/**
+ * Published post asset in group
+ */
+export type GroupPublishedPostAsset = BaseGroupAsset;
+/**
+ * Card asset in group
+ */
+export type GroupCardAsset = BaseGroupAsset;
+/**
+ * Pixel tracker asset in group
+ */
+export type GroupPixelTrackerAsset = BaseGroupAsset;
+/**
+ * VAST tracker asset in group
+ */
+export type GroupVastTrackerAsset = BaseGroupAsset;
+/**
+ * DAAST tracker asset in group
+ */
+export type GroupDaastTrackerAsset = BaseGroupAsset;
 /**
  * @deprecated
  * **DEPRECATED in 3.2.** Legacy named-format definition retained for older 3.x peers and list_creative_formats compatibility projections. New products and creative agents author ProductFormatDeclaration canonical contracts instead.
@@ -30323,6 +30400,12 @@ export interface Format {
         | IndividualWebhookAsset
         | IndividualBriefAsset
         | IndividualCatalogAsset
+        | IndividualDisplayTagAsset
+        | IndividualPublishedPostAsset
+        | IndividualCardAsset
+        | IndividualPixelTrackerAsset
+        | IndividualVastTrackerAsset
+        | IndividualDaastTrackerAsset
       )
     | RepeatableGroupAsset
   )[];
@@ -32574,17 +32657,17 @@ export interface ProductFilters {
   };
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.geo_countries so returned pricing and forecasts are scoped to the concrete delivery constraint.
+   * DEPRECATED legacy coverage filter. On compact discovery tasks use criteria.offer_filters.countries. Return products whose inventory covers at least one requested area; this does not impose delivery targeting or require selectable targeting support. Retained get_products handlers MUST preserve the original coverage predicate.
    */
   countries?: string[];
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.geo_regions. Sellers resolve the requested outcome through inherent product scope or selectable targeting.
+   * DEPRECATED legacy coverage filter. On compact discovery tasks use criteria.offer_filters.regions. Return products whose inventory covers at least one requested area; this does not impose delivery targeting or require selectable targeting support. Retained get_products handlers MUST preserve the original coverage predicate.
    */
   regions?: string[];
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.geo_metros for known values or required_overlay_support.geo_metros when values will be supplied on packages later.
+   * DEPRECATED legacy coverage filter. On compact discovery tasks use criteria.offer_filters.metros. Return products whose inventory covers at least one requested area; this does not impose delivery targeting or require selectable targeting support. Retained get_products handlers MUST preserve the original coverage predicate.
    */
   metros?: {
     system: MetroAreaSystem;
@@ -32701,7 +32784,7 @@ export interface ProductFilters {
   }[];
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.signal_targeting_groups for known selections or required_overlay_support.signal_targeting_groups when selection will happen later. Legacy entries remain accepted during migration.
+   * DEPRECATED legacy signal-option eligibility filter. Retained get_products handlers MUST preserve the signal identity, value predicate, and requested include/exclude capability. This does not activate delivery targeting. Native buyers use criteria.targeting_overlay.signal_targeting_groups only for concrete delivery selections, preserving exclusion through group operators; copying targeting_mode into targeting_overlay.signal_targeting does not preserve it.
    */
   signal_targeting?: {
     /**
@@ -32711,12 +32794,12 @@ export interface ProductFilters {
   }[];
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.geo_postal_areas for known values or required_overlay_support.geo_postal_areas when values will be supplied later.
+   * DEPRECATED legacy coverage filter. On compact discovery tasks use criteria.offer_filters.postal_areas. Return products whose inventory covers at least one requested area; this does not impose delivery targeting or require selectable targeting support. Retained get_products handlers MUST preserve the original coverage predicate.
    */
   postal_areas?: PostalArea[];
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.geo_proximity. Sellers resolve the requested outcome through inherent product scope or selectable targeting and forecast the resulting inventory.
+   * DEPRECATED legacy coverage filter. On compact discovery tasks use criteria.offer_filters.geo_proximity. Return products whose inventory covers at least one requested area; this does not impose delivery targeting or require selectable targeting support. Retained get_products handlers MUST preserve the original coverage predicate.
    */
   geo_proximity?: (
     | {
@@ -32828,7 +32911,7 @@ export interface ProductFilters {
   }[];
   /**
    * @deprecated
-   * DEPRECATED. Use get_products.targeting_overlay.keyword_targets for concrete terms or required_overlay_support.keyword_targets when terms will be supplied later. Broad thematic intent remains in brief.
+   * DEPRECATED legacy product eligibility filter. Retained get_products handlers MUST preserve the requested keyword eligibility and match_type (default broad). This is not an instruction to add package keyword targeting. Native buyers use criteria.targeting_overlay.keyword_targets only when they intend a delivery constraint, or criteria.required_overlay_support.keyword_targets for future selectability.
    */
   keywords?: {
     /**
@@ -32843,6 +32926,29 @@ export interface ProductFilters {
 }
 
 // core/product-offer-filters.json
+/**
+ * Inventory coverage in the specified proximity boundaries: OR within this field, AND across offer filters. Does not add delivery targeting, require targeting support, or rescope pricing or forecasts.
+ *
+ * @minItems 1
+ */
+export type GeoProximity = [
+  (
+    | {
+      }
+    | {
+      }
+    | {
+      }
+  ),
+  ...(
+    | {
+      }
+    | {
+      }
+    | {
+      }
+  )[]
+];
 /**
  * Offer, commercial-fit, availability, and reporting filters for product discovery. This compact schema is independent of the legacy delivery-targeting filter graph. Brand and issuer selectors are stable keys; callers do not send brand assets or content provenance.
  */
@@ -32893,6 +32999,25 @@ export interface ProductOfferFilters {
    * Filter by country coverage using ISO 3166-1 alpha-2 codes (e.g., ['US', 'CA', 'GB']). Returns products whose geographic coverage includes at least one of the specified countries. This is a product attribute filter, not a delivery-targeting instruction.
    */
   countries?: string[];
+  /**
+   * Inventory coverage in the specified ISO 3166-2 subdivisions: OR within this field, AND across offer filters. Does not add delivery targeting, require targeting support, or rescope pricing or forecasts.
+   */
+  regions?: string[];
+  /**
+   * Inventory coverage in the specified metro areas (system and code): OR within this field, AND across offer filters. Does not add delivery targeting, require targeting support, or rescope pricing or forecasts.
+   */
+  metros?: {
+    system: MetroAreaSystem;
+    /**
+     * Metro code within the system (e.g., '501' for NYC DMA)
+     */
+    code: string;
+  }[];
+  /**
+   * Inventory coverage in the specified postal areas: OR within this field, AND across offer filters. Does not add delivery targeting, require targeting support, or rescope pricing or forecasts.
+   */
+  postal_areas?: PostalArea[];
+  geo_proximity?: GeoProximity;
   property_list?: PropertyListReference;
   channels?: MediaChannel[];
   video_placement_types?: VideoPlacementType[];
@@ -33929,6 +34054,123 @@ export interface AdditionalGoldenVector {
 }
 
 
+// core/reporting-consumer-status.json
+/**
+ * One immutable, authenticated consumer statement about whether the required reporting for an expected configuration period could actually be consumed. It is operational status, not measurement data, delivery totals, a billing receipt, or authority to overwrite the seller's obligation/revision ledger. New statements supersede the current statement for the same consumer, configuration generation, report definition, and period while preserving append-only history.
+ */
+export interface ReportingConsumerStatus {
+  /**
+   * Consumer-issued immutable identity for this status statement. Exact retries reuse the ID and content; changed status uses a new ID and supersedes_reporting_status_id.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  reporting_status_id: string;
+  /**
+   * The authenticated consumer's current status leaf replaced by this statement. It must identify the same account, configuration generation, report definition, and period.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  supersedes_reporting_status_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 64
+   * @pattern ^[A-Za-z0-9_.:-]{1,64}$
+   */
+  delivery_config_id: string;
+  /**
+   * @minimum 1
+   * @format int
+   */
+  delivery_config_version: number;
+  /**
+   * Exact immutable report definition accepted with the configuration generation, preventing unlike reporting promises from sharing a status chain.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  report_definition_id: string;
+  /**
+   * Expected half-open reporting period derived from the accepted configuration generation. This identity works even when the seller omitted the corresponding obligation.
+   */
+  period: {
+    /**
+     * @format date-time
+     */
+    start: string;
+    /**
+     * @format date-time
+     */
+    end: string;
+    /**
+     * @minLength 1
+     */
+    source_timezone: string;
+  };
+  /**
+   * Seller-issued obligation identity when one was visible. Omitted when the consumer is reporting a missing obligation.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_obligation_id?: string;
+  /**
+   * Exact revision successfully consumed or found unreadable. Omitted when no required revision was available.
+   * @minLength 1
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{1,255}$
+   */
+  reporting_revision_id?: string;
+  /**
+   * revision_content_sha256 independently recomputed from the exact consumed Core revision binding. Required only for received; unlike a Reconciled Billing receipt it carries no materialization evidence, row totals, canonical digest, or billing acceptance.
+   * @pattern ^[A-Fa-f0-9]{64}$
+   */
+  observed_revision_content_sha256?: string;
+  /**
+   * received means the exact revision content was successfully consumed; obligation_missing means the independently expected period was absent from the seller ledger; revision_missing means the obligation existed but no required revision was available after expected_at; unreadable means a named revision was advertised but its exact content could not be consumed. None of these values reconciles billing evidence.
+   */
+  consumer_status: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable';
+  /**
+   * When the consumer established this status. For received, this is when the named revision first became consumable to this consumer; sellers use it as buyer-attributed arrival evidence rather than silently substituting publication time.
+   * @format date-time
+   */
+  status_as_of: string;
+  /**
+   * Typed reason a named revision was unreadable. Agents dispatch on this value, not prose or provider response bodies.
+   */
+  failure_code?:
+    | 'access_denied'
+    | 'resource_not_found'
+    | 'integrity_mismatch'
+    | 'reader_incompatible'
+    | 'transport_failed';
+  /**
+   * Optional opaque, non-secret consumer checkpoint, transaction, or load reference. It is operational evidence, not authorization, a credential, a URL, or instructions; receivers compare or display it as inert text and never dereference or execute it.
+   * @minLength 1
+   * @maxLength 512
+   * @pattern ^[A-Za-z0-9_.:-]{1,512}$
+   */
+  consumer_commit_ref?: string;
+  /**
+   * Optional seller-issued get_reporting_status snapshot on which this statement was based. It is evidence context, not consumer authority over that snapshot.
+   * @minLength 1
+   * @maxLength 255
+   */
+  seller_ledger_snapshot_id?: string;
+  /**
+   * ledger_as_of echoed from seller_ledger_snapshot_id. Present if and only if seller_ledger_snapshot_id is present.
+   * @format date-time
+   */
+  seller_ledger_as_of?: string;
+  /**
+   * When the seller durably recorded this immutable statement.
+   * @format date-time
+   */
+  recorded_at?: string;
+}
+
+
 // core/reporting-delivery-capabilities.json
 /**
  * One atomic combination a seller can honor. Buyers MUST NOT form a cross-product from separate capability arrays; each installed configuration selects one offering_id and values within that offering. A Core API-delivered offering requires no Managed external-materialization canonicalization code or contract, but every resulting revision still carries the fixed RFC 8785/JCS revision-binding canonicalization and digest.
@@ -34067,7 +34309,7 @@ export type ReportingReliabilityStatistics = {
 };
 
 /**
- * Reliable Reporting status and durable delivery support, advertised in three tiers over one data model. Core (supported: true) is the required tier: obligations, revisions, post-official adjustments, fixed RFC 8785/JCS revision-binding digests, the five health states, and get_reporting_status over transports sellers already have — polling get_media_buy_delivery and the existing reporting_webhook, with no destination or materialization machinery and no Managed external-materialization canonicalization contract. managed_delivery adds file/dataset-share/warehouse delivery and materializations. Reconciled Billing adds canonical digests and consumer receipts for immutable billing-purpose reporting evidence/control totals only; it does not create, approve, modify, or settle invoices, calculate taxes/FX, authorize accounting entries, transfer funds, or determine legal payment obligations. Each offerings entry is an atomic supported combination; buyers MUST NOT construct an unsupported cross-product. Presence requires media_buy.reporting_delivery in experimental_features; RFC 9421 webhook signing is required only when readiness_notification, status_notification, or ledger_notification is declared. Polling get_media_buy_delivery remains the compatibility baseline when this block is absent.
+ * Reliable Reporting status and durable delivery support, advertised in three tiers over one data model. Core (supported: true) is the required tier: obligations, revisions, post-official adjustments, fixed RFC 8785/JCS revision-binding digests, the five health states, and get_reporting_status seller status. During the published migration window, sellers may additionally advertise sync_reporting_status consumer status over ordinary task transport; it becomes part of required Core only in the next eligible minor after the notice window. Core has no destination, materialization, bespoke webhook, or Managed external-materialization canonicalization machinery. managed_delivery adds file/dataset-share/warehouse delivery and materializations. Reconciled Billing adds canonical digests and consumer receipts for immutable billing-purpose reporting evidence/control totals only; it does not create, approve, modify, or settle invoices, calculate taxes/FX, authorize accounting entries, transfer funds, or determine legal payment obligations. Each offerings entry is an atomic supported combination; buyers MUST NOT construct an unsupported cross-product. Presence requires media_buy.reporting_delivery in experimental_features; RFC 9421 webhook signing is required only when readiness_notification, status_notification, or ledger_notification is declared. Polling get_media_buy_delivery remains the compatibility baseline when this block is absent.
  */
 export interface ReportingDeliveryCapabilities {
   supported: true;
@@ -34085,6 +34327,10 @@ export interface ReportingDeliveryCapabilities {
   reconciled_billing?: boolean;
   configuration_task: 'sync_accounts';
   status_task: 'get_reporting_status';
+  /**
+   * Opt-in consumer-status loop during the published migration window, becoming required Core in the next eligible minor after that window. Buyers call this seller-hosted task to record whether each expected reporting period was received, missing, or unreadable. Buyers expose no reverse endpoint, and the status is not a billing receipt.
+   */
+  consumer_status_task?: 'sync_reporting_status';
   /**
    * Reliable Reporting exact-content read: callers select reporting_revision_id and receive immutable revision metadata plus authoritative canonical reporting_rows.
    */
@@ -34654,6 +34900,19 @@ export interface ReportingObligation {
    * @format int
    */
   revision_count: number;
+  /**
+   * Complete number of immutable authenticated consumer status statements associated with this obligation in the ledger snapshot, whether originally joined by reporting_obligation_id or by the exact configuration-generation, report-definition, and period key before the obligation existed. Core status-sync history is counted independently from Reconciled Billing receipts.
+   * @minimum 0
+   * @format int
+   */
+  consumer_status_count?: number;
+  /**
+   * Current unsuperseded consumer status statement associated with this obligation by seller ID or its exact logical period key. Omitted when consumer_status_count is zero.
+   * @minLength 16
+   * @maxLength 255
+   * @pattern ^[A-Za-z0-9_.:-]{16,255}$
+   */
+  current_consumer_status_id?: string;
   /**
    * Number of immutable post-official reporting adjustment records for this obligation in the consistent ledger snapshot.
    * @minimum 0
@@ -35743,7 +36002,7 @@ export interface ProtocolResponse {
    */
   message: string;
   /**
-   * Session continuity identifier
+   * Transport-managed conversation identifier. Maps to native contextId on A2A; compatibility metadata only on MCP and not a continuation or authorization mechanism.
    */
   context_id?: string;
   /**
@@ -36348,7 +36607,7 @@ export interface TasksGetRequest {
  */
 export interface TasksGetResponse {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -36366,7 +36625,7 @@ export interface TasksGetResponse {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -36585,7 +36844,7 @@ export interface TasksListRequest {
  */
 export interface TasksListResponse {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -36603,7 +36862,7 @@ export interface TasksListResponse {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -37548,6 +37807,7 @@ export type XEntityTypes =
   | 'reporting_adjustment'
   | 'reporting_materialization'
   | 'reporting_receipt'
+  | 'reporting_consumer_status'
   | 'reporting_resource'
   | 'identity_relying_party';
 
@@ -40424,11 +40684,11 @@ export interface ContextMatchRequest {
     };
   };
   /**
-   * Pre-computed classifier outputs for the content environment. Use when the publisher wants to provide classified context without sharing content or public references. Can supplement artifact_refs (e.g., URL + pre-classified topics) or replace them entirely (e.g., ephemeral conversation turns). Raw content MUST NOT be included — only classified outputs. The publisher is the classifier boundary.
+   * Pre-computed classifier outputs for the content environment. Use when the publisher wants to provide privacy-reduced context without sharing content or public references. Can supplement artifact_refs or replace them entirely. Ephemeral content that many users encounter (a trending query, a syndicated segment) is shared content; one user's turn or query is not. For non-public content attributable to a single user or session, only the field-specific privacy-reduced outputs permitted below may be sent. Raw content MUST NOT be included. The publisher is the classifier and privacy boundary.
    */
   context_signals?: {
     /**
-     * Content topic identifiers. Use IAB Content Taxonomy 3.0 IDs (e.g., '632' for Food & Drink) when taxonomy_id is 7, or human-readable strings (e.g., 'cooking.pasta') for custom taxonomies.
+     * Content topic identifiers. Use IAB Content Taxonomy 3.0 IDs (e.g., '632' for Food & Drink) when taxonomy_id is 7, or bounded human-readable category labels (e.g., 'cooking.pasta') for custom taxonomies. For non-public content attributable to a single user or session, publishers MUST use standardized taxonomy identifiers or bounded custom category labels; custom topic strings MUST NOT reproduce distinctive verbatim phrasing and MUST NOT include PII or uniquely identifying details.
      * @maxItems 50
      */
     topics?: string[];
@@ -40446,7 +40706,7 @@ export interface ContextMatchRequest {
      */
     sentiment?: 'positive' | 'negative' | 'neutral' | 'mixed';
     /**
-     * Content keywords extracted by the publisher's classifier.
+     * Content keywords produced by the publisher's classifier. For non-public content attributable to a single user or session, keywords MUST be policy-filtered, MUST NOT reproduce distinctive verbatim phrasing, and MUST NOT include PII or uniquely identifying details. Publishers SHOULD prefer bounded category labels.
      * @maxItems 50
      */
     keywords?: string[];
@@ -40461,12 +40721,12 @@ export interface ContextMatchRequest {
      */
     content_policies?: string[];
     /**
-     * Publisher-generated natural language summary of the content for relevance judgment (e.g., 'User exploring Italian cookware options for home pasta making'). Useful for LLM-native buyers that evaluate relevance semantically. Buyers MUST treat this as untrusted publisher-generated content.
+     * Publisher-generated natural language summary of the content for relevance judgment (e.g., 'Shopping context categorized as home cookware'). For non-public content attributable to a single user or session, the summary MUST be policy-filtered, MUST NOT reproduce raw user-authored text, and MUST NOT include PII or uniquely identifying details. Useful for LLM-native buyers that evaluate relevance semantically. Buyers MUST treat this as untrusted publisher-generated content.
      * @maxLength 500
      */
     summary?: string;
     /**
-     * Content embedding as base64-encoded int8 vector. Captures semantic content beyond what topics and keywords express. Publishers declare the model used. For standardized matching, use the protocol-recommended model (nomic-embed-text-v1.5, 256 dims, int8 quantized = 256 bytes).
+     * Content embedding as base64-encoded int8 vector. Captures semantic content beyond what topics and keywords express. MUST NOT be computed directly or indirectly from non-public content authored by or attributable to a single user or session, including conversation turns, prompts, and individual search queries. MAY represent public content or a shared content environment that is not attributable to one user's activity. Publishers declare the model used. For standardized matching, use the protocol-recommended model (nomic-embed-text-v1.5, 256 dims, int8 quantized = 256 bytes).
      */
     embedding?: string;
     /**
@@ -40508,7 +40768,7 @@ export type TargetingKvs = {
  */
 export interface ContextMatchResponseRouterPublisher {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -40526,7 +40786,7 @@ export interface ContextMatchResponseRouterPublisher {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40800,7 +41060,7 @@ export interface IdentityMatchRequest {
  */
 export interface IdentityMatchResponseRouterPublisher {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   /**
@@ -40817,7 +41077,7 @@ export interface IdentityMatchResponseRouterPublisher {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40903,7 +41163,7 @@ export interface TMPXChunk {
  */
 export interface ContextMatchResponseProviderRouter {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   context?: ContextObject;
@@ -40921,7 +41181,7 @@ export interface ContextMatchResponseProviderRouter {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;
@@ -40984,7 +41244,7 @@ export interface ContextMatchResponseProviderRouter {
  */
 export interface IdentityMatchResponseProviderRouter {
   /**
-   * Session/conversation identifier for tracking related operations across multiple task invocations. Managed by the protocol layer to maintain conversational context. Distinct from `context` (per-request opaque echo, see below).
+   * Transport-managed conversation identifier. On A2A, this maps to the native Message/Task `contextId` used to associate messages with a conversation; it is not carried inside the AdCP DataPart. On MCP, a request-body `context_id`, where admitted by the selected request schema, is a compatibility-only field: servers MUST ignore it, callers MUST NOT rely on it for continuity, and it MUST NOT select session state, identity, account, authorization, task continuation, or idempotency scope. MCP continuity, if provided, comes from the transport session. Distinct from `context` (per-request opaque echo, see below) and from `task_id` (AdCP operation tracking).
    */
   context_id?: string;
   /**
@@ -41001,7 +41261,7 @@ export interface IdentityMatchResponseProviderRouter {
    */
   timestamp?: string;
   /**
-   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. From 3.1 onward, `replayed` MAY appear on responses to any request that resolved via the idempotency cache, including read tools — universal `idempotency_key` (see security.mdx §Idempotency) means the cache holds read responses too.
+   * Set to true when this response was returned from the idempotency cache rather than from a fresh execution. Set to false (or omitted) when the request was executed fresh. Buyers use this to distinguish cached replays from new executions — matters for billing reconciliation, audit logs, state-machine routing (cached state-tracking fields are historical snapshots, not current state — re-read via the resource's read endpoint), and any downstream system that assumes exactly-once event semantics. `replayed` appears only when the request actually resolved through the idempotency cache. Pure reads may ignore an optional `idempotency_key`; when a seller voluntarily caches keyed reads, those responses use the same replay indicator and full cache contract.
    */
   replayed?: boolean;
   adcp_error?: Error;

@@ -13,6 +13,8 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { listAllComplianceStoryboards } = require('../../dist/lib/testing/storyboard/index.js');
+const { VALIDATION_ONLY_TASK, normalizeValidationOnlyTasks } = require('../../dist/lib/testing/index.js');
+const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner.js');
 const { hasRequestBuilder } = require('../../dist/lib/testing/storyboard/request-builder.js');
 const { TASK_TO_METHOD } = require('../../dist/lib/testing/storyboard/task-map.js');
 const { TOOL_REQUEST_SCHEMAS } = require('../../dist/lib/utils/tool-request-schemas.js');
@@ -26,6 +28,7 @@ const storyboards = allStoryboards.filter(sb => Array.isArray(sb.phases) && sb.p
 
 // Tasks that are part of the test harness — not protocol tools
 const HARNESS_TASKS = new Set([
+  VALIDATION_ONLY_TASK,
   'comply_test_controller',
   // Synthetic tasks dispatched by the storyboard runner — no corresponding
   // AdCP tool or response schema. Raw HTTP probes and flag-accumulator steps.
@@ -134,10 +137,18 @@ describe('storyboard structural completeness', () => {
               it('has required fields', () => {
                 assert.ok(step.id, 'missing step id');
                 assert.ok(step.title, 'missing step title');
-                assert.ok(step.task, 'missing task');
+                if (step.task === '__validation_only__') {
+                  assert.ok(
+                    Array.isArray(step.validations) && step.validations.length > 0,
+                    'a validation-only step must have validations'
+                  );
+                } else {
+                  assert.ok(step.task, 'missing task');
+                }
               });
 
               it('has a request builder or sample_request', () => {
+                if (step.task === undefined) return;
                 // Synthetic runner tasks (HTTP probes, flag accumulators) build their
                 // own request; they don't need a builder or sample_request.
                 if (HARNESS_TASKS.has(step.task) || isTestKitReference(step.task)) return;
@@ -161,7 +172,7 @@ describe('response schema coverage', () => {
   for (const sb of storyboards) {
     for (const phase of sb.phases) {
       for (const step of phase.steps) {
-        allTasks.add(step.task);
+        if (typeof step.task === 'string') allTasks.add(step.task);
       }
     }
   }
@@ -178,8 +189,14 @@ describe('response schema coverage', () => {
   }
 });
 
-describe('AdCP 3.2 beta.10 request schema coverage', () => {
-  for (const task of ['get_principal', 'sync_principal', 'get_reporting_status', 'sync_reporting_receipts']) {
+describe('AdCP 3.2 request schema coverage', () => {
+  for (const task of [
+    'get_principal',
+    'sync_principal',
+    'get_reporting_status',
+    'sync_reporting_status',
+    'sync_reporting_receipts',
+  ]) {
     it(`${task} has a registered request schema`, () => {
       assert.ok(TOOL_REQUEST_SCHEMAS[task], `Task "${task}" has no request schema in TOOL_REQUEST_SCHEMAS`);
     });
@@ -191,7 +208,7 @@ describe('task execution coverage', () => {
   for (const sb of storyboards) {
     for (const phase of sb.phases) {
       for (const step of phase.steps) {
-        allTasks.add(step.task);
+        if (typeof step.task === 'string') allTasks.add(step.task);
       }
     }
   }
@@ -201,5 +218,70 @@ describe('task execution coverage', () => {
     const fallback = [...allTasks].filter(t => !(t in TASK_TO_METHOD));
     assert.ok(mapped.length > 0, 'should have at least some mapped tasks');
     assert.ok(mapped.length + fallback.length === allTasks.size);
+  });
+});
+
+describe('validation-only storyboard steps', () => {
+  it('exports the normalization contract from the public testing entrypoint', () => {
+    assert.equal(VALIDATION_ONLY_TASK, '__validation_only__');
+    assert.equal(typeof normalizeValidationOnlyTasks, 'function');
+  });
+
+  it('reports a validation-only step as an unsupported runner coverage gap without dispatching', async () => {
+    let dispatches = 0;
+    const profile = { name: 'Test', tools: [] };
+    const storyboard = {
+      id: 'validation_only_test',
+      version: '1.0.0',
+      title: 'Validation-only test',
+      category: 'test',
+      phases: [
+        {
+          id: 'interpretation',
+          title: 'Interpretation',
+          steps: [
+            {
+              id: 'interpret',
+              title: 'Interpret',
+              validations: [{ check: 'output_contains', field: 'candidates' }],
+            },
+          ],
+        },
+      ],
+    };
+    Object.freeze(storyboard.phases[0].steps[0]);
+    Object.freeze(storyboard.phases[0].steps);
+    Object.freeze(storyboard.phases[0]);
+    Object.freeze(storyboard.phases);
+    Object.freeze(storyboard);
+    const result = await runStoryboardStep('https://seller.example/mcp', storyboard, 'interpret', {
+      protocol: 'mcp',
+      _profile: profile,
+      _client: {
+        getAgentInfo: async () => profile,
+        callTool: async () => {
+          dispatches += 1;
+        },
+      },
+    });
+    assert.equal(result.task, '__validation_only__');
+    assert.equal(storyboard.phases[0].steps[0].task, undefined);
+    assert.equal(result.skipped, true);
+    assert.equal(result.skip_reason, 'fixture_unavailable');
+    assert.equal(dispatches, 0);
+
+    const fullResult = await runStoryboard('https://seller.example/mcp', storyboard, {
+      protocol: 'mcp',
+      _profile: profile,
+      _client: {
+        getAgentInfo: async () => profile,
+        callTool: async () => {
+          dispatches += 1;
+        },
+      },
+    });
+    assert.equal(fullResult.overall_passed, false);
+    assert.equal(fullResult.phases[0].steps[0].skip_reason, 'fixture_unavailable');
+    assert.equal(dispatches, 0);
   });
 });

@@ -14,6 +14,7 @@ const RESPONSE_SCHEMA_PATH = path.join(
   'schemas/cache/latest/bundled/media-buy/get-reporting-status-response.json'
 );
 const GENERATED_SCHEMAS_PATH = path.join(REPO_ROOT, 'src/lib/types/schemas.generated.ts');
+const CURRENT_RESPONSE_SCHEMA_PATH = path.join(REPO_ROOT, 'src/lib/utils/reporting-status-response.ts');
 
 const period = {
   start: '2026-08-01T00:00:00Z',
@@ -290,6 +291,70 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(cases.map(value => G
     fs.rmSync(harnessDir, { recursive: true, force: true });
   }
 }
+
+function currentResponseOutcomes(cases) {
+  const harnessDir = fs.mkdtempSync(path.join(os.tmpdir(), '.reporting-status-current-runtime-'));
+  const inputPath = path.join(harnessDir, 'cases.json');
+  const outputPath = path.join(harnessDir, 'out.json');
+  const scriptPath = path.join(harnessDir, 'harness.ts');
+  fs.writeFileSync(inputPath, JSON.stringify(cases));
+  fs.writeFileSync(
+    scriptPath,
+    `
+import { readFileSync, writeFileSync } from 'node:fs';
+import { GetReportingStatusResponseCurrentSchema } from ${JSON.stringify(CURRENT_RESPONSE_SCHEMA_PATH)};
+const cases = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf8'));
+writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(cases.map(value => GetReportingStatusResponseCurrentSchema.safeParse(value).success)));
+`
+  );
+  try {
+    const result = spawnSync('npx', ['tsx', scriptPath], { cwd: REPO_ROOT, encoding: 'utf8' });
+    assert.equal(result.status, 0, `current response harness failed:\n${result.stderr}\n${result.stdout}`);
+    return JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+  } finally {
+    fs.rmSync(harnessDir, { recursive: true, force: true });
+  }
+}
+
+test('current reporting-status guard accepts the rc.2 consumer mismatch issue', () => {
+  const mismatch = response();
+  mismatch.periods[0].issues = [
+    {
+      issue_id: 'consumer_status_mismatch_1',
+      code: 'CONSUMER_STATUS_MISMATCH',
+      severity: 'action_required',
+      responsible_party: 'seller',
+      recommended_action: 'contact_seller',
+    },
+  ];
+  assert.deepEqual(currentResponseOutcomes([mismatch]), [true]);
+});
+
+test('current reporting-status guard accepts source-timezone schedule alignment', () => {
+  const sourceTimezone = response();
+  sourceTimezone.periods[0].schedule = {
+    period_duration: 'P1D',
+    alignment: 'source_timezone',
+    period_timezone: 'America/New_York',
+    delivery_sla: 'PT1H',
+  };
+  assert.deepEqual(currentResponseOutcomes([sourceTimezone]), [true]);
+});
+
+test('current reporting-status guard accepts direct-Core obligations without optional delivery counters', () => {
+  const directCore = response();
+  for (const field of [
+    'destination_ref',
+    'materialization_count',
+    'successful_materialization_count',
+    'receipt_count',
+    'accepted_receipt_count',
+  ]) {
+    delete directCore.periods[0][field];
+  }
+  assert.deepEqual(generatedOutcomes([directCore]), [true]);
+  assert.deepEqual(currentResponseOutcomes([directCore]), [true]);
+});
 
 test('generated reporting-status Zod matches authoritative required and closed evidence boundaries for every view', async () => {
   const valid = response();

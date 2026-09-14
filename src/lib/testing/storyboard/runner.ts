@@ -84,7 +84,7 @@ import {
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { resolveDeclaredTestKit, selectProbeTask, validateTestKit } from './test-kit';
-import { validateStoryboardShape } from './loader';
+import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
@@ -1301,6 +1301,7 @@ async function runStoryboardBody(
   options: StoryboardRunOptions
 ): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
+  storyboard = normalizeValidationOnlyTasks(storyboard);
   // Enforce authoring-time branch_set invariants regardless of how the
   // storyboard reached us. YAML callers already ran these rules in
   // parseStoryboard; programmatic callers (hand-built Storyboard objects or
@@ -3445,6 +3446,14 @@ async function executeStoryboardPass(
         continue;
       }
 
+      if (step.task === VALIDATION_ONLY_TASK) {
+        const result = validationOnlyCoverageGap(step, phase.id, context, allSteps, runnerVars, storyboard.id);
+        stepResults.push(result);
+        priorStepResults.set(step.id, result);
+        skippedCount++;
+        continue;
+      }
+
       let assignment;
       try {
         assignment = dispatch.nextFor(step);
@@ -4430,6 +4439,7 @@ export async function runStoryboardStep(
   options = applyReusableProfileOptions(options);
   return withMCPConnectionScope(
     async () => {
+      storyboard = normalizeValidationOnlyTasks(storyboard);
       validateStoryboardShape(storyboard);
       options = applyStoryboardVersionOptions(storyboard, options);
       options = applyFunctionalRequestSigning(options, {
@@ -4686,6 +4696,10 @@ async function executeStep(
     responseDerivedNotApplicableContextKeys: new Map(),
     capabilityUnavailableContextKeys: new Set(),
   };
+
+  if (step.task === VALIDATION_ONLY_TASK) {
+    return validationOnlyCoverageGap(step, phaseId, context, allSteps, runState.runnerVars);
+  }
 
   // Recognize the dedicated TMP publisher-auth probes before generic auth
   // overrides, missing-tool checks, or MCP/A2A routing.
@@ -6098,6 +6112,34 @@ async function executeStep(
     extraction: extractionFromTaskResult(taskResult),
     ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
     ...(hints.length > 0 && { hints }),
+  };
+}
+
+function validationOnlyCoverageGap(
+  step: StoryboardStep,
+  phaseId: string,
+  context: StoryboardContext,
+  allSteps: FlatStep[],
+  runnerVars: RunnerVariables | undefined,
+  storyboardId?: string
+): StoryboardStepResult {
+  const detail =
+    'Validation-only agent output requires an orchestrator output adapter and is not dispatched as an AdCP tool.';
+  return {
+    ...(storyboardId ? { storyboard_id: storyboardId } : {}),
+    step_id: step.id,
+    phase_id: phaseId,
+    title: step.title,
+    task: step.task,
+    passed: true,
+    skipped: true,
+    skip_reason: 'fixture_unavailable',
+    skip: buildSkip('fixture_unavailable', detail),
+    duration_ms: 0,
+    validations: [],
+    context,
+    next: getNextStepPreview(step.id, allSteps, context, runnerVars),
+    extraction: { path: 'none', note: detail },
   };
 }
 

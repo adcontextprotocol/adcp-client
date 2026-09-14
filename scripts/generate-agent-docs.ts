@@ -72,6 +72,10 @@ const TOOL_GOTCHAS: Record<string, string[]> = {
     'Use the typed factories from `@adcp/sdk`: `displayRender({ role, dimensions })` for display/video; `parameterizedRender({ role })` for audio and template formats (auto-injects `parameters_from_format_id: true`).',
     'Audio formats (`type: "audio"`) have no width/height — declare `renders: [parameterizedRender({ role: "primary" })]` and encode duration/codec in `format_id.parameters` (declared via `accepts_parameters`).',
   ],
+  sync_reporting_status: [
+    'A `completed` envelope does not mean every item succeeded: inspect each per-item `result`. For a schema-valid envelope, results map one-for-one to submitted statuses in request order.',
+    '`recorded_at` is seller-authored and response-only. Never send it in `statuses[]`.',
+  ],
 };
 
 // GitHub Pages base URL for published docs
@@ -253,6 +257,10 @@ function fieldType(prop: any, rootSchema?: any): string {
     const parts = prop.$ref.split('#')[0].split('/');
     const filename = parts[parts.length - 1].replace('.json', '');
     return kebabToTitle(filename);
+  }
+  if (Array.isArray(prop.allOf)) {
+    const structuralType = prop.allOf.map((value: any) => fieldType(value, rootSchema)).find(Boolean);
+    if (structuralType) return structuralType;
   }
   if (prop.oneOf || prop.anyOf) {
     const variants = prop.oneOf || prop.anyOf;
@@ -1199,6 +1207,9 @@ function generateLlmsTxt(
   ln(`| \`PricingOption\` | Price model (CPM, vCPM, CPC, CPCV, CPV, CPP, CPA, FlatRate, Time) |`);
   ln(`| \`GovernanceConfig\` | Buyer-side governance middleware config |`);
   ln(
+    `| \`ReportingConsumerStatus\` | Consumer acknowledgement for one config/report/period; see the four-state evidence matrix below |`
+  );
+  ln(
     `| \`EstablishedProposalStore\` | Durable 3.0/3.1 proposal snapshots, atomic mutation fences, seven-day completion proofs, pruning, and submitted-task reconciliation |`
   );
   ln(
@@ -1212,6 +1223,10 @@ function generateLlmsTxt(
   );
   ln(
     `| \`PostgresWebhookRuntime\` | Opinionated PostgreSQL webhook emitter, ready-to-wire server config, durable stores, migrations, probes, and bounded recovery |`
+  );
+  ln();
+  ln(
+    `\`ReportingConsumerStatus\` always carries \`reporting_status_id\`, delivery configuration identity, report definition, half-open period, \`consumer_status\`, and \`status_as_of\`. \`received\` requires obligation ID, revision ID, and observed revision SHA-256; \`obligation_missing\` forbids all three; \`revision_missing\` requires only obligation ID; \`unreadable\` requires obligation ID, revision ID, and \`failure_code\`. Snapshot ID/time are paired. Caller requests must omit seller-authored \`recorded_at\`.`
   );
   ln();
   ln(
@@ -1899,6 +1914,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
     ['ContentStandards', 'Brand safety config — has standards_id, name, scope, policy entries, calibration exemplars'],
     ['Catalog', 'Data feed — typed (offering, product, store, etc.) with items, URL, or inline data'],
     ['Offering', 'Promotable item with asset groups — used in sponsored intelligence and catalog creatives'],
+    [
+      'Reporting Consumer Status',
+      'Consumer acknowledgement for one config/report/half-open period — received requires obligation, revision, and observed SHA-256; obligation_missing forbids them; revision_missing requires obligation only; unreadable requires obligation, revision, and failure_code; snapshot ID/time are paired; recorded_at is response-only',
+    ],
   ];
 
   ln(`| Type | Key Fields |`);
@@ -2015,15 +2034,16 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`await producer.planObligations();`);
   ln(`await producer.runWorker();`);
   ln(`const getReportingStatus = createReportingStatusHandler(store);`);
+  ln(`const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads`);
   ln();
-  ln(`// AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.`);
+  ln(`// AdCP 3.2.0-rc.2: identity comes from authenticated transport.`);
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);
   ln('```');
   ln();
   ln(
-    `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
+    `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
   );
   ln();
 

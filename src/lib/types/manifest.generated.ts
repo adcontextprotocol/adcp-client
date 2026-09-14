@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.0-rc.1/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.0-rc.2/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.0-rc.1.
+ * Manifest-derived constants for AdCP 3.2.0-rc.2.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.0-rc.1/manifest.json` (adcp_version: 3.2.0-rc.1, generated_at:
- * 2026-09-05T04:09:41.894Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.0-rc.2/manifest.json` (adcp_version: 3.2.0-rc.2, generated_at:
+ * 2026-09-13T18:15:31.349Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -724,6 +724,7 @@ export const MEDIA_BUY_TOOLS_FROM_MANIFEST = [
   "sync_catalogs",
   "sync_event_sources",
   "sync_reporting_receipts",
+  "sync_reporting_status",
   "update_media_buy",
 ] as const;
 

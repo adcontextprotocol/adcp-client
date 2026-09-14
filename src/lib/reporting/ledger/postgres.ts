@@ -1,15 +1,23 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
+import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { canonicalJsonV1 } from '../source';
+import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
 import {
   evaluateReportingLedgerCoverageV1,
   reportingLedgerEffectivePeriod,
   reportingLedgerScopeClosed,
 } from './coverage';
 import { projectReportingObligationHealthV1 } from './health';
-import { canonicalReportingInstant, compareReportingInstants } from './instant';
-import { ReportingLedgerSnapshotUnavailableError } from './types';
+import { compareReportingInstants } from './instant';
+import {
+  REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES,
+  REPORTING_CONSUMER_STATUS_MAX_BYTES,
+  ReportingLedgerSnapshotUnavailableError,
+} from './types';
 import type {
   ReportingLedgerConfigurationV1,
   ReportingLedgerAdjustmentV1,
@@ -29,10 +37,15 @@ import type {
   ReportingConsumerStatusBatchInputV1,
   ReportingConsumerStatusBatchResultV1,
   ReportingConsumerStatusReplayInputV1,
-  ReportingLedgerConsumerStatusInputV1,
   ReportingLedgerRevisionMetadataV1,
 } from './types';
 import { ReportingConsumerStatusConflictError } from './types';
+import {
+  normalizeReportingConsumerStatusIdsV1,
+  reportingConsumerStatusChainKeyFromIdentityV1,
+  reportingConsumerStatusChainKeyV1,
+  reportingConsumerStatusFingerprintV1,
+} from './consumer-status-identity';
 
 type QueryResultRow = Record<string, unknown>;
 interface ReportingPgResult<Row extends QueryResultRow> {
@@ -264,12 +277,21 @@ const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
 const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
 const MAX_CONSUMER_STATUS_BATCHES = 10_000;
 const MAX_CONSUMER_STATUS_STATEMENTS = 100_000;
-const MAX_CONSUMER_STATUS_BYTES = 64 * 1024;
 const SNAPSHOT_RETENTION_MS = 15 * 60 * 1000;
 const CHECKPOINT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type JsonRow<T> = QueryResultRow & { data: T };
+type StoredConsumerStatusBatchResult = {
+  kind: 'recorded' | 'unchanged' | 'failed';
+  id: string;
+  errorCode?: string;
+  recovery?: ErrorRecovery;
+  retryAfterSeconds?: number;
+  safeMessage?: string;
+  errorField?: string;
+  errorKeyword?: string;
+};
 
 export interface PostgresReportingLedgerStoreOptions {
   /** Assert that the supplied PostgreSQL database/schema is isolated to this deployment. */
@@ -427,10 +449,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     );
   }
 
-  async getObligation(id: string): Promise<ReportingLedgerObligationV1 | null> {
+  async getObligation(id: string, account_id?: string): Promise<ReportingLedgerObligationV1 | null> {
     return this.one<ReportingLedgerObligationV1>(
-      'SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1',
-      [id]
+      `SELECT data FROM adcp_reporting_obligations
+        WHERE obligation_id = $1 AND ($2::text IS NULL OR account_id = $2)`,
+      [id, account_id ?? null]
     );
   }
 
@@ -764,7 +787,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           kind: 'recorded' | 'unchanged' | 'failed';
           id: string;
           errorCode?: string;
+          recovery?: ErrorRecovery;
+          retryAfterSeconds?: number;
           safeMessage?: string;
+          errorField?: string;
+          errorKeyword?: string;
         }>;
       }
     >(
@@ -783,7 +810,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           inserted: false,
           reporting_status_id: result.id,
           errorCode: result.errorCode ?? 'VALIDATION_ERROR',
-          safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+          recovery: result.recovery,
+          retryAfterSeconds: result.retryAfterSeconds,
+          safeMessage: boundedConsumerStatusSafeMessage(result.safeMessage ?? 'Reporting consumer status was rejected'),
+          ...boundedConsumerStatusErrorField(result.errorField),
+          ...boundedConsumerStatusErrorKeyword(result.errorKeyword),
         });
         continue;
       }
@@ -803,14 +834,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   ): Promise<ReportingConsumerStatusBatchResultV1[]> {
     return this.transaction(
       async client => {
-        type StoredResult = {
-          kind: 'recorded' | 'unchanged' | 'failed';
-          id: string;
-          errorCode?: string;
-          safeMessage?: string;
-        };
         const priorBatch = await client.query<
-          QueryResultRow & { request_fingerprint: string; results: StoredResult[] }
+          QueryResultRow & { request_fingerprint: string; results: StoredConsumerStatusBatchResult[] }
         >(
           `SELECT request_fingerprint, results FROM adcp_reporting_consumer_status_batches
            WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
@@ -827,7 +852,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                 inserted: false,
                 reporting_status_id: result.id,
                 errorCode: result.errorCode ?? 'VALIDATION_ERROR',
-                safeMessage: result.safeMessage ?? 'Reporting consumer status was rejected',
+                recovery: result.recovery,
+                retryAfterSeconds: result.retryAfterSeconds,
+                safeMessage: boundedConsumerStatusSafeMessage(
+                  result.safeMessage ?? 'Reporting consumer status was rejected'
+                ),
+                ...boundedConsumerStatusErrorField(result.errorField),
+                ...boundedConsumerStatusErrorKeyword(result.errorKeyword),
               });
               continue;
             }
@@ -845,11 +876,12 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           return replay;
         }
 
+        const normalizedIds = normalizeReportingConsumerStatusIdsV1(input.entries);
         const chainKeys = input.entries.map(entry =>
           'status' in entry
-            ? consumerStatusChainKey(entry.status)
+            ? reportingConsumerStatusChainKeyV1(entry.status)
             : entry.chainIdentity
-              ? consumerStatusChainKeyFromIdentity(entry.chainIdentity)
+              ? reportingConsumerStatusChainKeyFromIdentityV1(entry.chainIdentity)
               : null
         );
         const duplicateChains = new Set(
@@ -859,8 +891,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           )
         );
         const duplicateStatusIds = new Set(
-          input.entries
-            .map(value => ('status' in value ? value.status.reporting_status_id : value.reporting_status_id))
+          normalizedIds.values
+            .filter((_, index) => !normalizedIds.invalidIndexes.has(index))
             .filter((value, index, values) => values.indexOf(value) !== index || values.lastIndexOf(value) !== index)
         );
         const capacity = await client.query<QueryResultRow & { batches: string; statuses: string }>(
@@ -874,19 +906,59 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const batchCapacityExhausted = Number(capacity.rows[0]?.batches ?? 0) >= MAX_CONSUMER_STATUS_BATCHES;
         let remainingStatements = MAX_CONSUMER_STATUS_STATEMENTS - Number(capacity.rows[0]?.statuses ?? 0);
         const results: ReportingConsumerStatusBatchResultV1[] = [];
-        const storedResults: StoredResult[] = [];
-        const fail = (statusId: string, errorCode: string, safeMessage: string) => {
-          results.push({ inserted: false, reporting_status_id: statusId, errorCode, safeMessage });
-          storedResults.push({ kind: 'failed', id: statusId, errorCode, safeMessage });
+        const storedResults: StoredConsumerStatusBatchResult[] = [];
+        const fail = (
+          statusId: string,
+          errorCode: string,
+          safeMessage: string,
+          errorField?: string,
+          recovery: ErrorRecovery = getErrorRecovery(errorCode) ?? DEFAULT_UNKNOWN_ERROR_RECOVERY,
+          errorKeyword?: string,
+          retryAfterSeconds?: number
+        ) => {
+          const boundedErrorField = boundedConsumerStatusErrorField(errorField);
+          const boundedErrorKeyword = boundedConsumerStatusErrorKeyword(errorKeyword);
+          const boundedSafeMessage = boundedConsumerStatusSafeMessage(safeMessage);
+          results.push({
+            inserted: false,
+            reporting_status_id: statusId,
+            errorCode,
+            recovery,
+            retryAfterSeconds,
+            safeMessage: boundedSafeMessage,
+            ...boundedErrorField,
+            ...boundedErrorKeyword,
+          });
+          storedResults.push({
+            kind: 'failed',
+            id: statusId,
+            errorCode,
+            recovery,
+            retryAfterSeconds,
+            safeMessage: boundedSafeMessage,
+            ...boundedErrorField,
+            ...boundedErrorKeyword,
+          });
         };
         for (const [index, entry] of input.entries.entries()) {
-          const statusId = 'status' in entry ? entry.status.reporting_status_id : entry.reporting_status_id;
+          const statusId = normalizedIds.values[index]!;
+          if (normalizedIds.invalidIndexes.has(index)) {
+            fail(statusId, 'VALIDATION_ERROR', 'reporting_status_id is invalid', undefined, 'correctable', 'pattern');
+            continue;
+          }
           if (duplicateStatusIds.has(statusId)) {
             fail(statusId, 'VALIDATION_ERROR', 'reporting_status_id must be unique in a batch');
             continue;
           }
           if (!('status' in entry)) {
-            fail(statusId, 'VALIDATION_ERROR', entry.validationError);
+            fail(
+              statusId,
+              'VALIDATION_ERROR',
+              entry.validationError,
+              entry.validationField,
+              'correctable',
+              entry.validationKeyword
+            );
             continue;
           }
           const status = entry.status;
@@ -898,7 +970,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             fail(status.reporting_status_id, 'PERMISSION_DENIED', 'Reporting status scope is unavailable');
             continue;
           }
-          const fingerprint = consumerStatusFingerprint(status);
+          const fingerprint = reportingConsumerStatusFingerprintV1(status);
           const existing = await client.query<
             JsonRow<ReportingLedgerConsumerStatementV1> & {
               semantic_fingerprint: string;
@@ -921,15 +993,34 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           }
           const prevalidation = entry.validationError;
           if (prevalidation) {
-            fail(status.reporting_status_id, 'VALIDATION_ERROR', prevalidation);
+            fail(
+              status.reporting_status_id,
+              'VALIDATION_ERROR',
+              prevalidation,
+              entry.validationField,
+              'correctable',
+              entry.validationKeyword
+            );
             continue;
           }
-          if (Buffer.byteLength(JSON.stringify(status), 'utf8') > MAX_CONSUMER_STATUS_BYTES) {
-            fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status exceeds 64 KiB');
+          if (Buffer.byteLength(JSON.stringify(status), 'utf8') > REPORTING_CONSUMER_STATUS_MAX_BYTES) {
+            fail(
+              status.reporting_status_id,
+              'REPORTING_STATUS_TOO_LARGE',
+              'Reporting consumer status exceeds 64 KiB',
+              undefined,
+              'correctable'
+            );
             continue;
           }
           if (batchCapacityExhausted || remainingStatements <= 0) {
-            fail(status.reporting_status_id, 'RESOURCE_EXHAUSTED', 'Reporting consumer status capacity is exhausted');
+            fail(
+              status.reporting_status_id,
+              'REPORTING_STATUS_CAPACITY_EXHAUSTED',
+              'Reporting consumer status capacity is exhausted',
+              undefined,
+              'terminal'
+            );
             continue;
           }
           const chainKey = chainKeys[index]!;
@@ -992,6 +1083,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           storedResults.push({ kind: 'recorded', id: status.reporting_status_id });
           remainingStatements -= 1;
         }
+        boundStoredConsumerStatusResults(storedResults, results);
         if (!batchCapacityExhausted) {
           await client.query(
             `INSERT INTO adcp_reporting_consumer_status_batches
@@ -1003,9 +1095,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
               input.idempotencyKey,
               input.requestFingerprint,
               JSON.stringify(
-                input.entries.map(value =>
-                  'status' in value ? value.status.reporting_status_id : value.reporting_status_id
-                )
+                results.map(value => ('value' in value ? value.value.reporting_status_id : value.reporting_status_id))
               ),
               JSON.stringify(storedResults),
             ]
@@ -1359,7 +1449,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           );
           const projectedStatusesByChain = new Map<string, ReportingLedgerConsumerStatementV1[]>();
           for (const status of consumerStatusProjection) {
-            const key = consumerStatusChainKey(status);
+            const key = reportingConsumerStatusChainKeyV1(status);
             const statuses = projectedStatusesByChain.get(key) ?? [];
             statuses.push(status);
             projectedStatusesByChain.set(key, statuses);
@@ -1368,7 +1458,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           revisions = revisions.filter(value => accepted.has(value.reporting_obligation_id));
           adjustments = adjustments.filter(value => accepted.has(value.reporting_obligation_id));
           consumerStatuses = consumerStatuses.filter(value => {
-            const key = consumerStatusChainKey(value);
+            const key = reportingConsumerStatusChainKeyV1(value);
             const matchingObligation = obligationsByConsumerStatusChain.get(key);
             if (matchingObligation) return accepted.has(matchingObligation.reporting_obligation_id);
             const leaf = currentConsumerStatus(projectedStatusesByChain.get(key) ?? []);
@@ -2023,19 +2113,8 @@ function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
 }
 
-function consumerStatusChainKey(status: ReportingLedgerConsumerStatusInputV1): string {
-  return consumerStatusChainKeyFromIdentity({
-    delivery_config_id: status.delivery_config_id,
-    delivery_config_version: status.delivery_config_version,
-    report_definition_id: status.report_definition_id,
-    periodStart: status.period.start,
-    periodEnd: status.period.end,
-    sourceTimezone: status.period.source_timezone,
-  });
-}
-
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {
-  return consumerStatusChainKeyFromIdentity({
+  return reportingConsumerStatusChainKeyFromIdentityV1({
     delivery_config_id: obligation.delivery_config_id,
     delivery_config_version: obligation.delivery_config_version,
     report_definition_id: obligation.report_definition_id,
@@ -2045,33 +2124,66 @@ function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligati
   });
 }
 
-function consumerStatusChainKeyFromIdentity(value: {
-  delivery_config_id: string;
-  delivery_config_version: number;
-  report_definition_id: string;
-  periodStart: string;
-  periodEnd: string;
-  sourceTimezone: string;
-}): string {
-  return digest({
-    delivery_config_id: value.delivery_config_id,
-    delivery_config_version: value.delivery_config_version,
-    report_definition_id: value.report_definition_id,
-    period: {
-      start: canonicalReportingInstant(value.periodStart),
-      end: canonicalReportingInstant(value.periodEnd),
-      source_timezone: value.sourceTimezone,
-    },
-  });
+function boundedConsumerStatusErrorField(errorField?: string): { errorField?: string } {
+  return errorField &&
+    !errorField.includes('\u0000') &&
+    isWellFormedUnicodeString(errorField) &&
+    Buffer.byteLength(errorField, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES
+    ? { errorField }
+    : {};
 }
 
-function consumerStatusFingerprint(
-  status: ReportingLedgerConsumerStatusInputV1 | ReportingLedgerConsumerStatementV1
-): string {
-  const semanticValue = Object.fromEntries(
-    Object.entries(status).filter(([key]) => !['account_id', 'consumerId', 'recorded_at'].includes(key))
-  );
-  return digest(JSON.parse(JSON.stringify(semanticValue)) as Record<string, unknown>);
+function boundedConsumerStatusErrorKeyword(errorKeyword?: string): { errorKeyword?: string } {
+  return errorKeyword && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(errorKeyword) ? { errorKeyword } : {};
+}
+
+function boundedConsumerStatusSafeMessage(safeMessage: string): string {
+  const wellFormed = Buffer.from(safeMessage, 'utf8')
+    .toString('utf8')
+    .replace(/\u0000/g, '\ufffd');
+  if (Buffer.byteLength(wellFormed, 'utf8') <= REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) {
+    return wellFormed || 'Reporting consumer status was rejected';
+  }
+  let bounded = '';
+  let bytes = 0;
+  for (const character of wellFormed) {
+    const characterBytes = Buffer.byteLength(character, 'utf8');
+    if (bytes + characterBytes > REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES) break;
+    bounded += character;
+    bytes += characterBytes;
+  }
+  return bounded || 'Reporting consumer status was rejected';
+}
+
+function storedResultsJsonBytes(results: unknown[]): number {
+  return Buffer.byteLength(JSON.stringify(results), 'utf8');
+}
+
+function boundStoredConsumerStatusResults(
+  storedResults: StoredConsumerStatusBatchResult[],
+  results: ReportingConsumerStatusBatchResultV1[]
+): void {
+  if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
+  for (let index = storedResults.length - 1; index >= 0; index -= 1) {
+    const stored = storedResults[index];
+    const result = results[index];
+    if (stored?.errorField !== undefined) {
+      delete stored.errorField;
+      if (result && !('value' in result)) delete result.errorField;
+      if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
+    }
+  }
+  const fallback = 'Reporting consumer status was rejected';
+  for (let index = storedResults.length - 1; index >= 0; index -= 1) {
+    const stored = storedResults[index];
+    const result = results[index];
+    if (stored?.kind === 'failed' && stored.safeMessage !== fallback) {
+      stored.safeMessage = fallback;
+      if (result && !('value' in result)) result.safeMessage = fallback;
+      if (storedResultsJsonBytes(storedResults) <= REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES) return;
+    }
+  }
+  throw new RangeError('Reporting consumer status replay metadata exceeds 64 KiB');
 }
 
 function checkpointScopeFingerprint(query: ReportingLedgerSnapshotQueryV1): string {

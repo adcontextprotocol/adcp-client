@@ -103,10 +103,13 @@ export type {
 export type {
   GetReportingStatusRequest,
   GetReportingStatusResponse,
+  SyncReportingStatusRequest,
+  SyncReportingStatusResponse,
   SyncReportingReceiptsRequest,
   SyncReportingReceiptsResponse,
   ReportingCanonicalContentDigest,
   ReportingAdjustment,
+  ReportingConsumerStatus,
   ReportingControlTotal,
   ReportingMaterialization,
   ReportingObligation,

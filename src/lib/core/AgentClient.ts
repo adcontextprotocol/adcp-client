@@ -68,6 +68,8 @@ import type {
   GetMediaBuyDeliveryResponse,
   GetReportingStatusRequest,
   GetReportingStatusResponse,
+  SyncReportingStatusRequest,
+  SyncReportingStatusResponse,
   SyncReportingReceiptsRequest,
   SyncReportingReceiptsResponse,
   GetCreativeDeliveryRequest,
@@ -217,6 +219,7 @@ export type TaskResponseTypeMap = {
   get_media_buys: CanonicalCreativeResponse<GetMediaBuysResponse>;
   get_media_buy_delivery: CanonicalCreativeResponse<GetMediaBuyDeliveryResponse>;
   get_reporting_status: GetReportingStatusResponse;
+  sync_reporting_status: SyncReportingStatusResponse;
   sync_reporting_receipts: SyncReportingReceiptsResponse;
   get_creative_delivery: CanonicalCreativeResponse<GetCreativeDeliveryResponse>;
   provide_performance_feedback: ProvidePerformanceFeedbackResponse;
@@ -269,6 +272,7 @@ export type TaskRequestTypeMap = {
   get_media_buys: GetMediaBuysRequest;
   get_media_buy_delivery: GetMediaBuyDeliveryRequest;
   get_reporting_status: GetReportingStatusRequest;
+  sync_reporting_status: MutatingRequestInput<SyncReportingStatusRequest>;
   sync_reporting_receipts: MutatingRequestInput<SyncReportingReceiptsRequest>;
   get_creative_delivery: GetCreativeDeliveryRequest;
   provide_performance_feedback: MutatingRequestInput<ProvidePerformanceFeedbackRequest>;

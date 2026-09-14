@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-06T23:28:20.345Z
+// Generated at: 2026-09-14T03:05:58.042Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -387,7 +387,7 @@ export const SortMetricSchema = z.union([z.literal("impressions"), z.literal("sp
 
 export const SpecialCategorySchema = z.union([z.literal("awards"), z.literal("championship"), z.literal("concert"), z.literal("conference"), z.literal("election"), z.literal("festival"), z.literal("gala"), z.literal("holiday"), z.literal("premiere"), z.literal("product_launch"), z.literal("reunion"), z.literal("tribute")]);
 
-export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("creative-transformers"), z.literal("governance-aware-seller"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-dooh"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-social"), z.literal("signal-marketplace"), z.literal("signal-owned"), z.literal("signed-requests"), z.literal("sponsored-intelligence")]);
+export const AdCPSpecialismSchema = z.union([z.literal("audience-sync"), z.literal("brand-rights"), z.literal("buyer-activation"), z.literal("buyer-discovery"), z.literal("buyer-monitoring"), z.literal("buyer-negotiation"), z.literal("buyer-recovery"), z.literal("collection-lists"), z.literal("content-standards"), z.literal("creative-ad-server"), z.literal("creative-generative"), z.literal("creative-template"), z.literal("creative-transformers"), z.literal("governance-aware-seller"), z.literal("governance-delivery-monitor"), z.literal("governance-spend-authority"), z.literal("property-lists"), z.literal("sales-broadcast-tv"), z.literal("sales-catalog-driven"), z.literal("sales-dooh"), z.literal("sales-guaranteed"), z.literal("sales-non-guaranteed"), z.literal("sales-proposal-mode"), z.literal("sales-social"), z.literal("signal-marketplace"), z.literal("orchestrator-multi-agent"), z.literal("signal-owned"), z.literal("signed-requests"), z.literal("sponsored-intelligence")]);
 
 export const SponsoredPlacementTypeSchema = z.union([z.literal("sponsored_search"), z.literal("sponsored_display"), z.literal("sponsored_native")]);
 
@@ -395,7 +395,7 @@ export const TalentRoleSchema = z.union([z.literal("host"), z.literal("guest"), 
 
 export const TaskStatusSchema = z.union([z.literal("submitted"), z.literal("working"), z.literal("input-required"), z.literal("completed"), z.literal("canceled"), z.literal("failed"), z.literal("rejected"), z.literal("auth-required"), z.literal("unknown")]);
 
-export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs"), z.literal("sync_principal"), z.literal("get_principal"), z.literal("sync_reporting_receipts")]);
+export const TaskTypeSchema = z.union([z.literal("create_media_buy"), z.literal("update_media_buy"), z.literal("buy_products"), z.literal("accept_proposal"), z.literal("control_media_buy"), z.literal("media_buy_delivery"), z.literal("sync_creatives"), z.literal("build_creative"), z.literal("preview_creative"), z.literal("activate_signal"), z.literal("get_products"), z.literal("request_proposals"), z.literal("refine_proposals"), z.literal("decline_proposals"), z.literal("get_signals"), z.literal("create_property_list"), z.literal("update_property_list"), z.literal("get_property_list"), z.literal("list_property_lists"), z.literal("delete_property_list"), z.literal("sync_accounts"), z.literal("get_account_financials"), z.literal("get_creative_delivery"), z.literal("sync_event_sources"), z.literal("sync_audiences"), z.literal("sync_catalogs"), z.literal("log_event"), z.literal("get_brand_identity"), z.literal("search_brands"), z.literal("get_rights"), z.literal("acquire_rights"), z.literal("update_rights"), z.literal("sync_agent_notification_configs"), z.literal("sync_principal"), z.literal("get_principal"), z.literal("sync_reporting_status"), z.literal("sync_reporting_receipts")]);
 
 export const TrackerExecutionActorSchema = z.union([z.literal("seller"), z.literal("request_executor")]);
 
@@ -3017,12 +3017,13 @@ export const ReportingCoverageSchema = z.object({
 
 export const ReportingStatusIssueSchema = z.object({
     issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
-    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE"), z.literal("RECEIPT_REQUIRED"), z.literal("RECEIPT_REJECTED"), z.literal("ADJUSTMENT_RECEIPT_REQUIRED"), z.literal("ADJUSTMENT_RECEIPT_REJECTED")]),
+    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE"), z.literal("RECEIPT_REQUIRED"), z.literal("RECEIPT_REJECTED"), z.literal("ADJUSTMENT_RECEIPT_REQUIRED"), z.literal("ADJUSTMENT_RECEIPT_REJECTED"), z.literal("CONSUMER_STATUS_MISMATCH")]),
     severity: ReportingStatusSeveritySchema,
     responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
     recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
     message: z.string().max(500).optional(),
     reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
     delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")).optional(),
     delivery_config_version: z.number().int().gte(1).optional(),
     feed_purpose: ReportingFeedPurposeSchema.optional(),
@@ -3944,6 +3945,15 @@ export const CanonicalMetricQualifierSchema = z.object({
     attribution_window: DurationSchema.optional(),
     lift_dimension: LiftDimensionSchema.optional()
 }).strict();
+
+export const ForecastRateRangeSchema = ForecastRangeSchema.superRefine((value, ctx) => {
+    // forecast rate JSON Schema parity
+    for (const field of ["low", "mid", "high"] as const) {
+        if (value[field] !== undefined && value[field] > 1) {
+            ctx.addIssue({ code: "custom", path: [field], message: "forecast rate values must not exceed 1" });
+        }
+    }
+});
 
 export const CanonicalReportingCapabilitiesSchema = z.object({
     available_reporting_frequencies: z.array(ReportingFrequencySchema),
@@ -6437,6 +6447,8 @@ export const ProductChangeMapSchema = z.record(z.string(), z.union([z.literal("i
 
 export const BrandReference3Schema = BrandReferenceSchema;
 
+export const GeoProximitySchema = z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]));
+
 export const ReferenceRendererSchema = z.object({
     runtime: z.literal("browser-esm"),
     package: z.string().regex(/^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/),
@@ -6625,6 +6637,90 @@ export const AdditionalGoldenVectorSchema = z.object({
     canonical_utf8_base64: z.string().min(1),
     sha256: z.string().regex(/^[A-Fa-f0-9]{64}$/)
 }).passthrough();
+
+export const ReportingConsumerStatusSchema = (() => {
+          const objectSchema = z.object({}).passthrough().merge(z.object({
+    reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")),
+    supersedes_reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")),
+    delivery_config_version: z.number().int().gte(1),
+    report_definition_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    period: z.object({
+        start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        source_timezone: z.string().min(1)
+    }).passthrough(),
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    observed_revision_content_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
+    consumer_status: z.union([z.literal("received"), z.literal("obligation_missing"), z.literal("revision_missing"), z.literal("unreadable")]),
+    status_as_of: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    failure_code: z.union([z.literal("access_denied"), z.literal("resource_not_found"), z.literal("integrity_mismatch"), z.literal("reader_incompatible"), z.literal("transport_failed")]).optional(),
+    consumer_commit_ref: z.string().min(1).max(512).regex(new RegExp("^[A-Za-z0-9_.:-]{1,512}$")).optional(),
+    seller_ledger_snapshot_id: z.string().min(1).max(255).optional(),
+    seller_ledger_as_of: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    recorded_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).passthrough());
+          const exactSchema = objectSchema.superRefine((value, ctx) => {
+      // reporting consumer status rc.2 parity
+      const require = (field: string) => {
+          if ((value as Record<string, unknown>)[field] === undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is required" });
+          }
+      };
+      const forbid = (field: string) => {
+          if ((value as Record<string, unknown>)[field] !== undefined) {
+              ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
+          }
+      };
+      const allowed = new Set([
+          "reporting_status_id", "supersedes_reporting_status_id", "delivery_config_id",
+          "delivery_config_version", "report_definition_id", "period", "reporting_obligation_id",
+          "reporting_revision_id", "observed_revision_content_sha256", "consumer_status",
+          "status_as_of", "failure_code", "consumer_commit_ref", "seller_ledger_snapshot_id",
+          "seller_ledger_as_of", "recorded_at"
+      ]);
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+      const period = (value as Record<string, unknown>).period;
+      if (period && typeof period === "object" && !Array.isArray(period)) {
+          for (const field of Object.keys(period)) {
+              if (!["start", "end", "source_timezone"].includes(field)) {
+                  ctx.addIssue({ code: "custom", path: ["period", field], message: "Unrecognized key" });
+              }
+          }
+      }
+      if (value.consumer_status === "received") {
+          require("reporting_obligation_id");
+          require("reporting_revision_id");
+          require("observed_revision_content_sha256");
+          forbid("failure_code");
+      } else if (value.consumer_status === "obligation_missing") {
+          ["reporting_obligation_id", "reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
+      } else if (value.consumer_status === "revision_missing") {
+          require("reporting_obligation_id");
+          ["reporting_revision_id", "observed_revision_content_sha256", "failure_code"].forEach(forbid);
+      } else if (value.consumer_status === "unreadable") {
+          require("reporting_obligation_id");
+          require("reporting_revision_id");
+          require("failure_code");
+          forbid("observed_revision_content_sha256");
+      }
+      if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
+          ctx.addIssue({ code: "custom", path: ["seller_ledger_snapshot_id"], message: "snapshot identity and time must be paired" });
+      }
+  });
+          return Object.assign(exactSchema, {
+              // Zod rejects pick/omit on refined objects. Preserve that loud
+              // failure instead of silently deriving a schema that drops the
+              // published cross-field constraints.
+              pick: exactSchema.pick.bind(exactSchema),
+              omit: exactSchema.omit.bind(exactSchema),
+              extend: exactSchema.extend.bind(exactSchema),
+              safeExtend: exactSchema.safeExtend.bind(exactSchema),
+          });
+      })();
 
 export const ReportingScheduleOfferingSchema = z.object({}).passthrough().merge(z.object({
     period_duration: z.string().regex(new RegExp("^P(?=.*[1-9])(?=\\d|T)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$")),
@@ -7318,7 +7414,7 @@ export const CacheLayerScopeSchema = z.union([z.object({
 
 export const RemovalReasonSchema = z.union([z.literal("withdrawn"), z.literal("cancellation"), z.literal("expired"), z.literal("depublication"), z.literal("policy_takedown")]);
 
-export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_adjustment"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
+export const XEntityTypesSchema = z.union([z.literal("advertiser_brand"), z.literal("rights_holder_brand"), z.literal("rights_grant"), z.literal("account"), z.literal("operator"), z.literal("operator_unit"), z.literal("media_buy"), z.literal("package"), z.literal("product"), z.literal("proposal"), z.literal("opportunity"), z.literal("placement"), z.literal("product_pricing_option"), z.literal("vendor_pricing_option"), z.literal("creative"), z.literal("creative_revision"), z.literal("creative_representation"), z.literal("macro_declaration"), z.literal("tracker_execution_selector"), z.literal("creative_locale_variant"), z.literal("creative_format"), z.literal("transformer"), z.literal("evaluator"), z.literal("build_variant"), z.literal("served_variant"), z.literal("audience"), z.literal("audience_evidence"), z.literal("audience_evidence_snapshot"), z.literal("signal"), z.literal("signal_activation_id"), z.literal("demographic_interval_id"), z.literal("spot_airing"), z.literal("event_source"), z.literal("impairment"), z.literal("collection"), z.literal("installment"), z.literal("collection_list"), z.literal("property_list"), z.literal("catalog"), z.literal("catalog_generation"), z.literal("catalog_item"), z.literal("property"), z.literal("media_plan"), z.literal("governance_plan"), z.literal("governance_registry_policy"), z.literal("governance_policy_category"), z.literal("governance_policy_category_facet"), z.literal("acceptance_policy_profile"), z.literal("acceptance_policy_rule"), z.literal("media_buy_change_term"), z.literal("governance_inline_policy"), z.literal("governance_check"), z.literal("governance_delivery_statement"), z.literal("governance_delivery_observation"), z.literal("governance_outcome"), z.literal("governance_adjustment"), z.literal("governance_adjustment_evidence"), z.literal("seller_adjustment"), z.literal("content_standards"), z.literal("task"), z.literal("attestation_credential"), z.literal("si_session"), z.literal("offering"), z.literal("vendor_metric"), z.literal("reporting_destination"), z.literal("reporting_offering"), z.literal("reporting_delivery_config"), z.literal("reporting_definition"), z.literal("reporting_obligation"), z.literal("reporting_revision"), z.literal("reporting_adjustment"), z.literal("reporting_materialization"), z.literal("reporting_receipt"), z.literal("reporting_consumer_status"), z.literal("reporting_resource"), z.literal("identity_relying_party")]);
 
 export const CreativeAuditObservationSchema = z.object({
     code: z.literal("OVERSIGHT_DISCLOSURE_CARVEOUT_CLAIMED"),
@@ -8805,7 +8901,35 @@ export const IndividualCatalogAssetSchema = BaseIndividualAssetSchema.merge(z.ob
     asset_type: z.literal("catalog")
 }).passthrough());
 
+export const IndividualDisplayTagAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualPublishedPostAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualCardAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualPixelTrackerAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualVastTrackerAssetSchema = BaseIndividualAssetSchema;
+
+export const IndividualDaastTrackerAssetSchema = BaseIndividualAssetSchema;
+
 export const GroupZipAssetSchema = BaseGroupAssetSchema;
+
+export const GroupBriefAssetSchema = BaseGroupAssetSchema;
+
+export const GroupCatalogAssetSchema = BaseGroupAssetSchema;
+
+export const GroupDisplayTagAssetSchema = BaseGroupAssetSchema;
+
+export const GroupPublishedPostAssetSchema = BaseGroupAssetSchema;
+
+export const GroupCardAssetSchema = BaseGroupAssetSchema;
+
+export const GroupPixelTrackerAssetSchema = BaseGroupAssetSchema;
+
+export const GroupVastTrackerAssetSchema = BaseGroupAssetSchema;
+
+export const GroupDaastTrackerAssetSchema = BaseGroupAssetSchema;
 
 export const GroupAssetSlotSchema = z.union([GroupImageAssetSchema, GroupVideoAssetSchema, GroupAudioAssetSchema, GroupTextAssetSchema, GroupMarkdownAssetSchema, GroupHtmlAssetSchema, GroupCssAssetSchema, GroupJavaScriptAssetSchema, GroupVastAssetSchema, GroupDaastAssetSchema, GroupUrlAssetSchema, GroupWebhookAssetSchema]);
 
@@ -8994,12 +9118,14 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
         device_type: z.object({
             limit: z.int().min(1).optional(),
             sort_by: SortMetricSchema.optional(),
-            sort_direction: SortDirectionSchema.optional()
+            sort_direction: SortDirectionSchema.optional(),
+            cursor: z.string().optional()
         }).passthrough().optional(),
         device_platform: z.object({
             limit: z.int().min(1).optional(),
             sort_by: SortMetricSchema.optional(),
-            sort_direction: SortDirectionSchema.optional()
+            sort_direction: SortDirectionSchema.optional(),
+            cursor: z.string().optional()
         }).passthrough().optional(),
         format: z.object({
             limit: z.int().min(1).optional(),
@@ -9009,7 +9135,8 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
         audience: z.object({
             limit: z.int().min(1).optional(),
             sort_by: SortMetricSchema.optional(),
-            sort_direction: SortDirectionSchema.optional()
+            sort_direction: SortDirectionSchema.optional(),
+            cursor: z.string().optional()
         }).passthrough().optional(),
         demographic: z.object({
             age_ranges: z.array(DemographicAgeRangeSchema).optional(),
@@ -9023,7 +9150,8 @@ export const GetMediaBuyDeliveryRequestSchema = z.object({
         placement: z.object({
             limit: z.int().min(1).optional(),
             sort_by: SortMetricSchema.optional(),
-            sort_direction: SortDirectionSchema.optional()
+            sort_direction: SortDirectionSchema.optional(),
+            cursor: z.string().optional()
         }).passthrough().optional(),
         property: DeliveryBreakdownControlsSchema.optional(),
         collection: DeliveryBreakdownControlsSchema.optional(),
@@ -9132,6 +9260,8 @@ export const ReportingObligationSchema = z.object({}).strict().merge(z.object({
     health: ReportingHealthSchema,
     production_status: z.union([z.literal("not_due"), z.literal("pending"), z.literal("published"), z.literal("failed")]),
     revision_count: z.number().int().gte(0),
+    consumer_status_count: z.number().int().gte(0).optional(),
+    current_consumer_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
     adjustment_count: z.number().int().gte(0).optional(),
     materialization_count: z.number().int().gte(0).optional(),
     successful_materialization_count: z.number().int().gte(0).optional(),
@@ -9251,6 +9381,56 @@ export const OperationalFailureSchema = z.object({
     replayed: z.boolean().optional(),
     adcp_error: ErrorSchema.optional(),
     errors: z.array(ErrorSchema)
+}).passthrough();
+
+export const SyncReportingStatusRequestSchema = (() => {
+          const objectSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    account: CanonicalAccountReferenceSchema,
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    statuses: z.array(ReportingConsumerStatusSchema).max(100),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+          const exactSchema = objectSchema.superRefine((value, ctx) => {
+      // reporting consumer status rc.2 parity
+      const allowed = new Set(["account", "idempotency_key", "statuses", "adcp_version", "adcp_major_version", "context", "ext"]);
+      for (const field of Object.keys(value as Record<string, unknown>)) {
+          if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
+      }
+      if (value.statuses.length < 1) ctx.addIssue({ code: "custom", path: ["statuses"], message: "Array must contain at least 1 element(s)" });
+      value.statuses.forEach((status, index) => {
+          if ((status as Record<string, unknown>).recorded_at !== undefined) {
+              ctx.addIssue({ code: "custom", path: ["statuses", index, "recorded_at"], message: "recorded_at is response-only" });
+          }
+      });
+    });
+          return Object.assign(exactSchema, {
+              // Zod rejects pick/omit on refined objects. Preserve that loud
+              // failure instead of silently deriving a schema that drops the
+              // published cross-field constraints.
+              pick: exactSchema.pick.bind(exactSchema),
+              omit: exactSchema.omit.bind(exactSchema),
+              extend: exactSchema.extend.bind(exactSchema),
+              safeExtend: exactSchema.safeExtend.bind(exactSchema),
+          });
+      })();
+
+export const RecordedReportingConsumerStatusSchema = z.object({
+    result: z.literal("recorded"),
+    consumer_status: ReportingConsumerStatusSchema.and(z.object({}).passthrough())
+}).passthrough();
+
+export const UnchangedReportingConsumerStatusSchema = z.object({
+    result: z.literal("unchanged"),
+    consumer_status: ReportingConsumerStatusSchema.and(z.object({}).passthrough())
+}).passthrough();
+
+export const FailedReportingConsumerStatusSchema = z.object({
+    result: z.literal("failed"),
+    reporting_status_id: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
+    errors: z.array(ErrorSchema).max(16)
 }).passthrough();
 
 export const SyncReportingReceiptsRequestSchema = z.object({
@@ -11247,6 +11427,7 @@ export const ReportingDeliveryCapabilitiesSchema = z.object({}).passthrough().me
     reconciled_billing: z.boolean().optional(),
     configuration_task: z.literal("sync_accounts"),
     status_task: z.literal("get_reporting_status"),
+    consumer_status_task: z.literal("sync_reporting_status").optional(),
     revision_content_task: z.literal("get_media_buy_delivery").optional(),
     receipt_task: z.literal("sync_reporting_receipts").optional(),
     readiness_notification: z.literal("reporting.delivery_ready").optional(),
@@ -12772,15 +12953,10 @@ export const CanonicalForecastPointSchema = z.object({
     product_id: z.string().optional(),
     dimensions: ForecastPointDimensionsSchema.optional(),
     availability_status: AvailabilityStatusSchema.optional(),
-    metrics: z.record(z.string(), ForecastRangeSchema),
-    viewability: z.object({
-        vendor: BrandKeySchema.optional(),
-        measurable_impressions: ForecastRangeSchema.optional(),
-        viewable_impressions: ForecastRangeSchema.optional(),
-        viewable_rate: ForecastRangeSchema.optional(),
-        viewed_seconds: ForecastRangeSchema.optional(),
-        standard: ViewabilityStandardSchema.optional()
-    }).passthrough().optional(),
+    metrics: z.object({
+        coverage_rate: ForecastRateRangeSchema.optional()
+    }).passthrough().catchall(ForecastRangeSchema),
+    viewability: z.union([z.object({}).passthrough(), z.object({}).passthrough()]).optional(),
     vendor_metric_values: z.array(CanonicalForecastVendorMetricValueSchema).optional()
 }).passthrough();
 
@@ -13317,7 +13493,7 @@ export const FormatSchema: z.ZodObject<{ [K in keyof Format]-?: undefined extend
             role: z.string(),
             parameters_from_format_id: z.literal(true)
         }).passthrough()])).optional(),
-    assets: z.array(z.union([z.union([IndividualImageAssetSchema, IndividualVideoAssetSchema, IndividualAudioAssetSchema, IndividualTextAssetSchema, IndividualMarkdownAssetSchema, IndividualHtmlAssetSchema, IndividualCssAssetSchema, IndividualJavaScriptAssetSchema, IndividualZipAssetSchema, IndividualVastAssetSchema, IndividualDaastAssetSchema, IndividualUrlAssetSchema, IndividualWebhookAssetSchema, IndividualBriefAssetSchema, IndividualCatalogAssetSchema]), RepeatableGroupAssetSchema])).optional(),
+    assets: z.array(z.union([z.union([IndividualImageAssetSchema, IndividualVideoAssetSchema, IndividualAudioAssetSchema, IndividualTextAssetSchema, IndividualMarkdownAssetSchema, IndividualHtmlAssetSchema, IndividualCssAssetSchema, IndividualJavaScriptAssetSchema, IndividualZipAssetSchema, IndividualVastAssetSchema, IndividualDaastAssetSchema, IndividualUrlAssetSchema, IndividualWebhookAssetSchema, IndividualBriefAssetSchema, IndividualCatalogAssetSchema, IndividualDisplayTagAssetSchema, IndividualPublishedPostAssetSchema, IndividualCardAssetSchema, IndividualPixelTrackerAssetSchema, IndividualVastTrackerAssetSchema, IndividualDaastTrackerAssetSchema]), RepeatableGroupAssetSchema])).optional(),
     delivery: z.object({}).passthrough().optional(),
     supported_macros: z.array(z.union([UniversalMacroSchema, z.string()])).optional(),
     input_format_ids: z.array(FormatReferenceStructuredObjectSchema).optional(),
@@ -13598,6 +13774,13 @@ export const ProductOfferFiltersSchema = z.object({}).passthrough().merge(z.obje
     }).passthrough().optional(),
     budget_range: BudgetRangeSchema.optional(),
     countries: z.array(z.string()).optional(),
+    regions: z.array(z.string()).optional(),
+    metros: z.array(z.object({
+        system: MetroAreaSystemSchema,
+        code: z.string()
+    }).passthrough()).optional(),
+    postal_areas: z.array(PostalAreaSchema).optional(),
+    geo_proximity: GeoProximitySchema.optional(),
     property_list: PropertyListReferenceSchema.optional(),
     channels: z.array(MediaChannelSchema).optional(),
     video_placement_types: z.array(VideoPlacementTypeSchema).optional(),
@@ -15185,14 +15368,17 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             by_device_type_truncated: z.boolean().optional(),
             by_device_type_sorted_by: SortMetricSchema.optional(),
             by_device_type_sort_direction: SortDirectionSchema.optional(),
+            by_device_type_pagination: PaginationResponseSchema.optional(),
             by_device_platform: z.array(GetMediaBuyDeliveryDevicePlatformMetricsSchema).optional(),
             by_device_platform_truncated: z.boolean().optional(),
             by_device_platform_sorted_by: SortMetricSchema.optional(),
             by_device_platform_sort_direction: SortDirectionSchema.optional(),
+            by_device_platform_pagination: PaginationResponseSchema.optional(),
             by_audience: z.array(GetMediaBuyDeliveryAudienceMetricsSchema).optional(),
             by_audience_truncated: z.boolean().optional(),
             by_audience_sorted_by: SortMetricSchema.optional(),
             by_audience_sort_direction: SortDirectionSchema.optional(),
+            by_audience_pagination: PaginationResponseSchema.optional(),
             by_demographic: z.array(DeliveryMetricsSchema.merge(z.object({
                 demographic: z.string().min(1).regex(/\S/),
                 demographic_system: DemographicSystemSchema,
@@ -15206,6 +15392,7 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
             by_placement_truncated: z.boolean().optional(),
             by_placement_sorted_by: SortMetricSchema.optional(),
             by_placement_sort_direction: SortDirectionSchema.optional(),
+            by_placement_pagination: PaginationResponseSchema.optional(),
             by_property: z.array(PropertyDeliveryMetricsSchema).optional(),
             by_property_truncated: z.boolean().optional(),
             by_property_suppressed: z.boolean().optional(),
@@ -15284,6 +15471,40 @@ export const GetMediaBuyDeliveryResponseSchema = z.object({
 export const SuccessfulLookupSchema = z.union([SummaryViewSchema, PeriodsViewSchema, RevisionViewSchema]);
 
 export const FailedLookupSchema = z.union([UnavailableLookupSchema, OperationalFailureSchema]);
+
+export const SyncReportingStatusResponseSchema = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    results: z.array(z.union([RecordedReportingConsumerStatusSchema, UnchangedReportingConsumerStatusSchema, FailedReportingConsumerStatusSchema])).max(100),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().superRefine((value, ctx) => {
+      // reporting consumer status rc.2 parity
+      if (value.status === "completed" && value.results.length < 1) {
+          ctx.addIssue({ code: "custom", path: ["results"], message: "Array must contain at least 1 element(s)" });
+      }
+      if (value.status !== "completed") return;
+      value.results.forEach((entry, index) => {
+          if (entry.result === "failed") {
+              if (entry.errors.length < 1) ctx.addIssue({ code: "custom", path: ["results", index, "errors"], message: "Array must contain at least 1 element(s)" });
+              return;
+          }
+          const status = entry.consumer_status as Record<string, unknown>;
+          if (status.recorded_at === undefined) {
+              ctx.addIssue({ code: "custom", path: ["results", index, "consumer_status", "recorded_at"], message: "recorded_at is required" });
+          }
+      });
+  });
 
 export const SyncReportingReceiptsResponseSchema = z.object({
     context_id: z.string().optional(),
@@ -17708,7 +17929,7 @@ export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposa
         message: "Invalid input: Should pass single schema. Passed " + passed,
       });
     }
-  })).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Dimension constraints represented by a ForecastPoint. Use this when one product, proposal, or signal coverage forecast needs to expose availability or forecasted delivery by country, region, placement, device, audience, signal value, time window, or intersections such as placement x country without creating separate products solely for each slice. Each item declares one dimension family via `kind`; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` in a point. Consumers MUST NOT treat repeated kinds as OR semantics; repeated peer values such as two countries are a seller conformance issue. Dimension values are descriptors of the forecast row and are independent of pricing_options.").optional(), "availability_status": z.enum(["available","unavailable"]).describe("Bookability of the inventory a forecast row describes, as of the forecast's generated_at. A snapshot, never a hold: valid_until bounds freshness, and proposal finalization or purchase remains the commitment boundary.").optional(), "metrics": z.record(z.string(), z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.")), "viewability": z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.").optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_rate": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewed_seconds": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional() }).passthrough().optional(), "vendor_metric_values": z.array(z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "value": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), "unit": z.string().optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "breakdown": z.record(z.string(), z.any()).optional() }).passthrough().describe("Compact forecasted vendor metric with a BrandKey vendor pointer and no embedded brand assets.")).optional() }).passthrough().describe("Compact forecast row with numeric ranges and identity-only measurement-vendor references.")).min(1), "forecast_range_unit": z.enum(["spend","availability","reach_freq","weekly","daily","clicks","conversions","package"]).describe("Describes how to interpret the points array in a DeliveryForecast — what axis the curve represents").optional(), "method": z.enum(["estimate","modeled","guaranteed"]).describe("Method used to produce a delivery forecast"), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")), "demographic_system": z.enum(["nielsen","nielsen_audio","barb","agf","oztam","mediametrie","custom"]).describe("Audience measurement systems for demographic notation in GRP forecasts and pricing, across video and audio channels. Specifies how demographics are written, not whose panel produced the numbers — provider identity is measurement_source.").optional(), "demographic": z.string().optional(), "measurement_source": z.string().regex(new RegExp("^[a-z0-9_]+$")).max(64).optional(), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "generated_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "valid_until": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Compact product forecast without legacy BrandRef or creative dependencies.").describe("Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.").optional() }).passthrough().describe("Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.");
+  })).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Dimension constraints represented by a ForecastPoint. Use this when one product, proposal, or signal coverage forecast needs to expose availability or forecasted delivery by country, region, placement, device, audience, signal value, time window, or intersections such as placement x country without creating separate products solely for each slice. Each item declares one dimension family via `kind`; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` in a point. Consumers MUST NOT treat repeated kinds as OR semantics; repeated peer values such as two countries are a seller conformance issue. Dimension values are descriptors of the forecast row and are independent of pricing_options.").optional(), "availability_status": z.enum(["available","unavailable"]).describe("Bookability of the inventory a forecast row describes, as of the forecast's generated_at. A snapshot, never a hold: valid_until bounds freshness, and proposal finalization or purchase remains the commitment boundary.").optional(), "metrics": z.object({ "coverage_rate": z.intersection(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), z.object({ "low": z.any().optional(), "mid": z.any().optional(), "high": z.any().optional() })).describe("A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.").optional() }).catchall(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.")), "viewability": z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.").optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_rate": z.intersection(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), z.object({ "low": z.any().optional(), "mid": z.any().optional(), "high": z.any().optional() })).describe("A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.").optional(), "viewed_seconds": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.union([z.object({ "measurable_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewable_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewable_rate": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewed_seconds": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "standard": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "vendor_metric_values": z.array(z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "value": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), "unit": z.string().optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "breakdown": z.record(z.string(), z.any()).optional() }).passthrough().describe("Compact forecasted vendor metric with a BrandKey vendor pointer and no embedded brand assets.")).optional() }).passthrough().describe("Compact forecast row with numeric ranges and identity-only measurement-vendor references.")).min(1), "forecast_range_unit": z.enum(["spend","availability","reach_freq","weekly","daily","clicks","conversions","package"]).describe("Describes how to interpret the points array in a DeliveryForecast — what axis the curve represents").optional(), "method": z.enum(["estimate","modeled","guaranteed"]).describe("Method used to produce a delivery forecast"), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")), "demographic_system": z.enum(["nielsen","nielsen_audio","barb","agf","oztam","mediametrie","custom"]).describe("Audience measurement systems for demographic notation in GRP forecasts and pricing, across video and audio channels. Specifies how demographics are written, not whose panel produced the numbers — provider identity is measurement_source.").optional(), "demographic": z.string().optional(), "measurement_source": z.string().regex(new RegExp("^[a-z0-9_]+$")).max(64).optional(), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "generated_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "valid_until": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Compact product forecast without legacy BrandRef or creative dependencies.").describe("Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.").optional() }).passthrough().describe("Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.");
       const exactSchema = objectSchema.superRefine((value, ctx) => {
       const checked = z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "proposal_kind": z.enum(["media_buy_update","media_buy_cancellation"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_kind": z.enum(["media_buy_update","media_buy_cancellation"]) }), z.object({ "parent_proposal_id": z.any().refine((value) => value !== undefined, "Required"), "media_buy_id": z.any().refine((value) => value !== undefined, "Required"), "base_media_buy_revision": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "proposal_status": z.literal("accepted") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_status": z.literal("accepted") }), z.object({ "media_buy_id": z.any().refine((value) => value !== undefined, "Required"), "accepted_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])), z.intersection(z.union([z.any().refine((value) => !z.object({ "proposal_status": z.literal("committed") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_status": z.literal("committed") }), z.object({ "expires_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "proposal_kind": z.literal("media_buy_cancellation") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_kind": z.literal("media_buy_cancellation") }), z.object({ "commercial_terms": z.object({ "cancellation_terms": z.any().refine((value) => value !== undefined, "Required") }).passthrough().optional() }))]))).safeParse(value);
       if (!checked.success) {
@@ -18908,6 +19129,7 @@ export const GetReportingStatusResponseSchema = z.object({
     periods: z.array(ReportingObligationSchema).optional(),
     revisions: z.array(ReportingRevisionSchema).optional(),
     adjustments: z.array(ReportingAdjustmentSchema).optional(),
+    consumer_statuses: z.array(ReportingConsumerStatusSchema).optional(),
     adjustment_receipts: z.array(ReportingAdjustmentReceiptSchema).optional(),
     pagination: PaginationResponseSchema.optional(),
     revision: ReportingRevisionSchema.optional(),
@@ -19228,7 +19450,7 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         plan_id: z.string().optional(),
         rights_id: z.string().optional(),
         fixture: z.object({}).passthrough().optional(),
-        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("omit_obligation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
+        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("restate_snapshot"), z.literal("omit_obligation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
         target_health: z.union([z.literal("delayed"), z.literal("action_required")]).optional(),
         catalog_id: z.string().min(1).max(255).optional(),
         catalog_generation: z.string().min(1).max(255).optional(),

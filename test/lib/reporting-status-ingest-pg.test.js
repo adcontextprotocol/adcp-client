@@ -3,7 +3,7 @@ const { after, before, describe, test } = require('node:test');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
 
-describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'PostgreSQL URL not set' }, () => {
+describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL URL not set' }, () => {
   const schema = `adcp_reporting_status_${process.pid}`;
   let bootstrap;
   let pool;
@@ -482,7 +482,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       },
       consumerA
     );
-    assert.equal(successor.results[0].result, 'recorded');
+    assert.equal(successor.results[0].result, 'recorded', JSON.stringify(successor.results[0]));
     assert.equal(successor.results[1].result, 'failed');
     const successorReadback = await status(
       {
@@ -932,14 +932,10 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       consumer_status: 'received',
     };
     assert.equal(
-      ledger.ReportingConsumerStatusPreviewV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() })
-        .success,
+      ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() }).success,
       false
     );
-    assert.equal(
-      ledger.ReportingConsumerStatusPreviewV1Schema.safeParse({ ...valid, unexpected: true }).success,
-      false
-    );
+    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, unexpected: true }).success, false);
     const result = await sync(
       {
         account: request.account,
@@ -950,7 +946,8 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     );
     assert.deepEqual(
       result.results.map(value => value.result),
-      ['recorded', 'failed']
+      ['recorded', 'failed'],
+      JSON.stringify(result.results)
     );
     assert.equal(result.results[0].consumer_status.reporting_status_id, valid.reporting_status_id);
     assert.equal(result.results[1].reporting_status_id, invalid.reporting_status_id);
@@ -1011,7 +1008,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       },
       status_as_of: '2016-12-31T23:59:60Z',
     };
-    assert.equal(ledger.ReportingConsumerStatusPreviewV1Schema.safeParse(leapSecond).success, true);
+    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse(leapSecond).success, true);
     const leapBatch = await leapSync(
       {
         account: request.account,
@@ -1126,6 +1123,32 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     const mismatch = readback.periods[0].issues.find(issue => issue.code === 'CONSUMER_STATUS_MISMATCH');
     assert.ok(mismatch);
     assert.ok(mismatch.issue_id.length <= 255);
+  });
+
+  test('bounds rejected-item diagnostics before persistence and replay', async () => {
+    const input = {
+      account_id: request.account.account_id,
+      consumerId: 'fixture-consumer-oversized-diagnostic',
+      idempotencyKey: 'fixture-status-oversized-diagnostic-batch',
+      requestFingerprint: 'f'.repeat(64),
+      entries: [
+        {
+          reporting_status_id: 'fixture-status-oversized-diagnostic',
+          validationError: 'Reporting consumer status request is invalid',
+          validationField: `/${'x'.repeat(70_000)}`,
+        },
+      ],
+    };
+    const recorded = await reference.store.syncConsumerStatusBatch(input);
+    assert.equal(recorded[0].inserted, false);
+    assert.equal(recorded[0].errorField, undefined);
+    const replay = await reference.store.getConsumerStatusBatchReplay({
+      account_id: input.account_id,
+      consumerId: input.consumerId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: input.requestFingerprint,
+    });
+    assert.equal(replay[0].errorField, undefined);
   });
 
   test('serializes competing successors and concurrent exact batch retries', async () => {
@@ -1307,7 +1330,8 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
         mixed.results.map(value => value.result),
         ['unchanged', 'failed']
       );
-      assert.equal(mixed.results[1].errors[0].code, 'RESOURCE_EXHAUSTED');
+      assert.equal(mixed.results[1].errors[0].code, 'REPORTING_STATUS_CAPACITY_EXHAUSTED');
+      assert.equal(mixed.results[1].errors[0].recovery, 'terminal');
       const leaves = await pool.query(
         `SELECT consumer_status_id FROM adcp_reporting_consumer_statuses
           WHERE account_id = $1 AND consumer_id = $2 AND is_current`,
@@ -1367,5 +1391,131 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
     assert.equal(migrated.rows[0].consumer_id, '__legacy_unscoped_consumer__');
     assert.equal(migrated.rows[0].chain_key, 'legacy:fixture-legacy-status-0001');
     assert.equal(migrated.rows[0].semantic_fingerprint, 'legacy:fixture-legacy-status-0001');
+  });
+
+  test('bounds immutable replay metadata while preserving exact retry results', async () => {
+    const sync = ledger.createSyncReportingStatusHandler(reference.store, {
+      resolveConsumerId: context => context.consumer,
+      now: () => new Date(Date.parse(obligation.period.end) + 86_400_000),
+    });
+    const context = {
+      account: { account_id: request.account.account_id },
+      consumer: 'fixture-consumer-bounded-replay',
+    };
+    const statuses = Array.from({ length: 100 }, (_, index) => ({
+      reporting_status_id: `fixture-malformed-status-${String(index).padStart(3, '0')}`,
+      delivery_config_id: obligation.delivery_config_id,
+      delivery_config_version: obligation.delivery_config_version,
+      report_definition_id: obligation.report_definition_id,
+      period: {
+        start: obligation.period.start,
+        end: obligation.period.end,
+        source_timezone: obligation.period.sourceTimezone,
+      },
+      consumer_status: 'obligation_missing',
+      status_as_of: new Date(Date.parse(obligation.period.end) + 86_400_000).toISOString(),
+      [`unknown_${index}_${'x'.repeat(900)}`]: true,
+    }));
+    const payload = {
+      account: request.account,
+      idempotency_key: 'fixture-status-bounded-replay-0001',
+      statuses,
+    };
+    const first = await sync(payload, context);
+    const stored = await pool.query(
+      `SELECT results FROM adcp_reporting_consumer_status_batches
+       WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+      [request.account.account_id, context.consumer, payload.idempotency_key]
+    );
+    assert.equal(stored.rowCount, 1);
+    assert.ok(Buffer.byteLength(JSON.stringify(stored.rows[0].results), 'utf8') <= 64 * 1024);
+    assert.deepEqual(await sync(payload, context), first);
+  });
+
+  test('sanitizes custom-store diagnostics before durable replay', async () => {
+    const input = {
+      account_id: request.account.account_id,
+      consumerId: 'fixture-consumer-custom-diagnostic',
+      idempotencyKey: 'fixture-custom-diagnostic-0001',
+      requestFingerprint: 'fixture-custom-diagnostic-fingerprint',
+      entries: [
+        {
+          reporting_status_id: 'unsafe\u0000status-id',
+          validationError: 'unsafe identifier',
+        },
+        {
+          reporting_status_id: 'invalid-reporting-status-id-1',
+          validationError: `unsafe\u0000${String.fromCharCode(0xd800)}${'x'.repeat(2_000)}`,
+          validationField: `/statuses/1/unsafe\u0000${String.fromCharCode(0xd800)}`,
+          validationKeyword: 'unsafe keyword',
+        },
+        {
+          reporting_status_id: `unsafe${String.fromCharCode(0xd800)}status-id`,
+          validationError: 'unsafe identifier',
+        },
+        {
+          reporting_status_id: `oversized-${'x'.repeat(200_000)}`,
+          validationError: 'oversized identifier',
+        },
+        {
+          status: {
+            reporting_status_id: 'fixture-oversized-status-0001',
+            account_id: request.account.account_id,
+            consumerId: 'fixture-consumer-custom-diagnostic',
+            delivery_config_id: obligation.delivery_config_id,
+            delivery_config_version: obligation.delivery_config_version,
+            report_definition_id: obligation.report_definition_id,
+            period: {
+              start: obligation.period.start,
+              end: obligation.period.end,
+              source_timezone: obligation.period.sourceTimezone,
+            },
+            consumer_status: 'obligation_missing',
+            status_as_of: new Date(Date.parse(obligation.period.end) + 86_400_000).toISOString(),
+            ext: { 'example.invalid': 'x'.repeat(70_000) },
+          },
+        },
+      ],
+      replayOriginalResults: true,
+    };
+    const first = await reference.store.syncConsumerStatusBatch(input);
+    assert.equal(first.length, 5);
+    assert.deepEqual(
+      first.map(result => result.reporting_status_id),
+      [
+        'invalid-reporting-status-id-1-1',
+        'invalid-reporting-status-id-1',
+        'invalid-reporting-status-id-3',
+        'invalid-reporting-status-id-4',
+        'fixture-oversized-status-0001',
+      ]
+    );
+    assert.ok(first.every(result => result.inserted === false));
+    assert.ok(Buffer.byteLength(first[1].safeMessage, 'utf8') <= 1_024);
+    assert.equal(first[1].safeMessage.includes('\u0000'), false);
+    assert.equal(first[1].safeMessage.includes(String.fromCharCode(0xd800)), false);
+    assert.equal(first[1].errorField, undefined);
+    assert.equal(first[1].errorKeyword, undefined);
+    assert.equal(first[4].errorCode, 'REPORTING_STATUS_TOO_LARGE');
+    assert.equal(first[4].recovery, 'correctable');
+    const stored = await pool.query(
+      `SELECT status_ids, results FROM adcp_reporting_consumer_status_batches
+       WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+      [input.account_id, input.consumerId, input.idempotencyKey]
+    );
+    assert.deepEqual(
+      stored.rows[0].status_ids,
+      first.map(result => result.reporting_status_id)
+    );
+    assert.ok(Buffer.byteLength(JSON.stringify(stored.rows[0].results), 'utf8') <= 64 * 1024);
+    assert.deepEqual(
+      await reference.store.getConsumerStatusBatchReplay({
+        account_id: input.account_id,
+        consumerId: input.consumerId,
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint: input.requestFingerprint,
+      }),
+      first
+    );
   });
 });

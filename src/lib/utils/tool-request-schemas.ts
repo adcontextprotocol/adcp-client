@@ -127,6 +127,7 @@ export type KnownToolRequestSchemas = {
   get_media_buys: typeof schemas.GetMediaBuysRequestSchema;
   get_media_buy_delivery: typeof schemas.GetMediaBuyDeliveryRequestSchema;
   get_reporting_status: typeof schemas.GetReportingStatusRequestSchema;
+  sync_reporting_status: typeof schemas.SyncReportingStatusRequestSchema;
   sync_reporting_receipts: typeof schemas.SyncReportingReceiptsRequestSchema;
   provide_performance_feedback: typeof schemas.ProvidePerformanceFeedbackRequestSchema;
   list_creative_formats: typeof schemas.ListCreativeFormatsRequestSchema;
@@ -212,6 +213,7 @@ export const TOOL_REQUEST_SCHEMAS: ToolRequestSchemas = {
   get_media_buys: schemas.GetMediaBuysRequestSchema,
   get_media_buy_delivery: schemas.GetMediaBuyDeliveryRequestSchema,
   get_reporting_status: schemas.GetReportingStatusRequestSchema,
+  sync_reporting_status: schemas.SyncReportingStatusRequestSchema,
   sync_reporting_receipts: schemas.SyncReportingReceiptsRequestSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackRequestSchema,
 

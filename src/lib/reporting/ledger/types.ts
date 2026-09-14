@@ -1,5 +1,6 @@
 import type { GetReportingStatusResponse, ReportingAdjustment, ReportingRevision } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
+import type { ErrorRecovery } from '../../types/error-codes';
 import type {
   ReportingSourceExecutorV1,
   ReportingSourceOfferingV1,
@@ -184,19 +185,42 @@ export interface ReportingLedgerConsumerStatementV1 {
 
 export type ReportingLedgerConsumerStatusInputV1 = Omit<ReportingLedgerConsumerStatementV1, 'recorded_at'>;
 
+/** Durable diagnostic pointers are bounded independently of caller payload size. */
+export const REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES = 1024;
+/** Durable replay messages are sanitized and bounded independently of custom stores. */
+export const REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES = 1024;
+/** A single durable consumer statement may occupy at most 64 KiB. */
+export const REPORTING_CONSUMER_STATUS_MAX_BYTES = 64 * 1024;
+/** The complete request is bounded before validation or canonical hashing. */
+export const REPORTING_CONSUMER_STATUS_BATCH_MAX_BYTES = 8 * 1024 * 1024;
+/** Replay metadata is bounded per immutable batch row. */
+export const REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES = 64 * 1024;
+
+/** Canonical identity of one consumer-status supersession chain. */
+export interface ReportingConsumerStatusChainIdentityV1 {
+  delivery_config_id: string;
+  delivery_config_version: number;
+  report_definition_id: string;
+  periodStart: string;
+  periodEnd: string;
+  sourceTimezone: string;
+}
+
 export type ReportingConsumerStatusBatchEntryV1 =
-  | { status: ReportingLedgerConsumerStatusInputV1; validationError?: string }
+  | {
+      status: ReportingLedgerConsumerStatusInputV1;
+      validationError?: string;
+      validationField?: string;
+      validationKeyword?: string;
+    }
   | {
       reporting_status_id: string;
+      /** True when the handler synthesized the ID because the caller supplied no valid wire ID. */
+      syntheticReportingStatusId?: boolean;
       validationError: string;
-      chainIdentity?: {
-        delivery_config_id: string;
-        delivery_config_version: number;
-        report_definition_id: string;
-        periodStart: string;
-        periodEnd: string;
-        sourceTimezone: string;
-      };
+      validationField?: string;
+      validationKeyword?: string;
+      chainIdentity?: ReportingConsumerStatusChainIdentityV1;
     };
 
 export interface ReportingConsumerStatusBatchInputV1 {
@@ -217,7 +241,17 @@ export type ReportingConsumerStatusReplayInputV1 = Pick<
 
 export type ReportingConsumerStatusBatchResultV1 =
   | { inserted: boolean; value: ReportingLedgerConsumerStatementV1 }
-  | { inserted: false; reporting_status_id: string; errorCode: string; safeMessage: string };
+  | {
+      inserted: false;
+      reporting_status_id: string;
+      errorCode: string;
+      recovery?: ErrorRecovery;
+      /** Integer wire seconds from 1 through 3600. Invalid values are omitted. */
+      retryAfterSeconds?: number;
+      safeMessage: string;
+      errorField?: string;
+      errorKeyword?: string;
+    };
 
 export interface ReportingLedgerIssueV1 {
   issueId: string;
@@ -334,6 +368,10 @@ export class ReportingLedgerSnapshotUnavailableError extends Error {
 }
 
 export class ReportingConsumerStatusConflictError extends Error {
+  /**
+   * The message is diagnostic-only. The protocol handler always returns a
+   * fixed oracle-resistant conflict message to the caller.
+   */
   constructor(message = 'Reporting consumer status conflicts with the current immutable chain') {
     super(message);
     this.name = 'ReportingConsumerStatusConflictError';
@@ -348,7 +386,7 @@ export interface ReportingLedgerStore {
   putObligation(
     obligation: ReportingLedgerObligationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerObligationV1 }>;
-  getObligation(reporting_obligation_id: string): Promise<ReportingLedgerObligationV1 | null>;
+  getObligation(reporting_obligation_id: string, account_id?: string): Promise<ReportingLedgerObligationV1 | null>;
   listObligations(account_id?: string): Promise<ReportingLedgerObligationV1[]>;
   listLifecycleDueObligations(input: {
     ledgerAsOf: string;
@@ -416,12 +454,33 @@ export interface ReportingLedgerStore {
   ): Promise<ReportingLedgerPageV1>;
 }
 
-export interface ReportingConsumerStatusLedgerStore extends ReportingLedgerStore {
+/**
+ * Minimal authoritative-ledger port required by sync_reporting_status.
+ *
+ * Existing seller ledgers can implement this interface without adopting the
+ * SDK producer, worker, lifecycle, lease, issue, or row-storage APIs. Methods
+ * carrying account/principal arguments must enforce them; the handler also
+ * re-checks account identity on returned configurations, obligations,
+ * revisions, and snapshots. syncConsumerStatusBatch must reject every entry
+ * in duplicate-ID or duplicate-logical-chain groups, then atomically compare
+ * the current leaf, append, and retain the original ordered batch result for
+ * idempotent replay.
+ */
+export interface ReportingConsumerStatusLedgerStore {
+  listConfigurations(account_id: string): Promise<ReportingLedgerConfigurationV1[]>;
+  getObligation(reporting_obligation_id: string, account_id: string): Promise<ReportingLedgerObligationV1 | null>;
   /** Loads revision identity and binding for ingest validation without materializing rows. */
   getRevisionMetadata(
     reporting_revision_id: string,
     account_id: string
   ): Promise<ReportingLedgerRevisionMetadataV1 | null>;
+  /** Reads only the caller-bound snapshot needed to validate optional provenance. */
+  readSnapshotPage?(
+    snapshotId: string,
+    account_id: string,
+    cursor: string | undefined,
+    limit: number
+  ): Promise<ReportingLedgerPageV1>;
   getConsumerStatusBatchReplay(
     input: ReportingConsumerStatusReplayInputV1
   ): Promise<ReportingConsumerStatusBatchResultV1[] | null>;

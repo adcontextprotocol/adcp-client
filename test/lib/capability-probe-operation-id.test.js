@@ -63,10 +63,10 @@ async function createHarness(mutationName, { clientConfig = {}, beforeCapabiliti
       await beforeCapabilitiesResponse?.();
       return toolResult({
         status: 'completed',
-        adcp_version: '3.2.0-rc.1',
+        adcp_version: '3.2.0-rc.2',
         adcp: {
           major_versions: [3],
-          supported_versions: ['3.2.0-rc.1'],
+          supported_versions: ['3.2.0-rc.2'],
           idempotency: { supported: true, replay_ttl_seconds: 86400 },
         },
         supported_protocols: ['media_buy'],

@@ -908,7 +908,12 @@ function formatDecimal(value: Decimal): string {
   const negative = value.coefficient < 0n;
   const digits = (negative ? -value.coefficient : value.coefficient).toString().padStart(value.scale + 1, '0');
   const integer = value.scale ? digits.slice(0, -value.scale) : digits;
-  const fraction = value.scale ? digits.slice(-value.scale).replace(/0+$/, '') : '';
+  const untrimmedFraction = value.scale ? digits.slice(-value.scale) : '';
+  let fractionEnd = untrimmedFraction.length;
+  while (fractionEnd > 0 && untrimmedFraction.charCodeAt(fractionEnd - 1) === 0x30) {
+    fractionEnd -= 1;
+  }
+  const fraction = untrimmedFraction.slice(0, fractionEnd);
   const rendered = fraction ? `${integer}.${fraction}` : integer;
   return `${negative && rendered !== '0' ? '-' : ''}${rendered}`;
 }
