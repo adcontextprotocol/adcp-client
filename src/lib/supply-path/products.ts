@@ -109,7 +109,7 @@ export async function annotateProductsSupplyPaths<T extends object>(
     }
     return { keys, errors };
   });
-  const outcomes = new Map<string, RegistrySupplyPathResult>();
+  const outcomes = new Map<string, RegistrySupplyPathResult | AuthoritativeSupplyPathResult>();
   // Bound fan-out without allocating one network operation per product.
   const pending = [...requests.entries()];
   let position = 0;

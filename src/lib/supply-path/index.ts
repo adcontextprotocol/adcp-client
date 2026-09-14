@@ -11,3 +11,8 @@ export {
   type SupplyPathRevocationStore,
   type SupplyPathRevocation,
 } from './revocations';
+export {
+  defaultSupplyPathAuthorities,
+  InMemorySupplyPathAuthorityStore,
+  type SupplyPathAuthorityStore,
+} from './revocations';

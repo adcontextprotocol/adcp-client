@@ -1,10 +1,11 @@
+import { defaultSupplyPathAuthorities } from './revocations';
 import { withAbortSignal } from '../protocols/abort';
 import { createHash } from 'node:crypto';
 import { parse } from 'secure-json-parse';
 import { SsrfRefusedError, SSRF_TRANSIENT_CODES, type SsrfFetchResult } from '../net/ssrf-fetch';
 import { ssrfSafeFetchAdAgents, AdAgentsRedirectRefusedError } from '../discovery/adagents-redirects';
 import type { AuthoritativeSupplyPathOptions, SupplyPathEvidence, SupplyPathManifest } from './types';
-import { defaultSupplyPathRevocations, parseRevocations } from './revocations';
+import { defaultSupplyPathRevocations, parseRevocations, type SupplyPathRevocation } from './revocations';
 import { record } from './validation';
 
 export function boundedOption(value: number | undefined, fallback: number, maximum: number, name: string): number {
@@ -17,6 +18,9 @@ export function boundedOption(value: number | undefined, fallback: number, maxim
 /** A verification-local evidence session. No cached verdict survives a request. */
 export class SupplyPathEvidenceSession {
   readonly evidence: SupplyPathEvidence[] = [];
+  readonly crossOriginAuthorities = new Set<string>();
+  private readonly checkedAuthorities = new Set<string>();
+  private readonly observedRevocations = new Map<string, SupplyPathRevocation[]>();
   readonly revocations = new Map<string, readonly import('./revocations').SupplyPathRevocation[]>();
   readonly signal: AbortSignal;
   private readonly maxBodyBytes: number;
@@ -150,20 +154,22 @@ export class SupplyPathEvidenceSession {
     }
   }
   private parseManifest(publisher: string, response: SsrfFetchResult): SupplyPathManifest | null {
+    let document: unknown;
     try {
-      const document: unknown = parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
+      document = parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
       if (!record(document)) throw new Error('not_object');
-      return document;
     } catch {
-      this.evidence.push({
-        kind: 'adagents',
-        publisher_domain: publisher,
-        requested_url: response.url,
-        fetched_at: new Date().toISOString(),
-        error: 'invalid_document',
-      });
+      this.documentError(publisher, response, 'invalid_document');
       return null;
     }
+    const denials = parseRevocations(document.revoked_publisher_domains);
+    if (denials === null) {
+      this.documentError(publisher, response, 'invalid_revocations');
+      throw new TypeError('Invalid publisher revocation evidence');
+    }
+    // Denials survive invalid affirmative envelopes and failed/chained pointers.
+    this.observedRevocations.set(publisher, [...(this.observedRevocations.get(publisher) ?? []), ...denials]);
+    return document;
   }
   private documentError(publisher: string, response: SsrfFetchResult, error: string): void {
     this.evidence.push({
@@ -192,6 +198,25 @@ export class SupplyPathEvidenceSession {
       }
       const evidence = this.provenance.get(initial);
       if (evidence) evidence.delegated_to = target;
+      let location: URL;
+      try {
+        location = new URL(target);
+      } catch {
+        this.documentError(publisher, initial, 'invalid_authoritative_location');
+        return null;
+      }
+      if (
+        location.protocol !== 'https:' ||
+        location.username ||
+        location.password ||
+        location.hash ||
+        (location.port && location.port !== '443')
+      ) {
+        this.documentError(publisher, initial, 'invalid_authoritative_location');
+        return null;
+      }
+      await this.checkAuthority(publisher, location.href);
+      if (location.origin !== new URL(url).origin) this.crossOriginAuthorities.add(publisher);
       const response = await this.read(publisher, 'adagents', target, true);
       if (!response) return null;
       manifest = this.parseManifest(publisher, response);
@@ -203,28 +228,46 @@ export class SupplyPathEvidenceSession {
     }
     if (!Array.isArray(manifest.authorized_agents)) {
       this.documentError(publisher, initial, 'missing_authorized_agents');
-      return null;
+      // Preserve denials even when the affirmative authorization list is malformed.
+      return { revoked_publisher_domains: manifest.revoked_publisher_domains };
     }
     return manifest;
   }
+  private async checkAuthority(publisher: string, location: string): Promise<void> {
+    let accepted: boolean;
+    try {
+      accepted = await withAbortSignal([this.signal], undefined, () =>
+        (this.options.authorityStore ?? defaultSupplyPathAuthorities).check(publisher, location)
+      );
+    } catch (cause) {
+      this.signal.throwIfAborted();
+      throw new Error('Supply-path authority storage failed', { cause });
+    }
+    this.signal.throwIfAborted();
+    if (!accepted)
+      throw new TypeError(
+        `Authoritative location changed for ${publisher} to ${location}; independently confirm the publisher migration before updating its pin`
+      );
+    this.checkedAuthorities.add(publisher);
+  }
   private async readAndRemember(publisher: string): Promise<SupplyPathManifest | null> {
     const manifest = await this.readAdagents(publisher);
-    const observed = parseRevocations(manifest?.revoked_publisher_domains);
-    if (observed === null) {
-      this.evidence.push({
-        kind: 'adagents',
-        publisher_domain: publisher,
-        requested_url: `https://${publisher}/.well-known/adagents.json`,
-        fetched_at: new Date().toISOString(),
-        error: 'invalid_revocations',
-      });
-      throw new TypeError('Invalid publisher revocation evidence');
+    if (manifest && !this.checkedAuthorities.has(publisher))
+      await this.checkAuthority(publisher, `https://${publisher}/.well-known/adagents.json`);
+    const observed = this.observedRevocations.get(publisher) ?? [];
+    let held: readonly SupplyPathRevocation[];
+    try {
+      held = await withAbortSignal([this.signal], undefined, () =>
+        (this.options.revocationStore ?? defaultSupplyPathRevocations).observe(publisher, observed)
+      );
+    } catch (cause) {
+      this.signal.throwIfAborted();
+      throw new Error('Supply-path revocation storage failed', { cause });
     }
-    const held = await withAbortSignal([this.signal], undefined, () =>
-      (this.options.revocationStore ?? defaultSupplyPathRevocations).observe(publisher, observed ?? [])
-    );
     this.signal.throwIfAborted();
-    this.revocations.set(publisher, held);
-    return manifest ? { ...manifest, revoked_publisher_domains: [...held] } : null;
+    // Persistence can add prior denials; it cannot erase current wire evidence.
+    const effective = [...new Map([...held, ...observed].map(entry => [entry.publisher_domain, entry])).values()];
+    this.revocations.set(publisher, effective);
+    return manifest ? { ...manifest, revoked_publisher_domains: effective } : null;
   }
 }

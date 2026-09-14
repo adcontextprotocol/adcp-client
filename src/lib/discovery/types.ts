@@ -125,6 +125,8 @@ export type CollectionDistribution = { publisher_domain: string } & (
     }
 );
 export interface DiscoveryCollection {
+  /** Required when a shared cross-origin document declares this publisher-scoped collection. */
+  publisher_domain?: string;
   collection_id: string;
   name: string;
   kind?: string;
