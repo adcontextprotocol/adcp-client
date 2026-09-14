@@ -2,7 +2,7 @@ name: AI PR Review (Ladon)
 
 # Ladon reviews every non-draft, non-dependabot PR. The heavy lifting lives in
 # the shared action tree at adcontextprotocol/actions (ladon/), consumed here by
-# floating major tag. This workflow handles the pull_request_target security
+# immutable commit pin. This workflow handles the pull_request_target security
 # posture (trusted base-SHA checkout only; the PR head is never fetched, checked
 # out, or executed - setup reads head content via the GitHub API), the
 # review-workflow-modification gate, and invoking the composite. Reviews post as
@@ -70,7 +70,7 @@ jobs:
           MODIFIED=""
           while IFS= read -r f; do
             case "$f" in
-              .github/workflows/ai-review.yml|LADON.md)
+              .github/workflows/ai-review.yml|LADON.md|.github/workflows/ladon-policy.yml|.github/ladon-policy.test.cjs|.github/LADON-ADOPTION.md)
                 MODIFIED="${MODIFIED}${f}"$'\n' ;;
             esac
           done <<< "$CHANGED"

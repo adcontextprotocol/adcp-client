@@ -121,6 +121,13 @@ test('trusted base checkout, draft guard, modification gate, and COMMENT-only hu
 for (const files of [
   ['.github/workflows/ai-review.yml'],
   ['LADON.md'],
+  ['.github/workflows/ladon-policy.yml'],
+  ['.github/workflows/ladon-policy.yml', 'src/example.ts'],
+  ['.github/ladon-policy.test.cjs'],
+  ['.github/ladon-policy.test.cjs', 'src/example.ts'],
+  ['.github/LADON-ADOPTION.md'],
+  ['.github/LADON-ADOPTION.md', 'src/example.ts'],
+
   ['.github/workflows/ai-review.yml', '.github/ladon-policy.test.cjs', 'src/example.ts'],
   ['LADON.md', 'src/example.ts'],
 ]) {
@@ -161,10 +168,10 @@ test('reviewed checkout and every nested Ladon implementation are immutable and 
   for (const name of ['setup', 'arbiter', 'reviewer']) {
     const pin = name === 'reviewer' ? REVIEWER : IMPLEMENTATION;
     // Compare the full action directory, including executable dist bundles.
-    // Reviewer's later tests/docs may change; only runtime files are compared.
+    // Include reviewer rules, schema and every other prompt/runtime asset.
     const paths =
       name === 'reviewer'
-        ? ['ladon/reviewer/action.yml', 'ladon/reviewer/src']
+        ? ['ladon/reviewer']
         : [`ladon/${name}/action.yml`, `ladon/${name}/src`, `ladon/${name}/dist`];
     git('-C', actions, 'diff', '--exit-code', pin, REVIEW, '--', ...paths);
   }
@@ -179,6 +186,11 @@ test('read-only policy CI runs exact-head parsing and upstream approval/race reg
   const checkouts = ci.jobs.policy.steps.filter(step => step.uses?.startsWith('actions/checkout@'));
   assert.equal(checkouts.length, 2);
   assert.equal(checkouts[0].with.ref, '${{ github.event.pull_request.head.sha || github.sha }}');
+  assert.equal(checkouts[0].with.path, 'consumer');
+  assert.equal(checkouts[1].with.path, '.ladon-reviewed-actions');
+  assert.equal(ci.jobs.policy.env.LADON_ACTIONS_PATH, '${{ github.workspace }}/.ladon-reviewed-actions');
+  assert.equal(ci.jobs.policy.steps.find(step => step.run?.startsWith('node --test'))['working-directory'], 'consumer');
+  assert.equal(ci.jobs.policy.steps.find(step => step.uses?.startsWith('actions/setup-node@')).with['node-version-file'], '.ladon-reviewed-actions/.nvmrc');
   assert.equal(checkouts[1].with.ref, REVIEW);
   assert.equal(checkouts[1].with.repository, 'adcontextprotocol/actions');
   checkouts.forEach(step => assert.equal(step.with['persist-credentials'], false));
