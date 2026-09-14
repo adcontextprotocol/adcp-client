@@ -464,8 +464,14 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
       await honest(params);
       throw new Error('socket hang up');
     };
-    await assert.rejects(() => seller.reconcile(at, expected), /socket hang up/);
+    const lost = await seller.reconcile(at, expected);
     assert.equal(seller.store.consumerStatements.length, 1, 'the seller did record it');
+    // Recorded, not thrown: a throw from a later batch would discard the record
+    // of everything the earlier ones already appended, and those statements are
+    // durably the caller's leaves whether or not this call returns.
+    assert.deepEqual(lost.postedConsumerStatuses, []);
+    assert.equal(lost.failedConsumerStatuses.length, 1);
+    assert.match(lost.failedConsumerStatuses[0].errors[0].message, /socket hang up/);
 
     // Re-plan from scratch against a ledger that discloses nothing about the
     // chain — the case where suppression cannot save the buyer, so the ID and
@@ -505,6 +511,33 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.deepEqual(next.postedConsumerStatuses, []);
     assert.equal(next.consumerStatuses[0].suppressed, 'unchanged');
     assert.equal(seller.store.consumerStatements.length, 1);
+  });
+
+  test('running out of the read budget stays silent rather than accusing the seller', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // A revision that never stops paging. The buyer's own page limit is what
+    // ends the read, and a limit the buyer set is not evidence that the seller
+    // published bytes it could not consume.
+    const honest = seller.client.getMediaBuyDelivery;
+    let page = 0;
+    seller.client.getMediaBuyDelivery = async params => {
+      const response = await honest(params);
+      page += 1;
+      return { ...response, pagination: { has_more: true, cursor: `endless-${page}` } };
+    };
+
+    const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 1 } });
+    assert.deepEqual(result.postedConsumerStatuses, []);
+    assert.deepEqual(result.failedConsumerStatuses, []);
+    assert.equal(result.consumerStatuses[0].suppressed, 'budget_exhausted');
+    assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(seller.store.consumerStatements.length, 0, 'nothing was said at all');
   });
 
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {

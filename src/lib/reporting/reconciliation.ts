@@ -366,8 +366,11 @@ export interface ReportingConsumerStatusPlanV1 {
    *   guess.
    * - `consumption_unavailable` — no exact-revision reader is wired, so the
    *   buyer cannot honestly attest consumption.
+   * - `budget_exhausted` — the buyer's own read budget ran out before it could
+   *   consume the revision. Self-inflicted, so it is silence rather than an
+   *   `unreadable` claim against a seller that did nothing wrong.
    */
-  suppressed?: 'unchanged' | 'leaf_undisclosed' | 'consumption_unavailable';
+  suppressed?: 'unchanged' | 'leaf_undisclosed' | 'consumption_unavailable' | 'budget_exhausted';
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -2146,10 +2149,25 @@ export async function reconcileReporting<TCredential = unknown>(
   // seller's advertised recovery window — not merely before the scope closes.
   // Only overdue statuses are posted; posting early would churn the chain for
   // periods the buyer may still resolve on its own.
+  // One budget across every revision this run. When it runs out the remaining
+  // revisions are left unread rather than accused: `unreadable` says the seller
+  // advertised bytes the buyer could not consume, and a buyer that stopped
+  // reading to stay inside its own limit has not established that.
   const readDeadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
   const attested: ReportingConsumerStatusPlanV1[] = [];
+  let budgetExhausted = false;
   for (const plan of evaluated.consumerStatuses) {
-    attested.push(plan.overdue ? await attestConsumerStatusPlan(plan, ledger, options, readDeadline) : plan);
+    if (!plan.overdue) {
+      attested.push(plan);
+      continue;
+    }
+    if (budgetExhausted || (plan.requiresConsumption && Date.now() >= readDeadline)) {
+      attested.push(plan.requiresConsumption ? { ...plan, suppressed: 'budget_exhausted' } : plan);
+      continue;
+    }
+    const next = await attestConsumerStatusPlan(plan, ledger, options, readDeadline);
+    if (next.suppressed === 'budget_exhausted') budgetExhausted = true;
+    attested.push(next);
   }
   const consumerStatuses = attested;
   const owed = consumerStatuses.filter(plan => plan.overdue && plan.suppressed === undefined);
@@ -2163,26 +2181,42 @@ export async function reconcileReporting<TCredential = unknown>(
     for (let offset = 0; offset < owed.length; offset += CONSUMER_STATUS_BATCH_MAX) {
       const batch = owed.slice(offset, offset + CONSUMER_STATUS_BATCH_MAX);
       const wireStatuses = batch.map(wireConsumerStatus);
-      const response = await callBeforeDeadline(
-        signal =>
-          options.client.syncReportingStatus!(
-            {
-              ...(options.request.account ? { account: options.request.account } : {}),
-              idempotency_key: consumerStatusBatchKey(wireStatuses),
-              statuses: wireStatuses,
-            },
-            { signal }
-          ),
-        deadline,
-        'CONSUMER_STATUS_WRITE_FAILED',
-        'sync_reporting_status exceeded the reporting request deadline'
-      );
+      // A batch that fails is recorded and ends the loop rather than thrown.
+      // Throwing from the second batch discarded the record of everything the
+      // first one had already appended — statements that are durably the
+      // caller's current leaves whether or not this function returns.
+      let response;
+      try {
+        response = await callBeforeDeadline(
+          signal =>
+            options.client.syncReportingStatus!(
+              {
+                ...(options.request.account ? { account: options.request.account } : {}),
+                idempotency_key: consumerStatusBatchKey(wireStatuses),
+                statuses: wireStatuses,
+              },
+              { signal }
+            ),
+          deadline,
+          'CONSUMER_STATUS_WRITE_FAILED',
+          'sync_reporting_status exceeded the reporting request deadline'
+        );
+      } catch (error) {
+        recordConsumerStatusBatchFailure(
+          failedConsumerStatuses,
+          batch,
+          error instanceof Error ? error.message : 'sync_reporting_status failed'
+        );
+        break;
+      }
       const results = Array.isArray(response.results) ? response.results : [];
       if (response.status !== 'completed' || results.length !== batch.length) {
-        throw new ReportingReconciliationError(
-          'CONSUMER_STATUS_WRITE_FAILED',
+        recordConsumerStatusBatchFailure(
+          failedConsumerStatuses,
+          batch,
           'seller did not return one result per submitted consumer status'
         );
+        break;
       }
       // Partial success: each status is independent, so a failed sibling must
       // not be reported as posted and must not discard its successful peers.
@@ -2234,6 +2268,14 @@ interface UnconsumableReportingRevisionV1 {
 }
 
 /**
+ * The buyer ran out of its own budget. Not a seller failure and therefore not
+ * a `failure_code` — the caller stays silent for this revision this run.
+ */
+interface ExhaustedReportingReadBudgetV1 {
+  budgetExhausted: true;
+}
+
+/**
  * Complete a planned `received` / `content_mismatch` by actually consuming the
  * revision, or downgrade it to the `unreadable` it turned out to be.
  *
@@ -2255,6 +2297,8 @@ async function attestConsumerStatusPlan(
 
   const outcome = await consumeReportingRevision(options, plan.reportingRevisionId, deadline);
   const leaf = currentConsumerLeaf(ledger, plan, plan.supersedesReportingStatusId);
+
+  if ('budgetExhausted' in outcome) return { ...plan, suppressed: 'budget_exhausted' };
 
   if ('failureCode' in outcome) {
     return withSuppression(
@@ -2353,7 +2397,7 @@ async function consumeReportingRevision(
   options: ReconcileReportingOptions,
   reportingRevisionId: string,
   deadline: number
-): Promise<ConsumedReportingRevisionV1 | UnconsumableReportingRevisionV1> {
+): Promise<ConsumedReportingRevisionV1 | UnconsumableReportingRevisionV1 | ExhaustedReportingReadBudgetV1> {
   const read = options.client.getMediaBuyDelivery!;
   const maxPages = options.ledgerLimits?.maxPages ?? 1_000;
   const maxRows = options.ledgerLimits?.maxRecords ?? 100_000;
@@ -2373,9 +2417,7 @@ async function consumeReportingRevision(
   try {
     do {
       pages += 1;
-      if (pages > maxPages) {
-        return { failureCode: 'transport_failed', detail: 'the revision row read exceeded the configured page limit' };
-      }
+      if (pages > maxPages) return { budgetExhausted: true };
       const response = await callBeforeDeadline(
         signal =>
           read(
@@ -2428,10 +2470,14 @@ async function consumeReportingRevision(
         cursor = undefined;
       }
     } while (cursor);
-  } catch {
-    // Deliberately opaque: a provider error body is untrusted text, and the
-    // wire carries a closed `failure_code` precisely so agents dispatch on the
-    // code rather than on prose.
+  } catch (error) {
+    // The reconciler's own deadline is not the seller's fault; anything else is
+    // a read that genuinely failed. Either way the provider's error body stays
+    // out of the diagnostic: it is untrusted text, and the wire carries a
+    // closed `failure_code` precisely so agents dispatch on the code.
+    if (error instanceof ReportingReconciliationError && error.code === 'CONSUMER_STATUS_READ_FAILED') {
+      return { budgetExhausted: true };
+    }
     return { failureCode: 'transport_failed', detail: 'the exact-revision read failed before the rows were complete' };
   }
 
@@ -2502,6 +2548,17 @@ function rowEvidenceFor(
     if (totals) for (const key of Object.keys(totals)) observed.add(key);
   }
   return { observedMetricNames: [...observed] };
+}
+
+/** Record a whole-batch failure per statement, so none of it is lost. */
+function recordConsumerStatusBatchFailure(
+  failed: ReportingReconciliationResult['failedConsumerStatuses'],
+  batch: readonly ReportingConsumerStatusPlanV1[],
+  message: string
+): void {
+  for (const plan of batch) {
+    failed.push({ plan, errors: [{ code: 'CONSUMER_STATUS_WRITE_FAILED', message }] });
+  }
 }
 
 /**

@@ -83,6 +83,15 @@ rejections with the errors the seller returned, so a partial-success batch never
 Without the client method the reconciler still plans everything and reports it, so existing adopters
 are unaffected.
 
+**Failures stay data, not exceptions.** A batch write that fails records every statement in it on
+`failedConsumerStatuses` and stops posting, rather than throwing: a throw from the second batch
+discarded the record of everything the first had already appended, and those statements are durably
+the caller's current leaves whether or not the call returns. And when the buyer's own read budget
+runs out mid-run, the remaining revisions come back `suppressed: 'budget_exhausted'` instead of
+`unreadable` / `transport_failed` — a limit the buyer set is not evidence that the seller published
+bytes it could not consume, and a self-inflicted negative claim pins the caller's own view at
+`action_required`.
+
 **Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
 deadline with no current status; a failed read leaves it `undefined` rather than failing
 reconciliation, because it is visibility rather than evidence. `escalations` flattens seller issues
