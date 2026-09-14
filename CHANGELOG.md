@@ -1,5 +1,39 @@
 # Changelog
 
+## 14.0.0-rc.36
+
+### Minor Changes
+
+- f4d7abc: Adopt the signed AdCP 3.2.0-rc.2 schema and compliance bundles as the default wire release.
+  Idempotency fingerprints now preserve distinct malformed lone-surrogate payloads, so a
+  durable record created from such a payload may correctly conflict instead of replaying a
+  previous colliding response; well-formed request fingerprints remain unchanged.
+- ceb2edf: Project representable compact catalog filters onto established sellers and expose durable purchase continuations for eligible tokenless legacy listings.
+- def6389: Add the provider-neutral reporting source executor contract, basic and evidenced manifests, conformance harness, canonical JSON golden vectors, and published JSON Schemas.
+- 42215e6: Align the public proposal negotiation types with the canonical generated proposal and purchase fields, and export canonical delivery forecast types.
+- a671e05: Add `createInlineReportingSourceExecutor` for adapting synchronous or promise-returning delivery handlers to a conforming basic reporting source.
+- 10134ca: Merge structured-only media-buy action metadata into the generated `update_media_buy` field dispatch table. `scripts/generate-media-buy-update-fields.ts` now reads `enumMetadata` from both `enums/media-buy-valid-action.json` and `core/media-buy-available-action-id.json` (AdCP 3.2, adcontextprotocol/adcp#7449), so `UPDATE_FIELDS_BY_ACTION` / `ACTIONS_BY_FIELD` pick up `update_media_buy_frequency_cap -> ["frequency_cap"]` as soon as the schema pin ships that file, while `update_frequency_caps -> ["packages[].targeting_overlay.frequency_cap"]` is unchanged. Shared keys must agree (legacy block wins; a conflict aborts generation) and caches that predate the id schema still regenerate a legacy-only table.
+
+  Adds `MediaBuyActionId` (every structured `available_actions[].action` id; equal to `MediaBuyValidAction` until the pin includes the id schema) and widens the preflight, rollup, and `ACTION_NOT_ALLOWED` helper signatures from the legacy enum to it. `decomposeUpdateMediaBuy` / `preflightUpdateMediaBuy` map the MediaBuy-level `frequency_cap` request field through the generated table. New exports: `MediaBuyActionId`, `MediaBuyUpdateFieldAction`, `StructuredOnlyMediaBuyAction`, `STRUCTURED_ONLY_MEDIA_BUY_ACTIONS`.
+
+  Codegen: `MediaBuyAvailableAction` and `ProductAllowedAction` are now owned by `core.generated.ts` as priority canonical schemas (tool types import and re-export them). json-schema-to-typescript otherwise degrades later occurrences of the `anyOf [legacy enum, const]` id alias to the legacy enum alone, which would have dropped `update_media_buy_frequency_cap` from `available_actions[].action` and `allowed_actions[].action` once the pin moves. Under the current pin this only relocates the declarations; `ProductAllowedAction.modes` / `allowed_statuses` now type as plain arrays rather than non-empty tuples (Zod validators are unchanged and still enforce `minItems: 1`).
+
+- 609ab27: Expose an opt-out for the official A2A SDK's v0.3 compatibility layer on client and server paths while preserving the existing enabled default.
+- f4d7abc: Add `sync_reporting_status` consumer-status ingest, exact-leaf chain storage,
+  caller-isolated readback, mismatch projection, adapter identity primitives, and
+  published portable acceptance vectors for AdCP 3.2.0-rc.2.
+- ff08c84: Add the Reliable Reporting lifecycle reference harness and its compliance probe control.
+- fdef3ea: Add the seller-side reporting ledger, PostgreSQL store, leased producer, pure health projection, lifecycle transitions, and `get_reporting_status` handler.
+- 2d76193: Add optional `TaskHandoffOptions.ext` and `TaskRecord.ext` so adopters can attach a vendor-namespaced `ext` object to the submitted task envelope and have it projected on `get_task_status`, `tasks_get` and `list_tasks` reads.
+
+### Patch Changes
+
+- 8524e4d: Canonicalize agent URL identity fields before storyboard runner comparisons so schema-conformant URL forms grade equivalently without changing resource URL assertions.
+- 431e2f5: Preserve the `test-pricing` compliance sentinel when seeded pricing options are not present in storyboard runner context.
+- 5379f22: Route A2A storyboard auth-override probes through the official A2A SDK and record A2A request and response transport metadata.
+- 93d2ddc: Grade missing `parallel_dispatch_runner` contracts as canonically `not_applicable` while keeping required phases non-failing when they mix that skip with other unavailable test-kit contracts.
+- fc1a0ec: Send schema-invalid storyboard requests to sellers and grade only seller-authored responses, while treating any residual locally synthesized response as not applicable.
+
 ## 14.0.0-rc.35
 
 ### Patch Changes
