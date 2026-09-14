@@ -243,6 +243,11 @@ describe('validation-only storyboard steps', () => {
         },
       ],
     };
+    Object.freeze(storyboard.phases[0].steps[0]);
+    Object.freeze(storyboard.phases[0].steps);
+    Object.freeze(storyboard.phases[0]);
+    Object.freeze(storyboard.phases);
+    Object.freeze(storyboard);
     const result = await runStoryboardStep('https://seller.example/mcp', storyboard, 'interpret', {
       protocol: 'mcp',
       _profile: profile,
@@ -254,6 +259,7 @@ describe('validation-only storyboard steps', () => {
       },
     });
     assert.equal(result.task, '__validation_only__');
+    assert.equal(storyboard.phases[0].steps[0].task, undefined);
     assert.equal(result.skipped, true);
     assert.equal(result.skip_reason, 'missing_tool');
     assert.equal(dispatches, 0);

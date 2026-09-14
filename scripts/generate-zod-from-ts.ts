@@ -1953,8 +1953,11 @@ function postProcessReportingConsumerStatusConstraints(content: string): string 
           const objectSchema = ${target.expression};
           const exactSchema = objectSchema.superRefine(${refinement});
           return Object.assign(exactSchema, {
-              pick: objectSchema.pick.bind(objectSchema),
-              omit: objectSchema.omit.bind(objectSchema),
+              // Zod rejects pick/omit on refined objects. Preserve that loud
+              // failure instead of silently deriving a schema that drops the
+              // published cross-field constraints.
+              pick: exactSchema.pick.bind(exactSchema),
+              omit: exactSchema.omit.bind(exactSchema),
               extend: exactSchema.extend.bind(exactSchema),
               safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });

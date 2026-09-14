@@ -199,6 +199,14 @@ import { ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema, SyncRe
 const schemas = { status: ReportingConsumerStatusSchema, request: SyncReportingStatusRequestSchema, response: SyncReportingStatusResponseSchema };
 const cases = JSON.parse(readFileSync(${JSON.stringify(inputPath)}, 'utf8'));
 const issueCases = new Set(['received-missing-evidence', 'request-received-missing-evidence', 'response-received-missing-evidence']);
+const rejectsDerivation = method => {
+  try {
+    ReportingConsumerStatusSchema[method]({});
+    return false;
+  } catch {
+    return true;
+  }
+};
 writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({
   direct: cases.map(entry => schemas[entry.schema].safeParse(entry.value).success),
   extended: cases.map(entry => schemas[entry.schema].extend({}).safeParse(entry.value).success),
@@ -207,6 +215,8 @@ writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({
     const parsed = schemas[entry.schema].safeParse(entry.value);
     return [entry.id, parsed.success ? 0 : parsed.error.issues.length];
   })),
+  pickRejected: rejectsDerivation('pick'),
+  omitRejected: rejectsDerivation('omit'),
 }));
 `
   );
@@ -231,4 +241,6 @@ test('generated consumer-status schemas preserve published rc.2 wire constraints
     'request-received-missing-evidence': 3,
     'response-received-missing-evidence': 4,
   });
+  assert.equal(generated.pickRejected, true, 'pick must not silently drop published refinements');
+  assert.equal(generated.omitRejected, true, 'omit must not silently drop published refinements');
 });

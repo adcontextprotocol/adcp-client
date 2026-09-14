@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T02:42:31.520Z
+// Generated at: 2026-09-14T02:49:40.118Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -6711,8 +6711,11 @@ export const ReportingConsumerStatusSchema = (() => {
       }
   });
           return Object.assign(exactSchema, {
-              pick: objectSchema.pick.bind(objectSchema),
-              omit: objectSchema.omit.bind(objectSchema),
+              // Zod rejects pick/omit on refined objects. Preserve that loud
+              // failure instead of silently deriving a schema that drops the
+              // published cross-field constraints.
+              pick: exactSchema.pick.bind(exactSchema),
+              omit: exactSchema.omit.bind(exactSchema),
               extend: exactSchema.extend.bind(exactSchema),
               safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });
@@ -9403,8 +9406,11 @@ export const SyncReportingStatusRequestSchema = (() => {
       });
     });
           return Object.assign(exactSchema, {
-              pick: objectSchema.pick.bind(objectSchema),
-              omit: objectSchema.omit.bind(objectSchema),
+              // Zod rejects pick/omit on refined objects. Preserve that loud
+              // failure instead of silently deriving a schema that drops the
+              // published cross-field constraints.
+              pick: exactSchema.pick.bind(exactSchema),
+              omit: exactSchema.omit.bind(exactSchema),
               extend: exactSchema.extend.bind(exactSchema),
               safeExtend: exactSchema.safeExtend.bind(exactSchema),
           });

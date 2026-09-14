@@ -35,99 +35,61 @@ const statusId = z
   .max(255)
   .regex(/^[A-Za-z0-9_.:-]+$/);
 
-/** Published AdCP 3.2.0-rc.2 consumer status schema with bounded instants. */
-export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.omit({ recorded_at: true })
-  .strict()
-  .superRefine((value, context) => {
-    const require = (field: keyof typeof value) => {
-      if (value[field] === undefined)
-        context.addIssue({ code: 'custom', path: [field], message: `${field} is required` });
-    };
-    const forbid = (field: keyof typeof value) => {
-      if (value[field] !== undefined)
-        context.addIssue({ code: 'custom', path: [field], message: `${field} is forbidden` });
-    };
-    if (value.consumer_status === 'received') {
-      require('reporting_obligation_id');
-      require('reporting_revision_id');
-      require('observed_revision_content_sha256');
-      forbid('failure_code');
-    } else if (value.consumer_status === 'obligation_missing') {
-      for (const field of [
-        'reporting_obligation_id',
-        'reporting_revision_id',
-        'observed_revision_content_sha256',
-        'failure_code',
-      ] as const)
-        forbid(field);
-    } else if (value.consumer_status === 'revision_missing') {
-      require('reporting_obligation_id');
-      forbid('reporting_revision_id');
-      forbid('observed_revision_content_sha256');
-      forbid('failure_code');
-    } else {
-      require('reporting_obligation_id');
-      require('reporting_revision_id');
-      require('failure_code');
-      forbid('observed_revision_content_sha256');
-    }
-    if ((value.seller_ledger_snapshot_id === undefined) !== (value.seller_ledger_as_of === undefined)) {
+/** Published AdCP 3.2.0-rc.2 consumer status schema with request-only instant bounds. */
+export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.superRefine((value, context) => {
+  if (value.recorded_at !== undefined) {
+    context.addIssue({ code: 'custom', path: ['recorded_at'], message: 'recorded_at is response-only' });
+  }
+  let periodInstantsValid = true;
+  for (const [path, instant] of [
+    [['status_as_of'], value.status_as_of],
+    [['period', 'start'], value.period.start],
+    [['period', 'end'], value.period.end],
+    [['seller_ledger_as_of'], value.seller_ledger_as_of],
+  ] as const) {
+    if (instant === undefined) continue;
+    if (instant.length > 64) {
       context.addIssue({
         code: 'custom',
-        path: ['seller_ledger_snapshot_id'],
-        message: 'snapshot identity and time pair',
+        path: [...path],
+        message: 'Reporting instants must not exceed 64 characters',
       });
     }
-    let periodInstantsValid = true;
-    for (const [path, instant] of [
-      [['status_as_of'], value.status_as_of],
-      [['period', 'start'], value.period.start],
-      [['period', 'end'], value.period.end],
-      [['seller_ledger_as_of'], value.seller_ledger_as_of],
-    ] as const) {
-      if (instant === undefined) continue;
-      if (instant.length > 64) {
-        context.addIssue({
-          code: 'custom',
-          path: [...path],
-          message: 'Reporting instants must not exceed 64 characters',
-        });
-      }
-      try {
-        canonicalReportingInstant(instant);
-      } catch {
-        if (path[0] === 'period') periodInstantsValid = false;
-        context.addIssue({
-          code: 'custom',
-          path: [...path],
-          message: 'value must be a canonical RFC 3339 instant',
-        });
-      }
-    }
-    if (periodInstantsValid && compareReportingInstants(value.period.start, value.period.end) >= 0) {
+    try {
+      canonicalReportingInstant(instant);
+    } catch {
+      if (path[0] === 'period') periodInstantsValid = false;
       context.addIssue({
         code: 'custom',
-        path: ['period', 'end'],
-        message: 'period must be a non-empty half-open interval',
+        path: [...path],
+        message: 'value must be a canonical RFC 3339 instant',
       });
     }
-    for (const key of Object.keys(value.period)) {
-      if (!['start', 'end', 'source_timezone'].includes(key)) {
-        context.addIssue({
-          code: 'custom',
-          path: ['period', key],
-          message: 'period contains an unsupported field',
-        });
-      }
-    }
-    if (value.period.source_timezone.length > 255) {
+  }
+  if (periodInstantsValid && compareReportingInstants(value.period.start, value.period.end) >= 0) {
+    context.addIssue({
+      code: 'custom',
+      path: ['period', 'end'],
+      message: 'period must be a non-empty half-open interval',
+    });
+  }
+  for (const key of Object.keys(value.period)) {
+    if (!['start', 'end', 'source_timezone'].includes(key)) {
       context.addIssue({
         code: 'custom',
-        path: ['period', 'source_timezone'],
-        message: 'source_timezone must not exceed 255 characters',
+        path: ['period', key],
+        message: 'period contains an unsupported field',
       });
     }
-  });
+  }
+  if (value.period.source_timezone.length > 255) {
+    context.addIssue({
+      code: 'custom',
+      path: ['period', 'source_timezone'],
+      message: 'source_timezone must not exceed 255 characters',
+    });
+  }
+});
 
 /** Published AdCP 3.2.0-rc.2 request schema with the SDK's consumer-only item refinements. */
 export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema.safeExtend({
@@ -289,10 +251,17 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
 }
 
 function hasBoundedJsonDepth(root: unknown): boolean {
+  const maxNodes = 10_000;
+  let nodes = 0;
+  let pendingValues = 1;
   const stack: Array<{ value: unknown; depth: number; exit?: boolean }> = [{ value: root, depth: 0 }];
   const active = new WeakSet<object>();
   while (stack.length > 0) {
     const { value, depth, exit } = stack.pop()!;
+    if (!exit) {
+      pendingValues -= 1;
+      if (++nodes > maxNodes) return false;
+    }
     if (value === null || typeof value !== 'object') continue;
     if (exit) {
       active.delete(value);
@@ -303,6 +272,8 @@ function hasBoundedJsonDepth(root: unknown): boolean {
     if (depth > MAX_JSON_DEPTH) return false;
     stack.push({ value, depth, exit: true });
     const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>);
+    if (nodes + pendingValues + children.length > maxNodes) return false;
+    pendingValues += children.length;
     for (const child of children) stack.push({ value: child, depth: depth + 1 });
   }
   return true;
@@ -326,7 +297,11 @@ async function validateStatus(
       value.delivery_config_version === status.delivery_config_version &&
       value.report_definition_id === status.report_definition_id
   );
-  if (!configuration || !isExactPeriod(configuration, configurations, status.period)) {
+  if (
+    !configuration ||
+    configuration.account.account_id !== accountId ||
+    !isExactPeriod(configuration, configurations, status.period)
+  ) {
     throw new ReportingStatusValidationError('ineligible period');
   }
   const expectedOffset =

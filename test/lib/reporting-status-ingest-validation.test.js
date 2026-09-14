@@ -88,6 +88,29 @@ describe('reporting consumer status validation', () => {
     assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
   });
 
+  test('fails an excessively wide request before invoking the store', async () => {
+    let storeCalled = false;
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => {
+          storeCalled = true;
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1' }
+    );
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-width-0001',
+        statuses: [{ ...consumerStatus(), ext: Array.from({ length: 10_001 }, () => null) }],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(storeCalled, false);
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
+  });
+
   test('permits repeated object references when the input graph is acyclic', async () => {
     const sharedPeriod = consumerStatus().period;
     const handler = createSyncReportingStatusHandler(
@@ -205,5 +228,47 @@ describe('reporting consumer status validation', () => {
       );
       assert.equal(result.results[0].result, 'recorded', JSON.stringify(result));
     }
+  });
+
+  test('rejects configurations returned outside the authenticated account scope', async () => {
+    let synchronized = false;
+    const handler = createSyncReportingStatusHandler(
+      {
+        getConsumerStatusBatchReplay: async () => undefined,
+        listConfigurations: async accountId => {
+          assert.equal(accountId, 'account-1');
+          return [
+            {
+              account: { account_id: 'account-2' },
+              delivery_config_id: 'delivery_config_0001',
+              delivery_config_version: 1,
+              report_definition_id: 'report_definition_0001',
+            },
+          ];
+        },
+        syncConsumerStatusBatch: async ({ entries }) => {
+          synchronized = true;
+          return entries.map(entry => ({
+            inserted: false,
+            reporting_status_id: entry.status?.reporting_status_id ?? entry.reporting_status_id,
+            errorCode: 'VALIDATION_ERROR',
+            safeMessage: 'Reporting consumer status does not match the seller ledger',
+          }));
+        },
+      },
+      { resolveConsumerId: () => 'consumer-1', now: () => new Date('2026-09-03T00:00:00Z') }
+    );
+
+    const result = await handler(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'reporting-status-foreign-configuration-0001',
+        statuses: [consumerStatus()],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(synchronized, true);
+    assert.equal(result.results[0].result, 'failed');
+    assert.equal(result.results[0].errors[0].code, 'VALIDATION_ERROR');
   });
 });

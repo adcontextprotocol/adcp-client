@@ -84,7 +84,7 @@ import {
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { resolveDeclaredTestKit, selectProbeTask, validateTestKit } from './test-kit';
-import { validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
+import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
@@ -1301,6 +1301,7 @@ async function runStoryboardBody(
   options: StoryboardRunOptions
 ): Promise<StoryboardResult> {
   validateTestKit(options.test_kit);
+  storyboard = normalizeValidationOnlyTasks(storyboard);
   // Enforce authoring-time branch_set invariants regardless of how the
   // storyboard reached us. YAML callers already ran these rules in
   // parseStoryboard; programmatic callers (hand-built Storyboard objects or
@@ -4455,6 +4456,7 @@ export async function runStoryboardStep(
   options = applyReusableProfileOptions(options);
   return withMCPConnectionScope(
     async () => {
+      storyboard = normalizeValidationOnlyTasks(storyboard);
       validateStoryboardShape(storyboard);
       options = applyStoryboardVersionOptions(storyboard, options);
       options = applyFunctionalRequestSigning(options, {

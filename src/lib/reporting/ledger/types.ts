@@ -426,7 +426,7 @@ export interface ReportingLedgerStore {
  * result for idempotent replay.
  */
 export interface ReportingConsumerStatusLedgerStore {
-  listConfigurations(account_id?: string): Promise<ReportingLedgerConfigurationV1[]>;
+  listConfigurations(account_id: string): Promise<ReportingLedgerConfigurationV1[]>;
   getObligation(reporting_obligation_id: string): Promise<ReportingLedgerObligationV1 | null>;
   /** Loads revision identity and binding for ingest validation without materializing rows. */
   getRevisionMetadata(

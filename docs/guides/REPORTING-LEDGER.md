@@ -104,6 +104,8 @@ periods `2026-03-08T05:00:00Z` → `2026-03-09T04:00:00Z` and
 milliseconds respectively. Give each generated boundary its own delivery
 configuration version, set `anchor` and `installedAt` to the exact start,
 `supersededAt` to the exact end, and set `periodMilliseconds` to `end - start`.
-The portable `consumer-status.json` fixture contains those 23/25-hour cases,
+The portable repository fixture
+[`consumer-status.json`](../../test/fixtures/reporting-reconciliation/consumer-status.json)
+contains those 23/25-hour cases,
 a calendar-month boundary, and the obligation-missing path with no invented
 obligation ID.
