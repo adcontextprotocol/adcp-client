@@ -319,10 +319,7 @@ import type {
   AcquireRightsRequestSchema,
   UpdateRightsRequestSchema,
 } from '../types/schemas.generated';
-import {
-  AccountReferenceSchema,
-  SyncReportingStatusRequestSchema as SyncReportingStatusRequestRuntimeSchema,
-} from '../types/schemas.generated';
+import { AccountReferenceSchema } from '../types/schemas.generated';
 
 import type {
   AcquireRightsAcquired,
@@ -2992,9 +2989,21 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
 // `sync_reporting_status` is intentionally a partial-success batch. Validate
 // the official envelope at the framework boundary, while leaving each status
 // item to the registered handler so one malformed sibling cannot reject all.
-const SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA = SyncReportingStatusRequestRuntimeSchema.extend({
-  statuses: z.array(z.unknown()).min(1).max(100),
-}).strict();
+const SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA = z
+  .object({
+    account: AccountReferenceSchema,
+    idempotency_key: z
+      .string()
+      .min(16)
+      .max(255)
+      .regex(/^[A-Za-z0-9_.:-]+$/),
+    statuses: z.array(z.unknown()).min(1).max(100),
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().int().optional(),
+    context: z.unknown().optional(),
+    ext: z.unknown().optional(),
+  })
+  .strict();
 
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
