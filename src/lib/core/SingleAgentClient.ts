@@ -4492,18 +4492,16 @@ export class SingleAgentClient {
       normalizedParams = { ...normalizedParams, idempotency_key: generateIdempotencyKey() };
     }
 
-    // Validate request params against schema. When compliance testing has
-    // asked us to suppress idempotency auto-injection or account validation,
-    // skip the entire Zod schema parse — the required field is intentionally
-    // absent and Zod would fail on it too. This matches the pre-existing
-    // `skipIdempotencyAutoInject` behavior and is acceptable because both
-    // flags are @internal and only set by the storyboard runner for
-    // schema_validation steps. An explicit external schema root also skips
-    // this generated snapshot; TaskExecutor's AJV pass below validates the
-    // same request against the caller-supplied current-source bundle.
+    // Validate request params against schema. Compliance-only malformed-input
+    // vectors can skip this pass explicitly (or implicitly through the older
+    // missing-idempotency/account escape hatches) so the seller receives the
+    // request it is meant to validate. An explicit external schema root also
+    // skips this generated snapshot; TaskExecutor's AJV pass below validates
+    // the same request against the caller-supplied current-source bundle.
     if (
       !options?.skipIdempotencyAutoInject &&
       !options?.skipAccountValidation &&
+      !options?.skipRequestValidation &&
       !isExternalSchemaRootActive(this.resolvedAdcpVersion)
     ) {
       this.validateRequest(taskType, normalizedParams);
@@ -4532,9 +4530,9 @@ export class SingleAgentClient {
     // Schema-driven pre-send validation runs on the unadapted v3 shape so
     // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
     // v3-only fields out from under the v3 bundled schema. Skip the entire
-    // Zod parse when compliance testing has suppressed required-field
-    // validation — the missing field is intentional and Zod would reject it.
-    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
+    // Zod parse when compliance testing has suppressed request validation —
+    // the invalid shape is intentional and must reach the seller.
+    if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
       this.executor.validateRequest(taskType, normalizedParams);
     }
 
@@ -6505,7 +6503,7 @@ export class SingleAgentClient {
 
   /** Validate malformed creative payloads before capability discovery can perform I/O. */
   private validateBeforeCreativeCapabilityProbe(taskType: string, params: unknown, options: TaskOptions): void {
-    if (options.skipIdempotencyAutoInject || options.skipAccountValidation) return;
+    if (options.skipIdempotencyAutoInject || options.skipAccountValidation || options.skipRequestValidation) return;
     let normalizedParams = normalizeRequestParams(taskType, params);
     if (
       requestUsesIdempotency(taskType, normalizedParams) &&
@@ -7359,9 +7357,9 @@ export class SingleAgentClient {
       // Schema-driven pre-send validation runs on the unadapted v3 shape so
       // wire-format adapters (e.g. adaptGetProductsRequestForV2) don't strip
       // v3-only fields out from under the v3 bundled schema. Skip the entire
-      // Zod parse when compliance testing has suppressed required-field
-      // validation — the missing field is intentional and Zod would reject it.
-      if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation) {
+      // Zod parse when compliance testing has suppressed request validation —
+      // the invalid shape is intentional and must reach the seller.
+      if (!options?.skipIdempotencyAutoInject && !options?.skipAccountValidation && !options?.skipRequestValidation) {
         this.executor.validateRequest(taskName, normalizedParams);
       }
 

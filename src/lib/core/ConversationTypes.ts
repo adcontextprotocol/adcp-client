@@ -233,6 +233,20 @@ export interface TaskOptions {
    */
   skipAccountValidation?: boolean;
   /**
+   * INTERNAL — compliance-test-only escape hatch.
+   *
+   * Skips outgoing request-schema validation so storyboard vectors marked
+   * `negative_path: schema_invalid` reach the seller. Those vectors exist to
+   * grade the seller's validation response; rejecting them in the buyer SDK
+   * would replace seller evidence with a locally synthesized result.
+   *
+   * This does not disable request normalization, idempotency injection, or
+   * response validation.
+   *
+   * @internal Do not set in production buyer code.
+   */
+  skipRequestValidation?: boolean;
+  /**
    * Transport-level safeguards for this call. Overrides the matching field
    * on the client constructor's `transport` option. Use to lift or tighten
    * `maxResponseBytes` per call when an agent legitimately publishes large

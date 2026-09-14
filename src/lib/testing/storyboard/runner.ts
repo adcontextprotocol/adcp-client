@@ -5153,6 +5153,12 @@ async function executeStep(
   // can also skip client-side account validation/injection before the wire call.
   const testsMissingAccount = step.omit_account === true && effectiveStep.task === 'create_media_buy';
 
+  // The storyboard contract defines schema-invalid negative paths as seller
+  // validation probes: the malformed sample_request must reach the agent.
+  // Omitted negative_path retains the contract's backwards-compatible
+  // `schema_invalid` default for expect_error steps.
+  const testsSchemaInvalidRequest = step.expect_error === true && step.negative_path !== 'payload_well_formed';
+
   // Raw MCP dispatch is reserved for steps that explicitly override auth.
   // Missing-field vectors stay on the SDK transport with the skip flags below
   // so Streamable HTTP session setup completes before the malformed tool call
@@ -5346,6 +5352,7 @@ async function executeStep(
         taskOptions: {
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
+          skipRequestValidation: testsSchemaInvalidRequest,
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
@@ -5392,6 +5399,7 @@ async function executeStep(
         executeStoryboardTask(client, effectiveStep.task, request, {
           skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
           skipAccountValidation: testsMissingAccount,
+          skipRequestValidation: testsSchemaInvalidRequest,
           responseProjection:
             effectiveStep.response_projection ??
             defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
@@ -5569,26 +5577,51 @@ async function executeStep(
     };
   }
 
-  // An intentionally schema-invalid vector can be rejected by the SDK before
-  // transport. That is protocol-equivalent to INVALID_REQUEST, but the local
-  // validation path only carries a string. Normalize that narrow case so the
-  // authored error_code check can grade it while retaining a synthetic marker
-  // that makes clear the seller did not produce this envelope.
+  // Schema-invalid vectors should reach the seller through the bypass above.
+  // An injected or older client can still reject locally, however, so detect
+  // that narrow legacy path without presenting runner-authored evidence as a
+  // seller response that storyboard validations can grade.
   const unstructuredStepError = taskResult?.error ?? (taskResult === undefined ? stepResult.error : undefined);
   if (step.expect_error && !taskResult?.data && unstructuredStepError) {
     const localSchemaRejection =
-      step.negative_path === 'schema_invalid' &&
+      step.negative_path !== 'payload_well_formed' &&
       /^(?:Request validation failed for\b|Validation failed for field\b)/.test(unstructuredStepError);
-    if (taskResult || localSchemaRejection) {
+    if (localSchemaRejection) {
+      // The standard runner path disables request validation above, but an
+      // injected/older client may ignore the internal bypass and still reject
+      // locally. Preserve that diagnostic without grading any seller-facing
+      // validation against runner-authored evidence.
+      const syntheticResponse = {
+        errors: [{ code: 'INVALID_REQUEST', message: unstructuredStepError }],
+        synthetic: true,
+      };
+      const detail = 'Seller was not reached; validations are not gradeable on a locally-synthesized response';
+      const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
+      return {
+        step_id: step.id,
+        phase_id: phaseId,
+        title: step.title,
+        task: step.task,
+        passed: true,
+        skipped: true,
+        skip_reason: 'not_applicable',
+        skip: buildSkip('not_applicable', detail),
+        expect_error: true,
+        duration_ms: stepResult.duration_ms,
+        validations: [],
+        context,
+        response: syntheticResponse,
+        request: requestRecord,
+        next,
+        extraction: { path: 'none' },
+        ...(inputSchemaStripNotices.length > 0 && { notices: inputSchemaStripNotices }),
+      };
+    }
+    if (taskResult) {
       taskResult = {
-        ...(taskResult ?? { success: false }),
+        ...taskResult,
         error: unstructuredStepError,
-        data: localSchemaRejection
-          ? {
-              errors: [{ code: 'INVALID_REQUEST', message: unstructuredStepError }],
-              synthetic: true,
-            }
-          : { error: unstructuredStepError },
+        data: { error: unstructuredStepError },
       };
     }
   }
