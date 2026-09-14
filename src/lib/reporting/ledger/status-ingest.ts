@@ -198,7 +198,9 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       ) {
         throw new RangeError('clockSkewMilliseconds must be a safe integer between 0 and 3600000');
       }
-      const configurations = await store.listConfigurations(accountId);
+      const configurations = (await store.listConfigurations(accountId)).filter(
+        value => value?.account?.account_id === accountId
+      );
       try {
         const entries: ReportingConsumerStatusBatchEntryV1[] = [];
         for (const [index, parsedStatus] of parsedStatuses.entries()) {

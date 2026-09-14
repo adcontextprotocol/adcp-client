@@ -10,6 +10,9 @@ now satisfies platform validation without requiring adopters to invent an
 
 AdCP 3.2 prereleases are exact protocol pins: beta.6 replaces beta.5 in the
 SDK's compatible-version list rather than extending a rolling 3.2-beta range.
+Likewise, `3.2.0-rc.2` replaces `3.2.0-rc.1`; callers pinned to rc.1 must
+upgrade both peers together because the SDK does not advertise superseded 3.2
+prereleases as compatible wire releases.
 Beta.1 restored `adcp_major_version` on `buy_products`,
 `accept_proposal`, and `control_media_buy`; the SDK now sends that field again
 for beta.1 and later while retaining its omission only for an explicitly

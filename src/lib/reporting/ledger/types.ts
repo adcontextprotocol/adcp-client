@@ -421,10 +421,13 @@ export interface ReportingLedgerStore {
  * Minimal authoritative-ledger port required by sync_reporting_status.
  *
  * Existing seller ledgers can implement this interface without adopting the
- * SDK producer, worker, lifecycle, lease, issue, or row-storage APIs. Every
- * method remains account/principal scoped, and syncConsumerStatusBatch must
- * atomically compare the current leaf, append, and retain the original batch
- * result for idempotent replay.
+ * SDK producer, worker, lifecycle, lease, issue, or row-storage APIs. Methods
+ * carrying account/principal arguments must enforce them; the handler also
+ * re-checks account identity on returned configurations, obligations,
+ * revisions, and snapshots. syncConsumerStatusBatch must reject every entry
+ * in duplicate-ID or duplicate-logical-chain groups, then atomically compare
+ * the current leaf, append, and retain the original ordered batch result for
+ * idempotent replay.
  */
 export interface ReportingConsumerStatusLedgerStore {
   listConfigurations(account_id: string): Promise<ReportingLedgerConfigurationV1[]>;
