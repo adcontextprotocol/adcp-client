@@ -1056,6 +1056,7 @@ describe('authority pins require a successfully validated manifest', () => {
   });
   it('atomically rejects a pin changed between precheck and successful observation', async () => {
     const pins = new sdk.InMemorySupplyPathAuthorityStore();
+    const revocationStore = new sdk.InMemorySupplyPathRevocationStore();
     const fixture = input();
     fixture.hostManifest.properties[0].publisher_domain = HOST;
     const target = 'https://cdn.example/racing.json';
@@ -1064,8 +1065,12 @@ describe('authority pins require a successfully validated manifest', () => {
       verifySupplyPath(request, {
         source: 'authoritative',
         authorityStore: pins,
+        revocationStore,
         trustedFetchFn: transport({
-          [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: target },
+          [`https://${HOST}/.well-known/adagents.json`]: {
+            authoritative_location: target,
+            revoked_publisher_domains: [OWNER],
+          },
           [target]: () => {
             pins.approveChange(HOST, confirmed);
             return new Response(JSON.stringify(fixture.hostManifest), {
@@ -1078,7 +1083,63 @@ describe('authority pins require a successfully validated manifest', () => {
     );
     assert.equal(await pins.check(HOST, confirmed), true);
     assert.equal(await pins.check(HOST, target), false);
+    const recovered = await verifySupplyPath(request, {
+      source: 'authoritative',
+      authorityStore: pins,
+      revocationStore,
+      trustedFetchFn: transport({
+        [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: confirmed },
+        [confirmed]: fixture.hostManifest,
+      }),
+    });
+    assert.equal(recovered.state, 'owner_attested');
+    assert.deepEqual(
+      (await revocationStore.observe(HOST, [])).map(entry => entry.publisher_domain),
+      [OWNER]
+    );
   });
+  for (const failure of ['throw', 'timeout']) {
+    it(`retains a validated target denial when final authority observation fails by ${failure}`, async () => {
+      const pins = new sdk.InMemorySupplyPathAuthorityStore();
+      const revocationStore = new sdk.InMemorySupplyPathRevocationStore();
+      const target = `https://cdn.example/observation-${failure}.json`;
+      await pins.observe(HOST, target);
+      let failing = true;
+      const authorityStore = {
+        check: (publisher, location) => pins.check(publisher, location),
+        observe: (publisher, location) => {
+          if (publisher === HOST && failing) {
+            if (failure === 'timeout') return new Promise(() => {});
+            throw new Error('authority backend unavailable');
+          }
+          return pins.observe(publisher, location);
+        },
+      };
+      const fixture = input();
+      fixture.hostManifest.properties[0].publisher_domain = HOST;
+      const verify = manifest =>
+        verifySupplyPath(request, {
+          source: 'authoritative',
+          authorityStore,
+          revocationStore,
+          timeoutMs: failing && failure === 'timeout' ? 25 : 1000,
+          trustedFetchFn: transport({
+            [`https://${HOST}/.well-known/adagents.json`]: { authoritative_location: target },
+            [target]: manifest,
+          }),
+        });
+      await assert.rejects(
+        verify({ ...fixture.hostManifest, revoked_publisher_domains: [OWNER] }),
+        /storage failed|deadline|abort/i
+      );
+      failing = false;
+      assert.equal((await verify(fixture.hostManifest)).state, 'owner_attested');
+      assert.deepEqual(
+        (await revocationStore.observe(HOST, [])).map(entry => entry.publisher_domain),
+        [OWNER]
+      );
+    });
+  }
   it('bounds the successful-observation commit by the same overall deadline', async () => {
     await assert.rejects(
       verifySupplyPath(request, {

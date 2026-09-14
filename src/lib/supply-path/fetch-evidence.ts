@@ -152,7 +152,7 @@ export class SupplyPathEvidenceSession {
       return null;
     }
   }
-  private parseManifest(publisher: string, response: SsrfFetchResult): SupplyPathManifest | null {
+  private async parseManifest(publisher: string, response: SsrfFetchResult): Promise<SupplyPathManifest | null> {
     let document: unknown;
     try {
       document = parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
@@ -168,6 +168,9 @@ export class SupplyPathEvidenceSession {
     }
     // Denials survive invalid affirmative envelopes and failed/chained pointers.
     this.observedRevocations.set(publisher, [...(this.observedRevocations.get(publisher) ?? []), ...denials]);
+    // Persist before any later fetch or authority operation can fail or exhaust
+    // the deadline. A failed affirmative verification must not erase a denial.
+    if (denials.length) await this.rememberRevocations(publisher);
     return document;
   }
   private documentError(publisher: string, response: SsrfFetchResult, error: string): void {
@@ -185,7 +188,7 @@ export class SupplyPathEvidenceSession {
     if (!initial) return null;
     let authorityLocation = url;
     let documentResponse = initial;
-    let manifest = this.parseManifest(publisher, initial);
+    let manifest = await this.parseManifest(publisher, initial);
     if (!manifest) return null;
     if (manifest.authoritative_location !== undefined || manifest.superseded_by !== undefined) {
       const target = manifest.authoritative_location ?? manifest.superseded_by;
@@ -221,7 +224,7 @@ export class SupplyPathEvidenceSession {
       const response = await this.read(publisher, 'adagents', target, true);
       if (!response) return null;
       documentResponse = response;
-      manifest = this.parseManifest(publisher, response);
+      manifest = await this.parseManifest(publisher, response);
       if (!manifest) return null;
       if (manifest.authoritative_location !== undefined || manifest.superseded_by !== undefined) {
         this.documentError(publisher, response, 'chained_authoritative_pointer');
@@ -257,6 +260,10 @@ export class SupplyPathEvidenceSession {
   }
   private async readAndRemember(publisher: string): Promise<SupplyPathManifest | null> {
     const manifest = await this.readAdagents(publisher);
+    const effective = await this.rememberRevocations(publisher);
+    return manifest ? { ...manifest, revoked_publisher_domains: effective } : null;
+  }
+  private async rememberRevocations(publisher: string): Promise<SupplyPathRevocation[]> {
     const observed = this.observedRevocations.get(publisher) ?? [];
     let held: readonly SupplyPathRevocation[];
     try {
@@ -271,6 +278,6 @@ export class SupplyPathEvidenceSession {
     // Persistence can add prior denials; it cannot erase current wire evidence.
     const effective = [...new Map([...held, ...observed].map(entry => [entry.publisher_domain, entry])).values()];
     this.revocations.set(publisher, effective);
-    return manifest ? { ...manifest, revoked_publisher_domains: effective } : null;
+    return effective;
   }
 }
