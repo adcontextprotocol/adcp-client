@@ -440,7 +440,7 @@ AdCP 3.
 
 **Request:**
 - Required: `buying_mode: 'brief' | 'wholesale' | 'refine'`
-- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `acceptance_context: Acceptance Context`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: Delivery Type[]`, +12 more
+- Optional: `idempotency_key: string`, `brief: string`, `refine: object[]`, `brand: Brand Ref`, `acceptance_context: Acceptance Context`, `catalog: Catalog`, `account: Account Ref`, `preferred_delivery_types: Delivery Type[]`, +14 more
 
 **Response (success branch):**
 - Optional: `products: Product[]`, `targeting_resolution: Get Products Targeting Resolution`, `extensions: object`, `proposals: Proposal[]`, `errors: Error[]`, `reason: string`, `suggestions: string[]`, `property_list_applied: boolean`, +11 more
@@ -501,8 +501,8 @@ Request parameters for terminally declining one or more proposals.
 Create a MediaBuy directly from canonical published product offers.
 
 **Request:**
-- Required: `idempotency_key: string`, `account: Canonical Account Ref`, `feed_version: string`, `purchases: Product Purchase[]`, `start_time: Start Timing`, `end_time: string`
-- Optional: `adcp_version: string`, `brand: Brand Key`, `advertiser_industry: Advertiser Industry`, `pricing_version: string`, `total_budget: object`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `budget_allocation: Canonical Budget Allocation`, +11 more
+- Required: `idempotency_key: string`, `account: Canonical Account Ref`, `feed_version: string`, `purchases: Product Purchase Input[]`, `start_time: Start Timing`, `end_time: string`
+- Optional: `adcp_version: string`, `brand: Brand Key`, `advertiser_industry: Advertiser Industry`, `pricing_version: string`, `total_budget: object`, `daily_budget_cap: number`, `frequency_cap: Media Buy Frequency Cap`, `budget_cap_timezone: string`, +12 more
 
 #### `accept_proposal`
 
@@ -518,7 +518,7 @@ Apply operational controls inside accepted commercial terms.
 
 **Request:**
 - Required: `idempotency_key: string`, `account: Canonical Account Ref`, `media_buy_id: string`, `revision: integer`
-- Optional: `adcp_version: string`, `name: string`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `total_budget: object`, `daily_budget_cap: number,null`, `budget_cap_timezone: string,null`, +8 more
+- Optional: `adcp_version: string`, `name: string`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `total_budget: object`, `daily_budget_cap: number,null`, `frequency_cap: Media Buy Frequency Cap | null`, +9 more
 
 **Response (success branch):**
 - Required: `status: 'completed'`, `media_buy_id: string`, `revision: integer`
@@ -546,11 +546,11 @@ AdCP 3.
 
 **Request:**
 - Required: `idempotency_key: string`, `account: Account Ref`, `brand: Brand Ref`, `start_time: Start Timing`, `end_time: string`
-- Optional: `governance_context: string`, `plan_id: string`, `proposal_id: string`, `opportunity: Opportunity Context`, `total_budget: object`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `budget_allocation: Budget Allocation`, +14 more
+- Optional: `governance_context: string`, `plan_id: string`, `proposal_id: string`, `opportunity: Opportunity Context`, `total_budget: object`, `daily_budget_cap: number`, `frequency_cap: Media Buy Frequency Cap`, `budget_cap_timezone: string`, +15 more
 
 **Response (success branch):**
 - Required: `media_buy_id: string`, `confirmed_at: string,null`, `revision: integer`, `packages: Package[]`
-- Optional: `proposal_id: string`, `name: string`, `account: Account`, `invoice_recipient: Business Entity`, `media_buy_status: Media Buy Status`, `creative_deadline: string`, `currency: string`, `total_budget: number`, +11 more
+- Optional: `proposal_id: string`, `name: string`, `account: Account`, `invoice_recipient: Business Entity`, `media_buy_status: Media Buy Status`, `creative_deadline: string`, `currency: string`, `total_budget: number`, +12 more
 
 **Watch out:**
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
@@ -561,11 +561,11 @@ AdCP 3.
 
 **Request:**
 - Required: `account: Account Ref`, `media_buy_id: string`, `idempotency_key: string`
-- Optional: `governance_context: string`, `name: string`, `revision: integer`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `start_time: Start Timing`, `end_time: string`, +12 more
+- Optional: `governance_context: string`, `name: string`, `revision: integer`, `paused: boolean`, `canceled: 'true'`, `cancellation_reason: string`, `start_time: Start Timing`, `end_time: string`, +13 more
 
 **Response (success branch):**
 - Required: `media_buy_id: string`, `revision: integer`
-- Optional: `name: string`, `media_buy_status: Media Buy Status`, `currency: string`, `total_budget: number`, `daily_budget_cap: number`, `budget_cap_timezone: string`, `budget_allocation: Budget Allocation`, `pacing: Pacing`, +9 more
+- Optional: `name: string`, `media_buy_status: Media Buy Status`, `currency: string`, `total_budget: number`, `daily_budget_cap: number`, `frequency_cap: Media Buy Frequency Cap`, `budget_cap_timezone: string`, `budget_allocation: Budget Allocation`, +10 more
 
 **Watch out:**
 - Server handlers should return business lifecycle state as `media_buy_status`. The framework owns the task envelope `status`; do not return top-level `status` as the media-buy state.
@@ -1420,6 +1420,9 @@ Flow: `comply_test_controller → request_proposals → refine_proposals → com
 **Seller binds an external audience source into a targetable audience** — Verifies dataset-source ingestion, discovery echo, media-buy targeting, unsupported-rail rejection, and transport immutability.
 Flow: `sync_audiences → create_media_buy → sync_audiences`
 
+**Package frequency-cap capability and update boundaries** — Verifies constrained discovery with seller-wide unit inheritance, create-only rejection, out-of-range rejection, mutable update, package-qualified actions, and exact readback.
+Flow: `sync_accounts → get_products → create_media_buy → get_media_buys → control_media_buy → get_media_buys`
+
 **Seller honors a package-level frequency cap and reports observed frequency at-or-below the cap** — Verifies that a seller advertising frequency_capping accepts a package-level frequency_cap (max_impressions + per + window form) on create_media_buy and, after simulated delivery, reports observed reach and frequency on get_media_buy_delivery with the observed frequency at-or-below the requested cap. Runtime-enforcement scenario — no rejection arm. Sellers without frequency_capping grade not_applicable.
 Flow: `sync_accounts → get_products → create_media_buy → comply_test_controller → get_media_buy_delivery`
 
@@ -1473,6 +1476,9 @@ Flow: `get_products → create_media_buy`
 
 **Seller rejects unworkable measurement_terms** — Buyer proposes measurement_terms the seller will not accept; seller returns TERMS_REJECTED without being required to accept a different configuration.
 Flow: `get_products → create_media_buy`
+
+**Seller accepts and reads back a MediaBuy frequency cap** — Verifies participation-gated discovery, incompatible-mix rejection, exact acceptance, and readback of a root cap across a two-product buy.
+Flow: `sync_accounts → get_products → create_media_buy → get_media_buys`
 
 **Seller solves for budget from a structured outcome target** — Verifies criteria.outcome_target reverse forecasting: a metric or event goal plus desired volume answered with total_budget_guidance on proposals and a forecast whose points carry the goal's key in metrics.
 Flow: `sync_accounts → request_proposals`
@@ -1735,7 +1741,7 @@ Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
 
 **Reliable Reporting: consumer-status loop** — Validates opt-in buyer-to-seller reporting status, missing-obligation identity, caller-scoped mismatch, and immutable supersession.
-Flow: `comply_test_controller → sync_reporting_status → get_reporting_status → comply_test_controller → sync_reporting_status → comply_test_controller → get_reporting_status → get_media_buy_delivery → sync_reporting_status → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_status → get_reporting_status`
+Flow: `comply_test_controller → sync_reporting_status → get_reporting_status → comply_test_controller → sync_reporting_status → comply_test_controller → get_reporting_status → get_media_buy_delivery → sync_reporting_status → get_reporting_status → comply_test_controller → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_status → get_reporting_status`
 
 **Reliable Reporting: Core declaration** — Validates the proper-name Reliable Reporting 1.0 declaration and its required Core tier without requiring optional tiers or a sandbox controller.
 Flow: `get_adcp_capabilities`
@@ -1844,7 +1850,7 @@ Agents use the `recovery` classification to decide what to do: `transient` → r
 | `ACCOUNT_REQUIRED` | correctable | The service must resolve the commercial account before it can determine governance applicability, but the request and referenced resource do not identify one. |
 | `ACCOUNT_SETUP_REQUIRED` | correctable | Natural key resolved but the account needs setup before use. |
 | `ACCOUNT_SUSPENDED` | terminal | Account has been suspended. |
-| `ACTION_NOT_ALLOWED` | correctable | The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the `media_buy_valid_action` value the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, `mode_mismatch`, or `condition_unresolved`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip). |
+| `ACTION_NOT_ALLOWED` | correctable | The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the structured available-action identifier the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, `mode_mismatch`, or `condition_unresolved`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip). |
 | `AGENT_BLOCKED` | terminal | The calling buyer agent's commercial relationship with the seller is permanently denied — the agent is blocked. Sibling to `AGENT_SUSPENDED` on the agent-relationship axis but with no recovery path (a suspension may lift via re-onboarding; a block does not). The code itself is the discriminator — same posture as `AGENT_SUSPENDED`: no `error.details` payload, no per-agent commercial state, cross-tenant onboarding oracle clamp + channel-coverage requirements normative in error-handling.mdx Per-Agent Authorization Gate. |
 | `AGENT_SUSPENDED` | terminal | The calling buyer agent's commercial relationship with the seller is temporarily paused — the agent is onboarded but currently suspended. Sibling to `ACCOUNT_SUSPENDED` (account-wide) and `CAMPAIGN_SUSPENDED` (per-plan) but scoped to the agent-relationship axis (orthogonal to any specific account on that agent). The code itself is the discriminator — it does NOT carry an `error.details` payload (mirroring `BILLING_NOT_PERMITTED_FOR_AGENT`'s discriminator-by-code pattern), and MUST NOT carry per-agent commercial state (rate cards, payment terms, credit limit, billing entity, contact channels) since full disclosure of per-agent state in a single probe is a per-agent oracle. Cross-tenant onboarding oracle clamp + channel-coverage requirements (response shape, HTTP/A2A/MCP status, headers, side effects, observability, latency parity, retry-counter side channel) are normative in error-handling.mdx Per-Agent Authorization Gate; this description does not restate them to avoid drift. |
 | `AMBIGUOUS_BIDDING_POLICY` | correctable | The same effective package combines the canonical bidding block with legacy bid_price or monetary optimization-goal target fields, so two bidding interpretations are present. Sellers MUST reject rather than choosing a winner. |

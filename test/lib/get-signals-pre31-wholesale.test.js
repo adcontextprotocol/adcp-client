@@ -63,7 +63,7 @@ function makeModernClientTargeting30(protocol = 'mcp', config = {}, capabilityOv
       protocol,
     },
     {
-      adcpVersion: '3.2.0-rc.2',
+      adcpVersion: '3.2.0-rc.3',
       validateFeatures: false,
       validation: { requests: 'off', responses: 'off' },
       ...config,

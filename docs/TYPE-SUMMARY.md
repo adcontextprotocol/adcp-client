@@ -754,9 +754,11 @@ _Request:_
   preferred_delivery_types: Delivery Type[]
   filters: Product Filters
   targeting_overlay: Targeting
+  media_buy_frequency_cap: Media Buy Frequency Cap
   required_overlay_support: Targeting Overlay Requirements
+  required_media_buy_support: Media Buy Support Requirements
   property_list: Property List Ref
-  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'acceptance_policy_profile_ids' | 'identity' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'targeting_resolution' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
+  fields: ('product_id' | 'name' | 'description' | 'publisher_properties' | 'channels' | 'video_placement_types' | 'audio_distribution_types' | 'sponsored_placement_types' | 'social_placement_surfaces' | 'format_options' | 'placements' | 'delivery_type' | 'exclusivity' | 'pricing_options' | 'forecast' | 'reporting_capabilities' | 'measurement_terms' | 'performance_standards' | 'catalog_types' | 'signal_targeting_allowed' | 'signal_targeting_rules' | 'demographic_targeting' | 'overlay_support' | 'media_buy_support' | 'audience_evidence' | 'audience_evidence_selections' | 'max_optimization_goals' | 'catalog_match' | 'list_applications' | 'brief_relevance' | 'acceptance_policy_profile_ids' | 'identity' | 'expires_at' | 'allowed_actions' | 'format_ids' | 'outcome_measurement' | 'delivery_measurement' | 'creative_policy' | 'metric_optimization' | 'conversion_tracking' | 'data_provider_signals' | 'included_signals' | 'signal_targeting_options' | 'overlay_support' | 'media_buy_support' | 'targeting_resolution' | 'collections' | 'collection_targeting_allowed' | 'installments' | 'is_custom' | 'product_card' | 'product_card_detailed' | 'enforced_policies' | 'trusted_match')[]
   time_budget: Duration
   push_notification_config: Push Notification Config
   pagination: Pagination Request
@@ -943,7 +945,7 @@ _Request:_
   idempotency_key: string  // required
   account: Canonical Account Ref  // required
   feed_version: string  // required
-  purchases: Product Purchase[]  // required
+  purchases: Product Purchase Input[]  // required
   start_time: Start Timing  // required
   end_time: string  // required
   adcp_version: string
@@ -952,6 +954,7 @@ _Request:_
   pricing_version: string
   total_budget: object
   daily_budget_cap: number
+  frequency_cap: Media Buy Frequency Cap
   budget_cap_timezone: string
   budget_allocation: Canonical Budget Allocation
   pacing: Pacing
@@ -1013,6 +1016,7 @@ _Request:_
   cancellation_reason: string
   total_budget: object
   daily_budget_cap: number,null
+  frequency_cap: Media Buy Frequency Cap | null
   budget_cap_timezone: string,null
   budget_allocation: Canonical Budget Allocation
   pacing: Pacing
@@ -1104,6 +1108,7 @@ _Request:_
   opportunity: Opportunity Context
   total_budget: object
   daily_budget_cap: number
+  frequency_cap: Media Buy Frequency Cap
   budget_cap_timezone: string
   budget_allocation: Budget Allocation
   packages: Package Request[]
@@ -1139,6 +1144,7 @@ _Response (success branch):_
   currency: string
   total_budget: number
   daily_budget_cap: number
+  frequency_cap: Media Buy Frequency Cap
   budget_cap_timezone: string
   budget_allocation: Budget Allocation
   pacing: Pacing
@@ -1175,6 +1181,7 @@ _Request:_
   end_time: string
   total_budget: object
   daily_budget_cap: number,null
+  frequency_cap: Media Buy Frequency Cap | null
   budget_cap_timezone: string,null
   budget_allocation: Budget Allocation
   pacing: Pacing
@@ -1198,6 +1205,7 @@ _Response (success branch):_
   currency: string
   total_budget: number
   daily_budget_cap: number
+  frequency_cap: Media Buy Frequency Cap
   budget_cap_timezone: string
   budget_allocation: Budget Allocation
   pacing: Pacing
@@ -2787,7 +2795,7 @@ await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
 const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
 
-// AdCP 3.2.0-rc.2: identity comes from authenticated transport.
+// AdCP 3.2.0-rc.3: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });

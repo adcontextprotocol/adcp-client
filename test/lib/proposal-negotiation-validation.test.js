@@ -97,7 +97,7 @@ test('commercial-terms verifier accepts a digest-bound exact reviewed snapshot',
   const result = verifyProposalCommercialTerms(
     proposal('proposal-terms', 'source-1', { commercial_terms: terms }),
     terms,
-    { adcpVersion: '3.2-rc.2' }
+    { adcpVersion: '3.2-rc.3' }
   );
 
   assert.equal(result.ok, true);
@@ -331,7 +331,7 @@ test('commercial-terms verifier fails closed when the requested schema bundle is
     proposal('proposal-version', 'source-1', { commercial_terms: terms }),
     terms,
     {
-      adcpVersion: '3.2.0-rc.299',
+      adcpVersion: '3.2.0-rc.399',
     }
   );
   assert.equal(result.ok, false);
@@ -515,7 +515,7 @@ test('builder pins the 3.2 wire envelope and returns an immutable deep snapshot 
   input.context.planning.attempt = 2;
   input.refinements[0].ask = 'Changed after construction';
 
-  assert.equal(built.adcp_version, '3.2-rc.2');
+  assert.equal(built.adcp_version, '3.2-rc.3');
   assert.equal(built.adcp_major_version, 3);
   assert.equal(built.context.planning.attempt, 1);
   assert.equal(built.refinements[0].ask, 'Improve the terms');
@@ -661,7 +661,7 @@ test('compact submitted responses validate without completed-field access', () =
 });
 
 test('response verifier accepts only the 3.2 response release line and reports rejected values', () => {
-  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2-rc.2']) {
+  for (const adcp_version of ['3.2', '3.2-beta.0', '3.2-rc.3']) {
     assert.equal(
       validateRefineProposalsResponseShape({
         ...response(),

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T15:12:42.507Z
+// Generated at: 2026-09-14T17:49:02.914Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -105,7 +105,7 @@ export const CanceledBySchema = z.union([z.literal("buyer"), z.literal("seller")
 
 export const CanonicalMediaBuyActionModeSchema = z.union([z.literal("self_serve"), z.literal("conditional_self_serve"), z.literal("seller_managed"), z.literal("requires_approval")]);
 
-export const CanonicalMediaBuyActionNameSchema = z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("extend_flight"), z.literal("shorten_flight"), z.literal("update_flight_dates"), z.literal("increase_budget"), z.literal("decrease_budget"), z.literal("reallocate_budget"), z.literal("update_budget_allocation"), z.literal("update_targeting"), z.literal("update_pacing"), z.literal("update_bidding"), z.literal("update_frequency_caps"), z.literal("update_catalog_assignments"), z.literal("update_keywords"), z.literal("update_optimization_goals"), z.literal("update_impression_goal"), z.literal("update_spend_target"), z.literal("update_reporting_webhook"), z.literal("replace_creative"), z.literal("update_creative_assignments"), z.literal("remove_creative"), z.literal("add_packages"), z.literal("remove_packages")]);
+export const CanonicalMediaBuyActionNameSchema = z.union([z.literal("pause"), z.literal("resume"), z.literal("cancel"), z.literal("extend_flight"), z.literal("shorten_flight"), z.literal("update_flight_dates"), z.literal("increase_budget"), z.literal("decrease_budget"), z.literal("reallocate_budget"), z.literal("update_budget_allocation"), z.literal("update_targeting"), z.literal("update_pacing"), z.literal("update_bidding"), z.literal("update_frequency_caps"), z.literal("update_media_buy_frequency_cap"), z.literal("update_catalog_assignments"), z.literal("update_keywords"), z.literal("update_optimization_goals"), z.literal("update_impression_goal"), z.literal("update_spend_target"), z.literal("update_reporting_webhook"), z.literal("replace_creative"), z.literal("update_creative_assignments"), z.literal("remove_creative"), z.literal("add_packages"), z.literal("remove_packages")]);
 
 export const CatalogActionSchema = z.union([z.literal("created"), z.literal("updated"), z.literal("unchanged"), z.literal("failed"), z.literal("deleted")]);
 
@@ -221,6 +221,10 @@ export const FormatIDParameterSchema = z.union([z.literal("dimensions"), z.liter
 
 export const FrameRateTypeSchema = z.union([z.literal("constant"), z.literal("variable")]);
 
+export const FrequencyCapControlModeSchema = z.union([z.literal("max_impressions"), z.literal("suppress"), z.literal("max_impressions_and_suppress")]);
+
+export const FrequencyCapMutableFieldSchema = z.union([z.literal("max_impressions"), z.literal("per"), z.literal("window"), z.literal("suppress")]);
+
 export const FrequencyCapScopeSchema = z.literal("package");
 
 export const GenreTaxonomySchema = z.union([z.literal("iab_content_3.0"), z.literal("iab_content_2.2"), z.literal("gracenote"), z.literal("eidr"), z.literal("apple_genres"), z.literal("google_genres"), z.literal("roku"), z.literal("amazon_genres"), z.literal("custom")]);
@@ -282,6 +286,8 @@ export const MatchIDTypeSchema = z.union([z.literal("hashed_email"), z.literal("
 export const MatchTypeSchema = z.union([z.literal("broad"), z.literal("phrase"), z.literal("exact")]);
 
 export const MediaBuyActionModeSchema = z.union([z.literal("self_serve"), z.literal("conditional_self_serve"), z.literal("seller_managed"), z.literal("requires_approval")]);
+
+export const MediaBuyFrequencyCapControlModeSchema = z.literal("max_impressions");
 
 export const MediaBuyHealthSchema = z.union([z.literal("ok"), z.literal("impaired")]);
 
@@ -741,6 +747,15 @@ export const PostalAreaSupportSchema = z.object({
 
 export const IANATimezoneIdentifierSchema = z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$"));
 
+export const FrequencyCapImpressionConstraintsSchema = z.object({
+    minimum: z.number().int().gte(1).optional(),
+    maximum: z.number().int().gte(1).optional(),
+    allowed_values: z.array(z.number()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().merge(z.object({}).passthrough());
+
+export const FrequencyCapDurationUnitSchema = z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days"), z.literal("campaign")]);
+
 export const BrowserSupportSchema = z.union([SupportedSchema, z.object({
         families: z.array(BrowserFamilySchema),
         ext: ExtensionObjectSchema.optional()
@@ -821,6 +836,14 @@ export const GeographicRegionRequirementSchema = z.object({
             }).passthrough(), z.object({
                 values: z.array(z.string())
             }).passthrough()]))
+}).passthrough();
+
+export const FrequencyCapRequirementsSchema = z.object({
+    mutable_fields: z.array(FrequencyCapMutableFieldSchema).optional(),
+    supported_control_modes: z.array(FrequencyCapControlModeSchema).optional(),
+    supported_per_units: z.array(ReachUnitSchema).optional(),
+    supported_window_units: z.array(FrequencyCapDurationUnitSchema).optional(),
+    supported_suppression_units: z.array(FrequencyCapDurationUnitSchema).optional()
 }).passthrough();
 
 export const CatalogRequirementSchema = z.object({
@@ -912,9 +935,13 @@ export const CancellationPolicySchema = z.object({
         }).passthrough()])
 }).passthrough();
 
+export const MediaBuyAvailableActionIDSchema = z.union([MediaBuyValidActionSchema, z.literal("update_media_buy_frequency_cap")]);
+
 export const MediaBuyChangeTermIDSchema = z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$"));
 
 export const MediaBuyTermsReferenceSchema = z.string();
+
+export const ApplicablePackageIDSchema = z.string().min(1);
 
 export const SLAWindowSchema = z.object({
     response_max: z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).optional(),
@@ -1030,23 +1057,42 @@ export const AttributionWindowSchema = z.object({
     model: AttributionModelSchema.optional()
 }).passthrough();
 
-export const DaypartTargetSchema = z.object({
-    days: z.array(DayOfWeekSchema),
-    start_hour: z.number().int().gte(0).lte(23),
-    end_hour: z.number().int().gte(1).lte(24),
-    timezone: z.union([z.literal("inventory_local"), IANATimezoneIdentifierSchema]).optional(),
-    label: z.string().optional()
-}).passthrough();
+export const TargetingUnknownAgeEligibilityConstraintSchema = z.object({}).passthrough();
+
+export const TargetingVerifiedAgeBasisConstraintSchema = z.object({}).passthrough();
+
+export const GeoCountriesSchema = z.array(z.string());
+
+export const GeoCountriesExcludeSchema = z.array(z.string());
+
+export const GeoRegionsSchema = z.array(z.string());
+
+export const GeoRegionsExcludeSchema = z.array(z.string());
+
+export const GeoMetrosExcludeSchema = z.array(z.object({
+    system: MetroAreaSystemSchema,
+    values: z.array(z.string())
+}).passthrough());
+
+export const AudienceIncludeSchema = z.array(z.string());
+
+export const AudienceExcludeSchema = z.array(z.string());
 
 export const SignalTargetingSchema = z.union([z.union([z.object({}).passthrough(), z.object({}).passthrough()]), z.union([z.object({}).passthrough(), z.object({}).passthrough()]), z.union([z.object({}).passthrough(), z.object({}).passthrough()])]);
 
-export const FrequencyCapSchema = z.object({}).passthrough().merge(z.object({
+export const TargetingFrequencyCapSchema = z.object({}).passthrough().merge(z.object({
     suppress: DurationSchema.optional(),
-    suppress_minutes: z.number().gte(0).optional(),
-    max_impressions: z.number().int().gte(1).optional(),
+    suppress_minutes: z.number().optional(),
+    max_impressions: z.number().optional(),
     per: ReachUnitSchema.optional(),
     window: DurationSchema.optional()
 }).passthrough());
+
+export const TargetingPropertyListSchema = z.object({
+    agent_url: z.string(),
+    list_id: z.string(),
+    auth_token: z.string().optional()
+}).passthrough();
 
 export const PropertyListReferenceSchema = z.object({
     agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
@@ -1054,10 +1100,51 @@ export const PropertyListReferenceSchema = z.object({
     auth_token: z.string().optional()
 }).passthrough();
 
+export const TargetingCollectionListSchema = z.object({
+    agent_url: z.string(),
+    list_id: z.string(),
+    auth_token: z.string().optional()
+}).passthrough();
+
 export const CollectionListReferenceSchema = z.object({
     agent_url: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
     list_id: z.string().min(1),
     auth_token: z.string().optional()
+}).passthrough();
+
+export const AgeRestrictionSchema = z.object({
+    min: z.number(),
+    verification_required: z.boolean().optional(),
+    accepted_methods: z.array(AgeVerificationMethodSchema).optional()
+}).passthrough();
+
+export const DevicePlatformExcludeSchema = z.array(DevicePlatformSchema);
+
+export const DeviceTypeExcludeSchema = z.array(DeviceTypeSchema);
+
+export const BrowserSchema = z.array(BrowserFamilySchema);
+
+export const BrowserExcludeSchema = z.array(BrowserFamilySchema);
+
+export const StoreCatchmentsSchema = z.array(z.object({
+    catalog_id: z.string(),
+    store_ids: z.array(z.string()).optional(),
+    catchment_ids: z.array(z.string()).optional()
+}).passthrough());
+
+export const GeoProximitySchema = z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]));
+
+export const TargetingLanguagesSchema = z.array(LanguageTagSchema);
+
+export const TargetingKeywordsSchema = z.array(z.object({
+    keyword: z.string(),
+    match_type: MatchTypeSchema,
+    bid_price: z.number().optional()
+}).passthrough());
+
+export const GeoMetroSchema = z.object({
+    system: MetroAreaSystemSchema,
+    values: z.array(z.string())
 }).passthrough();
 
 export const PostalAreaWithFusedSystemSchema = z.object({
@@ -1106,6 +1193,32 @@ export const PostalCountryAreaSchema = PostalCountrySystemSchema.and(z.object({
 
 export const GeographicPlaceIdentifierSystemSchema = z.union([z.union([z.literal("geonames"), z.literal("google_ads"), z.literal("microsoft_ads")]), z.string()]);
 
+export const GeographicPlaceAreaSchema = z.object({}).passthrough().merge(z.object({
+    country: z.string().regex(new RegExp("^[A-Z]{2}$")),
+    system: GeographicPlaceIdentifierSystemSchema,
+    system_version: z.string().min(1).optional(),
+    place_type: GeographicPlaceTypeSchema,
+    values: z.array(z.string()),
+    value_labels: z.record(z.string(), z.string()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).merge(z.object({
+    country: z.string().regex(new RegExp("^[A-Z]{2}$")),
+    system: GeographicPlaceIdentifierSystemSchema,
+    system_version: z.string().min(1).optional(),
+    place_type: GeographicPlaceTypeSchema,
+    values: z.array(z.string()),
+    value_labels: z.record(z.string(), z.string()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
+export const DaypartTargetSchema = z.object({
+    days: z.array(DayOfWeekSchema),
+    start_hour: z.number().int().gte(0).lte(23),
+    end_hour: z.number().int().gte(1).lte(24),
+    timezone: z.union([z.literal("inventory_local"), IANATimezoneIdentifierSchema]).optional(),
+    label: z.string().optional()
+}).passthrough();
+
 export const ActivationKeySchema = z.union([z.object({
         type: z.literal("segment_id"),
         segment_id: z.string()
@@ -1135,6 +1248,11 @@ export const PublisherCatalogPlacementIdentitySchema = z.object({
 export const ProductDefaultCollectionsSchema = z.object({
     mode: z.literal("default"),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const NegativeKeywordSchema = z.object({
+    keyword: z.string().min(1),
+    match_type: MatchTypeSchema
 }).passthrough();
 
 export const CreativeAssignmentSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
@@ -2734,6 +2852,14 @@ export const ReportingPackageIDSchema = z.string();
 
 export const ReportingStatusSeveritySchema = z.union([z.literal("delayed"), z.literal("action_required")]);
 
+export const FrequencyCapSchema = z.object({}).passthrough().merge(z.object({
+    suppress: DurationSchema.optional(),
+    suppress_minutes: z.number().gte(0).optional(),
+    max_impressions: z.number().int().gte(1).optional(),
+    per: ReachUnitSchema.optional(),
+    window: DurationSchema.optional()
+}).passthrough());
+
 export const OptimizationGoalSchema = z.union([z.object({
         kind: z.literal("metric"),
         metric: z.union([z.literal("clicks"), z.literal("views"), z.literal("completed_views"), z.literal("viewed_seconds"), z.literal("attention_seconds"), z.literal("attention_score"), z.literal("engagements"), z.literal("follows"), z.literal("saves"), z.literal("profile_visits"), z.literal("reach")]),
@@ -2880,6 +3006,10 @@ export const AttestationEvaluationSchema = z.object({}).passthrough().merge(z.ob
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
+export const TargetingGeoMetrosSchema = z.array(GeoMetroSchema);
+
+export const TargetingNegativeKeywordsSchema = z.array(NegativeKeywordSchema);
+
 export const DemographicPredicateSchema = z.object({
     age: DemographicAgeRangeSchema
 }).passthrough();
@@ -2976,6 +3106,8 @@ export const ImpairmentSchema = z.object({
     remediation: z.string().max(500).optional()
 }).passthrough();
 
+export const MediaBuyFrequencyCapSchema = FrequencyCapSchema.and(z.object({}).passthrough());
+
 export const BudgetAllocationSchema = z.union([z.object({
         mode: z.literal("fixed")
     }).passthrough(), z.object({
@@ -3032,25 +3164,6 @@ export const ReportingCoverageSchema = z.object({
         media_buy_id: ReportingMediaBuyIDSchema,
         package_ids: z.array(ReportingPackageIDSchema).optional()
     }).strict())
-}).strict();
-
-export const ReportingStatusIssueSchema = z.object({
-    issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
-    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE"), z.literal("RECEIPT_REQUIRED"), z.literal("RECEIPT_REJECTED"), z.literal("ADJUSTMENT_RECEIPT_REQUIRED"), z.literal("ADJUSTMENT_RECEIPT_REJECTED"), z.literal("CONSUMER_STATUS_MISMATCH")]),
-    severity: ReportingStatusSeveritySchema,
-    responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
-    recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
-    message: z.string().max(500).optional(),
-    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
-    reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
-    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")).optional(),
-    delivery_config_version: z.number().int().gte(1).optional(),
-    feed_purpose: ReportingFeedPurposeSchema.optional(),
-    media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional(),
-    package_ids: z.array(ReportingPackageIDSchema).optional(),
-    period_start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    period_end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).strict();
 
 export const PriceAdjustmentSchema = z.object({
@@ -3202,7 +3315,7 @@ export const OutcomeMeasurementSchema = z.object({
 export const BrandReference1Schema = BrandReferenceSchema;
 
 export const ProductAllowedActionSchema = z.object({
-    action: MediaBuyValidActionSchema,
+    action: MediaBuyAvailableActionIDSchema,
     modes: z.array(MediaBuyActionModeSchema),
     allowed_statuses: z.array(MediaBuyStatusSchema).optional(),
     sla: SLAWindowSchema.optional(),
@@ -3874,13 +3987,15 @@ export const CanonicalPricingOptionSchema = z.object({}).passthrough().merge(z.o
     commission_basis_description: z.string().min(1).max(1000).optional()
 }).passthrough());
 
+export const ProductPurchaseImpressionsSchema = z.number();
+
 export const BrandKeySchema = z.object({
     domain: z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")),
     brand_id: BrandIDSchema.optional(),
     countries: z.array(z.string()).optional()
 }).passthrough();
 
-export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthrough().merge(z.object({
+export const ProductPurchaseAudienceEvidenceRequirementsSchema = z.object({}).passthrough().merge(z.object({
     requirement_mode: z.union([z.literal("required"), z.literal("preferred")]),
     evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
     accepted_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
@@ -3890,7 +4005,7 @@ export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthroug
     excluded_providers: z.array(BrandKeySchema).optional(),
     accepted_subject_types: z.array(AudienceSubjectTypeSchema).optional(),
     accepted_resolution_methods: z.array(AudienceResolutionMethodSchema).optional(),
-    minimum_confidence: z.number().gte(0).lte(1).optional(),
+    minimum_confidence: z.number().optional(),
     maximum_age: DurationSchema.and(z.object({
         unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days")]).optional()
     }).passthrough()).optional(),
@@ -4162,7 +4277,8 @@ export const CanonicalMediaBuyActionFieldsSchema = z.object({
     mode: CanonicalMediaBuyActionModeSchema,
     sla: SLAWindowSchema.optional(),
     change_term_id: MediaBuyChangeTermIDSchema.optional(),
-    terms_ref: MediaBuyTermsReferenceSchema.optional()
+    terms_ref: MediaBuyTermsReferenceSchema.optional(),
+    applicable_package_ids: z.array(ApplicablePackageIDSchema).optional()
 }).passthrough();
 
 export const WarningSchema = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({
@@ -4361,6 +4477,18 @@ export const AudienceEvidencePinSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const ProductPurchaseMeasurementTermsSchema = z.object({
+    billing_measurement: z.object({
+        vendor: BrandKeySchema,
+        max_variance_percent: z.number().optional(),
+        measurement_window: z.string().optional(),
+        finalization_deadline_hours: z.number().optional()
+    }).passthrough().optional(),
+    makegood_policy: z.object({
+        available_remedies: z.array(MakegoodRemedySchema)
+    }).passthrough().optional()
+}).passthrough();
+
 export const CanonicalForecastVendorMetricValueSchema = z.object({
     vendor: BrandKeySchema,
     metric_id: VendorMetricIDSchema,
@@ -4396,12 +4524,13 @@ export const ControlAppliedSchema = z.object({
 export const CreateMediaBuyAsyncSubmittedSchema = CreateMediaBuySubmittedSchema;
 
 export const MediaBuyAvailableActionSchema = z.object({
-    action: MediaBuyValidActionSchema,
+    action: MediaBuyAvailableActionIDSchema,
     mode: MediaBuyActionModeSchema,
     task: z.union([z.literal("control_media_buy"), z.literal("refine_proposals"), z.literal("sync_creatives")]).optional(),
     sla: SLAWindowSchema.optional(),
     change_term_id: MediaBuyChangeTermIDSchema.optional(),
-    terms_ref: MediaBuyTermsReferenceSchema.optional()
+    terms_ref: MediaBuyTermsReferenceSchema.optional(),
+    applicable_package_ids: z.array(ApplicablePackageIDSchema).optional()
 }).passthrough();
 
 export const MeasurementTerms1Schema = MeasurementTermsSchema;
@@ -5741,6 +5870,12 @@ export const PropertyReferenceSchema = z.object({
     property_id: PropertyIDSchema
 }).passthrough();
 
+export const SelectedCollectionsSchema = z.object({
+    mode: z.literal("selected"),
+    collections: z.array(CollectionSelectorSchema.merge(z.object({}).passthrough())),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const LimitedSeriesSchema = z.object({
     total_installments: z.number().int().gte(1),
     starts: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
@@ -6212,6 +6347,15 @@ export const KeywordTargetSchema = z.object({
     bid_price: z.number().gte(0).optional()
 }).passthrough();
 
+export const MediaBuyFrequencyCapRequirementSchema = FrequencyCapRequirementsSchema.and(z.object({
+    supported_control_modes: z.array(MediaBuyFrequencyCapControlModeSchema).optional()
+}).passthrough());
+
+export const ProductMediaBuySupportRequirementsSchema = z.object({
+    frequency_cap: z.literal(true).optional(),
+    frequency_cap_constraints: MediaBuyFrequencyCapRequirementSchema.optional()
+}).passthrough();
+
 export const MissingMetricSchema = z.union([z.object({
         scope: z.literal("standard"),
         metric_id: AvailableMetricSchema,
@@ -6262,6 +6406,11 @@ export const PackageDeliveryMetricValueSchema = z.object({}).passthrough().merge
 }).passthrough()).and(z.object({
     qualifier: z.object({}).passthrough()
 }).passthrough());
+
+export const PackageSignalTargetingGroupSchema = z.object({
+    operator: z.union([z.literal("any"), z.literal("none")]),
+    signals: z.array(PackageSignalTargetingSchema)
+}).passthrough();
 
 export const PerformanceFeedbackMetricSchema = z.union([z.object({
         scope: z.literal("standard"),
@@ -6468,11 +6617,42 @@ export const PrincipalDeclarationsStateSchema = z.object({
     }).passthrough()).max(64).optional()
 }).passthrough();
 
+export const ProductAudienceEvidenceRequirementsSchema = z.object({}).passthrough().merge(z.object({
+    requirement_mode: z.union([z.literal("required"), z.literal("preferred")]),
+    evidence_presence: z.union([z.literal("required"), z.literal("when_available")]),
+    accepted_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
+    excluded_methodologies: z.array(AudienceEvidenceMethodologySchema).optional(),
+    accepted_evidence_types: z.array(z.union([z.literal("measured"), z.literal("forecast"), z.literal("seller_declared")])).optional(),
+    accepted_providers: z.array(BrandKeySchema).optional(),
+    excluded_providers: z.array(BrandKeySchema).optional(),
+    accepted_subject_types: z.array(AudienceSubjectTypeSchema).optional(),
+    accepted_resolution_methods: z.array(AudienceResolutionMethodSchema).optional(),
+    minimum_confidence: z.number().gte(0).lte(1).optional(),
+    maximum_age: DurationSchema.and(z.object({
+        unit: z.union([z.literal("seconds"), z.literal("minutes"), z.literal("hours"), z.literal("days")]).optional()
+    }).passthrough()).optional(),
+    methodology_documentation_required: z.boolean().optional(),
+    independent_attestation_required: z.boolean().optional(),
+    accepted_attestation_issuers: z.array(z.union([z.object({
+            type: z.literal("brand"),
+            brand: BrandKeySchema,
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough(), z.object({
+            type: z.literal("agent"),
+            agent_url: z.string(),
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough(), z.object({
+            type: z.literal("origin"),
+            origin: z.string(),
+            ext: ExtensionObjectSchema.optional()
+        }).passthrough()])).optional(),
+    accepted_attestation_claim_types: z.array(z.string()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
 export const ProductChangeMapSchema = z.record(z.string(), z.union([z.literal("include"), z.literal("omit")]));
 
 export const BrandReference3Schema = BrandReferenceSchema;
-
-export const GeoProximitySchema = z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]));
 
 export const ReferenceRendererSchema = z.object({
     runtime: z.literal("browser-esm"),
@@ -6678,8 +6858,9 @@ export const ReportingConsumerStatusSchema = (() => {
     reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
     reporting_revision_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
     observed_revision_content_sha256: z.string().regex(new RegExp("^[A-Fa-f0-9]{64}$")).optional(),
-    consumer_status: z.union([z.literal("received"), z.literal("obligation_missing"), z.literal("revision_missing"), z.literal("unreadable")]),
+    consumer_status: z.union([z.literal("received"), z.literal("obligation_missing"), z.literal("revision_missing"), z.literal("unreadable"), z.literal("content_mismatch")]),
     status_as_of: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    mismatch_code: z.union([z.literal("scope_media_buy_missing"), z.literal("coverage_short"), z.literal("metric_missing"), z.literal("schema_nonconformant"), z.literal("currency_mismatch"), z.literal("period_mismatch")]).optional(),
     failure_code: z.union([z.literal("access_denied"), z.literal("resource_not_found"), z.literal("integrity_mismatch"), z.literal("reader_incompatible"), z.literal("transport_failed")]).optional(),
     consumer_commit_ref: z.string().min(1).max(512).regex(new RegExp("^[A-Za-z0-9_.:-]{1,512}$")).optional(),
     seller_ledger_snapshot_id: z.string().min(1).max(255).optional(),
@@ -6698,7 +6879,7 @@ export const ReportingConsumerStatusSchema = (() => {
               ctx.addIssue({ code: "custom", path: [field], message: field + " is forbidden" });
           }
       };
-      const allowed = new Set(["reporting_status_id","supersedes_reporting_status_id","delivery_config_id","delivery_config_version","report_definition_id","period","reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","consumer_status","status_as_of","failure_code","consumer_commit_ref","seller_ledger_snapshot_id","seller_ledger_as_of","recorded_at"]);
+      const allowed = new Set(["reporting_status_id","supersedes_reporting_status_id","delivery_config_id","delivery_config_version","report_definition_id","period","reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","consumer_status","status_as_of","mismatch_code","failure_code","consumer_commit_ref","seller_ledger_snapshot_id","seller_ledger_as_of","recorded_at"]);
       for (const field of Object.keys(value as Record<string, unknown>)) {
           if (!allowed.has(field)) ctx.addIssue({ code: "custom", path: [field], message: "Unrecognized key" });
       }
@@ -6710,7 +6891,7 @@ export const ReportingConsumerStatusSchema = (() => {
               }
           }
       }
-      const rules: Record<string, { required: string[]; forbidden: string[] }> = {"received":{"required":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256"],"forbidden":["failure_code"]},"obligation_missing":{"required":[],"forbidden":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","failure_code"]},"revision_missing":{"required":["reporting_obligation_id"],"forbidden":["reporting_revision_id","observed_revision_content_sha256","failure_code"]},"unreadable":{"required":["reporting_obligation_id","reporting_revision_id","failure_code"],"forbidden":["observed_revision_content_sha256"]}};
+      const rules: Record<string, { required: string[]; forbidden: string[] }> = {"received":{"required":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256"],"forbidden":["failure_code","mismatch_code"]},"obligation_missing":{"required":[],"forbidden":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","failure_code","mismatch_code"]},"revision_missing":{"required":["reporting_obligation_id"],"forbidden":["reporting_revision_id","observed_revision_content_sha256","failure_code","mismatch_code"]},"unreadable":{"required":["reporting_obligation_id","reporting_revision_id","failure_code"],"forbidden":["observed_revision_content_sha256","mismatch_code"]},"content_mismatch":{"required":["reporting_obligation_id","reporting_revision_id","observed_revision_content_sha256","mismatch_code"],"forbidden":["failure_code"]}};
       const rule = Object.hasOwn(rules, value.consumer_status) ? rules[value.consumer_status] : undefined;
       if (!rule) {
           ctx.addIssue({ code: "custom", path: ["consumer_status"], message: "Unsupported consumer status" });
@@ -6940,6 +7121,48 @@ export const ReportingScheduleSchema = z.object({}).strict().merge(z.object({
     period_anchor: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     period_timezone: z.string().min(1).max(255).optional(),
     delivery_sla: z.string().regex(new RegExp("^P(?=\\d|T)(?=.*\\d)(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?=\\d)(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$"))
+}).strict());
+
+export const ReportingStatusIssueSchema = z.object({}).strict().merge(z.object({
+    issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE"), z.literal("RECEIPT_REQUIRED"), z.literal("RECEIPT_REJECTED"), z.literal("ADJUSTMENT_RECEIPT_REQUIRED"), z.literal("ADJUSTMENT_RECEIPT_REJECTED"), z.literal("CONSUMER_STATUS_MISMATCH")]),
+    severity: ReportingStatusSeveritySchema,
+    opened_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    issue_state: z.union([z.literal("open"), z.literal("acknowledged"), z.literal("resolved"), z.literal("waived")]).optional(),
+    external_ref: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")).optional(),
+    responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
+    recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
+    message: z.string().max(500).optional(),
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")).optional(),
+    delivery_config_version: z.number().int().gte(1).optional(),
+    feed_purpose: ReportingFeedPurposeSchema.optional(),
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional(),
+    package_ids: z.array(ReportingPackageIDSchema).optional(),
+    period_start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    period_end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
+}).strict()).merge(z.object({
+    issue_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")),
+    code: z.union([z.literal("REPORT_OVERDUE"), z.literal("PRODUCTION_FAILED"), z.literal("DELIVERY_FAILED"), z.literal("ACCESS_REQUIRED"), z.literal("CONFIGURATION_REQUIRED"), z.literal("REPORTING_COVERAGE_INCOMPLETE"), z.literal("RESOURCE_EXPIRED"), z.literal("READER_INCOMPATIBLE"), z.literal("HISTORY_UNAVAILABLE"), z.literal("RECEIPT_REQUIRED"), z.literal("RECEIPT_REJECTED"), z.literal("ADJUSTMENT_RECEIPT_REQUIRED"), z.literal("ADJUSTMENT_RECEIPT_REJECTED"), z.literal("CONSUMER_STATUS_MISMATCH")]),
+    severity: ReportingStatusSeveritySchema,
+    opened_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    issue_state: z.union([z.literal("open"), z.literal("acknowledged"), z.literal("resolved"), z.literal("waived")]).optional(),
+    external_ref: z.string().min(1).max(128).regex(new RegExp("^[A-Za-z0-9_.:-]{1,128}$")).optional(),
+    responsible_party: z.union([z.literal("buyer"), z.literal("seller"), z.literal("provider")]),
+    recommended_action: z.union([z.literal("wait_for_retry"), z.literal("contact_buyer"), z.literal("contact_seller"), z.literal("contact_provider"), z.literal("repair_access"), z.literal("update_configuration"), z.literal("change_reporting_scope"), z.literal("use_supported_reader")]),
+    message: z.string().max(500).optional(),
+    reporting_obligation_id: z.string().min(1).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).optional(),
+    reporting_status_id: z.string().min(16).max(255).regex(new RegExp("^[A-Za-z0-9_.:-]{16,255}$")).optional(),
+    delivery_config_id: z.string().min(1).max(64).regex(new RegExp("^[A-Za-z0-9_.:-]{1,64}$")).optional(),
+    delivery_config_version: z.number().int().gte(1).optional(),
+    feed_purpose: ReportingFeedPurposeSchema.optional(),
+    media_buy_ids: z.array(ReportingMediaBuyIDSchema).optional(),
+    package_ids: z.array(ReportingPackageIDSchema).optional(),
+    period_start: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    period_end: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    expected_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
 }).strict());
 
 export const ReportingReceiptSchema = z.object({}).strict().merge(z.object({
@@ -7562,7 +7785,7 @@ export const AccountSetupRequiredDetailsSchema = z.object({
 }).passthrough();
 
 export const ActionNotAllowedDetailsSchema = z.object({
-    attempted_action: MediaBuyValidActionSchema,
+    attempted_action: MediaBuyAvailableActionIDSchema,
     reason: ActionNotAllowedReasonSchema,
     currently_available_actions: z.array(MediaBuyAvailableActionSchema).optional()
 }).passthrough();
@@ -7880,7 +8103,17 @@ export const OutcomeTargetSchema = z.object({
     }
 });
 
-export const ProductResponseFieldsSchema = z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("identity"), z.literal("expires_at"), z.literal("allowed_actions")]));
+export const ProductResponseFieldsSchema = z.array(z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("overlay_support"), z.literal("media_buy_support"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("identity"), z.literal("expires_at"), z.literal("allowed_actions")]));
+
+export const FormatOptionRefsSchema = z.array(FormatOptionReferenceSchema);
+
+export const CatalogIdsSchema = z.array(z.string());
+
+export const OptimizationGoalsSchema = z.array(CanonicalOptimizationGoalSchema);
+
+export const AudienceEvidencePinsSchema = z.array(AudienceEvidencePinSchema);
+
+export const PerformanceStandardsSchema = z.array(CanonicalPerformanceStandardSchema);
 
 export const ProductRefinementRequestsSchema = z.array(z.union([z.object({
         scope: z.literal("request"),
@@ -8410,23 +8643,12 @@ export const PostalAreaSchema = z.union([PostalArea1Schema, PostalAreaWithFusedS
   }
 });
 
-export const GeographicPlaceAreaSchema = z.object({}).passthrough().merge(z.object({
-    country: z.string().regex(new RegExp("^[A-Z]{2}$")),
-    system: GeographicPlaceIdentifierSystemSchema,
-    system_version: z.string().min(1).optional(),
-    place_type: GeographicPlaceTypeSchema,
-    values: z.array(z.string()),
-    value_labels: z.record(z.string(), z.string()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough()).merge(z.object({
-    country: z.string().regex(new RegExp("^[A-Z]{2}$")),
-    system: GeographicPlaceIdentifierSystemSchema,
-    system_version: z.string().min(1).optional(),
-    place_type: GeographicPlaceTypeSchema,
-    values: z.array(z.string()),
-    value_labels: z.record(z.string(), z.string()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
+export const TargetingSignalGroupsSchema = z.object({
+    operator: z.literal("all"),
+    groups: z.array(PackageSignalTargetingGroupSchema)
+}).passthrough();
+
+export const TargetingCollectionSelectionSchema = z.union([SelectedCollectionsSchema, ProductDefaultCollectionsSchema]);
 
 export const SellerInlinePlacementIdentitySchema = z.object({
     kind: z.literal("seller_inline"),
@@ -8434,20 +8656,9 @@ export const SellerInlinePlacementIdentitySchema = z.object({
     placement_id: z.string()
 }).passthrough();
 
-export const SelectedCollectionsSchema = z.object({
-    mode: z.literal("selected"),
-    collections: z.array(CollectionSelectorSchema.merge(z.object({}).passthrough())),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const ScopeCapabilitySchema = z.object({
     fixed: PolicyProfileSchema.optional(),
     seller_optimized: PolicyProfileSchema.optional()
-}).passthrough();
-
-export const PackageSignalTargetingGroupSchema = z.object({
-    operator: z.union([z.literal("any"), z.literal("none")]),
-    signals: z.array(PackageSignalTargetingSchema)
 }).passthrough();
 
 export const PlacementIdentitySchema = z.union([PublisherCatalogPlacementIdentitySchema, SellerInlinePlacementIdentitySchema]);
@@ -8576,6 +8787,42 @@ export const PlacementForecastDimensionSchema = z.object({
     placement_name: z.string().optional()
 }).passthrough();
 
+export const FrequencyCapIntervalConstraintsSchema = z.object({
+    unit: FrequencyCapDurationUnitSchema,
+    minimum_interval: z.number().optional(),
+    maximum_interval: z.number().optional(),
+    allowed_intervals: z.array(z.number()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough().and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
+    unit: FrequencyCapDurationUnitSchema,
+    minimum_interval: z.number().optional(),
+    maximum_interval: z.number().optional(),
+    allowed_intervals: z.array(z.number()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
+    unit: FrequencyCapDurationUnitSchema,
+    minimum_interval: z.number().optional(),
+    maximum_interval: z.number().optional(),
+    allowed_intervals: z.array(z.number()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()])).and(z.object({
+    unit: FrequencyCapDurationUnitSchema,
+    minimum_interval: z.number().optional(),
+    maximum_interval: z.number().optional(),
+    allowed_intervals: z.array(z.number()).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough()).and(z.union([z.object({}).passthrough(), z.object({}).passthrough()]));
+
+export const FrequencyCapConstraintsSchema = z.object({}).passthrough().merge(z.object({
+    mutable_fields: z.array(FrequencyCapMutableFieldSchema).optional(),
+    supported_control_modes: z.array(FrequencyCapControlModeSchema).optional(),
+    supported_per_units: z.array(ReachUnitSchema).optional(),
+    max_impressions_constraints: FrequencyCapImpressionConstraintsSchema.optional(),
+    window_constraints: z.array(FrequencyCapIntervalConstraintsSchema).optional(),
+    suppression_constraints: z.array(FrequencyCapIntervalConstraintsSchema).optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
 export const AttestationIssuerSchema = z.union([AttestationBrandIssuerSchema, AttestationAgentIssuerSchema, AttestationOriginIssuerSchema]);
 
 export const AttestationBrandSubjectSchema = z.object({
@@ -8633,6 +8880,10 @@ export const PlaceSupportSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const MediaBuyFrequencyCapSupportSchema = FrequencyCapConstraintsSchema.and(z.object({
+    supported_control_modes: z.array(MediaBuyFrequencyCapControlModeSchema).optional()
+}).passthrough());
+
 export const InstallmentDeadlinesSchema = z.object({
     booking_deadline: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     cancellation_deadline: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
@@ -8664,6 +8915,7 @@ export const TargetingOverlayRequirementsSchema = z.object({
             age: RequiredSchema
         }).passthrough()]).optional(),
     frequency_cap: RequiredSchema.optional(),
+    frequency_cap_support: FrequencyCapRequirementsSchema.optional(),
     property_list: RequiredSchema.optional(),
     property_list_exclude: RequiredSchema.optional(),
     collection_list: RequiredSchema.optional(),
@@ -8716,6 +8968,7 @@ export const TargetingOverlaySupportSchema = z.object({
             ext: ExtensionObjectSchema.optional()
         }).passthrough()]).optional(),
     frequency_cap: SupportedSchema.optional(),
+    frequency_cap_support: FrequencyCapConstraintsSchema.optional(),
     property_list: SupportedSchema.optional(),
     property_list_exclude: SupportedSchema.optional(),
     collection_list: SupportedSchema.optional(),
@@ -8739,6 +8992,12 @@ export const TargetingOverlaySupportSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const ProductMediaBuySupportSchema = z.object({
+    frequency_cap: z.literal(true).optional(),
+    frequency_cap_constraints: MediaBuyFrequencyCapSupportSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const CanonicalDOOHPlacementAttributesSchema = z.object({
     slot_duration_seconds: z.number().optional(),
     loop_duration_seconds: z.number().optional(),
@@ -8759,6 +9018,16 @@ export const DeclineProposalsRequestSchema = z.object({
     declines: z.array(ProposalDeclineSchema).max(25),
     opportunity: OpportunityContextSchema.optional()
 }).passthrough();
+
+export const GeoPostalAreasSchema = z.array(PostalAreaSchema);
+
+export const GeoPostalAreasExcludeSchema = z.array(PostalAreaSchema);
+
+export const GeoPlacesSchema = z.array(GeographicPlaceAreaSchema);
+
+export const GeoPlacesExcludeSchema = z.array(GeographicPlaceAreaSchema);
+
+export const DaypartTargetsSchema = z.array(DaypartTargetSchema);
 
 export const AcceptProposalRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -11424,10 +11693,19 @@ export const ReportingDeliveryCapabilitiesSchema = z.object({}).passthrough().me
     offerings: z.array(ReportingDeliveryOfferingSchema),
     automated_recovery_window_seconds: z.number().int().gte(0),
     status_retention_days: z.number().int().gte(1),
+    consumer_mismatch_escalation_seconds: z.number().int().gte(0).optional(),
+    operations_contact: z.object({
+        url: z.string().max(2048).regex(new RegExp("^https://(?![^/]*@)(?!localhost(?:[:/]|$))(?!\\[)(?!\\d+(?:\\.\\d+){3}(?::|/|$))(?:[A-Za-z0-9-]+\\.)+[A-Za-z]{2,}(?::\\d+)?(?:/|$)")).refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+        email: z.string().max(254).optional()
+    }).passthrough().optional(),
     reliability_statistics: z.array(ReportingReliabilityStatisticsSchema).optional(),
     resource_retention_days: z.number().int().gte(1).optional(),
     supports_webhook_activity: z.boolean().optional(),
     authorization_revocation_seconds: z.number().int().gte(0).optional()
+}).passthrough());
+
+export const MediaBuyFrequencyCapCapabilitySchema = FrequencyCapConstraintsSchema.and(z.object({
+    supported_control_modes: z.array(MediaBuyFrequencyCapControlModeSchema)
 }).passthrough());
 
 export const BudgetCappingTimezoneBasisSchema = z.union([z.literal("account"), z.literal("fixed")]);
@@ -12210,13 +12488,6 @@ export const ReportingFileTransferSchema = z.object({
     format: z.union([z.literal("jsonl"), z.literal("csv"), z.literal("parquet"), z.literal("avro"), z.literal("orc")])
 }).passthrough();
 
-export const PackageSignalTargetingGroupsSchema = z.object({
-    operator: z.literal("all"),
-    groups: z.array(PackageSignalTargetingGroupSchema)
-}).passthrough();
-
-export const CollectionSelectionSchema = z.union([SelectedCollectionsSchema, ProductDefaultCollectionsSchema]);
-
 export const SelectedPlacementsSchema = z.object({
     mode: z.literal("selected"),
     placement_refs: z.array(z.union([PlacementReferenceSchema.merge(z.object({}).passthrough()), PlacementIdentitySchema])),
@@ -12384,6 +12655,8 @@ export const AttestationReferenceSchema = z.object({
     }).passthrough().optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
+
+export const PlacementSelectionSchema = z.union([SelectedPlacementsSchema, ProductDefaultPlacementsSchema]);
 
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const ProductFormatDeclarationSchema: z.ZodObject<{ [K in keyof ProductFormatDeclaration]-?: undefined extends ProductFormatDeclaration[K] ? z.ZodOptional<z.ZodType<Exclude<ProductFormatDeclaration[K], undefined>, Exclude<ProductFormatDeclaration[K], undefined>>> : z.ZodType<ProductFormatDeclaration[K], ProductFormatDeclaration[K]> }, z.core.$loose> & z.ZodType<ProductFormatDeclaration & Record<string, unknown>, ProductFormatDeclaration & Record<string, unknown>> = z.object({}).passthrough().merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({}).passthrough()).merge(z.object({
@@ -12708,6 +12981,7 @@ export const ProductSchema: ProductSchemaObject<ProductSchemaShape> & z.ZodType<
     signal_targeting_allowed: z.boolean().optional(),
     demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
     overlay_support: TargetingOverlaySupportSchema.optional(),
+    media_buy_support: ProductMediaBuySupportSchema.optional(),
     identity: ProductIdentitySchema.optional(),
     targeting_resolution: ProductTargetingResolutionSchema.optional(),
     audience_evidence: z.array(AudienceEvidenceSchema).optional(),
@@ -12923,6 +13197,57 @@ export const RightsConstraintSchema = z.object({}).passthrough().merge(z.object(
     ext: ExtensionObjectSchema.optional()
 }).passthrough());
 
+export const TargetingOverlaySchema = TargetingUnknownAgeEligibilityConstraintSchema.merge(TargetingVerifiedAgeBasisConstraintSchema).merge(z.object({
+    geo_countries: z.array(z.string()).optional(),
+    geo_countries_exclude: z.array(z.string()).optional(),
+    geo_regions: z.array(z.string()).optional(),
+    geo_regions_exclude: z.array(z.string()).optional(),
+    geo_metros: TargetingGeoMetrosSchema.optional(),
+    geo_metros_exclude: z.array(z.object({
+        system: MetroAreaSystemSchema,
+        values: z.array(z.string())
+    }).passthrough()).optional(),
+    geo_postal_areas: z.array(PostalAreaSchema).optional(),
+    geo_postal_areas_exclude: z.array(PostalAreaSchema).optional(),
+    geo_places: z.array(GeographicPlaceAreaSchema).optional(),
+    geo_places_exclude: z.array(GeographicPlaceAreaSchema).optional(),
+    daypart_targets: z.array(DaypartTargetSchema).optional(),
+    axe_include_segment: z.string().optional(),
+    axe_exclude_segment: z.string().optional(),
+    audience_include: z.array(z.string()).optional(),
+    audience_exclude: z.array(z.string()).optional(),
+    signal_targeting_groups: TargetingSignalGroupsSchema.optional(),
+    signal_targeting: z.array(SignalTargetingSchema).optional(),
+    demographics: DemographicTargetingIntentSchema.optional(),
+    frequency_cap: TargetingFrequencyCapSchema.optional(),
+    property_list: TargetingPropertyListSchema.optional(),
+    property_list_exclude: PropertyListReferenceSchema.optional(),
+    collection_list: TargetingCollectionListSchema.optional(),
+    collection_list_exclude: CollectionListReferenceSchema.optional(),
+    placement_selection: PlacementSelectionSchema.optional(),
+    collection_selection: TargetingCollectionSelectionSchema.optional(),
+    age_restriction: z.object({
+        min: z.number().int().gte(13).lte(99),
+        verification_required: z.boolean().optional(),
+        accepted_methods: z.array(AgeVerificationMethodSchema).optional()
+    }).passthrough().optional(),
+    device_platform: z.array(DevicePlatformSchema).optional(),
+    device_platform_exclude: z.array(DevicePlatformSchema).optional(),
+    device_type: z.array(DeviceTypeSchema).optional(),
+    device_type_exclude: z.array(DeviceTypeSchema).optional(),
+    browser: z.array(BrowserFamilySchema).optional(),
+    browser_exclude: z.array(BrowserFamilySchema).optional(),
+    store_catchments: z.array(z.object({
+        catalog_id: z.string(),
+        store_ids: z.array(z.string()).optional(),
+        catchment_ids: z.array(z.string()).optional()
+    }).passthrough()).optional(),
+    geo_proximity: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
+    language: TargetingLanguagesSchema.optional(),
+    keyword_targets: TargetingKeywordsSchema.optional(),
+    negative_keywords: TargetingNegativeKeywordsSchema.optional()
+}).passthrough());
+
 export const DeliveryForecast1Schema = DeliveryForecastSchema;
 
 export const GetProductsAsyncInputRequiredSchema: z.ZodType = z.object({
@@ -12931,6 +13256,31 @@ export const GetProductsAsyncInputRequiredSchema: z.ZodType = z.object({
     suggestions: z.array(z.string()).optional(),
     context: ContextObjectSchema.optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ProductPurchaseSchema = z.object({
+    product_id: z.string().min(1),
+    pricing_option_id: z.string().min(1),
+    pricing: CanonicalPricingOptionSchema.optional(),
+    format_option_refs: z.array(FormatOptionReferenceSchema).optional(),
+    catalog_ids: z.array(z.string()).optional(),
+    budget: z.number().gte(0).optional(),
+    daily_budget_cap: z.number().gte(0).optional(),
+    min_spend_target: z.number().gte(0).optional(),
+    impressions: ProductPurchaseImpressionsSchema.optional(),
+    start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    pacing: PacingSchema.optional(),
+    bidding: BiddingPolicySchema.optional(),
+    targeting_overlay: TargetingOverlaySchema.optional(),
+    optimization_goals: z.array(CanonicalOptimizationGoalSchema).optional(),
+    audience_evidence_requirements: ProductPurchaseAudienceEvidenceRequirementsSchema.optional(),
+    audience_evidence_pins: z.array(AudienceEvidencePinSchema).optional(),
+    agency_estimate_number: z.string().max(100).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional(),
+    measurement_terms: ProductPurchaseMeasurementTermsSchema.optional(),
+    performance_standards: z.array(CanonicalPerformanceStandardSchema).optional()
 }).passthrough();
 
 export const CanonicalForecastPointSchema = z.object({
@@ -13224,6 +13574,11 @@ export const VerifyBrandClaimsSuccessSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const ProductDiscoveryTargetingResolutionSchema = z.object({
+    brief_targeting: TargetingOverlaySchema,
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
 export const ProposalSchema = z.object({}).passthrough().merge(z.object({
     proposal_id: z.string().max(255),
     name: z.string().max(500),
@@ -13231,6 +13586,7 @@ export const ProposalSchema = z.object({}).passthrough().merge(z.object({
     allocations: z.array(ProductAllocationSchema),
     budget_allocation: BudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
     proposal_status: ProposalStatusSchema.optional(),
     expires_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
     insertion_order: InsertionOrderSchema.optional(),
@@ -13312,6 +13668,8 @@ export const CollectionPropertyDeliveryMetricsSchema = DeliveryMetricsSchema.mer
     property_ref: PropertyReferenceSchema.optional(),
     property_name: z.string().optional()
 }).passthrough());
+
+export const CollectionSelectionSchema = z.union([SelectedCollectionsSchema, ProductDefaultCollectionsSchema]);
 
 export const CreativeDeliveryMetricsSchema = DeliveryMetricsSchema.merge(z.object({
     creative_id: z.string(),
@@ -13619,6 +13977,11 @@ export const OfferingSchema = z.object({
     keywords: z.array(z.string()).optional(),
     categories: z.array(z.string()).optional(),
     ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const PackageSignalTargetingGroupsSchema = z.object({
+    operator: z.literal("all"),
+    groups: z.array(PackageSignalTargetingGroupSchema)
 }).passthrough();
 
 export const InlineDeclarationSchema = z.object({}).passthrough().merge(z.object({
@@ -14187,6 +14550,113 @@ export const AcceptancePolicyCatalogSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const TargetingOverlayInputSchema = TargetingUnknownAgeEligibilityConstraintSchema.merge(TargetingVerifiedAgeBasisConstraintSchema).merge(z.object({
+    geo_countries: GeoCountriesSchema.optional().nullable(),
+    geo_countries_exclude: GeoCountriesExcludeSchema.optional().nullable(),
+    geo_regions: GeoRegionsSchema.optional().nullable(),
+    geo_regions_exclude: GeoRegionsExcludeSchema.optional().nullable(),
+    geo_metros: TargetingGeoMetrosSchema.optional(),
+    geo_metros_exclude: GeoMetrosExcludeSchema.optional().nullable(),
+    geo_postal_areas: GeoPostalAreasSchema.optional().nullable(),
+    geo_postal_areas_exclude: GeoPostalAreasExcludeSchema.optional().nullable(),
+    geo_places: GeoPlacesSchema.optional().nullable(),
+    geo_places_exclude: GeoPlacesExcludeSchema.optional().nullable(),
+    daypart_targets: DaypartTargetsSchema.optional().nullable(),
+    axe_include_segment: z.string().optional().nullable(),
+    axe_exclude_segment: z.string().optional().nullable(),
+    audience_include: AudienceIncludeSchema.optional().nullable(),
+    audience_exclude: AudienceExcludeSchema.optional().nullable(),
+    signal_targeting_groups: TargetingSignalGroupsSchema.optional().nullable(),
+    signal_targeting: z.array(SignalTargetingSchema).optional().nullable(),
+    demographics: DemographicTargetingIntentSchema.optional().nullable(),
+    frequency_cap: TargetingFrequencyCapSchema.optional().nullable(),
+    property_list: TargetingPropertyListSchema.optional().nullable(),
+    property_list_exclude: PropertyListReferenceSchema.optional().nullable(),
+    collection_list: TargetingCollectionListSchema.optional().nullable(),
+    collection_list_exclude: CollectionListReferenceSchema.optional().nullable(),
+    placement_selection: PlacementSelectionSchema.optional().nullable(),
+    collection_selection: TargetingCollectionSelectionSchema.optional().nullable(),
+    age_restriction: AgeRestrictionSchema.optional().nullable(),
+    device_platform: z.array(DevicePlatformSchema).optional().nullable(),
+    device_platform_exclude: DevicePlatformExcludeSchema.optional().nullable(),
+    device_type: z.array(DeviceTypeSchema).optional().nullable(),
+    device_type_exclude: DeviceTypeExcludeSchema.optional().nullable(),
+    browser: BrowserSchema.optional().nullable(),
+    browser_exclude: BrowserExcludeSchema.optional().nullable(),
+    store_catchments: StoreCatchmentsSchema.optional().nullable(),
+    geo_proximity: GeoProximitySchema.optional().nullable(),
+    language: TargetingLanguagesSchema.optional(),
+    keyword_targets: TargetingKeywordsSchema.optional(),
+    negative_keywords: TargetingNegativeKeywordsSchema.optional()
+}).passthrough());
+
+export const ProductDiscoveryCriteriaSchema = z.object({
+    product_ids: z.array(z.string()).optional(),
+    offer_filters: ProductOfferFiltersSchema.optional(),
+    targeting_overlay: TargetingOverlaySchema.optional(),
+    media_buy_frequency_cap: MediaBuyFrequencyCapSchema.optional(),
+    required_overlay_support: TargetingOverlayRequirementsSchema.optional(),
+    required_media_buy_support: ProductMediaBuySupportRequirementsSchema.optional(),
+    outcome_target: OutcomeTargetSchema.optional(),
+    acceptance_context: AcceptanceContextSchema.optional(),
+    catalog: CatalogSelectionSchema.optional(),
+    policy_ids: z.array(z.string()).optional(),
+    ext: z.object({}).passthrough().optional()
+}).passthrough();
+
+export const ProductPurchaseInputSchema = z.object({
+    product_id: z.string(),
+    pricing_option_id: z.string(),
+    pricing: CanonicalPricingOptionSchema.optional(),
+    format_option_refs: FormatOptionRefsSchema.optional(),
+    catalog_ids: CatalogIdsSchema.optional(),
+    budget: z.number().optional(),
+    daily_budget_cap: z.number().optional(),
+    min_spend_target: z.number().optional(),
+    impressions: ProductPurchaseImpressionsSchema.optional(),
+    start_time: z.string().optional(),
+    end_time: z.string().optional(),
+    pacing: PacingSchema.optional(),
+    bidding: BiddingPolicySchema.optional(),
+    targeting_overlay: TargetingOverlayInputSchema.optional(),
+    optimization_goals: OptimizationGoalsSchema.optional(),
+    audience_evidence_requirements: ProductPurchaseAudienceEvidenceRequirementsSchema.optional(),
+    audience_evidence_pins: AudienceEvidencePinsSchema.optional(),
+    agency_estimate_number: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional(),
+    measurement_terms: ProductPurchaseMeasurementTermsSchema.optional(),
+    performance_standards: PerformanceStandardsSchema.optional()
+}).passthrough();
+
+export const ProposalRefinementSchema = z.object({
+    proposal_id: z.string().min(1),
+    action: z.union([z.literal("revise"), z.literal("finalize")]).optional(),
+    change_kind: z.union([z.literal("amendment"), z.literal("cancellation")]).optional(),
+    constraints: z.object({
+        total_budget: ProposalBudgetConstraintSchema.optional(),
+        cpm: z.object({
+            max: z.number().gt(0),
+            currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
+        }).passthrough().optional(),
+        impressions: z.object({
+            min: z.number().gt(0)
+        }).passthrough().optional(),
+        flight: z.object({}).passthrough().optional()
+    }).passthrough().optional(),
+    product_changes: ProductChangeMapSchema.optional(),
+    alternatives: z.object({
+        count: z.number().int().gte(2).lte(10)
+    }).passthrough().optional(),
+    ask: z.string().min(1).optional(),
+    criteria: ProductDiscoveryCriteriaSchema.optional(),
+    remove_media_buy_frequency_cap: z.literal(true).optional()
+}).passthrough().and(z.union([z.object({
+        action: z.literal("finalize")
+    }).passthrough(), z.union([z.object({}).passthrough(), z.object({
+            change_kind: z.literal("cancellation")
+        }).passthrough()])]));
+
 export const PropertyFeatureResultSchema = z.object({
     property: PropertyIDSchema,
     features: z.record(z.string(), PropertyFeatureValueSchema).optional(),
@@ -14268,84 +14738,132 @@ export const ContextMatchResponseRouterPublisherSchema = z.object({
 
 export const FormatAssetSlotSchema = z.union([IndividualAssetSlotSchema, RepeatableGroupAssetSchema]);
 
-export const PlacementSelectionSchema = z.union([SelectedPlacementsSchema, ProductDefaultPlacementsSchema]);
-
-export const TargetingOverlaySchema = z.object({}).passthrough().merge(z.object({
-    geo_countries: z.array(z.string()).optional(),
-    geo_countries_exclude: z.array(z.string()).optional(),
-    geo_regions: z.array(z.string()).optional(),
-    geo_regions_exclude: z.array(z.string()).optional(),
-    geo_metros: z.array(z.object({
-        system: MetroAreaSystemSchema,
-        values: z.array(z.string())
-    }).passthrough()).optional(),
-    geo_metros_exclude: z.array(z.object({
-        system: MetroAreaSystemSchema,
-        values: z.array(z.string())
-    }).passthrough()).optional(),
-    geo_postal_areas: z.array(PostalAreaSchema).optional(),
-    geo_postal_areas_exclude: z.array(PostalAreaSchema).optional(),
-    geo_places: z.array(GeographicPlaceAreaSchema).optional(),
-    geo_places_exclude: z.array(GeographicPlaceAreaSchema).optional(),
-    daypart_targets: z.array(DaypartTargetSchema).optional(),
-    axe_include_segment: z.string().optional(),
-    axe_exclude_segment: z.string().optional(),
-    audience_include: z.array(z.string()).optional(),
-    audience_exclude: z.array(z.string()).optional(),
-    signal_targeting_groups: PackageSignalTargetingGroupsSchema.optional(),
-    signal_targeting: z.array(SignalTargetingSchema).optional(),
-    demographics: DemographicTargetingIntentSchema.optional(),
-    frequency_cap: FrequencyCapSchema.optional(),
+// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
+export const GetProductsRequestSchema: z.ZodObject<{ [K in keyof GetProductsRequest]-?: undefined extends GetProductsRequest[K] ? z.ZodOptional<z.ZodType<Exclude<GetProductsRequest[K], undefined>, Exclude<GetProductsRequest[K], undefined>>> : z.ZodType<GetProductsRequest[K], GetProductsRequest[K]> }, z.core.$loose> & z.ZodType<GetProductsRequest & Record<string, unknown>, GetProductsRequest & Record<string, unknown>> = z.object({
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
+    buying_mode: z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")]),
+    brief: z.string().optional(),
+    refine: z.array(z.union([z.object({
+            scope: z.literal("request"),
+            ask: z.string().min(1)
+        }).passthrough(), z.object({
+            scope: z.literal("product"),
+            product_id: z.string().min(1),
+            action: z.union([z.literal("include"), z.literal("omit"), z.literal("more_like_this")]).optional(),
+            ask: z.string().min(1).optional()
+        }).passthrough(), z.object({
+            scope: z.literal("proposal"),
+            proposal_id: z.string().min(1),
+            action: z.union([z.literal("include"), z.literal("omit"), z.literal("finalize")]).optional(),
+            ask: z.string().min(1).optional()
+        }).passthrough()])).optional(),
+    brand: BrandReferenceSchema.optional(),
+    acceptance_context: AcceptanceContextSchema.optional(),
+    catalog: CatalogSchema.optional(),
+    account: AccountReferenceSchema.optional(),
+    preferred_delivery_types: z.array(DeliveryTypeSchema).optional(),
+    filters: ProductFiltersSchema.optional(),
+    targeting_overlay: TargetingOverlaySchema.optional(),
+    media_buy_frequency_cap: MediaBuyFrequencyCapSchema.optional(),
+    required_overlay_support: TargetingOverlayRequirementsSchema.optional(),
+    required_media_buy_support: ProductMediaBuySupportRequirementsSchema.optional(),
     property_list: PropertyListReferenceSchema.optional(),
-    property_list_exclude: PropertyListReferenceSchema.optional(),
-    collection_list: CollectionListReferenceSchema.optional(),
-    collection_list_exclude: CollectionListReferenceSchema.optional(),
-    placement_selection: PlacementSelectionSchema.optional(),
-    collection_selection: CollectionSelectionSchema.optional(),
-    age_restriction: z.object({
-        min: z.number().int().gte(13).lte(99),
-        verification_required: z.boolean().optional(),
-        accepted_methods: z.array(AgeVerificationMethodSchema).optional()
-    }).passthrough().optional(),
-    device_platform: z.array(DevicePlatformSchema).optional(),
-    device_platform_exclude: z.array(DevicePlatformSchema).optional(),
-    device_type: z.array(DeviceTypeSchema).optional(),
-    device_type_exclude: z.array(DeviceTypeSchema).optional(),
-    browser: z.array(BrowserFamilySchema).optional(),
-    browser_exclude: z.array(BrowserFamilySchema).optional(),
-    store_catchments: z.array(z.object({
-        catalog_id: z.string(),
-        store_ids: z.array(z.string()).optional(),
-        catchment_ids: z.array(z.string()).optional()
-    }).passthrough()).optional(),
-    geo_proximity: z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()])).optional(),
-    language: z.array(LanguageTagSchema).optional(),
-    keyword_targets: z.array(z.object({
-        keyword: z.string().min(1),
-        match_type: MatchTypeSchema,
-        bid_price: z.number().gte(0).optional()
-    }).passthrough()).optional(),
-    negative_keywords: z.array(z.object({
-        keyword: z.string().min(1),
-        match_type: MatchTypeSchema
-    }).passthrough()).optional()
-}).passthrough());
-
-export const ProductDiscoveryTargetingResolutionSchema = z.object({
-    brief_targeting: TargetingOverlaySchema,
+    fields: z.array(z.union([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("overlay_support"), z.literal("media_buy_support"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("identity"), z.literal("expires_at"), z.literal("allowed_actions")]), z.union([z.literal("format_ids"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("creative_policy"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("included_signals"), z.literal("signal_targeting_options"), z.literal("overlay_support"), z.literal("media_buy_support"), z.literal("targeting_resolution"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("is_custom"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies"), z.literal("trusted_match")])])).optional(),
+    time_budget: DurationSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    pagination: PaginationRequestSchema.optional(),
+    if_wholesale_feed_version: z.string().optional(),
+    if_pricing_version: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    required_policies: z.array(z.string()).optional(),
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const ProductDiscoveryCriteriaSchema = z.object({
-    product_ids: z.array(z.string()).optional(),
-    offer_filters: ProductOfferFiltersSchema.optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
-    required_overlay_support: TargetingOverlayRequirementsSchema.optional(),
-    outcome_target: OutcomeTargetSchema.optional(),
-    acceptance_context: AcceptanceContextSchema.optional(),
-    catalog: CatalogSelectionSchema.optional(),
-    policy_ids: z.array(z.string()).optional(),
-    ext: z.object({}).passthrough().optional()
+// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
+export const GetProductsResponseSchema: z.ZodObject<{ [K in keyof GetProductsResponse]-?: undefined extends GetProductsResponse[K] ? z.ZodOptional<z.ZodType<Exclude<GetProductsResponse[K], undefined>, Exclude<GetProductsResponse[K], undefined>>> : z.ZodType<GetProductsResponse[K], GetProductsResponse[K]> }, z.core.$loose> & z.ZodType<GetProductsResponse & Record<string, unknown>, GetProductsResponse & Record<string, unknown>> = z.object({
+    context_id: z.string().optional(),
+    context: ContextObjectSchema.optional(),
+    task_id: z.string().optional(),
+    status: TaskStatusSchema,
+    message: z.string().optional(),
+    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    replayed: z.boolean().optional(),
+    adcp_error: ErrorSchema.optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
+    payload: z.object({}).passthrough().optional(),
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    products: z.array(ProductSchema).optional(),
+    targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
+    extensions: z.record(z.string(), z.object({
+        extends: z.string(),
+        fields: z.object({}).passthrough(),
+        version: z.string().optional(),
+        description: z.string().optional()
+    }).passthrough()).optional(),
+    proposals: z.array(ProposalSchema).optional(),
+    errors: z.array(ErrorSchema).optional(),
+    reason: z.string().min(1).max(2000).optional(),
+    suggestions: z.array(z.string()).max(20).optional(),
+    property_list_applied: z.boolean().optional(),
+    catalog_applied: z.boolean().optional(),
+    refinement_applied: z.array(z.union([z.object({
+            scope: z.literal("request"),
+            status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
+            notes: z.string().optional()
+        }).passthrough(), z.object({
+            scope: z.literal("product"),
+            product_id: z.string(),
+            status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
+            notes: z.string().optional()
+        }).passthrough(), z.object({
+            scope: z.literal("proposal"),
+            proposal_id: z.string().max(255),
+            status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
+            notes: z.string().optional()
+        }).passthrough()])).optional(),
+    incomplete: z.array(z.object({
+        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
+        description: z.string(),
+        estimated_wait: DurationSchema.optional()
+    }).passthrough()).optional(),
+    filter_diagnostics: z.object({
+        semantics: z.union([z.literal("only"), z.literal("any"), z.literal("approximate")]).optional(),
+        total_candidates: z.int().min(0).optional(),
+        excluded_by: z.record(z.string(), z.object({
+                count: z.int().min(0),
+                values: z.array(z.union([z.string(), z.object({}).passthrough()])).optional(),
+                notes: z.string().optional()
+            }).passthrough()).optional()
+    }).passthrough().optional(),
+    pagination: PaginationResponseSchema.optional(),
+    wholesale_feed_version: z.string().optional(),
+    pricing_version: z.string().optional(),
+    cache_scope: z.union([z.literal("public"), z.literal("account")]).optional(),
+    unchanged: z.literal(true).optional(),
+    sandbox: z.boolean().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
+
+export const ListProductsRequestSchema = z.object({
+    adcp_version: z.string().optional(),
+    adcp_major_version: z.number().optional(),
+    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
+    context_id: z.string().min(1).optional(),
+    context: ContextObjectSchema.optional(),
+    governance_context: z.string().min(1).max(4096).optional(),
+    push_notification_config: PushNotificationConfigSchema.optional(),
+    account: CanonicalAccountReferenceSchema.optional(),
+    brand: BrandKeySchema.optional(),
+    criteria: ProductDiscoveryCriteriaSchema.optional(),
+    fields: ProductResponseFieldsSchema.optional(),
+    cursor: z.string().min(1).optional(),
+    max_results: z.int().min(1).max(100).optional(),
+    if_feed_version: z.string().optional(),
+    if_pricing_version: z.string().optional()
 }).passthrough();
 
 export const CanonicalDeliveryForecastSchema = z.object({
@@ -14379,57 +14897,41 @@ export const RequestProposalsRequestSchema = z.object({
     }).passthrough()).optional()
 }).passthrough();
 
-export const ProductPurchaseSchema = z.object({
-    product_id: z.string().min(1),
-    pricing_option_id: z.string().min(1),
-    pricing: CanonicalPricingOptionSchema.optional(),
-    format_option_refs: z.array(FormatOptionReferenceSchema).optional(),
-    catalog_ids: z.array(z.string()).optional(),
-    budget: z.number().gte(0).optional(),
+export const CommercialTermsSchema = z.object({
+    source_feed_version: z.string().min(1).optional(),
+    source_pricing_version: z.string().min(1).optional(),
+    brand: BrandKeySchema,
+    advertiser_industry: AdvertiserIndustrySchema.optional(),
+    purchases: z.array(ProductPurchaseSchema.merge(z.object({}).passthrough())),
+    start_time: StartTimingSchema,
+    end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+    total_budget: z.object({
+        amount: z.number().gte(0),
+        currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
+    }).passthrough().optional(),
     daily_budget_cap: z.number().gte(0).optional(),
-    min_spend_target: z.number().gte(0).optional(),
-    impressions: z.number().gte(0).optional(),
-    start_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
+    budget_cap_timezone: z.string().min(1).optional(),
+    budget_allocation: CanonicalBudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
     bidding: BiddingPolicySchema.optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
-    optimization_goals: z.array(CanonicalOptimizationGoalSchema).optional(),
-    audience_evidence_requirements: ProductAudienceEvidenceRequirementsSchema.optional(),
-    audience_evidence_pins: z.array(AudienceEvidencePinSchema).optional(),
+    invoice_recipient: BusinessEntitySchema.optional(),
+    purchase_order_ref: z.string().min(1).max(255).optional(),
     agency_estimate_number: z.string().max(100).optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional(),
-    measurement_terms: CanonicalMeasurementTermsSchema.optional(),
-    performance_standards: z.array(CanonicalPerformanceStandardSchema).optional()
-}).passthrough();
-
-export const ProposalRefinementSchema = z.object({
-    proposal_id: z.string().min(1),
-    action: z.union([z.literal("revise"), z.literal("finalize")]).optional(),
-    change_kind: z.union([z.literal("amendment"), z.literal("cancellation")]).optional(),
-    constraints: z.object({
-        total_budget: ProposalBudgetConstraintSchema.optional(),
-        cpm: z.object({
-            max: z.number().gt(0),
+    reporting_commitments: z.array(z.object({
+        purchase_index: z.number().int().gte(0),
+        metrics: z.array(CanonicalReportingCommitmentSchema)
+    }).passthrough()).optional(),
+    cancellation_terms: z.object({
+        effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
+        fee: z.object({
+            amount: z.number().gte(0),
             currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
         }).passthrough().optional(),
-        impressions: z.object({
-            min: z.number().gt(0)
-        }).passthrough().optional(),
-        flight: z.object({}).passthrough().optional()
+        reason: z.string().min(1).max(500).optional()
     }).passthrough().optional(),
-    product_changes: ProductChangeMapSchema.optional(),
-    alternatives: z.object({
-        count: z.number().int().gte(2).lte(10)
-    }).passthrough().optional(),
-    ask: z.string().min(1).optional(),
-    criteria: ProductDiscoveryCriteriaSchema.optional()
-}).passthrough().and(z.union([z.object({
-        action: z.literal("finalize")
-    }).passthrough(), z.union([z.object({}).passthrough(), z.object({
-            change_kind: z.literal("cancellation")
-        }).passthrough()])]));
+    change_terms: z.array(MediaBuyChangeTermSchema).optional()
+}).passthrough();
 
 export const RefineProposalsRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -14441,6 +14943,888 @@ export const RefineProposalsRequestSchema = z.object({
     idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/),
     refinements: z.array(ProposalRefinementSchema).max(25)
 }).passthrough();
+
+// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
+export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposal]-?: undefined extends CanonicalProposal[K] ? z.ZodOptional<z.ZodType<Exclude<CanonicalProposal[K], undefined>, Exclude<CanonicalProposal[K], undefined>>> : z.ZodType<CanonicalProposal[K], CanonicalProposal[K]> }, z.core.$loose> & z.ZodType<CanonicalProposal & Record<string, unknown>, CanonicalProposal & Record<string, unknown>> = (() => {
+      const objectSchema = z.object({ "proposal_id": z.string().min(1).max(255), "proposal_kind": z.enum(["new_media_buy","media_buy_update","media_buy_cancellation"]), "parent_proposal_id": z.string().min(1).max(255).describe("Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.").optional(), "media_buy_id": z.string().min(1).optional(), "opportunity_id": z.string().regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).min(1).max(255).describe("Buyer planning cycle associated with this proposal. Revisions inherit it; it does not participate in proposal identity.").optional(), "base_media_buy_revision": z.number().int().gte(1).optional(), "proposal_status": z.enum(["draft","committed","accepted"]).describe("draft is indicative and unreserved; committed has firm terms with inventory reserved until expires_at; accepted is the historical snapshot attached to a MediaBuy."), "accepted_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "expires_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "name": z.string().min(1).max(500), "description": z.string().max(2000).optional(), "brief_alignment": z.string().max(2000).optional(), "commercial_terms": z.object({ "source_feed_version": z.string().min(1).describe("Wholesale product feed version against which direct published offers were accepted. Omitted when the seller authored terms outside a wholesale snapshot.").optional(), "source_pricing_version": z.string().min(1).describe("Pricing-layer version against which published rates were accepted.").optional(), "brand": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "advertiser_industry": z.enum(["automotive","automotive.electric_vehicles","automotive.parts_accessories","automotive.luxury","beauty_cosmetics","beauty_cosmetics.skincare","beauty_cosmetics.fragrance","beauty_cosmetics.haircare","cannabis","cpg","cpg.personal_care","cpg.household","dating","education","education.higher_education","education.online_learning","education.k12","energy_utilities","energy_utilities.renewable","fashion_apparel","fashion_apparel.luxury","fashion_apparel.sportswear","finance","finance.banking","finance.insurance","finance.investment","finance.cryptocurrency","food_beverage","food_beverage.alcohol","food_beverage.restaurants","food_beverage.packaged_goods","gambling_betting","gambling_betting.sports_betting","gambling_betting.casino","gaming","gaming.mobile","gaming.console_pc","gaming.esports","government_nonprofit","government_nonprofit.political","government_nonprofit.charity","healthcare","healthcare.pharmaceutical","healthcare.medical_devices","healthcare.wellness","home_garden","home_garden.furniture","home_garden.home_improvement","media_entertainment","media_entertainment.podcasts","media_entertainment.music","media_entertainment.film_tv","media_entertainment.publishing","media_entertainment.live_events","pets","professional_services","professional_services.legal","professional_services.consulting","real_estate","real_estate.residential","real_estate.commercial","recruitment_hr","retail","retail.ecommerce","retail.department_stores","sports_fitness","sports_fitness.equipment","sports_fitness.teams_leagues","technology","technology.software","technology.hardware","technology.ai_ml","telecom","telecom.mobile_carriers","telecom.internet_providers","transportation_logistics","travel_hospitality","travel_hospitality.airlines","travel_hospitality.hotels","travel_hospitality.cruise","travel_hospitality.tourism"]).describe("Standardized advertiser industry classification. Top-level categories classify the advertiser's primary business. Dot-notation subcategories (e.g., 'media_entertainment.podcasts') provide platform-specific precision where needed. Sellers map these to platform-native codes (Spotify ADV categories, LinkedIn industry IDs, IAB Content Taxonomy, etc.). Sellers MUST accept unknown values gracefully — treat unrecognized values as the parent category (strip the subcategory) or as uncategorized. This ensures forward compatibility as the taxonomy evolves.").optional(), "purchases": z.array(z.intersection(z.object({ "product_id": z.string().min(1), "pricing_option_id": z.string().min(1), "pricing": z.object({ "pricing_option_id": z.string().min(1), "pricing_model": z.enum(["cpm","vcpm","cpc","cpcv","cpv","cpp","cpa","revenue_share","flat_rate","time"]), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")), "fixed_price": z.number().gte(0).optional(), "floor_price": z.number().gte(0).optional(), "price_guidance": z.object({ "p25": z.number().gte(0).describe("25th percentile of recent winning bids").optional(), "p50": z.number().gte(0).describe("Median of recent winning bids").optional(), "p75": z.number().gte(0).describe("75th percentile of recent winning bids").optional(), "p90": z.number().gte(0).describe("90th percentile of recent winning bids").optional() }).catchall(z.any()).describe("Pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.").optional(), "min_spend_per_package": z.number().gte(0).optional(), "price_breakdown": z.object({ "list_price": z.number().gt(0).describe("Rate card or base price before any adjustments. The starting point from which fixed_price is derived by applying fee and discount adjustments sequentially."), "adjustments": z.array(z.object({ "kind": z.enum(["fee","discount","commission","settlement"]).describe("Categorizes how a price adjustment affects the transaction"), "name": z.string().max(64).describe("Specific adjustment name. Use well-known values where applicable for interoperability."), "rate": z.number().gt(0).lt(1).describe("Adjustment as a decimal proportion (e.g., 0.15 for 15%). Always positive — kind determines the economic effect. Mutually exclusive with amount.").optional(), "amount": z.number().gt(0).describe("Adjustment as a fixed monetary amount in the pricing option's currency. Always positive — kind determines the economic effect. Mutually exclusive with rate.").optional(), "description": z.string().max(256).describe("Human-readable description of this adjustment (e.g., 'Malstaffel 12x', '2% Skonto 10 Tage')").optional(), "beneficiary": z.string().max(256).describe("Identifies who receives this adjustment's value. For commissions, the intermediary (e.g., a sellers.json domain, an AdCP account ID, or a human-readable party name). Optional but recommended for multi-intermediary transparency.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "rate": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }))).min(1).max(20).describe("Ordered list of price adjustments. Fee and discount adjustments walk list_price to fixed_price — fees increase the running price, discounts reduce it. Commission and settlement adjustments are disclosed for transparency but do not affect the buyer's committed price.") }).catchall(z.any()).describe("Breaks down the composition of fixed_price from a list (rate card) price through adjustments. Adjustments fall into four kinds: fees (increase buyer price), discounts (reduce buyer price), commissions (revenue splits that don't affect buyer price), and settlement terms (applied at invoicing). The invariant is: list_price with all fee and discount adjustments applied sequentially equals fixed_price. Fees increase the running price; discounts reduce it. This invariant applies only when fixed_price is present on the parent object; on auction-based packages the breakdown is informational only. All monetary values are rounded to currency precision at each step. Budgets are always denominated at the fixed_price level, inclusive of commissions.").optional(), "eligible_adjustments": z.array(z.enum(["fee","discount","commission","settlement"]).describe("Categorizes how a price adjustment affects the transaction")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "parameters": z.record(z.string(), z.any()).optional(), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI").optional(), "custom_event_name": z.string().min(1).optional(), "event_source_id": z.string().min(1).optional(), "commission_rate": z.number().gt(0).lte(1).optional(), "commission_basis_description": z.string().min(1).max(1000).optional() }).passthrough().and(z.intersection(z.intersection(z.any().refine((value) => !z.object({ "fixed_price": z.any().refine((value) => value !== undefined, "Required"), "floor_price": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.union([z.any().refine((value) => !z.object({ "pricing_model": z.literal("cpa") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "pricing_model": z.literal("cpa") }), z.object({ "event_type": z.any().refine((value) => value !== undefined, "Required"), "fixed_price": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])), z.intersection(z.union([z.any().refine((value) => !z.object({ "pricing_model": z.literal("revenue_share") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "pricing_model": z.literal("revenue_share") }), z.object({ "event_type": z.any().refine((value) => value !== undefined, "Required"), "event_source_id": z.any().refine((value) => value !== undefined, "Required"), "commission_rate": z.any().refine((value) => value !== undefined, "Required"), "commission_basis_description": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.intersection(z.union([z.any().refine((value) => !z.object({ "pricing_model": z.enum(["cpv","cpp","time"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "pricing_model": z.enum(["cpv","cpp","time"]) }), z.object({ "parameters": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "event_type": z.literal("custom") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "event_type": z.literal("custom") }), z.object({ "custom_event_name": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]))))).describe("Resolved selected pricing terms. Optional on buy_products input, where pricing_option_id plus the versioned feed identifies the offer; required inside accepted commercial_terms. Its pricing_option_id MUST match the sibling field.").optional(), "format_option_refs": z.array(z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("publisher").describe("Reference resolves against the named publisher's adagents.json top-level `formats[]` catalog."), "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Publisher domain where the adagents.json declaring this format option is hosted."), "format_option_id": z.string().describe("Stable format option ID from the publisher's adagents.json top-level `formats[]`, matching a publisher-catalog-backed entry in the target product's `format_options[]`.") }).catchall(z.any()).describe("Selects a publisher-catalog-backed product format option by publisher domain and format option ID."), z.object({ "scope": z.literal("product").describe("Reference resolves only against the target product's inline `format_options[]`."), "format_option_id": z.string().describe("Stable format option ID from the target product's inline `format_options[]`."), "publisher_domain": z.never().optional() }).catchall(z.any()).describe("Selects a product-local format option by ID within the enclosing package/product context. This branch deliberately forbids `publisher_domain` (`publisher_domain: false` in the schema) because product-local references are namespaced by the enclosing product only; include `scope: \"publisher\"` when the selector must cross into a publisher catalog.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).describe("Discriminated reference to a product format option. The global canonical shape is still named by `format_kind`; this reference selects one concrete product `format_options[]` entry. `scope: \"publisher\"` identifies a publisher-declared catalog option by `{ publisher_domain, format_option_id }`. `scope: \"product\"` identifies a product-local option by `format_option_id`; the enclosing package/product context supplies the namespace.")).min(1).describe("Canonical format options selected from the published product offer. Legacy named-format identifiers are not accepted.").optional(), "catalog_ids": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.").optional(), "budget": z.number().gte(0).describe("Hard spend cap for this selection in the media-buy currency.").optional(), "daily_budget_cap": z.number().gte(0).describe("Optional hard daily spend ceiling for this purchase. It is subordinate to the media-buy aggregate daily cap and is not a reserved daily allocation. Its day boundary is the media buy's budget_cap_timezone.").optional(), "min_spend_target": z.number().gte(0).describe("Soft lifetime spend target for seller-optimized allocation.").optional(), "impressions": z.number().gte(0).optional(), "start_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "targeting_overlay": z.object({ "geo_countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_countries_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_regions": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.").optional(), "geo_regions_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.").optional(), "geo_metros": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough().describe("A targeted metro area.")).min(1).describe("Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_metros_exclude": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas_exclude": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_places": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.").optional(), "geo_places_exclude": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.").optional(), "daypart_targets": z.array(z.object({ "days": z.array(z.enum(["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]).describe("Days of the week for daypart targeting")).min(1).describe("Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object)."), "start_hour": z.number().int().gte(0).lte(23).describe("Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm."), "end_hour": z.number().int().gte(1).lte(24).describe("End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour."), "timezone": z.union([z.literal("inventory_local"), z.any().refine((value) => !z.literal("inventory_local").safeParse(value).success, "Invalid input: Should NOT be valid against schema").describe("Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.")]).describe("Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and hour with the half-open window: a skipped DST hour has no matching instants, while both occurrences of a repeated hour match. This delivery clock is independent of reporting_capabilities.timezone.").default("inventory_local"), "label": z.string().describe("Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')").optional() }).passthrough().describe("A time window for daypart targeting. Specifies days of week, an hour range, and the civil-time clock used to evaluate it. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.")).min(1).describe("Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.").optional(), "axe_include_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.").optional(), "axe_exclude_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.").optional(), "audience_include": z.array(z.string()).min(1).describe("Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.").optional(), "audience_exclude": z.array(z.string()).min(1).describe("Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.").optional(), "signal_targeting_groups": z.object({ "operator": z.literal("all").describe("Groups-level operator. Required even though v1 only supports 'all': every child group must be satisfied."), "groups": z.array(z.object({ "operator": z.enum(["any","none"]).describe("How to evaluate the signals in this group. 'any' is an OR include group. 'none' is an exclusion group equivalent to NOT (A OR B OR C)."), "signals": z.array(z.object({ "pricing_option_id": z.string().describe("Pricing option selected for this signal. Use the pricing_option_id from the product's signal_targeting_options entry when product-scoped pricing is present; otherwise use the seller get_signals pricing only when the product option does not override it. Required when the selected signal has pricing_options; omit only when the signal is bundled into the product price or has no incremental cost.").optional(), "signal_agent_segment_id": z.string().describe("Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the product option exposes a separate runtime or activation handle, and pass it verbatim. Buyers SHOULD prefer an exposed segment handle over reconstructing condition identity from categorical values because the handle can carry provider namespace and methodology distinctions.").optional(), "activation_key": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "type": z.literal("segment_id").describe("Segment ID based targeting"), "segment_id": z.string().describe("The platform-specific segment identifier to use in campaign targeting") }).catchall(z.any()), z.object({ "type": z.literal("key_value").describe("Key-value pair based targeting"), "key": z.string().describe("The targeting parameter key"), "value": z.string().describe("The targeting parameter value") }).catchall(z.any())];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).describe("Destination-specific activation key returned by get_signals or activate_signal. Usually omitted for seller-offered signals selected directly through the same seller; include only when the selected signal was separately activated and the seller requires the activation key to correlate the package selection.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Named signal being targeted."), "value_type": z.literal("binary").describe("Discriminator for binary signals."), "value": z.literal(true).describe("Binary package signal entries match users for whom the signal is true. Use the parent group operator for include/exclude.") }).catchall(z.any()).describe("Binary signal expression. In grouped package targeting, value is always true; use a parent group with operator 'none' for exclusion."), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Named signal being targeted."), "value_type": z.literal("categorical").describe("Discriminator for categorical signals."), "values": z.array(z.string()).min(1).describe("Values to target. Users with any of these values match the expression.") }).catchall(z.any()).describe("Categorical signal expression - target users with one of the listed values."), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Named signal being targeted."), "value_type": z.literal("numeric").describe("Discriminator for numeric signals."), "min_value": z.number().describe("Minimum value, inclusive. Omit for no minimum. Should be within the signal definition's range when declared.").optional(), "max_value": z.number().describe("Maximum value, inclusive. Omit for no maximum. Should be within the signal definition's range when declared.").optional() }).catchall(z.any()).and(z.union([z.object({ "min_value": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_value": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Numeric signal expression - target users within a value range. At least one of min_value or max_value is required. If both min_value and max_value are provided, min_value MUST be <= max_value.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Predicate over a named signal definition. Signals are typed dimensions, similar to feature values: binary signals match true, categorical signals match one of a set of values, and numeric signals match a range. In package signal targeting groups, include/exclude semantics are controlled by the parent group operator, not by negating the expression.")).describe("Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.")).min(1).describe("Signal targeting entries evaluated by this group. Each entry uses the package signal targeting shape, including signal_ref, value expression, and optional pricing, execution-handle, or activation fields.") }).catchall(z.any()).describe("A basic Boolean group of package-level signal targeting entries. 'any' means the user must match at least one signal in the group. 'none' means the user must match none of the signals in the group. Use groups for portable include/exclude composition such as (A OR B) AND NOT (C OR D).")).min(1).describe("Signal targeting groups to evaluate. Use operator 'any' for include groups and 'none' for exclusion groups.") }).catchall(z.any()).describe("Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external signals published in adagents.json signals[]. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. Sellers MAY return REQUOTE_REQUIRED when a targeting mutation changes commercial terms.").optional(), "signal_targeting": z.array(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("The signal to target. New targeting constraints SHOULD use signal_ref.").optional(), "signal_id": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "source": z.literal("catalog").describe("Discriminator indicating this signal is from a data provider's published adagents.json signals[]"), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain of the data provider that owns this signal (e.g., 'pinnacle-data.example'). The signal definition is published at this domain's /.well-known/adagents.json"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')") }).catchall(z.any()).describe("Data-provider signal - references a signal from a data provider's published adagents.json signals[]. Buyers can verify authorization by checking the data provider's adagents.json."), z.object({ "source": z.literal("agent").describe("Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions."), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that provides this signal (e.g., 'https://signals.example/.well-known/adcp/signals')"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')") }).catchall(z.any()).describe("Agent signal - references a signal native to a signal source identified by agent_url. Not externally verifiable through an upstream catalog; buyer trusts the issuing signal source's claim about the signal.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older clients.").optional(), "value_type": z.literal("binary").describe("Discriminator for binary signals"), "value": z.boolean().describe("Whether to include (true) or exclude (false) users matching this signal") }).catchall(z.any()).and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Binary signal targeting - user either matches or doesn't"), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("The signal to target. New targeting constraints SHOULD use signal_ref.").optional(), "signal_id": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "source": z.literal("catalog").describe("Discriminator indicating this signal is from a data provider's published adagents.json signals[]"), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain of the data provider that owns this signal (e.g., 'pinnacle-data.example'). The signal definition is published at this domain's /.well-known/adagents.json"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')") }).catchall(z.any()).describe("Data-provider signal - references a signal from a data provider's published adagents.json signals[]. Buyers can verify authorization by checking the data provider's adagents.json."), z.object({ "source": z.literal("agent").describe("Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions."), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that provides this signal (e.g., 'https://signals.example/.well-known/adcp/signals')"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')") }).catchall(z.any()).describe("Agent signal - references a signal native to a signal source identified by agent_url. Not externally verifiable through an upstream catalog; buyer trusts the issuing signal source's claim about the signal.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older clients.").optional(), "value_type": z.literal("categorical").describe("Discriminator for categorical signals"), "values": z.array(z.string()).min(1).describe("Values to target. Users with any of these values will be included.") }).catchall(z.any()).and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Categorical signal targeting - target users with specific values"), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("The signal to target. New targeting constraints SHOULD use signal_ref.").optional(), "signal_id": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "source": z.literal("catalog").describe("Discriminator indicating this signal is from a data provider's published adagents.json signals[]"), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain of the data provider that owns this signal (e.g., 'pinnacle-data.example'). The signal definition is published at this domain's /.well-known/adagents.json"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')") }).catchall(z.any()).describe("Data-provider signal - references a signal from a data provider's published adagents.json signals[]. Buyers can verify authorization by checking the data provider's adagents.json."), z.object({ "source": z.literal("agent").describe("Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions."), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that provides this signal (e.g., 'https://signals.example/.well-known/adcp/signals')"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')") }).catchall(z.any()).describe("Agent signal - references a signal native to a signal source identified by agent_url. Not externally verifiable through an upstream catalog; buyer trusts the issuing signal source's claim about the signal.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older clients.").optional(), "value_type": z.literal("numeric").describe("Discriminator for numeric signals"), "min_value": z.number().describe("Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided. Should be >= signal's range.min if defined.").optional(), "max_value": z.number().describe("Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided. Should be <= signal's range.max if defined.").optional() }).catchall(z.any()).and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Numeric signal targeting - target users within a value range. If min_value is provided, it must be <= max_value. Values should be within the signal's defined range (see signal definition).")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.")).min(1).describe("DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.").optional(), "demographics": z.object({ "age": z.intersection(z.object({ "min": z.number().int().gte(0).lte(150).describe("Inclusive minimum age in completed years. Omit for an open lower bound.").optional(), "max": z.number().int().gte(0).lte(150).describe("Inclusive maximum age in completed years. Omit for an open upper bound.").optional(), "include_unknown": z.boolean().describe("Whether delivery to people whose age is unavailable is part of this predicate. This field has no default and MUST be supplied.") }).catchall(z.any()).and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A canonical audience-age predicate in completed integer years. min and max are inclusive; omitting one bound means no restriction in that direction. At least one bound is required. include_unknown is always explicit because people whose age is unavailable are not members of any numeric interval. Implementations MUST reject min greater than max; JSON Schema draft-07 cannot compare sibling numeric values."), z.object({ "accepted_bases": z.array(z.enum(["verified","declared","inferred"]).describe("User-level bases that may resolve age for demographic targeting execution. Population estimates are deliberately absent because aggregate composition cannot establish an individual impression's age.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("User-level age determination bases the buyer permits for this predicate. Sellers MUST use only these bases or reject the request; they MUST NOT silently fall back to another basis. When omitted, the buyer imposes no determination-basis constraint beyond product capability and any age_restriction. population_estimate is structurally unavailable because aggregate evidence cannot identify an eligible user.").optional(), "accepted_verification_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Verification methods acceptable when verified is an accepted basis. This field narrows verified demographic execution; age_restriction.accepted_methods independently governs legal eligibility and the two sets are intersected when both are present.").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema") }))]))) }).catchall(z.any()).describe("Canonical demographic audience targeting intent with optional constraints on how age may be determined. This is distinct from age_restriction: demographics selects an audience, while age_restriction expresses a legal eligibility or verification floor. Fresh create/update targeting MUST compile exactly or be rejected. During get_products, a seller may offer a different configured predicate only through sparse targeting_resolution modifications on a distinguishable product_id; selecting that product accepts the alternative. Sellers never silently broaden, narrow, default, drop, or substitute the basis.").optional(), "frequency_cap": z.object({ "suppress": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {\"interval\": 60, \"unit\": \"minutes\"} for a 1-hour cooldown). Preferred over suppress_minutes.").optional(), "suppress_minutes": z.number().gte(0).describe("Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).").optional(), "max_impressions": z.number().int().gte(1).describe("Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window. campaign applies across the owning field's full flight: the package flight for a targeting overlay, or the MediaBuy flight for a root cap.").optional(), "per": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").describe("Entity granularity for impression counting. Required when max_impressions is set.").optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Time window for the max_impressions cap (e.g. {\"interval\": 7, \"unit\": \"days\"} or {\"interval\": 1, \"unit\": \"campaign\"} for the full flight). Required when max_impressions is set.").optional() }).catchall(z.any()).and(z.union([z.object({ "suppress": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "suppress_minutes": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required"), "per": z.any().refine((value) => value !== undefined, "Required"), "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.intersection(z.union([z.any().refine((value) => !z.object({ "per": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "per": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.any().refine((value) => !z.object({ "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "window": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).describe("Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set. Field location determines scope; this value has no scope discriminator. The MediaBuy root uses the narrower media-buy-frequency-cap schema, which permits maximum impressions only in 3.2.").optional(), "property_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.").optional(), "property_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for including specific collections (programs, publications, channels) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for excluding specific collections (programs, publications, channels) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities.").optional(), "placement_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "mode": z.literal("selected"), "placement_refs": z.array(z.union([z.intersection(z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Legacy-compatible product-context reference to a placement. For publisher-catalog placements, publisher_domain plus placement_id resolves the declaration in that publisher's adagents.json. For seller-inline placements, the enclosing seller and product supply scope. When publisher_domain is omitted on legacy inputs, receivers MAY interpret the ID relative to the enclosing single-publisher product. Use placement-identity.json when a self-contained cross-document identity is required."), z.object({ "publisher_domain": z.any().refine((value) => value !== undefined, "Required") }).passthrough()), z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "kind": z.literal("publisher_ref"), "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain whose adagents.json declares placement_id."), "placement_id": z.string().min(1) }).passthrough(), z.object({ "kind": z.literal("seller_inline"), "seller_agent": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("The seller agent's API endpoint URL as declared in the property publisher's adagents.json `authorized_agents[].url`. MUST use the `https://` scheme. Receivers compare this URL against the `authorized_agents` list using the AdCP URL canonicalization rules — not byte-equality — and reject mismatches with `seller_not_authorized`. See docs/reference/url-canonicalization."), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).min(1).describe("Reserved for a future registry-assigned stable seller identifier. Not used today — senders MUST NOT populate this field until a registry is defined. When a future release populates both `agent_url` and `id`, `agent_url` remains authoritative and `id` is advisory.").optional() }).passthrough().describe("Sales agent that defines and maintains the inline placement namespace."), "placement_id": z.string().min(1).describe("Stable placement ID within the defining sales agent's namespace. The agent MUST NOT reuse it for a different semantic placement.") }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Self-contained identity for either a publisher-catalog placement or a sales-agent-defined inline placement. The discriminator names which authority owns placement_id.")])).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Complete required placement set. A reference normally identifies a mode targetable placement. It MAY identify a mode included placement only when the set exactly equals the product's complete fixed included set, which is an inherent match rather than independent selection. Legacy publisher refs use {publisher_domain, placement_id}; authority-discriminated 3.2 identities use placement-identity.json so seller-inline inventory is selected by {seller_agent, placement_id}. An item that exactly matches placement-identity uses that canonical identity; otherwise a released-compatible item with publisher_domain and placement_id uses legacy product-context matching, and tolerated product metadata such as kind, name, or mode has no selection effect."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "mode": z.literal("default"), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).describe("Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. In request-side Targeting Input, a non-null value replaces this dimension, omission preserves or inherits it, and null clears it when the product permits that broader inventory set.").optional(), "collection_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "mode": z.literal("selected"), "collections": z.array(z.intersection(z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring these collections is hosted (e.g., 'mrbeast.com'). The collections array in that file contains the authoritative collection definitions."), "collection_ids": z.array(z.string()).min(1).describe("Collection IDs from the adagents.json collections array. Each ID must match a collection_id declared in that file. Omit to reference all collections declared in that file.").optional() }).catchall(z.any()).describe("References collections declared in an adagents.json. Buyers resolve full collection objects by fetching the adagents.json at the given domain and matching collection_ids against its collections array. When collection_ids is omitted, the selector references every collection declared in that adagents.json — the bulk-grant form for authorization scoping (e.g., a host authorizing a channel owner's sales agent for all of the owner's collections without tracking owner-assigned IDs)."), z.object({ "collection_ids": z.any().refine((value) => value !== undefined, "Required") }).passthrough())).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Complete required collection set as domain-qualified selectors with explicit collection_ids; the domain-only bulk-grant form is authorization scoping, not selection. publisher_domain may be an external channel owner's domain."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "mode": z.literal("default"), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).describe("Purchased collection selection within the product. On create, mode selected supplies the complete selected set and mode default uses the product's full bundle. On package readback this is the committed selection sellers MUST echo as concrete selectors, materializing any collection_list composition; collection_list fields remain the buyer-managed list mechanism. In request-side Targeting Input, a non-null value replaces this dimension, omission preserves or inherits it, and null clears it when the product permits that broader inventory set.").optional(), "age_restriction": z.object({ "min": z.number().int().gte(13).lte(99).describe("Minimum age required"), "verification_required": z.boolean().describe("Whether verified age (not inferred) is required for compliance").default(false), "accepted_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).describe("Accepted verification methods. If omitted, any method the platform supports is acceptable.").optional() }).passthrough().describe("Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.").optional(), "device_platform": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.").optional(), "device_platform_exclude": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "device_type": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).").optional(), "device_type_exclude": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).").optional(), "browser": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.").optional(), "browser_exclude": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "store_catchments": z.array(z.object({ "catalog_id": z.string().describe("Synced store-type catalog ID from sync_catalogs."), "store_ids": z.array(z.string()).min(1).describe("Filter to specific stores within the catalog. Omit to target all stores.").optional(), "catchment_ids": z.array(z.string()).min(1).describe("Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.").optional() }).catchall(z.any())).min(1).describe("Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.").optional(), "geo_proximity": z.array(z.object({ "lat": z.number().gte(-90).lte(90).describe("Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "lng": z.number().gte(-180).lte(180).describe("Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "label": z.string().describe("Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').").optional(), "travel_time": z.object({ "value": z.number().gte(1).describe("Travel time limit."), "unit": z.enum(["min","hr"]).describe("Time unit for isochrone (travel-time catchment) calculations.") }).passthrough().describe("Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks.").optional(), "transport_mode": z.enum(["walking","cycling","driving","public_transport"]).describe("Transportation mode for isochrone calculation. Required when travel_time is provided.").optional(), "radius": z.object({ "value": z.number().gt(0).describe("Radius distance."), "unit": z.enum(["km","mi","m"]).describe("Distance unit.") }).passthrough().describe("Simple radius from the point. The platform draws a circle of this distance around the coordinates.").optional(), "geometry": z.object({ "type": z.enum(["Polygon","MultiPolygon"]).describe("GeoJSON geometry type."), "coordinates": z.array(z.any()).describe("GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.") }).passthrough().describe("Pre-computed GeoJSON geometry defining the proximity boundary. Use when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom boundaries. When geometry is provided, lat/lng are not required.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "lat": z.any().refine((value) => value !== undefined, "Required"), "lng": z.any().refine((value) => value !== undefined, "Required"), "travel_time": z.any().refine((value) => value !== undefined, "Required"), "transport_mode": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "lat": z.any().refine((value) => value !== undefined, "Required"), "lng": z.any().refine((value) => value !== undefined, "Required"), "radius": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "geometry": z.any().refine((value) => value !== undefined, "Required") }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }))).min(1).describe("Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.").optional(), "language": z.array(z.string().regex(new RegExp("^(?:[a-z]{2,8}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?|x(?:-[a-z0-9]{1,8})+)$")).min(2).max(63).describe("A well-formed BCP 47 language tag used by AdCP only as language identity. Script and region may refine that identity; other valid BCP 47 subtags remain part of tag matching but do not make this a general locale-settings object. It does not determine currency, time zone, number/date formatting, market, or legal jurisdiction. The AdCP canonical wire profile requires lower-case language and variants, title-case script, and upper-case region (for example `en-US`, `zh-Hant-TW`, or `x-private`). RFC 5646 comparisons are case-insensitive and its case regularization is optional; AdCP intentionally requires this stricter single wire spelling and receivers MUST reject differently cased tags rather than silently normalizing them. The schema pattern enforces the AdCP casing profile and extension structure for commonly used tags; conforming receivers additionally validate the complete RFC 5646 grammar and registry rules. Every new AdCP field carrying BCP 47 language identity or a concrete language range MUST reference this schema instead of declaring independent string constraints.")).min(1).describe("Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.").optional(), "keyword_targets": z.array(z.object({ "keyword": z.string().min(1).describe("The keyword to target"), "match_type": z.enum(["broad","phrase","exact"]).describe("Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly."), "bid_price": z.number().gte(0).describe("Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.").optional() }).passthrough()).min(1).describe("Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.").optional(), "negative_keywords": z.array(z.object({ "keyword": z.string().min(1).describe("The keyword to exclude"), "match_type": z.enum(["broad","phrase","exact"]).describe("Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.") }).passthrough().describe("An excluded keyword.")).min(1).describe("Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.").optional() }).catchall(z.any()).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "demographics": z.any().refine((value) => value !== undefined, "Required"), "age_restriction": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "demographics": z.any().refine((value) => value !== undefined, "Required"), "age_restriction": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "demographics": z.object({ "age": z.object({ "include_unknown": z.literal(false).optional() }).optional() }).optional() }))]).describe("Unknown-age delivery cannot satisfy a minimum-age eligibility policy. When demographic audience targeting and age_restriction are both present, include_unknown must be false."), z.union([z.any().refine((value) => !z.object({ "age_restriction": z.object({ "verification_required": z.literal(true) }), "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => value !== undefined, "Required") }).passthrough() }) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "age_restriction": z.object({ "verification_required": z.literal(true) }), "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => value !== undefined, "Required") }).passthrough() }) }), z.object({ "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional() }).optional() }).optional() }))]).describe("A legal verification requirement always narrows demographic targeting. When the buyer supplies accepted_bases and age_restriction requires verification, verified must be accepted; otherwise the constraints have an empty intersection and the request is invalid."))).describe("Resolved effective buyer-selected targeting, including compatible wholesale signal selections, applied within the product's published targeting contract. Cleared dimensions are omitted; null is invalid in an accepted snapshot.").optional(), "optimization_goals": z.array(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","engagements","follows","saves","profile_visits","reach"]), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Canonical 3.2 optimization objective. Monetary execution policy belongs in BiddingPolicy; legacy monetary targets and unbound attention metrics are excluded.")).min(1).optional(), "audience_evidence_requirements": z.object({ "requirement_mode": z.enum(["required","preferred"]), "evidence_presence": z.enum(["required","when_available"]), "accepted_methodologies": z.array(z.enum(["observed","declared","derived","inferred","modeled","projected"]).describe("How a population-level audience-evidence estimate was produced. This vocabulary is intentionally separate from signal-definition methodology: `projected` describes expansion of a sample or panel to a reference population and does not become a user-level signal-membership method.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "excluded_methodologies": z.array(z.enum(["observed","declared","derived","inferred","modeled","projected"]).describe("How a population-level audience-evidence estimate was produced. This vocabulary is intentionally separate from signal-definition methodology: `projected` describes expansion of a sample or panel to a reference population and does not become a user-level signal-membership method.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_evidence_types": z.array(z.enum(["measured","forecast","seller_declared"])).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_providers": z.array(z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.")).min(1).optional(), "excluded_providers": z.array(z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.")).min(1).optional(), "accepted_subject_types": z.array(z.enum(["individual","household","business","contextual","none"]).describe("The kind of subject characterized by audience data or population-level evidence.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_resolution_methods": z.array(z.enum(["deterministic_id","probabilistic_device","browser","geographic","content_signal","mixed"]).describe("How subjects were resolved when producing a signal or population-level evidence estimate.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "minimum_confidence": z.number().gte(0).lte(1).optional(), "maximum_age": z.intersection(z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight."), z.object({ "unit": z.enum(["seconds","minutes","hours","days"]).optional() })).optional(), "methodology_documentation_required": z.boolean().default(false), "independent_attestation_required": z.boolean().default(false), "accepted_attestation_issuers": z.array(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "type": z.literal("brand"), "brand": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "type": z.literal("agent"), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "type": z.literal("origin"), "origin": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://[^/?#@]+$")), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_attestation_claim_types": z.array(z.string().refine(adcpJsonSchemaUri, "Invalid URI")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "independent_attestation_required": z.literal(true) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "independent_attestation_required": z.literal(true) }), z.object({ "accepted_attestation_issuers": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])).describe("Buyer evidence-admissibility policy carried into the accepted purchase snapshot.").optional(), "audience_evidence_pins": z.array(z.object({ "evidence_id": z.string().min(1), "snapshot_id": z.string().min(1), "version": z.string().min(1), "content_digest": z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Buyer-authored pin to one exact immutable audience-evidence snapshot selected during discovery. Sellers MUST match all four fields against a single published snapshot; they MUST reject the package rather than substitute a newer version or reuse snapshot_id with changed content. A confirmed package MUST return the same identity in audience_evidence_selections with decision_use package_construction.")).min(1).describe("Exact immutable audience-evidence snapshots selected for package construction.").optional(), "agency_estimate_number": z.string().max(100).describe("Package-level agency estimate or authorization reference.").optional(), "context": z.record(z.string(), z.any()).describe("Opaque buyer package correlation preserved in the accepted snapshot and readback.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional(), "measurement_terms": z.object({ "billing_measurement": z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "max_variance_percent": z.number().gte(0).lt(100).optional(), "measurement_window": z.string().min(1).optional(), "finalization_deadline_hours": z.number().int().gte(0).optional() }).passthrough().optional(), "makegood_policy": z.object({ "available_remedies": z.array(z.enum(["additional_delivery","credit","invoice_adjustment"]).describe("Remedy types available when a performance standard or billing measurement threshold is breached.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!") }).passthrough().optional() }).passthrough().describe("Published or negotiated billing-measurement and makegood terms for this purchase. Direct buyers may omit this to inherit the product default; accepted proposal snapshots preserve the resolved terms.").optional(), "performance_standards": z.array(z.object({ "metric": z.enum(["viewability","ivt","completion_rate","brand_safety","attention_score"]).describe("Performance metrics that support rate thresholds on media buys — the verification subset of the broader metric vocabulary. Each metric specifies whether its threshold is a floor (must exceed) or ceiling (must not exceed). Shared values with `available-metric.json` mirror the delivery vocabulary (`viewability` → `viewable_rate` family, `completion_rate` → same name); verification-only values (`ivt`, `brand_safety`, `attention_score`) are typically vendor-attested and do not appear in `available-metric.json` because they're not seller-reportable scalars — they flow through `vendor_metric_values` or vendor-scope `committed_metrics` entries with the matching `performance_standard.vendor` BrandRef anchoring identity."), "threshold": z.number().gte(0).lte(1), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.") }).passthrough().describe("Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph.")).min(1).describe("Published or negotiated metric thresholds and measurement vendors. Direct buyers may omit this to inherit the product defaults; accepted proposal snapshots preserve every applicable standard.").optional() }).passthrough().describe("One resolved canonical product selection in a compact proposal or accepted commercial snapshot. Request-side buy_products selections use product-purchase-input.json. This strict snapshot shape contains effective non-null targeting and resolved inherited terms. Creative content and creative assignments are intentionally absent."), z.object({ "product_id": z.any().refine((value) => value !== undefined, "Required"), "pricing_option_id": z.any().refine((value) => value !== undefined, "Required"), "pricing": z.any().refine((value) => value !== undefined, "Required"), "start_time": z.any().refine((value) => value !== undefined, "Required"), "end_time": z.any().refine((value) => value !== undefined, "Required") }).passthrough())).min(1).describe("Exact canonical product, pricing, format, catalog, budget, targeting, bidding, optimization, resolved flight, measurement, and performance terms in the commercial envelope."), "start_time": z.any().superRefine((x, ctx) => {
+    const schemas = [z.literal("asap").describe("Start campaign as soon as possible"), z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Campaign start timing: 'asap' or ISO 8601 date-time"), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "total_budget": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().optional(), "daily_budget_cap": z.number().gte(0).describe("Hard aggregate daily spend ceiling accepted as part of these terms. It bounds total spend without creating purchase allocations.").optional(), "frequency_cap": z.intersection(z.object({ "suppress": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {\"interval\": 60, \"unit\": \"minutes\"} for a 1-hour cooldown). Preferred over suppress_minutes.").optional(), "suppress_minutes": z.number().gte(0).describe("Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).").optional(), "max_impressions": z.number().int().gte(1).describe("Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window. campaign applies across the owning field's full flight: the package flight for a targeting overlay, or the MediaBuy flight for a root cap.").optional(), "per": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").describe("Entity granularity for impression counting. Required when max_impressions is set.").optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Time window for the max_impressions cap (e.g. {\"interval\": 7, \"unit\": \"days\"} or {\"interval\": 1, \"unit\": \"campaign\"} for the full flight). Required when max_impressions is set.").optional() }).catchall(z.any()).and(z.union([z.object({ "suppress": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "suppress_minutes": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required"), "per": z.any().refine((value) => value !== undefined, "Required"), "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.intersection(z.union([z.any().refine((value) => !z.object({ "per": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "per": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.any().refine((value) => !z.object({ "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "window": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).describe("Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set. Field location determines scope; this value has no scope discriminator. The MediaBuy root uses the narrower media-buy-frequency-cap schema, which permits maximum impressions only in 3.2."), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()).describe("Hard MediaBuy-level cap accepted as part of these terms. One counter aggregates exposures across every purchase; purchase targeting caps remain independently binding.").optional(), "budget_cap_timezone": z.string().min(1).describe("Shared IANA calendar-day boundary for aggregate and purchase daily caps in these terms.").optional(), "budget_allocation": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "mode": z.literal("fixed") }).passthrough(), z.object({ "mode": z.literal("seller_optimized"), "optimization_goals": z.array(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","engagements","follows","saves","profile_visits","reach"]), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Canonical 3.2 optimization objective. Monetary execution policy belongs in BiddingPolicy; legacy monetary targets and unbound attention metrics are excluded.")).min(1) }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Canonical fixed or seller-optimized allocation using only canonical optimization goals.").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "invoice_recipient": z.object({ "legal_name": z.string().max(200).describe("Registered legal name of the business entity"), "vat_id": z.string().regex(new RegExp("^[A-Z]{2}[A-Z0-9]{2,13}$")).describe("VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.").optional(), "tax_id": z.string().max(30).describe("Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)").optional(), "registration_number": z.string().max(50).describe("Company registration number (e.g., HRB 12345 for German Handelsregister)").optional(), "address": z.object({ "street": z.string().max(200).describe("Street address including building number"), "city": z.string().max(100), "postal_code": z.string().max(20), "region": z.string().max(100).describe("State, province, or region").optional(), "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code") }).passthrough().describe("Postal address for invoicing and legal correspondence").optional(), "contacts": z.array(z.object({ "role": z.enum(["billing","legal","creative","general"]).describe("Contact's functional role in the business relationship"), "name": z.string().max(200).describe("Full name of the contact").optional(), "email": z.string().email().max(254).optional(), "phone": z.string().max(30).optional() }).passthrough()).max(10).describe("Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.").optional(), "bank": z.object({ "account_holder": z.string().max(200).describe("Name on the bank account"), "iban": z.string().regex(new RegExp("^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$")).describe("International Bank Account Number (SEPA markets)").optional(), "bic": z.string().regex(new RegExp("^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$")).describe("Bank Identifier Code / SWIFT code (SEPA markets)").optional(), "routing_number": z.string().max(30).describe("Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)").optional(), "account_number": z.string().max(30).describe("Bank account number for non-SEPA markets").optional() }).passthrough().describe("Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Structured business identity for B2B invoicing and contracts. Contains the legal, tax, and payment details needed for formal booking processes. Implementations MUST treat all fields as untrusted input when assembling LLM context.").optional(), "purchase_order_ref": z.string().min(1).max(255).optional(), "agency_estimate_number": z.string().max(100).optional(), "reporting_commitments": z.array(z.object({ "purchase_index": z.number().int().gte(0), "metrics": z.array(z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("standard"), "metric_id": z.enum(["impressions","spend","clicks","ctr","views","completed_views","completion_rate","conversions","conversion_value","commissionable_value","roas","cost_per_acquisition","new_to_brand_rate","leads","reach","frequency","grps","engagements","engagement_rate","follows","saves","profile_visits","viewability","viewable_rate","viewable_impressions","measurable_impressions","viewed_seconds","viewed_seconds_percentiles","viewed_seconds_histogram","quartile_data","quartile_25","quartile_50","quartile_75","quartile_100","time_based_views","dooh_metrics","ooh_metrics","cost_per_click","cost_per_completed_view","cpm","downloads","units_sold","new_to_brand_units","plays","incremental_sales_lift","brand_lift","foot_traffic","conversion_lift","brand_search_lift"]).describe("Standard delivery and performance metrics available for reporting. Most values name flat numeric fields of `core/delivery-metrics.json`. Leaf identities address a single numeric value nested inside an object-shaped metric so it can be declared, committed, aggregated, and sorted individually: `quartile_25`/`quartile_50`/`quartile_75`/`quartile_100` resolve to `quartile_data.q1_views`–`q4_views`, and `viewable_rate`/`viewable_impressions`/`measurable_impressions`/`viewed_seconds` resolve to the same-named fields of `viewability`. Structured nested identities `viewed_seconds_percentiles` and `viewed_seconds_histogram` make the corresponding optional distribution carriers discoverable, committable, and requestable, but not aggregatable or sortable. The nested object or array remains the canonical carrier — nested identities never introduce duplicate flat response fields. Container tokens such as `viewability`, `quartile_data`, `dooh_metrics`, and `time_based_views` declare their documented nested surface. **Container subsumption applies only to numeric leaves**: `viewability` subsumes `viewable_rate`, `viewable_impressions`, `measurable_impressions`, and `viewed_seconds`; `quartile_data` subsumes `quartile_25`, `quartile_50`, `quartile_75`, and `quartile_100`. This rule applies to capability declaration, `required_metrics` filtering, format `reported_metrics` intersection, and `requested_metrics` selection. Optional structured identities MUST be declared explicitly: `viewability` alone does not satisfy `viewed_seconds_percentiles` or `viewed_seconds_histogram`. Requesting any nested identity selects its canonical carrier in the response. A nested identity declaration does not imply sibling values or the carrier's non-metric fields."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and package-level delivery values (`metric_values` or `vendor_metric_values`) to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough(), z.object({ "scope": z.literal("vendor"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and package-level delivery values (`metric_values` or `vendor_metric_values`) to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough()];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).describe("One metric the seller commits to report for a commercial product term. Vendor identity uses BrandKey so the compact lifecycle does not inline brand or provenance documents.")).min(1) }).passthrough()).min(1).describe("Binding reporting contract keyed by position in purchases. Amendments preserve prior entries and add metrics with effective_at; seller-assigned package IDs live in the execution binding, outside this digest.").optional(), "cancellation_terms": z.object({ "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "fee": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().optional(), "reason": z.string().min(1).max(500).optional() }).passthrough().optional(), "change_terms": z.array(z.object({ "term_id": z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$")), "action": z.enum(["pause","resume","cancel","extend_flight","shorten_flight","update_flight_dates","increase_budget","decrease_budget","reallocate_budget","update_budget_allocation","update_targeting","update_pacing","update_bidding","update_frequency_caps","update_media_buy_frequency_cap","update_catalog_assignments","update_keywords","update_optimization_goals","update_impression_goal","update_spend_target","update_reporting_webhook","replace_creative","update_creative_assignments","remove_creative","add_packages","remove_packages"]).describe("Fine-grained MediaBuy action vocabulary for compact product and lifecycle surfaces. Deprecated coarse 3.x actions are absent."), "service_mode": z.enum(["self_serve","conditional_self_serve","seller_managed","requires_approval"]).describe("How a seller honors a routed compact-lifecycle action."), "allowed_statuses": z.array(z.enum(["pending_creatives","pending_start","active","paused"])).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Non-terminal MediaBuy statuses in which this negotiated right may be exercised. When absent, the right applies in every non-terminal status where the canonical action itself is meaningful. This field describes contractual lifecycle scope; available_actions[] remains authoritative for the current instant.").optional(), "processing_sla": z.object({ "response_max": z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).describe("Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.").optional(), "completion_max": z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).describe("Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.").optional() }).passthrough().describe("Binding elapsed-time acknowledgement and completion commitment. Sellers account for weekends and non-working periods when declaring the maximum.").optional(), "conditions": z.array(z.string().regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Opaque stable condition identifiers defined by terms_ref or bilateral commercial documentation. Implementations compare identifiers; they MUST NOT execute or interpret them as instructions.").optional(), "constraints": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "kind": z.literal("budget"), "max_delta_amount": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().describe("Maximum absolute amount by which the affected budget may change in the direction named by the action.").optional(), "max_delta_percent": z.number().gte(0).describe("Maximum percentage change relative to the current committed value. Values above 100 are valid for increases greater than the current value.").optional(), "min_result_amount": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().describe("Minimum resulting committed value after the change.").optional(), "max_result_amount": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().describe("Maximum resulting committed value after the change.").optional() }).passthrough().and(z.union([z.object({ "max_delta_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_delta_percent": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "min_result_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_result_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])), z.object({ "kind": z.literal("flight"), "max_change": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("Maximum extension, shortening, or shift in the direction named by the action.").optional(), "earliest_result": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "latest_result": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "minimum_notice": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("Minimum elapsed notice before the requested flight change may take effect.").optional() }).passthrough().and(z.union([z.object({ "max_change": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "earliest_result": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "latest_result": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "minimum_notice": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])), z.object({ "kind": z.literal("package_count"), "max_additions": z.number().int().gte(0).describe("Maximum packages that may be added by one exercise of the right.").optional(), "max_removals": z.number().int().gte(0).describe("Maximum packages that may be removed by one exercise of the right.").optional(), "max_result_count": z.number().int().gte(0).describe("Maximum active package count after the change.").optional() }).passthrough().and(z.union([z.object({ "max_additions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_removals": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_result_count": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])), z.object({ "kind": z.literal("effective_timing"), "minimum_notice": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("Minimum elapsed notice before pause, resume, cancellation, or another operational action may take effect.").optional(), "earliest_effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "latest_effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough().and(z.union([z.object({ "minimum_notice": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "earliest_effective_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "latest_effective_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]))];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Portable bounds that buyer and seller SDKs can preflight. Omission means no machine-readable bound was promised; opaque conditions remain unevaluated.").optional(), "terms_ref": z.string().min(1).max(1000).describe("Stable contract reference. Resolving it cannot expand the typed right and MUST use the caller's normal authenticated contract-document path, never ambient seller credentials.").optional(), "description": z.string().min(1).max(1000).describe("Display-only summary; it cannot grant authority, add an action, or override typed fields.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("A proposal-bound buyer change right. It binds to the resulting media buy and account, not personally to the caller, and may be exercised by any caller admitted by both seller account authorization and applicable signed governance delegation.")).min(1).describe("Binding buyer change rights included in the commercial envelope and therefore covered by terms_digest. Entries are uniquely keyed by action. When this field is present, an omitted action is not a negotiated change right. Omission of the entire field means legacy-unspecified rights, not a prohibition.").optional() }).passthrough().describe("Complete typed commercial envelope for a compact-lifecycle proposal. This is the authoritative audit and refinement snapshot; allocations and narrative fields are explanatory views rather than substitutes for these terms."), "terms_digest": z.string().regex(new RegExp("^sha256:[A-Za-z0-9_-]{43}$")).describe("Base64url SHA-256 digest of the RFC 8785 JCS serialization of commercial_terms, prefixed with sha256:."), "insertion_order": z.object({ "io_id": z.string().max(255).describe("Unique identifier for this insertion order. Referenced by io_acceptance on create_media_buy."), "terms": z.object({ "advertiser": z.string().max(500).describe("Advertiser name or identifier").optional(), "publisher": z.string().max(500).describe("Publisher name or identifier").optional(), "total_budget": z.object({ "amount": z.number().gte(0), "currency": z.string().min(3).max(3).describe("ISO 4217 currency code") }).describe("Total committed budget").optional(), "flight_start": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "flight_end": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "payment_terms": z.enum(["net_30","net_60","net_90","prepaid","due_on_receipt"]).describe("Payment terms").optional() }).catchall(z.any()).describe("Summary fields echoed from the committed proposal for agent verification. Buyer agents use these to confirm the IO matches what was negotiated before a human signs. These are read-only summaries, not negotiation surfaces — deal terms live on products and packages.").optional(), "terms_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL to a human-readable document containing the full insertion order terms").optional(), "signing_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL to an electronic signing service (e.g., DocuSign) for human signature workflows. When present, a human must sign before the buyer agent can proceed with create_media_buy.").optional(), "requires_signature": z.boolean().describe("Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.") }).catchall(z.any()).describe("A signing wrapper attached to a committed proposal. The IO does not introduce new deal terms — all negotiated terms (performance standards, measurement terms, cancellation policy, pricing) live on the product and package. The IO exists for human signature workflows and provides summary fields so buyer agents can verify the IO matches the committed proposal before a human signs.").optional(), "total_budget_guidance": z.object({ "min": z.number().gte(0).optional(), "recommended": z.number().gte(0).optional(), "max": z.number().gte(0).optional(), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().and(z.union([z.object({ "recommended": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Optional budget guidance for this proposal — the planning answer to criteria.outcome_target and to open-budget briefs. commercial_terms.total_budget remains the concrete figure the plan is priced at; this band expresses the seller's recommended range around it.").optional(), "forecast": z.object({ "points": z.array(z.object({ "label": z.string().max(128).optional(), "budget": z.number().gte(0).optional(), "product_id": z.string().optional(), "dimensions": z.array(z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "kind": z.literal("geo").describe("Dimension family discriminator."), "geo_level": z.enum(["country","region","metro","postal_area"]).describe("Geographic level for this forecast point."), "system": z.string().describe("Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; native postal rows use country-local postal-system enum values such as 'zip' with country 'US'; deprecated legacy postal rows may use legacy-postal-system enum values such as 'us_zip'. Omit for country and region rows.").optional(), "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code. Required for native postal_area rows and omitted for legacy postal rows, metro rows, country rows, and region rows.").optional(), "geo_code": z.string().describe("Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001')."), "geo_name": z.string().describe("Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA').").optional() }).passthrough().and(z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("country") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("country") }), z.object({ "geo_code": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code.").optional() }))]), z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("region") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("region") }), z.object({ "geo_code": z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$")).describe("ISO 3166-2 subdivision code.").optional() }))])), z.intersection(z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("metro") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("metro") }), z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')") }))]), z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("postal_area") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("postal_area") }), z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom."), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system.") })]))])))).describe("A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("placement").describe("Dimension family discriminator."), "placement_ref": z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Structured placement reference for this forecast row. References an entry from the product's placements array."), "placement_name": z.string().describe("Human-readable placement name, useful when the buyer has not resolved the placement catalog.").optional() }).passthrough().describe("A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("device_type").describe("Dimension family discriminator."), "device_type": z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.") }).passthrough().describe("A device form-factor dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("device_platform").describe("Dimension family discriminator."), "device_platform": z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.") }).passthrough().describe("An operating-system or platform dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("audience").describe("Dimension family discriminator."), "audience_id": z.string().describe("Audience segment identifier for this forecast row."), "audience_source": z.enum(["synced","platform","third_party","lookalike","retargeting","unknown"]).describe("Origin of the audience segment."), "audience_name": z.string().describe("Human-readable audience segment name.").optional() }).passthrough().describe("An audience segment dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("signal").describe("Dimension family discriminator."), "signal_ref": z.any().superRefine((x, ctx) => {
+    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  }).describe("Canonical signal reference for this forecast row. Required when the row needs to disambiguate product-local, data-provider, or signal-source identity. Product-relative forecasts SHOULD use signal_ref.").optional(), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier shorthand for this forecast row. Use only when the enclosing context already identifies the signal unambiguously, such as a coverage_forecast nested directly under one get_signals signal item. Otherwise use signal_ref.").optional(), "signal_value": z.union([z.string().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value."), z.number().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value."), z.boolean().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value."), z.null().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value.")]).describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value.").optional(), "presence": z.enum(["present","absent"]).describe("Whether the signal is present for this point. Use 'absent' for the explicit not-present bucket."), "signal_name": z.string().describe("Human-readable signal name, useful when the buyer has not resolved the signal definition.").optional(), "signal_value_name": z.string().describe("Human-readable label for the signal value bucket.").optional() }).passthrough().and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "presence": z.literal("absent") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "presence": z.literal("absent") }), z.object({ "signal_value": z.null() }))]), z.union([z.any().refine((value) => !z.object({ "presence": z.literal("present") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "presence": z.literal("present") }), z.object({ "signal_value": z.union([z.string(), z.number(), z.boolean()]).optional() }))]))).describe("A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("time").describe("Dimension family discriminator."), "start_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time") }).passthrough().describe("A calendar-window dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules. Windows are half-open intervals [start_time, end_time): the row covers instants at or after start_time and strictly before end_time, so adjacent windows share a boundary without overlapping. end_time MUST be after start_time; JSON Schema draft-07 cannot compare sibling values, so conformance tooling enforces the ordering. Within one forecast, sellers MUST emit non-overlapping windows and SHOULD coalesce adjacent windows whose availability_status and metrics do not materially differ. When the request scoped the forecast with offer_filters.availability_horizon, a complete forecast partitions the requested horizon; a seller that cannot cover the full horizon signals the gap through the response's incomplete[] mechanism rather than silently omitting windows.")];
+    const { errors, failed } = schemas.reduce<{
+      errors: z.core.$ZodIssue[];
+      failed: number;
+    }>(
+      ({ errors, failed }, schema) =>
+        ((result) =>
+          result.error
+            ? {
+                errors: [...errors, ...result.error.issues],
+                failed: failed + 1,
+              }
+            : { errors, failed })(
+          schema.safeParse(x),
+        ),
+      { errors: [], failed: 0 },
+    );
+    const passed = schemas.length - failed;
+    if (passed !== 1) {
+      ctx.addIssue(errors.length ? {
+        path: [],
+        code: "invalid_union",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      } : {
+        path: [],
+        code: "custom",
+        errors: [errors],
+        message: "Invalid input: Should pass single schema. Passed " + passed,
+      });
+    }
+  })).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Dimension constraints represented by a ForecastPoint. Use this when one product, proposal, or signal coverage forecast needs to expose availability or forecasted delivery by country, region, placement, device, audience, signal value, time window, or intersections such as placement x country without creating separate products solely for each slice. Each item declares one dimension family via `kind`; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` in a point. Consumers MUST NOT treat repeated kinds as OR semantics; repeated peer values such as two countries are a seller conformance issue. Dimension values are descriptors of the forecast row and are independent of pricing_options.").optional(), "availability_status": z.enum(["available","unavailable"]).describe("Bookability of the inventory a forecast row describes, as of the forecast's generated_at. A snapshot, never a hold: valid_until bounds freshness, and proposal finalization or purchase remains the commitment boundary.").optional(), "metrics": z.object({ "coverage_rate": z.intersection(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), z.object({ "low": z.any().optional(), "mid": z.any().optional(), "high": z.any().optional() })).describe("A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.").optional() }).catchall(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.")), "viewability": z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.").optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_rate": z.intersection(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), z.object({ "low": z.any().optional(), "mid": z.any().optional(), "high": z.any().optional() })).describe("A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.").optional(), "viewed_seconds": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.union([z.object({ "measurable_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewable_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewable_rate": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewed_seconds": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "standard": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "vendor_metric_values": z.array(z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "value": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), "unit": z.string().optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "breakdown": z.record(z.string(), z.any()).optional() }).passthrough().describe("Compact forecasted vendor metric with a BrandKey vendor pointer and no embedded brand assets.")).optional() }).passthrough().describe("Compact forecast row with numeric ranges and identity-only measurement-vendor references.")).min(1), "forecast_range_unit": z.enum(["spend","availability","reach_freq","weekly","daily","clicks","conversions","package"]).describe("Describes how to interpret the points array in a DeliveryForecast — what axis the curve represents").optional(), "method": z.enum(["estimate","modeled","guaranteed"]).describe("Method used to produce a delivery forecast"), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")), "demographic_system": z.enum(["nielsen","nielsen_audio","barb","agf","oztam","mediametrie","custom"]).describe("Audience measurement systems for demographic notation in GRP forecasts and pricing, across video and audio channels. Specifies how demographics are written, not whose panel produced the numbers — provider identity is measurement_source.").optional(), "demographic": z.string().optional(), "measurement_source": z.string().regex(new RegExp("^[a-z0-9_]+$")).max(64).optional(), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "generated_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "valid_until": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Compact product forecast without legacy BrandRef or creative dependencies.").describe("Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.").optional() }).passthrough().describe("Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.");
+      const exactSchema = objectSchema.superRefine((value, ctx) => {
+      const checked = z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "proposal_kind": z.enum(["media_buy_update","media_buy_cancellation"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_kind": z.enum(["media_buy_update","media_buy_cancellation"]) }), z.object({ "parent_proposal_id": z.any().refine((value) => value !== undefined, "Required"), "media_buy_id": z.any().refine((value) => value !== undefined, "Required"), "base_media_buy_revision": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "proposal_status": z.literal("accepted") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_status": z.literal("accepted") }), z.object({ "media_buy_id": z.any().refine((value) => value !== undefined, "Required"), "accepted_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])), z.intersection(z.union([z.any().refine((value) => !z.object({ "proposal_status": z.literal("committed") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_status": z.literal("committed") }), z.object({ "expires_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "proposal_kind": z.literal("media_buy_cancellation") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_kind": z.literal("media_buy_cancellation") }), z.object({ "commercial_terms": z.object({ "cancellation_terms": z.any().refine((value) => value !== undefined, "Required") }).passthrough().optional() }))]))).safeParse(value);
+      if (!checked.success) {
+        for (const issue of checked.error.issues) {
+          ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
+        }
+      }
+      });
+      return Object.assign(exactSchema, {
+        pick: objectSchema.pick.bind(objectSchema),
+        omit: objectSchema.omit.bind(objectSchema),
+        extend: objectSchema.extend.bind(objectSchema),
+      });
+    })();
 
 export const CanonicalProductSchema = z.object({}).passthrough().merge(z.object({
     product_id: z.string().min(1),
@@ -14466,6 +15850,7 @@ export const CanonicalProductSchema = z.object({}).passthrough().merge(z.object(
     signal_targeting_rules: SignalTargetingRulesSchema.optional(),
     demographic_targeting: DemographicTargetingCapabilitySchema.optional(),
     overlay_support: TargetingOverlaySupportSchema.optional(),
+    media_buy_support: ProductMediaBuySupportSchema.optional(),
     identity: ProductIdentitySchema.optional(),
     audience_evidence: z.array(CanonicalAudienceEvidenceSchema).optional(),
     audience_evidence_selections: z.array(CanonicalAudienceEvidenceSelectionSchema).optional(),
@@ -14493,12 +15878,13 @@ export const BuyProductsRequestSchema = z.object({
     advertiser_industry: AdvertiserIndustrySchema.optional(),
     feed_version: z.string().min(1),
     pricing_version: z.string().min(1).optional(),
-    purchases: z.array(ProductPurchaseSchema),
+    purchases: z.array(ProductPurchaseInputSchema),
     total_budget: z.object({
         amount: z.number().min(0),
         currency: z.string().regex(/^[A-Z]{3}$/)
     }).passthrough().optional(),
     daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
     budget_cap_timezone: z.string().min(1).optional(),
     budget_allocation: CanonicalBudgetAllocationSchema.optional(),
     start_time: StartTimingSchema,
@@ -14519,6 +15905,32 @@ export const BuyProductsRequestSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const CommittedMediaBuySchema = z.object({
+    status: z.literal("completed"),
+    media_buy_id: z.string(),
+    revision: z.number(),
+    media_buy_status: MediaBuyStatusSchema.optional(),
+    confirmed_at: z.string().optional().nullable(),
+    accepted_proposal: CanonicalProposalSchema.and(z.object({
+        proposal_status: z.literal("accepted"),
+        media_buy_id: z.string()
+    }).passthrough()),
+    purchase_bindings: z.array(z.object({
+        purchase_index: z.number(),
+        product_id: z.string(),
+        package_id: z.string()
+    }).passthrough()),
+    available_actions: z.array(CanonicalMediaBuyActionSchema),
+    warnings: z.array(WarningSchema.and(z.object({
+        code: z.union([z.literal("inventory_shortfall_forecast"), z.literal("flight_change_creates_pacing_risk")]).optional()
+    }).passthrough())).optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional(),
+    replayed: z.literal(true).optional()
+}).passthrough();
+
+export const MediaBuyCommitmentResponseSchema = z.union([CommittedMediaBuySchema, CommitmentErrorSchema, CommitmentSubmittedSchema]);
+
 export const PackageControlSchema = z.object({}).passthrough().merge(z.object({
     package_id: z.string().min(1),
     budget: z.number().gte(0).optional().nullable(),
@@ -14530,7 +15942,7 @@ export const PackageControlSchema = z.object({}).passthrough().merge(z.object({
     paused: z.boolean().optional(),
     canceled: z.literal(true).optional(),
     cancellation_reason: z.string().min(1).max(500).optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
+    targeting_overlay: TargetingOverlayInputSchema.optional(),
     catalog_ids: z.array(z.string()).optional(),
     keyword_targets_add: z.array(KeywordTargetSchema).optional(),
     keyword_targets_remove: z.array(KeywordTargetSchema).optional(),
@@ -14555,6 +15967,7 @@ export const ControlMediaBuyRequestSchema = z.object({
         currency: z.string().regex(/^[A-Z]{3}$/)
     }).passthrough().optional(),
     daily_budget_cap: z.number().min(0).optional().nullable(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional().nullable(),
     budget_cap_timezone: z.string().min(1).optional().nullable(),
     budget_allocation: CanonicalBudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
@@ -14656,7 +16069,7 @@ export const PackageRequestSchema: z.ZodObject<{ [K in keyof PackageRequest]-?: 
     paused: z.boolean().optional(),
     catalogs: z.array(CatalogSchema).optional(),
     optimization_goals: z.array(OptimizationGoalSchema).optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
+    targeting_overlay: TargetingOverlayInputSchema.optional(),
     audience_evidence_requirements: AudienceEvidenceRequirementsSchema.optional(),
     audience_evidence_pins: z.array(AudienceEvidencePinSchema).optional(),
     measurement_terms: MeasurementTermsSchema.optional(),
@@ -14706,6 +16119,7 @@ export const ReportingDeliveryConfigurationSchema = z.object({}).passthrough().m
     coverage_requirement: z.union([z.literal("full"), z.literal("allow_partial")]),
     required_finality: ReportingFinalitySchema,
     reconciliation_mode: ReportingReconciliationModeSchema,
+    authoritative_party: z.union([z.literal("seller"), z.literal("consumer")]).optional(),
     schedule: ReportingScheduleSchema,
     method: ReportingDeliveryMethodSchema.optional(),
     revocation_effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional()
@@ -15048,7 +16462,7 @@ export const PackageUpdateSchema: z.ZodObject<{ [K in keyof PackageUpdate]-?: un
     cancellation_reason: z.string().max(500).optional(),
     catalogs: z.array(CatalogSchema).optional(),
     optimization_goals: z.array(OptimizationGoalSchema).optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
+    targeting_overlay: TargetingOverlayInputSchema.optional(),
     keyword_targets_add: z.array(z.object({
         keyword: z.string().min(1),
         match_type: MatchTypeSchema,
@@ -15080,6 +16494,7 @@ export const UpdateMediaBuySuccessSchema: z.ZodType = z.object({
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     total_budget: z.number().min(0).optional(),
     daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
     budget_cap_timezone: z.string().optional(),
     budget_allocation: BudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
@@ -16302,6 +17717,64 @@ export const GetPlanAuditLogsResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
+export const CheckGovernanceRequestSchema = z.object({}).passthrough().merge(z.object({
+    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
+    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
+    plan_id: z.string().optional(),
+    caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
+    purchase_type: PurchaseTypeSchema.optional(),
+    target_agent: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
+    proposed_commitment: z.object({
+        amount: z.number().min(0),
+        currency: z.string().regex(/^[A-Z]{3}$/)
+    }).passthrough().optional(),
+    execution_commitment: z.object({
+        amount: z.number().min(0),
+        currency: z.string().regex(/^[A-Z]{3}$/)
+    }).passthrough().optional(),
+    tool: z.string().optional(),
+    payload: z.object({}).passthrough().optional(),
+    proposal: CanonicalProposalSchema.optional(),
+    governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
+    consultation_context: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]+$/).optional(),
+    phase: GovernancePhaseSchema.optional(),
+    planned_delivery: PlannedDeliverySchema.optional(),
+    delivery_metrics: z.object({
+        statement_id: z.string().min(1).max(255).optional(),
+        statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+        sequence: z.int().min(1).optional(),
+        issued_at: z.iso.datetime().optional(),
+        reporting_period: z.object({
+            start: z.iso.datetime(),
+            end: z.iso.datetime()
+        }).passthrough(),
+        spend: z.number().min(0).optional(),
+        cumulative_spend: z.number().min(0).optional(),
+        currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+        impressions: z.int().min(0).optional(),
+        cumulative_impressions: z.int().min(0).optional(),
+        geo_distribution: z.record(z.string(), z.number()).optional(),
+        channel_distribution: z.record(z.string(), z.number()).optional(),
+        pacing: z.union([z.literal("ahead"), z.literal("on_track"), z.literal("behind")]).optional(),
+        audience_distribution: z.object({
+            baseline: z.union([z.literal("census"), z.literal("platform"), z.literal("custom")]),
+            baseline_description: z.string().optional(),
+            indices: z.record(z.string(), z.number()),
+            cumulative_indices: z.record(z.string(), z.number()).optional()
+        }).passthrough().optional()
+    }).passthrough().optional(),
+    modification_summary: z.string().max(1000).optional(),
+    runtime_attestations: z.array(AttestationReferenceSchema.and(z.object({
+        subject: z.object({
+            type: z.literal("resource"),
+            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/signal")
+        }).passthrough().optional()
+    }).passthrough())).max(10).optional(),
+    invoice_recipient: BusinessEntitySchema.optional(),
+    context: ContextObjectSchema.optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough());
+
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdCPCapabilitiesResponse]-?: undefined extends GetAdCPCapabilitiesResponse[K] ? z.ZodOptional<z.ZodType<Exclude<GetAdCPCapabilitiesResponse[K], undefined>, Exclude<GetAdCPCapabilitiesResponse[K], undefined>>> : z.ZodType<GetAdCPCapabilitiesResponse[K], GetAdCPCapabilitiesResponse[K]> }, z.core.$loose> & z.ZodType<GetAdCPCapabilitiesResponse & Record<string, unknown>, GetAdCPCapabilitiesResponse & Record<string, unknown>> = z.object({
     context_id: z.string().optional(),
@@ -16524,6 +17997,7 @@ export const GetAdCPCapabilitiesResponseSchema: z.ZodObject<{ [K in keyof GetAdC
             supported_per_units: z.array(ReachUnitSchema).optional(),
             supported_window_units: z.array(z.string()).optional()
         }).passthrough().optional(),
+        aggregate_frequency_capping: MediaBuyFrequencyCapCapabilitySchema.optional(),
         budget_capping: z.object({
             supported_scopes: z.array(z.union([z.literal("media_buy"), z.literal("package")])),
             supported_periods: z.array(z.literal("day")),
@@ -17014,1023 +18488,6 @@ export const ValidatePropertyDeliveryResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough();
 
-export const CommercialTermsSchema = z.object({
-    source_feed_version: z.string().min(1).optional(),
-    source_pricing_version: z.string().min(1).optional(),
-    brand: BrandKeySchema,
-    advertiser_industry: AdvertiserIndustrySchema.optional(),
-    purchases: z.array(ProductPurchaseSchema.merge(z.object({}).passthrough())),
-    start_time: StartTimingSchema,
-    end_time: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
-    total_budget: z.object({
-        amount: z.number().gte(0),
-        currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
-    }).passthrough().optional(),
-    daily_budget_cap: z.number().gte(0).optional(),
-    budget_cap_timezone: z.string().min(1).optional(),
-    budget_allocation: CanonicalBudgetAllocationSchema.optional(),
-    pacing: PacingSchema.optional(),
-    bidding: BiddingPolicySchema.optional(),
-    invoice_recipient: BusinessEntitySchema.optional(),
-    purchase_order_ref: z.string().min(1).max(255).optional(),
-    agency_estimate_number: z.string().max(100).optional(),
-    reporting_commitments: z.array(z.object({
-        purchase_index: z.number().int().gte(0),
-        metrics: z.array(CanonicalReportingCommitmentSchema)
-    }).passthrough()).optional(),
-    cancellation_terms: z.object({
-        effective_at: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"),
-        fee: z.object({
-            amount: z.number().gte(0),
-            currency: z.string().regex(new RegExp("^[A-Z]{3}$"))
-        }).passthrough().optional(),
-        reason: z.string().min(1).max(500).optional()
-    }).passthrough().optional(),
-    change_terms: z.array(MediaBuyChangeTermSchema).optional()
-}).passthrough();
-
-// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const CanonicalProposalSchema: z.ZodObject<{ [K in keyof CanonicalProposal]-?: undefined extends CanonicalProposal[K] ? z.ZodOptional<z.ZodType<Exclude<CanonicalProposal[K], undefined>, Exclude<CanonicalProposal[K], undefined>>> : z.ZodType<CanonicalProposal[K], CanonicalProposal[K]> }, z.core.$loose> & z.ZodType<CanonicalProposal & Record<string, unknown>, CanonicalProposal & Record<string, unknown>> = (() => {
-      const objectSchema = z.object({ "proposal_id": z.string().min(1).max(255), "proposal_kind": z.enum(["new_media_buy","media_buy_update","media_buy_cancellation"]), "parent_proposal_id": z.string().min(1).max(255).describe("Immediate predecessor this snapshot was forked from. Every proposal produced by refine_proposals carries it, equal to the request's source proposal_id, so negotiation lineage is reconstructible from proposals alone.").optional(), "media_buy_id": z.string().min(1).optional(), "opportunity_id": z.string().regex(new RegExp("^[A-Za-z0-9_.:-]{1,255}$")).min(1).max(255).describe("Buyer planning cycle associated with this proposal. Revisions inherit it; it does not participate in proposal identity.").optional(), "base_media_buy_revision": z.number().int().gte(1).optional(), "proposal_status": z.enum(["draft","committed","accepted"]).describe("draft is indicative and unreserved; committed has firm terms with inventory reserved until expires_at; accepted is the historical snapshot attached to a MediaBuy."), "accepted_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "expires_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "name": z.string().min(1).max(500), "description": z.string().max(2000).optional(), "brief_alignment": z.string().max(2000).optional(), "commercial_terms": z.object({ "source_feed_version": z.string().min(1).describe("Wholesale product feed version against which direct published offers were accepted. Omitted when the seller authored terms outside a wholesale snapshot.").optional(), "source_pricing_version": z.string().min(1).describe("Pricing-layer version against which published rates were accepted.").optional(), "brand": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "advertiser_industry": z.enum(["automotive","automotive.electric_vehicles","automotive.parts_accessories","automotive.luxury","beauty_cosmetics","beauty_cosmetics.skincare","beauty_cosmetics.fragrance","beauty_cosmetics.haircare","cannabis","cpg","cpg.personal_care","cpg.household","dating","education","education.higher_education","education.online_learning","education.k12","energy_utilities","energy_utilities.renewable","fashion_apparel","fashion_apparel.luxury","fashion_apparel.sportswear","finance","finance.banking","finance.insurance","finance.investment","finance.cryptocurrency","food_beverage","food_beverage.alcohol","food_beverage.restaurants","food_beverage.packaged_goods","gambling_betting","gambling_betting.sports_betting","gambling_betting.casino","gaming","gaming.mobile","gaming.console_pc","gaming.esports","government_nonprofit","government_nonprofit.political","government_nonprofit.charity","healthcare","healthcare.pharmaceutical","healthcare.medical_devices","healthcare.wellness","home_garden","home_garden.furniture","home_garden.home_improvement","media_entertainment","media_entertainment.podcasts","media_entertainment.music","media_entertainment.film_tv","media_entertainment.publishing","media_entertainment.live_events","pets","professional_services","professional_services.legal","professional_services.consulting","real_estate","real_estate.residential","real_estate.commercial","recruitment_hr","retail","retail.ecommerce","retail.department_stores","sports_fitness","sports_fitness.equipment","sports_fitness.teams_leagues","technology","technology.software","technology.hardware","technology.ai_ml","telecom","telecom.mobile_carriers","telecom.internet_providers","transportation_logistics","travel_hospitality","travel_hospitality.airlines","travel_hospitality.hotels","travel_hospitality.cruise","travel_hospitality.tourism"]).describe("Standardized advertiser industry classification. Top-level categories classify the advertiser's primary business. Dot-notation subcategories (e.g., 'media_entertainment.podcasts') provide platform-specific precision where needed. Sellers map these to platform-native codes (Spotify ADV categories, LinkedIn industry IDs, IAB Content Taxonomy, etc.). Sellers MUST accept unknown values gracefully — treat unrecognized values as the parent category (strip the subcategory) or as uncategorized. This ensures forward compatibility as the taxonomy evolves.").optional(), "purchases": z.array(z.intersection(z.object({ "product_id": z.string().min(1), "pricing_option_id": z.string().min(1), "pricing": z.object({ "pricing_option_id": z.string().min(1), "pricing_model": z.enum(["cpm","vcpm","cpc","cpcv","cpv","cpp","cpa","revenue_share","flat_rate","time"]), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")), "fixed_price": z.number().gte(0).optional(), "floor_price": z.number().gte(0).optional(), "price_guidance": z.object({ "p25": z.number().gte(0).describe("25th percentile of recent winning bids").optional(), "p50": z.number().gte(0).describe("Median of recent winning bids").optional(), "p75": z.number().gte(0).describe("75th percentile of recent winning bids").optional(), "p90": z.number().gte(0).describe("90th percentile of recent winning bids").optional() }).catchall(z.any()).describe("Pricing guidance for auction-based bidding. Helps buyers calibrate bids with historical percentiles.").optional(), "min_spend_per_package": z.number().gte(0).optional(), "price_breakdown": z.object({ "list_price": z.number().gt(0).describe("Rate card or base price before any adjustments. The starting point from which fixed_price is derived by applying fee and discount adjustments sequentially."), "adjustments": z.array(z.object({ "kind": z.enum(["fee","discount","commission","settlement"]).describe("Categorizes how a price adjustment affects the transaction"), "name": z.string().max(64).describe("Specific adjustment name. Use well-known values where applicable for interoperability."), "rate": z.number().gt(0).lt(1).describe("Adjustment as a decimal proportion (e.g., 0.15 for 15%). Always positive — kind determines the economic effect. Mutually exclusive with amount.").optional(), "amount": z.number().gt(0).describe("Adjustment as a fixed monetary amount in the pricing option's currency. Always positive — kind determines the economic effect. Mutually exclusive with rate.").optional(), "description": z.string().max(256).describe("Human-readable description of this adjustment (e.g., 'Malstaffel 12x', '2% Skonto 10 Tage')").optional(), "beneficiary": z.string().max(256).describe("Identifies who receives this adjustment's value. For commissions, the intermediary (e.g., a sellers.json domain, an AdCP account ID, or a human-readable party name). Optional but recommended for multi-intermediary transparency.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "rate": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }))).min(1).max(20).describe("Ordered list of price adjustments. Fee and discount adjustments walk list_price to fixed_price — fees increase the running price, discounts reduce it. Commission and settlement adjustments are disclosed for transparency but do not affect the buyer's committed price.") }).catchall(z.any()).describe("Breaks down the composition of fixed_price from a list (rate card) price through adjustments. Adjustments fall into four kinds: fees (increase buyer price), discounts (reduce buyer price), commissions (revenue splits that don't affect buyer price), and settlement terms (applied at invoicing). The invariant is: list_price with all fee and discount adjustments applied sequentially equals fixed_price. Fees increase the running price; discounts reduce it. This invariant applies only when fixed_price is present on the parent object; on auction-based packages the breakdown is informational only. All monetary values are rounded to currency precision at each step. Budgets are always denominated at the fixed_price level, inclusive of commissions.").optional(), "eligible_adjustments": z.array(z.enum(["fee","discount","commission","settlement"]).describe("Categorizes how a price adjustment affects the transaction")).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "parameters": z.record(z.string(), z.any()).optional(), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI").optional(), "custom_event_name": z.string().min(1).optional(), "event_source_id": z.string().min(1).optional(), "commission_rate": z.number().gt(0).lte(1).optional(), "commission_basis_description": z.string().min(1).max(1000).optional() }).passthrough().and(z.intersection(z.intersection(z.any().refine((value) => !z.object({ "fixed_price": z.any().refine((value) => value !== undefined, "Required"), "floor_price": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.union([z.any().refine((value) => !z.object({ "pricing_model": z.literal("cpa") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "pricing_model": z.literal("cpa") }), z.object({ "event_type": z.any().refine((value) => value !== undefined, "Required"), "fixed_price": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])), z.intersection(z.union([z.any().refine((value) => !z.object({ "pricing_model": z.literal("revenue_share") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "pricing_model": z.literal("revenue_share") }), z.object({ "event_type": z.any().refine((value) => value !== undefined, "Required"), "event_source_id": z.any().refine((value) => value !== undefined, "Required"), "commission_rate": z.any().refine((value) => value !== undefined, "Required"), "commission_basis_description": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.intersection(z.union([z.any().refine((value) => !z.object({ "pricing_model": z.enum(["cpv","cpp","time"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "pricing_model": z.enum(["cpv","cpp","time"]) }), z.object({ "parameters": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "event_type": z.literal("custom") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "event_type": z.literal("custom") }), z.object({ "custom_event_name": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]))))).describe("Resolved selected pricing terms. Optional on buy_products input, where pricing_option_id plus the versioned feed identifies the offer; required inside accepted commercial_terms. Its pricing_option_id MUST match the sibling field.").optional(), "format_option_refs": z.array(z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("publisher").describe("Reference resolves against the named publisher's adagents.json top-level `formats[]` catalog."), "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Publisher domain where the adagents.json declaring this format option is hosted."), "format_option_id": z.string().describe("Stable format option ID from the publisher's adagents.json top-level `formats[]`, matching a publisher-catalog-backed entry in the target product's `format_options[]`.") }).catchall(z.any()).describe("Selects a publisher-catalog-backed product format option by publisher domain and format option ID."), z.object({ "scope": z.literal("product").describe("Reference resolves only against the target product's inline `format_options[]`."), "format_option_id": z.string().describe("Stable format option ID from the target product's inline `format_options[]`."), "publisher_domain": z.never().optional() }).catchall(z.any()).describe("Selects a product-local format option by ID within the enclosing package/product context. This branch deliberately forbids `publisher_domain` (`publisher_domain: false` in the schema) because product-local references are namespaced by the enclosing product only; include `scope: \"publisher\"` when the selector must cross into a publisher catalog.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).describe("Discriminated reference to a product format option. The global canonical shape is still named by `format_kind`; this reference selects one concrete product `format_options[]` entry. `scope: \"publisher\"` identifies a publisher-declared catalog option by `{ publisher_domain, format_option_id }`. `scope: \"product\"` identifies a product-local option by `format_option_id`; the enclosing package/product context supplies the namespace.")).min(1).describe("Canonical format options selected from the published product offer. Legacy named-format identifiers are not accepted.").optional(), "catalog_ids": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.").optional(), "budget": z.number().gte(0).describe("Hard spend cap for this selection in the media-buy currency.").optional(), "daily_budget_cap": z.number().gte(0).describe("Optional hard daily spend ceiling for this purchase. It is subordinate to the media-buy aggregate daily cap and is not a reserved daily allocation. Its day boundary is the media buy's budget_cap_timezone.").optional(), "min_spend_target": z.number().gte(0).describe("Soft lifetime spend target for seller-optimized allocation.").optional(), "impressions": z.number().gte(0).optional(), "start_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "targeting_overlay": z.object({ "geo_countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_countries_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).describe("Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').").optional(), "geo_regions": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.").optional(), "geo_regions_exclude": z.array(z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$"))).min(1).describe("Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.").optional(), "geo_metros": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_metros_exclude": z.array(z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')"), "values": z.array(z.string()).min(1).describe("Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)") }).passthrough()).min(1).describe("Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_postal_areas_exclude": z.array(z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code for the postal values."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system."), "values": z.array(z.string()).min(1).describe("Postal codes within the country and system.") }).passthrough().and(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom.")), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system."), "values": z.array(z.string()).min(1).describe("Postal codes within the legacy system.") }).passthrough()]).describe("Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.")).min(1).describe("Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.").optional(), "geo_places": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.").optional(), "geo_places_exclude": z.array(z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code containing the place."), "system": z.union([z.enum(["geonames","google_ads","microsoft_ads"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings."), "system_version": z.string().min(1).describe("Optional exact catalog version from the seller's declared supported_versions. When omitted, the seller applies catalog.current_version and MUST echo that version on persisted package state.").optional(), "place_type": z.union([z.enum(["airport","borough","city","city_region","commune","county","district","municipality","neighborhood","post_town","prefecture","province","quarter","state","territory","ward"]), z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://"))]).describe("Canonical place classification. Registered tokens have protocol-defined meanings. Catalog-specific classifications without a registered mapping MUST use an absolute HTTPS URI controlled by the vocabulary owner; consumers compare URI types as exact opaque strings."), "values": z.array(z.string().min(1)).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Stable place identifiers in the declared system. Display names are not valid targeting values."), "value_labels": z.record(z.string(), z.string().min(1)).describe("Optional human-readable diagnostic labels keyed by identifiers present in values. Extra keys are a conformance error. Labels are non-authoritative and MUST NOT be used to resolve or apply targeting.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "system": z.enum(["geonames","google_ads","microsoft_ads"]) }), z.object({ "values": z.any().optional() }))])).describe("A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.")).min(1).describe("Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.").optional(), "daypart_targets": z.array(z.object({ "days": z.array(z.enum(["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]).describe("Days of the week for daypart targeting")).min(1).describe("Days of week this window applies to. Use multiple days for compact targeting (e.g., monday-friday in one object)."), "start_hour": z.number().int().gte(0).lte(23).describe("Start hour (inclusive), 0-23 in 24-hour format. 0 = midnight, 6 = 6:00am, 18 = 6:00pm."), "end_hour": z.number().int().gte(1).lte(24).describe("End hour (exclusive), 1-24 in 24-hour format. 10 = 10:00am, 24 = midnight. Must be greater than start_hour."), "timezone": z.union([z.literal("inventory_local"), z.any().refine((value) => !z.literal("inventory_local").safeParse(value).success, "Invalid input: Should NOT be valid against schema").describe("Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.")]).describe("Civil-time clock used to evaluate this window. 'inventory_local' evaluates the hours in the seller-assigned local timezone of each inventory unit that can deliver the impression, such as a screen, venue, station, or publisher property; it never means the buyer, account, or server timezone. A concrete IANA timezone identifier (for example, 'America/New_York', 'CET', or 'UTC') evaluates one shared civil-time clock across the targeted inventory. Omission defaults to 'inventory_local'. Buyers that begin with a user or account preference MUST resolve it to a concrete IANA identifier before sending the daypart; 'user_timezone' and 'account_timezone' are not wire values. For each candidate delivery instant, convert the instant into this clock and compare its resulting local day and hour with the half-open window: a skipped DST hour has no matching instants, while both occurrences of a repeated hour match. This delivery clock is independent of reporting_capabilities.timezone.").default("inventory_local"), "label": z.string().describe("Optional human-readable name for this time window (e.g., 'Morning Drive', 'Prime Time')").optional() }).passthrough().describe("A time window for daypart targeting. Specifies days of week, an hour range, and the civil-time clock used to evaluate it. start_hour is inclusive, end_hour is exclusive (e.g., 6-10 = 6:00am to 10:00am). Follows the Google Ads AdScheduleInfo / DV360 DayPartTargeting pattern.")).min(1).describe("Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.").optional(), "axe_include_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.").optional(), "axe_exclude_segment": z.string().describe("Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.").optional(), "audience_include": z.array(z.string()).min(1).describe("Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.").optional(), "audience_exclude": z.array(z.string()).min(1).describe("Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.").optional(), "signal_targeting_groups": z.object({ "operator": z.literal("all").describe("Groups-level operator. Required even though v1 only supports 'all': every child group must be satisfied."), "groups": z.array(z.object({ "operator": z.enum(["any","none"]).describe("How to evaluate the signals in this group. 'any' is an OR include group. 'none' is an exclusion group equivalent to NOT (A OR B OR C)."), "signals": z.array(z.object({ "pricing_option_id": z.string().describe("Pricing option selected for this signal. Use the pricing_option_id from the product's signal_targeting_options entry when product-scoped pricing is present; otherwise use the seller get_signals pricing only when the product option does not override it. Required when the selected signal has pricing_options; omit only when the signal is bundled into the product price or has no incremental cost.").optional(), "signal_agent_segment_id": z.string().describe("Optional opaque resolved-segment or seller execution handle for this signal. Omit when signal_ref plus the value expression is sufficient for the seller to resolve the signal. Include when the product option exposes a separate runtime or activation handle, and pass it verbatim. Buyers SHOULD prefer an exposed segment handle over reconstructing condition identity from categorical values because the handle can carry provider namespace and methodology distinctions.").optional(), "activation_key": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "type": z.literal("segment_id").describe("Segment ID based targeting"), "segment_id": z.string().describe("The platform-specific segment identifier to use in campaign targeting") }).catchall(z.any()), z.object({ "type": z.literal("key_value").describe("Key-value pair based targeting"), "key": z.string().describe("The targeting parameter key"), "value": z.string().describe("The targeting parameter value") }).catchall(z.any())];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).describe("Destination-specific activation key returned by get_signals or activate_signal. Usually omitted for seller-offered signals selected directly through the same seller; include only when the selected signal was separately activated and the seller requires the activation key to correlate the package selection.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Named signal being targeted."), "value_type": z.literal("binary").describe("Discriminator for binary signals."), "value": z.literal(true).describe("Binary package signal entries match users for whom the signal is true. Use the parent group operator for include/exclude.") }).catchall(z.any()).describe("Binary signal expression. In grouped package targeting, value is always true; use a parent group with operator 'none' for exclusion."), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Named signal being targeted."), "value_type": z.literal("categorical").describe("Discriminator for categorical signals."), "values": z.array(z.string()).min(1).describe("Values to target. Users with any of these values match the expression.") }).catchall(z.any()).describe("Categorical signal expression - target users with one of the listed values."), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Named signal being targeted."), "value_type": z.literal("numeric").describe("Discriminator for numeric signals."), "min_value": z.number().describe("Minimum value, inclusive. Omit for no minimum. Should be within the signal definition's range when declared.").optional(), "max_value": z.number().describe("Maximum value, inclusive. Omit for no maximum. Should be within the signal definition's range when declared.").optional() }).catchall(z.any()).and(z.union([z.object({ "min_value": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_value": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Numeric signal expression - target users within a value range. At least one of min_value or max_value is required. If both min_value and max_value are provided, min_value MUST be <= max_value.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Predicate over a named signal definition. Signals are typed dimensions, similar to feature values: binary signals match true, categorical signals match one of a set of values, and numeric signals match a range. In package signal targeting groups, include/exclude semantics are controlled by the parent group operator, not by negating the expression.")).describe("Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.")).min(1).describe("Signal targeting entries evaluated by this group. Each entry uses the package signal targeting shape, including signal_ref, value expression, and optional pricing, execution-handle, or activation fields.") }).catchall(z.any()).describe("A basic Boolean group of package-level signal targeting entries. 'any' means the user must match at least one signal in the group. 'none' means the user must match none of the signals in the group. Use groups for portable include/exclude composition such as (A OR B) AND NOT (C OR D).")).min(1).describe("Signal targeting groups to evaluate. Use operator 'any' for include groups and 'none' for exclusion groups.") }).catchall(z.any()).describe("Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external signals published in adagents.json signals[]. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. Sellers MAY return REQUOTE_REQUIRED when a targeting mutation changes commercial terms.").optional(), "signal_targeting": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("The signal to target. New targeting constraints SHOULD use signal_ref.").optional(), "signal_id": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "source": z.literal("catalog").describe("Discriminator indicating this signal is from a data provider's published adagents.json signals[]"), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain of the data provider that owns this signal (e.g., 'pinnacle-data.example'). The signal definition is published at this domain's /.well-known/adagents.json"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')") }).catchall(z.any()).describe("Data-provider signal - references a signal from a data provider's published adagents.json signals[]. Buyers can verify authorization by checking the data provider's adagents.json."), z.object({ "source": z.literal("agent").describe("Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions."), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that provides this signal (e.g., 'https://signals.example/.well-known/adcp/signals')"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')") }).catchall(z.any()).describe("Agent signal - references a signal native to a signal source identified by agent_url. Not externally verifiable through an upstream catalog; buyer trusts the issuing signal source's claim about the signal.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older clients.").optional(), "value_type": z.literal("binary").describe("Discriminator for binary signals"), "value": z.boolean().describe("Whether to include (true) or exclude (false) users matching this signal") }).catchall(z.any()).and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Binary signal targeting - user either matches or doesn't"), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("The signal to target. New targeting constraints SHOULD use signal_ref.").optional(), "signal_id": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "source": z.literal("catalog").describe("Discriminator indicating this signal is from a data provider's published adagents.json signals[]"), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain of the data provider that owns this signal (e.g., 'pinnacle-data.example'). The signal definition is published at this domain's /.well-known/adagents.json"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')") }).catchall(z.any()).describe("Data-provider signal - references a signal from a data provider's published adagents.json signals[]. Buyers can verify authorization by checking the data provider's adagents.json."), z.object({ "source": z.literal("agent").describe("Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions."), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that provides this signal (e.g., 'https://signals.example/.well-known/adcp/signals')"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')") }).catchall(z.any()).describe("Agent signal - references a signal native to a signal source identified by agent_url. Not externally verifiable through an upstream catalog; buyer trusts the issuing signal source's claim about the signal.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older clients.").optional(), "value_type": z.literal("categorical").describe("Discriminator for categorical signals"), "values": z.array(z.string()).min(1).describe("Values to target. Users with any of these values will be included.") }).catchall(z.any()).and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Categorical signal targeting - target users with specific values"), z.object({ "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("The signal to target. New targeting constraints SHOULD use signal_ref.").optional(), "signal_id": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "source": z.literal("catalog").describe("Discriminator indicating this signal is from a data provider's published adagents.json signals[]"), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain of the data provider that owns this signal (e.g., 'pinnacle-data.example'). The signal definition is published at this domain's /.well-known/adagents.json"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's catalog (e.g., 'likely_ev_buyers', 'income_100k_plus')") }).catchall(z.any()).describe("Data-provider signal - references a signal from a data provider's published adagents.json signals[]. Buyers can verify authorization by checking the data provider's adagents.json."), z.object({ "source": z.literal("agent").describe("Discriminator indicating this signal is native to the signal source identified by agent_url, not from a data provider's published signal definitions."), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that provides this signal (e.g., 'https://signals.example/.well-known/adcp/signals')"), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the agent's signal set (e.g., 'custom_auto_intenders')") }).catchall(z.any()).describe("Agent signal - references a signal native to a signal source identified by agent_url. Not externally verifiable through an upstream catalog; buyer trusts the issuing signal source's claim about the signal.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("DEPRECATED. Use signal_ref instead. Legacy SignalId retained for compatibility with older clients.").optional(), "value_type": z.literal("numeric").describe("Discriminator for numeric signals"), "min_value": z.number().describe("Minimum value (inclusive). Omit for no minimum. Must be <= max_value when both are provided. Should be >= signal's range.min if defined.").optional(), "max_value": z.number().describe("Maximum value (inclusive). Omit for no maximum. Must be >= min_value when both are provided. Should be <= signal's range.max if defined.").optional() }).catchall(z.any()).and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Numeric signal targeting - target users within a value range. If min_value is provided, it must be <= max_value. Values should be within the signal's defined range (see signal definition).")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Targeting constraint for a specific signal. Uses value_type as discriminator to determine the targeting expression format.")).min(1).describe("DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.").optional(), "demographics": z.object({ "age": z.intersection(z.object({ "min": z.number().int().gte(0).lte(150).describe("Inclusive minimum age in completed years. Omit for an open lower bound.").optional(), "max": z.number().int().gte(0).lte(150).describe("Inclusive maximum age in completed years. Omit for an open upper bound.").optional(), "include_unknown": z.boolean().describe("Whether delivery to people whose age is unavailable is part of this predicate. This field has no default and MUST be supplied.") }).catchall(z.any()).and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A canonical audience-age predicate in completed integer years. min and max are inclusive; omitting one bound means no restriction in that direction. At least one bound is required. include_unknown is always explicit because people whose age is unavailable are not members of any numeric interval. Implementations MUST reject min greater than max; JSON Schema draft-07 cannot compare sibling numeric values."), z.object({ "accepted_bases": z.array(z.enum(["verified","declared","inferred"]).describe("User-level bases that may resolve age for demographic targeting execution. Population estimates are deliberately absent because aggregate composition cannot establish an individual impression's age.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("User-level age determination bases the buyer permits for this predicate. Sellers MUST use only these bases or reject the request; they MUST NOT silently fall back to another basis. When omitted, the buyer imposes no determination-basis constraint beyond product capability and any age_restriction. population_estimate is structurally unavailable because aggregate evidence cannot identify an eligible user.").optional(), "accepted_verification_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Verification methods acceptable when verified is an accepted basis. This field narrows verified demographic execution; age_restriction.accepted_methods independently governs legal eligibility and the two sets are intersected when both are present.").optional() }).catchall(z.any()).and(z.union([z.any().refine((value) => !z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "accepted_verification_methods": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema") }))]))) }).catchall(z.any()).describe("Canonical demographic audience targeting intent with optional constraints on how age may be determined. This is distinct from age_restriction: demographics selects an audience, while age_restriction expresses a legal eligibility or verification floor. Fresh create/update targeting MUST compile exactly or be rejected. During get_products, a seller may offer a different configured predicate only through sparse targeting_resolution modifications on a distinguishable product_id; selecting that product accepts the alternative. Sellers never silently broaden, narrow, default, drop, or substitute the basis.").optional(), "frequency_cap": z.object({ "suppress": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {\"interval\": 60, \"unit\": \"minutes\"} for a 1-hour cooldown). Preferred over suppress_minutes.").optional(), "suppress_minutes": z.number().gte(0).describe("Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).").optional(), "max_impressions": z.number().int().gte(1).describe("Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.").optional(), "per": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").describe("Entity granularity for impression counting. Required when max_impressions is set.").optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Time window for the max_impressions cap (e.g. {\"interval\": 7, \"unit\": \"days\"} or {\"interval\": 1, \"unit\": \"campaign\"} for the full flight). Required when max_impressions is set.").optional() }).catchall(z.any()).and(z.union([z.object({ "suppress": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "suppress_minutes": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "max_impressions": z.any().refine((value) => value !== undefined, "Required"), "per": z.any().refine((value) => value !== undefined, "Required"), "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.intersection(z.union([z.any().refine((value) => !z.object({ "per": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "per": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]), z.union([z.any().refine((value) => !z.object({ "window": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "window": z.any().refine((value) => value !== undefined, "Required"), "max_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])))).describe("Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.").optional(), "property_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.").optional(), "property_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the property list"), "list_id": z.string().min(1).describe("Identifier for the property list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for including specific collections (programs, publications, channels) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.").optional(), "collection_list_exclude": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the agent managing the collection list"), "list_id": z.string().min(1).describe("Identifier for the collection list within the agent"), "auth_token": z.string().describe("JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.").optional() }).passthrough().describe("Reference to a collection list for excluding specific collections (programs, publications, channels) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities.").optional(), "placement_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "mode": z.literal("selected"), "placement_refs": z.array(z.union([z.intersection(z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Legacy-compatible product-context reference to a placement. For publisher-catalog placements, publisher_domain plus placement_id resolves the declaration in that publisher's adagents.json. For seller-inline placements, the enclosing seller and product supply scope. When publisher_domain is omitted on legacy inputs, receivers MAY interpret the ID relative to the enclosing single-publisher product. Use placement-identity.json when a self-contained cross-document identity is required."), z.object({ "publisher_domain": z.any().refine((value) => value !== undefined, "Required") }).passthrough()), z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("publisher_ref"), "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain whose adagents.json declares placement_id."), "placement_id": z.string().min(1) }).passthrough(), z.object({ "kind": z.literal("seller_inline"), "seller_agent": z.object({ "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("The seller agent's API endpoint URL as declared in the property publisher's adagents.json `authorized_agents[].url`. MUST use the `https://` scheme. Receivers compare this URL against the `authorized_agents` list using the AdCP URL canonicalization rules — not byte-equality — and reject mismatches with `seller_not_authorized`. See docs/reference/url-canonicalization."), "id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).min(1).describe("Reserved for a future registry-assigned stable seller identifier. Not used today — senders MUST NOT populate this field until a registry is defined. When a future release populates both `agent_url` and `id`, `agent_url` remains authoritative and `id` is advisory.").optional() }).passthrough().describe("Sales agent that defines and maintains the inline placement namespace."), "placement_id": z.string().min(1).describe("Stable placement ID within the defining sales agent's namespace. The agent MUST NOT reuse it for a different semantic placement.") }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Self-contained identity for either a publisher-catalog placement or a sales-agent-defined inline placement. The discriminator names which authority owns placement_id.")])).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Complete required placement set. A reference normally identifies a mode targetable placement. It MAY identify a mode included placement only when the set exactly equals the product's complete fixed included set, which is an inherent match rather than independent selection. Legacy publisher refs use {publisher_domain, placement_id}; authority-discriminated 3.2 identities use placement-identity.json so seller-inline inventory is selected by {seller_agent, placement_id}. An item that exactly matches placement-identity uses that canonical identity; otherwise a released-compatible item with publisher_domain and placement_id uses legacy product-context matching, and tolerated product metadata such as kind, name, or mode has no selection effect."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "mode": z.literal("default"), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).describe("Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. On update, the surrounding targeting_overlay replacement semantics apply.").optional(), "collection_selection": z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "mode": z.literal("selected"), "collections": z.array(z.intersection(z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring these collections is hosted (e.g., 'mrbeast.com'). The collections array in that file contains the authoritative collection definitions."), "collection_ids": z.array(z.string()).min(1).describe("Collection IDs from the adagents.json collections array. Each ID must match a collection_id declared in that file. Omit to reference all collections declared in that file.").optional() }).catchall(z.any()).describe("References collections declared in an adagents.json. Buyers resolve full collection objects by fetching the adagents.json at the given domain and matching collection_ids against its collections array. When collection_ids is omitted, the selector references every collection declared in that adagents.json — the bulk-grant form for authorization scoping (e.g., a host authorizing a channel owner's sales agent for all of the owner's collections without tracking owner-assigned IDs)."), z.object({ "collection_ids": z.any().refine((value) => value !== undefined, "Required") }).passthrough())).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Complete required collection set as domain-qualified selectors with explicit collection_ids; the domain-only bulk-grant form is authorization scoping, not selection. publisher_domain may be an external channel owner's domain."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "mode": z.literal("default"), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).describe("Purchased collection selection within the product. On create, mode selected supplies the complete selected set and mode default uses the product's full bundle. On package readback this is the committed selection sellers MUST echo as concrete selectors, materializing any collection_list composition; collection_list fields remain the buyer-managed list mechanism. On update, the surrounding targeting_overlay replacement semantics apply.").optional(), "age_restriction": z.object({ "min": z.number().int().gte(13).lte(99).describe("Minimum age required"), "verification_required": z.boolean().describe("Whether verified age (not inferred) is required for compliance").default(false), "accepted_methods": z.array(z.enum(["facial_age_estimation","id_document","digital_id","credit_card","world_id"]).describe("Methods for verifying user age for compliance. Does not include 'inferred' as it is not accepted for regulatory compliance.")).min(1).describe("Accepted verification methods. If omitted, any method the platform supports is acceptable.").optional() }).passthrough().describe("Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.").optional(), "device_platform": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.").optional(), "device_platform_exclude": z.array(z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.")).min(1).describe("Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "device_type": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).").optional(), "device_type_exclude": z.array(z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.")).min(1).describe("Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).").optional(), "browser": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.").optional(), "browser_exclude": z.array(z.enum(["chrome","safari","firefox","edge","opera","samsung_internet","android_webview","other","unknown"]).describe("Portable browser families for targeting the impression delivery and rendering environment, not a post-click landing-page browser. Values identify browser families, not versions or seller-native browser IDs, and MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. android_webview means an impression reliably classified as rendering in Android WebView. other means a seller-recognized browser family that is not explicitly enumerated; unknown means the seller cannot classify the browser into a recognized family.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.").optional(), "store_catchments": z.array(z.object({ "catalog_id": z.string().describe("Synced store-type catalog ID from sync_catalogs."), "store_ids": z.array(z.string()).min(1).describe("Filter to specific stores within the catalog. Omit to target all stores.").optional(), "catchment_ids": z.array(z.string()).min(1).describe("Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.").optional() }).catchall(z.any())).min(1).describe("Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.").optional(), "geo_proximity": z.array(z.object({ "lat": z.number().gte(-90).lte(90).describe("Latitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "lng": z.number().gte(-180).lte(180).describe("Longitude in decimal degrees (WGS 84). Required for travel_time and radius methods.").optional(), "label": z.string().describe("Human-readable label for this entry (e.g., 'Düsseldorf', 'Heathrow Airport', 'Primary trade area').").optional(), "travel_time": z.object({ "value": z.number().gte(1).describe("Travel time limit."), "unit": z.enum(["min","hr"]).describe("Time unit for isochrone (travel-time catchment) calculations.") }).passthrough().describe("Travel time limit for isochrone calculation. The platform resolves this to a geographic boundary based on actual transportation networks.").optional(), "transport_mode": z.enum(["walking","cycling","driving","public_transport"]).describe("Transportation mode for isochrone calculation. Required when travel_time is provided.").optional(), "radius": z.object({ "value": z.number().gt(0).describe("Radius distance."), "unit": z.enum(["km","mi","m"]).describe("Distance unit.") }).passthrough().describe("Simple radius from the point. The platform draws a circle of this distance around the coordinates.").optional(), "geometry": z.object({ "type": z.enum(["Polygon","MultiPolygon"]).describe("GeoJSON geometry type."), "coordinates": z.array(z.any()).describe("GeoJSON coordinates array. For Polygon: array of linear rings. For MultiPolygon: array of polygons.") }).passthrough().describe("Pre-computed GeoJSON geometry defining the proximity boundary. Use when the buyer has already calculated isochrones (via TravelTime, Mapbox, etc.) or has custom boundaries. When geometry is provided, lat/lng are not required.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).catchall(z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "lat": z.any().refine((value) => value !== undefined, "Required"), "lng": z.any().refine((value) => value !== undefined, "Required"), "travel_time": z.any().refine((value) => value !== undefined, "Required"), "transport_mode": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "lat": z.any().refine((value) => value !== undefined, "Required"), "lng": z.any().refine((value) => value !== undefined, "Required"), "radius": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "geometry": z.any().refine((value) => value !== undefined, "Required") }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }))).min(1).describe("Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.").optional(), "language": z.array(z.string().regex(new RegExp("^(?:[a-z]{2,8}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?(?:-(?:[a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*(?:-[0-9a-wy-z](?:-[a-z0-9]{2,8})+)*(?:-x(?:-[a-z0-9]{1,8})+)?|x(?:-[a-z0-9]{1,8})+)$")).min(2).max(63).describe("A well-formed BCP 47 language tag used by AdCP only as language identity. Script and region may refine that identity; other valid BCP 47 subtags remain part of tag matching but do not make this a general locale-settings object. It does not determine currency, time zone, number/date formatting, market, or legal jurisdiction. The AdCP canonical wire profile requires lower-case language and variants, title-case script, and upper-case region (for example `en-US`, `zh-Hant-TW`, or `x-private`). RFC 5646 comparisons are case-insensitive and its case regularization is optional; AdCP intentionally requires this stricter single wire spelling and receivers MUST reject differently cased tags rather than silently normalizing them. The schema pattern enforces the AdCP casing profile and extension structure for commonly used tags; conforming receivers additionally validate the complete RFC 5646 grammar and registry rules. Every new AdCP field carrying BCP 47 language identity or a concrete language range MUST reference this schema instead of declaring independent string constraints.")).min(1).describe("Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.").optional(), "keyword_targets": z.array(z.object({ "keyword": z.string().min(1).describe("The keyword to target"), "match_type": z.enum(["broad","phrase","exact"]).describe("Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly."), "bid_price": z.number().gte(0).describe("Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.").optional() }).passthrough()).min(1).describe("Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.").optional(), "negative_keywords": z.array(z.object({ "keyword": z.string().min(1).describe("The keyword to exclude"), "match_type": z.enum(["broad","phrase","exact"]).describe("Keyword targeting match type. broad: ads may serve on queries semantically related to the keyword. phrase: ads serve when the query contains the keyword phrase. exact: ads serve only when the query matches the keyword exactly.") }).passthrough()).min(1).describe("Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.").optional() }).catchall(z.any()).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "demographics": z.any().refine((value) => value !== undefined, "Required"), "age_restriction": z.any().refine((value) => value !== undefined, "Required") }).passthrough().safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "demographics": z.any().refine((value) => value !== undefined, "Required"), "age_restriction": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "demographics": z.object({ "age": z.object({ "include_unknown": z.literal(false).optional() }).optional() }).optional() }))]).describe("Unknown-age delivery cannot satisfy a minimum-age eligibility policy. When demographic audience targeting and age_restriction are both present, include_unknown must be false."), z.union([z.any().refine((value) => !z.object({ "age_restriction": z.object({ "verification_required": z.literal(true) }), "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => value !== undefined, "Required") }).passthrough() }) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "age_restriction": z.object({ "verification_required": z.literal(true) }), "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => value !== undefined, "Required") }).passthrough() }) }), z.object({ "demographics": z.object({ "age": z.object({ "accepted_bases": z.any().refine((value) => !z.array(z.any().refine((value) => !z.literal("verified").safeParse(value).success, "Invalid input: Should NOT be valid against schema")).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional() }).optional() }).optional() }))]).describe("A legal verification requirement always narrows demographic targeting. When the buyer supplies accepted_bases and age_restriction requires verification, verified must be accepted; otherwise the constraints have an empty intersection and the request is invalid."))).describe("Buyer-selected targeting, including compatible wholesale signal selections, applied within the product's published targeting contract.").optional(), "optimization_goals": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","engagements","follows","saves","profile_visits","reach"]), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Canonical 3.2 optimization objective. Monetary execution policy belongs in BiddingPolicy; legacy monetary targets and unbound attention metrics are excluded.")).min(1).optional(), "audience_evidence_requirements": z.object({ "requirement_mode": z.enum(["required","preferred"]), "evidence_presence": z.enum(["required","when_available"]), "accepted_methodologies": z.array(z.enum(["observed","declared","derived","inferred","modeled","projected"]).describe("How a population-level audience-evidence estimate was produced. This vocabulary is intentionally separate from signal-definition methodology: `projected` describes expansion of a sample or panel to a reference population and does not become a user-level signal-membership method.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "excluded_methodologies": z.array(z.enum(["observed","declared","derived","inferred","modeled","projected"]).describe("How a population-level audience-evidence estimate was produced. This vocabulary is intentionally separate from signal-definition methodology: `projected` describes expansion of a sample or panel to a reference population and does not become a user-level signal-membership method.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_evidence_types": z.array(z.enum(["measured","forecast","seller_declared"])).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_providers": z.array(z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.")).min(1).optional(), "excluded_providers": z.array(z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.")).min(1).optional(), "accepted_subject_types": z.array(z.enum(["individual","household","business","contextual","none"]).describe("The kind of subject characterized by audience data or population-level evidence.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_resolution_methods": z.array(z.enum(["deterministic_id","probabilistic_device","browser","geographic","content_signal","mixed"]).describe("How subjects were resolved when producing a signal or population-level evidence estimate.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "minimum_confidence": z.number().gte(0).lte(1).optional(), "maximum_age": z.intersection(z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight."), z.object({ "unit": z.enum(["seconds","minutes","hours","days"]).optional() })).optional(), "methodology_documentation_required": z.boolean().default(false), "independent_attestation_required": z.boolean().default(false), "accepted_attestation_issuers": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "type": z.literal("brand"), "brand": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "type": z.literal("agent"), "agent_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://[^/?#@]+(?:/[^?#]*)?(?:\\?[^#]*)?$")), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough(), z.object({ "type": z.literal("origin"), "origin": z.string().refine(adcpJsonSchemaUri, "Invalid URI").regex(new RegExp("^https://[^/?#@]+$")), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "accepted_attestation_claim_types": z.array(z.string().refine(adcpJsonSchemaUri, "Invalid URI")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.object({ "independent_attestation_required": z.literal(true) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "independent_attestation_required": z.literal(true) }), z.object({ "accepted_attestation_issuers": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])).describe("Buyer evidence-admissibility policy carried into the accepted purchase snapshot.").optional(), "audience_evidence_pins": z.array(z.object({ "evidence_id": z.string().min(1), "snapshot_id": z.string().min(1), "version": z.string().min(1), "content_digest": z.string().regex(new RegExp("^sha256:[a-f0-9]{64}$")), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Buyer-authored pin to one exact immutable audience-evidence snapshot selected during discovery. Sellers MUST match all four fields against a single published snapshot; they MUST reject the package rather than substitute a newer version or reuse snapshot_id with changed content. A confirmed package MUST return the same identity in audience_evidence_selections with decision_use package_construction.")).min(1).describe("Exact immutable audience-evidence snapshots selected for package construction.").optional(), "agency_estimate_number": z.string().max(100).describe("Package-level agency estimate or authorization reference.").optional(), "context": z.record(z.string(), z.any()).describe("Opaque buyer package correlation preserved in the accepted snapshot and readback.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional(), "measurement_terms": z.object({ "billing_measurement": z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "max_variance_percent": z.number().gte(0).lt(100).optional(), "measurement_window": z.string().min(1).optional(), "finalization_deadline_hours": z.number().int().gte(0).optional() }).passthrough().optional(), "makegood_policy": z.object({ "available_remedies": z.array(z.enum(["additional_delivery","credit","invoice_adjustment"]).describe("Remedy types available when a performance standard or billing measurement threshold is breached.")).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!") }).passthrough().optional() }).passthrough().describe("Published or negotiated billing-measurement and makegood terms for this purchase. Direct buyers may omit this to inherit the product default; accepted proposal snapshots preserve the resolved terms.").optional(), "performance_standards": z.array(z.object({ "metric": z.enum(["viewability","ivt","completion_rate","brand_safety","attention_score"]).describe("Performance metrics that support rate thresholds on media buys — the verification subset of the broader metric vocabulary. Each metric specifies whether its threshold is a floor (must exceed) or ceiling (must not exceed). Shared values with `available-metric.json` mirror the delivery vocabulary (`viewability` → `viewable_rate` family, `completion_rate` → same name); verification-only values (`ivt`, `brand_safety`, `attention_score`) are typically vendor-attested and do not appear in `available-metric.json` because they're not seller-reportable scalars — they flow through `vendor_metric_values` or vendor-scope `committed_metrics` entries with the matching `performance_standard.vendor` BrandRef anchoring identity."), "threshold": z.number().gte(0).lte(1), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.") }).passthrough().describe("Compact committed metric threshold with resolvable vendor identity and no creative or brand-asset graph.")).min(1).describe("Published or negotiated metric thresholds and measurement vendors. Direct buyers may omit this to inherit the product defaults; accepted proposal snapshots preserve every applicable standard.").optional() }).passthrough().describe("One canonical product selection shared by buy_products inputs and compact proposal snapshots. Direct purchases accept published terms as-is; sellers resolve omitted inherited flight, measurement, and performance terms into the accepted commercial snapshot. Changes to those terms belong in the proposal lifecycle. Creative content and creative assignments are intentionally absent."), z.object({ "product_id": z.any().refine((value) => value !== undefined, "Required"), "pricing_option_id": z.any().refine((value) => value !== undefined, "Required"), "pricing": z.any().refine((value) => value !== undefined, "Required"), "start_time": z.any().refine((value) => value !== undefined, "Required"), "end_time": z.any().refine((value) => value !== undefined, "Required") }).passthrough())).min(1).describe("Exact canonical product, pricing, format, catalog, budget, targeting, bidding, optimization, resolved flight, measurement, and performance terms in the commercial envelope."), "start_time": z.any().superRefine((x, ctx) => {
-    const schemas = [z.literal("asap").describe("Start campaign as soon as possible"), z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Campaign start timing: 'asap' or ISO 8601 date-time"), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "total_budget": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().optional(), "daily_budget_cap": z.number().gte(0).describe("Hard aggregate daily spend ceiling accepted as part of these terms. It bounds total spend without creating purchase allocations.").optional(), "budget_cap_timezone": z.string().min(1).describe("Shared IANA calendar-day boundary for aggregate and purchase daily caps in these terms.").optional(), "budget_allocation": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "mode": z.literal("fixed") }).passthrough(), z.object({ "mode": z.literal("seller_optimized"), "optimization_goals": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("metric"), "metric": z.enum(["clicks","views","completed_views","viewed_seconds","engagements","follows","saves","profile_visits","reach"]), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "target_frequency": z.object({ "min": z.number().int().gte(1).optional(), "max": z.number().int().gte(1).optional(), "window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.") }).passthrough().and(z.union([z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "view_duration_seconds": z.number().gt(0).optional(), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("event"), "event_sources": z.array(z.object({ "event_source_id": z.string().min(1), "event_type": z.enum(["page_view","view_content","select_content","select_item","search","share","add_to_cart","remove_from_cart","viewed_cart","add_to_wishlist","initiate_checkout","add_payment_info","purchase","refund","lead","qualify_lead","close_convert_lead","disqualify_lead","complete_registration","subscribe","follow","content_view","watch_milestone","start_trial","app_install","app_launch","contact","schedule","donate","submit_application","custom"]).describe("Standard marketing event types for event logging, aligned with IAB ECAPI"), "custom_event_name": z.string().min(1).optional(), "value_field": z.string().min(1).optional(), "value_factor": z.number().default(1) }).passthrough()).min(1), "target": z.object({ "kind": z.literal("maximize_value") }).passthrough().optional(), "attribution_window": z.object({ "post_click": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-click attribution window. Conversions occurring within this duration after a click are attributed to the ad.").optional(), "post_view": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").describe("Post-view attribution window. Conversions occurring within this duration after an ad impression (without click) are attributed to the ad.").optional(), "model": z.enum(["last_touch","first_touch","linear","time_decay","data_driven"]).describe("Attribution model used to assign credit when multiple touchpoints exist. SHOULD be populated when committing to a specific model; when absent, the seller's default applies.").optional() }).catchall(z.any()).describe("Describes the attribution methodology and lookback windows used for conversion measurement. Enables cross-platform comparison by making attribution methodology transparent. Used as a `$ref` from `optimization-goal.json` (buyer's optimization-time attribution choice), `get-media-buy-delivery-response.json` (seller-declared attribution methodology in delivery reports), and similar surfaces. All fields are optional individually but at least one of `post_click`, `post_view`, or `model` SHOULD be populated; absence of `model` means the seller's default attribution model applies (typically `last_touch` per industry convention) — sellers SHOULD populate `model` explicitly when committing to a specific methodology.").optional(), "priority": z.number().int().gte(1).optional() }).passthrough(), z.object({ "kind": z.literal("vendor_metric"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "target": z.object({ "kind": z.literal("threshold_rate"), "value": z.number().gt(0) }).passthrough().optional(), "priority": z.number().int().gte(1).optional() }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Canonical 3.2 optimization objective. Monetary execution policy belongs in BiddingPolicy; legacy monetary targets and unbound attention metrics are excluded.")).min(1) }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Canonical fixed or seller-optimized allocation using only canonical optimization goals.").optional(), "pacing": z.enum(["even","asap","front_loaded"]).describe("Budget pacing strategy").optional(), "bidding": z.object({ "automatic": z.literal(true).describe("Explicitly use seller/provider automatic bidding at this authored scope. At package scope this is a complete override of a media-buy policy, not inheritance. It MUST be the only field in the block and MUST be preserved on readback.").optional(), "bid_amount": z.number().gt(0).describe("Manual auction bid denominated in the media-buy currency and expressed per the selected pricing option's auction unit. For example, a CPM option interprets the amount per thousand impressions. This is the amount submitted to the auction, not a promise that the clearing price equals it. Requires an auction-priced pricing option whose currency equals the media-buy currency.").optional(), "max_bid": z.number().gt(0).describe("Hard per-auction ceiling denominated in the media-buy currency and expressed per the selected pricing option's auction unit. This is the only canonical hard auction ceiling and MUST NOT be translated into an average outcome-cost control. Requires an auction-priced pricing option whose currency equals the media-buy currency. May stand alone or supplement cost_per/roas only when the relevant scope capability advertises that combination.").optional(), "cost_per": z.object({ "amount": z.number().gt(0).describe("Average cost amount per scope-bound primary-goal result, denominated in the media-buy currency."), "strength": z.enum(["cap","target"]).describe("`cap` optimizes for an average at or below the amount and accepts underdelivery when necessary; `target` optimizes around the amount while balancing volume and spend. Neither is a per-result or per-auction guarantee.") }).passthrough().describe("Average cost control per result of the scope-bound primary optimization goal. At seller-optimized media-buy scope it binds to budget_allocation.optimization_goals; at package scope it binds to that package's optimization_goals; at fixed media-buy scope it binds independently to each inheriting package and is valid only when their primary-goal result units are compatible. Metric goals are compatible only when metric and every result-defining qualifier match; vendor_metric goals only when vendor and metric_id match; event goals only when the event_type/custom_event_name set and resolved attribution_window match. Primary is the earliest array entry among goals tied for the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary.").optional(), "roas": z.object({ "value": z.number().gt(0).describe("Return per unit of ad spend; 4 means 4 units of value per 1 unit spent."), "strength": z.enum(["floor","target"]).describe("`floor` prefers underdelivery to knowingly optimizing below the requested return; `target` optimizes around the requested return. Neither guarantees realized return.") }).passthrough().describe("Dimensionless return-on-ad-spend control bound to the same scope-specific primary goal rules as cost_per. The bound goal must be value-bearing; a fixed media-buy default requires a value-bearing primary goal on every inheriting package. Every referenced value-bearing event source MUST declare value_currencies containing the media-buy currency. The seller validates this at buy creation; each buy consumes only exact-currency records, while other declared currencies remain available to other buys. Sellers MUST NOT perform currency conversion.").optional() }).passthrough().and(z.any().refine((value) => !z.union([z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "bid_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "automatic": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "max_bid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "cost_per": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "bid_amount": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "cost_per": z.any().refine((value) => value !== undefined, "Required"), "roas": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema")).describe("Buyer-authored execution policy for automatic delivery, auction bidding, average outcome cost, or return on ad spend. The containing object determines authored scope: media-buy `bidding` is a complete inherited default and package `bidding` is a complete package override. Sellers MUST preserve authored scope on readback and MUST NOT copy an inherited media-buy policy into package `bidding`. Every monetary field in this block is denominated in the media-buy currency; the selected pricing option supplies the auction unit, never another denomination. Auction-unit identity is the pricing_model plus every canonical billing-event qualifier after defaults are applied: for example CPV view threshold, CPP demographic system/demographic, CPA event tuple, time time_unit, and flat-rate/DOOH parameters. An extension qualifier participates only when its registered extension specification explicitly defines how it contributes to auction-unit identity. A media-buy bid_amount or max_bid is valid only when every inheriting package resolves the same auction-unit identity. Every affected pricing option MUST use the media-buy currency; split currency-mismatched packages into separate buys. Seller-optimized media-buy cost_per/roas bind to the primary budget_allocation.optimization_goals goal. Package-authored cost_per/roas bind to the package primary optimization goal. The primary goal is the earliest array entry among goals with the lowest explicit numeric priority; unprioritized goals follow explicitly prioritized goals; when all priorities are absent, the first entry is primary. In fixed allocation, an inherited media-buy cost_per is valid only when all inheriting packages have compatible primary-goal result units; inherited roas requires value-bearing primary goals on every inheriting package. Canonical ROAS requires each value-bearing event source to declare the media-buy currency in value_currencies; each buy consumes only exact-currency records and sellers MUST NOT convert them. Absence invokes inheritance or provider automatic delivery; `{automatic:true}` is an explicit authored policy that overrides inheritance. Sellers MUST reject unsupported modes, combinations, units, currency, goal bindings, or native placements before any provider mutation and MUST NOT silently translate semantics.").refine((value) => Object.keys(value).length >= 1, "Object must contain at least 1 property").optional(), "invoice_recipient": z.object({ "legal_name": z.string().max(200).describe("Registered legal name of the business entity"), "vat_id": z.string().regex(new RegExp("^[A-Z]{2}[A-Z0-9]{2,13}$")).describe("VAT identification number (e.g., DE123456789 for Germany, FR12345678901 for France). Required for B2B invoicing in the EU. Must be normalized: no spaces, dots, or dashes.").optional(), "tax_id": z.string().max(30).describe("Tax identification number for jurisdictions that do not use VAT (e.g., US EIN)").optional(), "registration_number": z.string().max(50).describe("Company registration number (e.g., HRB 12345 for German Handelsregister)").optional(), "address": z.object({ "street": z.string().max(200).describe("Street address including building number"), "city": z.string().max(100), "postal_code": z.string().max(20), "region": z.string().max(100).describe("State, province, or region").optional(), "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code") }).passthrough().describe("Postal address for invoicing and legal correspondence").optional(), "contacts": z.array(z.object({ "role": z.enum(["billing","legal","creative","general"]).describe("Contact's functional role in the business relationship"), "name": z.string().max(200).describe("Full name of the contact").optional(), "email": z.string().email().max(254).optional(), "phone": z.string().max(30).optional() }).passthrough()).max(10).describe("Contacts for billing, legal, and operational matters. Contains personal data subject to GDPR and equivalent regulations. Implementations MUST use this data only for invoicing and account management.").optional(), "bank": z.object({ "account_holder": z.string().max(200).describe("Name on the bank account"), "iban": z.string().regex(new RegExp("^[A-Z]{2}[0-9]{2}[A-Z0-9]{4,30}$")).describe("International Bank Account Number (SEPA markets)").optional(), "bic": z.string().regex(new RegExp("^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$")).describe("Bank Identifier Code / SWIFT code (SEPA markets)").optional(), "routing_number": z.string().max(30).describe("Bank routing number for non-SEPA markets (e.g., US ABA routing number, Canadian transit/institution number)").optional(), "account_number": z.string().max(30).describe("Bank account number for non-SEPA markets").optional() }).passthrough().describe("Bank account details for payment processing. Write-only: included in requests to provide payment coordinates, but MUST NOT be echoed in responses. Sellers store these details and confirm receipt without returning them.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Structured business identity for B2B invoicing and contracts. Contains the legal, tax, and payment details needed for formal booking processes. Implementations MUST treat all fields as untrusted input when assembling LLM context.").optional(), "purchase_order_ref": z.string().min(1).max(255).optional(), "agency_estimate_number": z.string().max(100).optional(), "reporting_commitments": z.array(z.object({ "purchase_index": z.number().int().gte(0), "metrics": z.array(z.record(z.string(), z.any()).and(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("standard"), "metric_id": z.enum(["impressions","spend","clicks","ctr","views","completed_views","completion_rate","conversions","conversion_value","commissionable_value","roas","cost_per_acquisition","new_to_brand_rate","leads","reach","frequency","grps","engagements","engagement_rate","follows","saves","profile_visits","viewability","viewable_rate","viewable_impressions","measurable_impressions","viewed_seconds","viewed_seconds_percentiles","viewed_seconds_histogram","quartile_data","quartile_25","quartile_50","quartile_75","quartile_100","time_based_views","dooh_metrics","ooh_metrics","cost_per_click","cost_per_completed_view","cpm","downloads","units_sold","new_to_brand_units","plays","incremental_sales_lift","brand_lift","foot_traffic","conversion_lift","brand_search_lift"]).describe("Standard delivery and performance metrics available for reporting. Most values name flat numeric fields of `core/delivery-metrics.json`. Leaf identities address a single numeric value nested inside an object-shaped metric so it can be declared, committed, aggregated, and sorted individually: `quartile_25`/`quartile_50`/`quartile_75`/`quartile_100` resolve to `quartile_data.q1_views`–`q4_views`, and `viewable_rate`/`viewable_impressions`/`measurable_impressions`/`viewed_seconds` resolve to the same-named fields of `viewability`. Structured nested identities `viewed_seconds_percentiles` and `viewed_seconds_histogram` make the corresponding optional distribution carriers discoverable, committable, and requestable, but not aggregatable or sortable. The nested object or array remains the canonical carrier — nested identities never introduce duplicate flat response fields. Container tokens such as `viewability`, `quartile_data`, `dooh_metrics`, and `time_based_views` declare their documented nested surface. **Container subsumption applies only to numeric leaves**: `viewability` subsumes `viewable_rate`, `viewable_impressions`, `measurable_impressions`, and `viewed_seconds`; `quartile_data` subsumes `quartile_25`, `quartile_50`, `quartile_75`, and `quartile_100`. This rule applies to capability declaration, `required_metrics` filtering, format `reported_metrics` intersection, and `requested_metrics` selection. Optional structured identities MUST be declared explicitly: `viewability` alone does not satisfy `viewed_seconds_percentiles` or `viewed_seconds_histogram`. Requesting any nested identity selects its canonical carrier in the response. A nested identity declaration does not imply sibling values or the carrier's non-metric fields."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and package-level delivery values (`metric_values` or `vendor_metric_values`) to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough(), z.object({ "scope": z.literal("vendor"), "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "qualifier": z.object({ "viewability_standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional(), "completion_source": z.enum(["seller_attested","vendor_attested"]).describe("Trust-source disambiguator for `completion_rate` — *who* attested to the completion event, not *how* (methodology granularity is a separate dimension; future qualifier keys may add it if buyer demand surfaces). The two paths can yield materially different rates, particularly in SSAI environments where the player's view of completion may differ from a vendor's. Used as a `qualifier.completion_source` key on `committed_metrics`, `missing_metrics`, and package-level delivery values (`metric_values` or `vendor_metric_values`) to disambiguate which trust source the row represents. Edge cases: walled gardens where the seller is also the measurement vendor (YouTube, Spotify) collapse to `seller_attested` by trust-model logic — the same party served and counted. IAB-certified first-party podcast measurement (Podtrac, Triton on their own platforms; Art19 on its own platform) likewise collapses to `seller_attested`. The same vendor's offering on a third-party platform (Podtrac on a publisher who isn't Podtrac) is `vendor_attested`. The trust axis is *not* who runs the SDK — it's who is independent of the seller's revenue interest.").optional(), "attribution_methodology": z.enum(["deterministic_purchase","probabilistic","panel_based","modeled"]).describe("How attribution between ad exposure and outcome events was computed. Used as a `qualifier.attribution_methodology` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate the same outcome metric reported under different methodologies — `conversion_value` measured deterministically (matched purchase IDs) is not the same number as `conversion_value` measured probabilistically (modeled match) and should never be summed across methodologies. The retail-media closed-loop pattern typically reports under `deterministic_purchase`; MMM and clean-room outputs typically report under `modeled` or `probabilistic`; panel-based measurement (Nielsen, comScore, Edison) reports under `panel_based`.").optional(), "attribution_window": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("A time duration expressed as an interval and unit. Used for frequency cap windows, attribution windows, reach optimization windows, time budgets, and other time-based settings. When unit is 'campaign', interval must be 1 — the window spans the full campaign flight.").optional(), "lift_dimension": z.enum(["awareness","consideration","favorability","purchase_intent","ad_recall"]).describe("Brand-lift dimension disambiguator. Brand lift is multidimensional in production — Kantar, Upwave, Cint, DoubleVerify, and similar vendors report awareness, consideration, favorability, purchase intent, and ad recall as separate measurements with their own sample sizes and confidence intervals. Used as a `qualifier.lift_dimension` key on `committed_metrics`, `missing_metrics`, package-level delivery values (`metric_values` or `vendor_metric_values`), and `performance-feedback.metric` to disambiguate which dimension of `brand_lift` a row represents. Two `brand_lift` rows under different lift dimensions represent different surveyed outcomes and must not be combined into a single number.").optional() }).passthrough().describe("Compact qualifier set that distinguishes incompatible reporting definitions for the same metric ID.").optional(), "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough()];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).describe("One metric the seller commits to report for a commercial product term. Vendor identity uses BrandKey so the compact lifecycle does not inline brand or provenance documents.")).min(1) }).passthrough()).min(1).describe("Binding reporting contract keyed by position in purchases. Amendments preserve prior entries and add metrics with effective_at; seller-assigned package IDs live in the execution binding, outside this digest.").optional(), "cancellation_terms": z.object({ "effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "fee": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().optional(), "reason": z.string().min(1).max(500).optional() }).passthrough().optional(), "change_terms": z.array(z.object({ "term_id": z.string().regex(new RegExp("^[A-Za-z0-9_.:-]+$")), "action": z.enum(["pause","resume","cancel","extend_flight","shorten_flight","update_flight_dates","increase_budget","decrease_budget","reallocate_budget","update_budget_allocation","update_targeting","update_pacing","update_bidding","update_frequency_caps","update_catalog_assignments","update_keywords","update_optimization_goals","update_impression_goal","update_spend_target","update_reporting_webhook","replace_creative","update_creative_assignments","remove_creative","add_packages","remove_packages"]).describe("Fine-grained MediaBuy action vocabulary for compact product and lifecycle surfaces. Deprecated coarse 3.x actions are absent."), "service_mode": z.enum(["self_serve","conditional_self_serve","seller_managed","requires_approval"]).describe("How a seller honors a routed compact-lifecycle action."), "allowed_statuses": z.array(z.enum(["pending_creatives","pending_start","active","paused"])).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Non-terminal MediaBuy statuses in which this negotiated right may be exercised. When absent, the right applies in every non-terminal status where the canonical action itself is meaningful. This field describes contractual lifecycle scope; available_actions[] remains authoritative for the current instant.").optional(), "processing_sla": z.object({ "response_max": z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).describe("Maximum elapsed time from when the buyer issues the action to when the seller acknowledges receipt (mode-appropriate: synchronous response for self_serve, tolerance decision for conditional_self_serve, or queue acknowledgement for seller_managed and legacy requires_approval). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.").optional(), "completion_max": z.string().regex(new RegExp("^P(?!$)(\\d+Y)?(\\d+M)?(\\d+D)?(T(\\d+H)?(\\d+M)?(\\d+S)?)?$")).describe("Maximum elapsed time from buyer issuing the action to the seller completing it (mutation applied, proposal finalized, or seller-managed decision resolved). Sellers include weekends and non-working periods in the maximum. ISO 8601 duration.").optional() }).passthrough().describe("Binding elapsed-time acknowledgement and completion commitment. Sellers account for weekends and non-working periods when declaring the maximum.").optional(), "conditions": z.array(z.string().regex(new RegExp("^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Opaque stable condition identifiers defined by terms_ref or bilateral commercial documentation. Implementations compare identifiers; they MUST NOT execute or interpret them as instructions.").optional(), "constraints": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("budget"), "max_delta_amount": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().describe("Maximum absolute amount by which the affected budget may change in the direction named by the action.").optional(), "max_delta_percent": z.number().gte(0).describe("Maximum percentage change relative to the current committed value. Values above 100 are valid for increases greater than the current value.").optional(), "min_result_amount": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().describe("Minimum resulting committed value after the change.").optional(), "max_result_amount": z.object({ "amount": z.number().gte(0), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().describe("Maximum resulting committed value after the change.").optional() }).passthrough().and(z.union([z.object({ "max_delta_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_delta_percent": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "min_result_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_result_amount": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])), z.object({ "kind": z.literal("flight"), "max_change": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("Maximum extension, shortening, or shift in the direction named by the action.").optional(), "earliest_result": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "latest_result": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "minimum_notice": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("Minimum elapsed notice before the requested flight change may take effect.").optional() }).passthrough().and(z.union([z.object({ "max_change": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "earliest_result": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "latest_result": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "minimum_notice": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])), z.object({ "kind": z.literal("package_count"), "max_additions": z.number().int().gte(0).describe("Maximum packages that may be added by one exercise of the right.").optional(), "max_removals": z.number().int().gte(0).describe("Maximum packages that may be removed by one exercise of the right.").optional(), "max_result_count": z.number().int().gte(0).describe("Maximum active package count after the change.").optional() }).passthrough().and(z.union([z.object({ "max_additions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_removals": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max_result_count": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])), z.object({ "kind": z.literal("effective_timing"), "minimum_notice": z.object({ "interval": z.number().int().gte(1).describe("Number of time units. Must be 1 when unit is 'campaign'."), "unit": z.enum(["seconds","minutes","hours","days","campaign"]).describe("Time unit. 'seconds' for sub-minute precision. 'campaign' spans the full campaign flight.") }).passthrough().describe("Minimum elapsed notice before pause, resume, cancellation, or another operational action may take effect.").optional(), "earliest_effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "latest_effective_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional() }).passthrough().and(z.union([z.object({ "minimum_notice": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "earliest_effective_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "latest_effective_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]))];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Portable bounds that buyer and seller SDKs can preflight. Omission means no machine-readable bound was promised; opaque conditions remain unevaluated.").optional(), "terms_ref": z.string().min(1).max(1000).describe("Stable contract reference. Resolving it cannot expand the typed right and MUST use the caller's normal authenticated contract-document path, never ambient seller credentials.").optional(), "description": z.string().min(1).max(1000).describe("Display-only summary; it cannot grant authority, add an action, or override typed fields.").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("A proposal-bound buyer change right. It binds to the resulting media buy and account, not personally to the caller, and may be exercised by any caller admitted by both seller account authorization and applicable signed governance delegation.")).min(1).describe("Binding buyer change rights included in the commercial envelope and therefore covered by terms_digest. Entries are uniquely keyed by action. When this field is present, an omitted action is not a negotiated change right. Omission of the entire field means legacy-unspecified rights, not a prohibition.").optional() }).passthrough().describe("Complete typed commercial envelope for a compact-lifecycle proposal. This is the authoritative audit and refinement snapshot; allocations and narrative fields are explanatory views rather than substitutes for these terms."), "terms_digest": z.string().regex(new RegExp("^sha256:[A-Za-z0-9_-]{43}$")).describe("Base64url SHA-256 digest of the RFC 8785 JCS serialization of commercial_terms, prefixed with sha256:."), "insertion_order": z.object({ "io_id": z.string().max(255).describe("Unique identifier for this insertion order. Referenced by io_acceptance on create_media_buy."), "terms": z.object({ "advertiser": z.string().max(500).describe("Advertiser name or identifier").optional(), "publisher": z.string().max(500).describe("Publisher name or identifier").optional(), "total_budget": z.object({ "amount": z.number().gte(0), "currency": z.string().min(3).max(3).describe("ISO 4217 currency code") }).describe("Total committed budget").optional(), "flight_start": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "flight_end": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "payment_terms": z.enum(["net_30","net_60","net_90","prepaid","due_on_receipt"]).describe("Payment terms").optional() }).catchall(z.any()).describe("Summary fields echoed from the committed proposal for agent verification. Buyer agents use these to confirm the IO matches what was negotiated before a human signs. These are read-only summaries, not negotiation surfaces — deal terms live on products and packages.").optional(), "terms_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL to a human-readable document containing the full insertion order terms").optional(), "signing_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL to an electronic signing service (e.g., DocuSign) for human signature workflows. When present, a human must sign before the buyer agent can proceed with create_media_buy.").optional(), "requires_signature": z.boolean().describe("Whether the buyer must accept this IO before creating a media buy. When true, create_media_buy requires an io_acceptance referencing this io_id.") }).catchall(z.any()).describe("A signing wrapper attached to a committed proposal. The IO does not introduce new deal terms — all negotiated terms (performance standards, measurement terms, cancellation policy, pricing) live on the product and package. The IO exists for human signature workflows and provides summary fields so buyer agents can verify the IO matches the committed proposal before a human signs.").optional(), "total_budget_guidance": z.object({ "min": z.number().gte(0).optional(), "recommended": z.number().gte(0).optional(), "max": z.number().gte(0).optional(), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")) }).passthrough().and(z.union([z.object({ "recommended": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "min": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "max": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("Optional budget guidance for this proposal — the planning answer to criteria.outcome_target and to open-budget briefs. commercial_terms.total_budget remains the concrete figure the plan is priced at; this band expresses the seller's recommended range around it.").optional(), "forecast": z.object({ "points": z.array(z.object({ "label": z.string().max(128).optional(), "budget": z.number().gte(0).optional(), "product_id": z.string().optional(), "dimensions": z.array(z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "kind": z.literal("geo").describe("Dimension family discriminator."), "geo_level": z.enum(["country","region","metro","postal_area"]).describe("Geographic level for this forecast point."), "system": z.string().describe("Classification system for metro or postal_area levels. Required when geo_level is 'metro' or 'postal_area'. Metro rows use metro-system enum values such as 'nielsen_dma'; native postal rows use country-local postal-system enum values such as 'zip' with country 'US'; deprecated legacy postal rows may use legacy-postal-system enum values such as 'us_zip'. Omit for country and region rows.").optional(), "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code. Required for native postal_area rows and omitted for legacy postal rows, metro rows, country rows, and region rows.").optional(), "geo_code": z.string().describe("Geographic code within the level and system. Country: ISO 3166-1 alpha-2 ('US'). Region: ISO 3166-2 with country prefix ('US-CA'). Metro/postal: system-specific code ('501', '10001')."), "geo_name": z.string().describe("Human-readable geographic name (e.g., 'United States', 'California', 'New York DMA').").optional() }).passthrough().and(z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("country") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("country") }), z.object({ "geo_code": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code.").optional() }))]), z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("region") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("region") }), z.object({ "geo_code": z.string().regex(new RegExp("^[A-Z]{2}-[A-Z0-9]{1,3}$")).describe("ISO 3166-2 subdivision code.").optional() }))])), z.intersection(z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("metro") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("metro") }), z.object({ "system": z.enum(["nielsen_dma","uk_itl1","uk_itl2","eurostat_nuts2","custom"]).describe("Metro area classification system (e.g., 'nielsen_dma', 'uk_itl2')") }))]), z.union([z.any().refine((value) => !z.object({ "geo_level": z.literal("postal_area") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "geo_level": z.literal("postal_area") }), z.union([z.object({ "country": z.string().regex(new RegExp("^[A-Z]{2}$")).describe("ISO 3166-1 alpha-2 country code."), "system": z.enum(["postal_code","zip","zip_plus_four","outward","full","fsa","plz","code_postal","postcode","cep","pin","custom","us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Country-local postal code system.") }).and(z.union([z.object({ "country": z.literal("US").optional(), "system": z.enum(["zip","zip_plus_four"]).optional() }), z.object({ "country": z.literal("GB").optional(), "system": z.enum(["outward","full"]).optional() }), z.object({ "country": z.literal("CA").optional(), "system": z.enum(["fsa","full"]).optional() }), z.object({ "country": z.enum(["DE","CH","AT"]).optional(), "system": z.literal("plz").optional() }), z.object({ "country": z.literal("FR").optional(), "system": z.literal("code_postal").optional() }), z.object({ "country": z.literal("AU").optional(), "system": z.literal("postcode").optional() }), z.object({ "country": z.literal("BR").optional(), "system": z.literal("cep").optional() }), z.object({ "country": z.literal("IN").optional(), "system": z.literal("pin").optional() }), z.object({ "country": z.literal("ZA").optional(), "system": z.literal("postal_code").optional() }), z.object({ "country": z.any().refine((value) => !z.enum(["US","GB","CA","DE","CH","AT","FR","AU","BR","IN","ZA"]).safeParse(value).success, "Invalid input: Should NOT be valid against schema").optional(), "system": z.enum(["postal_code","custom"]).optional() })])).describe("Valid country-local postal system pairing. Registered countries only accept their registered local systems; countries without a registered local system use postal_code or custom."), z.object({ "system": z.enum(["us_zip","us_zip_plus_four","gb_outward","gb_full","ca_fsa","ca_full","de_plz","fr_code_postal","au_postcode","ch_plz","at_plz"]).describe("Deprecated country-fused postal code system (e.g., 'us_zip', 'gb_outward'). Prefer country + postal-system.") })]))])))).describe("A geographic dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("placement").describe("Dimension family discriminator."), "placement_ref": z.object({ "publisher_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain where the adagents.json declaring a publisher-catalog placement is hosted, or the inventory publisher associated with an inline placement. Omitted only for legacy single-publisher product-context references.").optional(), "placement_id": z.string().describe("Placement ID from the publisher's adagents.json placement catalog, or an inline seller-defined placement ID interpreted within the enclosing seller and product context.") }).catchall(z.any()).describe("Structured placement reference for this forecast row. References an entry from the product's placements array."), "placement_name": z.string().describe("Human-readable placement name, useful when the buyer has not resolved the placement catalog.").optional() }).passthrough().describe("A placement dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("device_type").describe("Dimension family discriminator."), "device_type": z.enum(["desktop","mobile","tablet","ctv","dooh","unknown"]).describe("Device form factor categories for targeting and reporting. Complements device-platform (operating system) with hardware classification. OpenRTB mapping: 1 (Mobile/Tablet General) → mobile, 2 (PC) → desktop, 4 (Phone) → mobile, 5 (Tablet) → tablet, 6 (Connected Device) → ctv, 7 (Set Top Box) → ctv. DOOH inventory uses dooh.") }).passthrough().describe("A device form-factor dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("device_platform").describe("Dimension family discriminator."), "device_platform": z.enum(["ios","android","windows","macos","linux","chromeos","tvos","tizen","webos","fire_os","roku_os","unknown"]).describe("Operating system platforms for device targeting. Browser values from Sec-CH-UA-Platform standard, extended for CTV.") }).passthrough().describe("An operating-system or platform dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("audience").describe("Dimension family discriminator."), "audience_id": z.string().describe("Audience segment identifier for this forecast row."), "audience_source": z.enum(["synced","platform","third_party","lookalike","retargeting","unknown"]).describe("Origin of the audience segment."), "audience_name": z.string().describe("Human-readable audience segment name.").optional() }).passthrough().describe("An audience segment dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("signal").describe("Dimension family discriminator."), "signal_ref": z.any().superRefine((x, ctx) => {
-    const schemas = [z.object({ "scope": z.literal("product").describe("Discriminator indicating the signal resolves through the selected product's included_signals or signal_targeting_options."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Product-local signal identifier. For local signals exposed on both get_signals and get_products, this MUST match get_signals.signals[].signal_ref.signal_id for the same signal.") }).catchall(z.any()).describe("Product-scoped signal. The signal_id is meaningful only within the selected product/package context and MUST match a Product.included_signals[].signal_ref.signal_id or Product.signal_targeting_options[].signal_ref.signal_id for that product, depending on whether the signal is descriptive or selectable."), z.object({ "scope": z.literal("data_provider").describe("Discriminator indicating the signal resolves through a data provider's published adagents.json signals[]."), "data_provider_domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that publishes the signal definition in its adagents.json signals[]."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the data provider's published adagents.json signals[].") }).catchall(z.any()).describe("Data-provider-scoped signal. The signal_id resolves through the data provider's published adagents.json signals[] and can be authorization-verified there."), z.object({ "scope": z.literal("signal_source").describe("Discriminator indicating the signal resolves through the issuing signal source."), "signal_source_url": z.string().refine(adcpJsonSchemaUri, "Invalid URI").describe("URL of the signal source that issues this source-native signal."), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier within the issuing signal source's signal set.") }).catchall(z.any()).describe("Signal-source-scoped signal. Use this for source-native signals that are not published in upstream adagents.json signals[]. The buyer trusts the issuing signal source for this identity; use scope 'data_provider' instead when the signal is published in adagents.json signals[], even if the publisher is also the seller or signal source.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  }).describe("Canonical signal reference for this forecast row. Required when the row needs to disambiguate product-local, data-provider, or signal-source identity. Product-relative forecasts SHOULD use signal_ref.").optional(), "signal_id": z.string().regex(new RegExp("^[a-zA-Z0-9_-]+$")).describe("Signal identifier shorthand for this forecast row. Use only when the enclosing context already identifies the signal unambiguously, such as a coverage_forecast nested directly under one get_signals signal item. Otherwise use signal_ref.").optional(), "signal_value": z.union([z.string().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value."), z.number().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value."), z.boolean().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value."), z.null().describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value.")]).describe("Signal value bucket represented by this point. Use null with presence 'absent' to represent inventory where the signal is not present. Omit when the row describes any present value rather than one specific value.").optional(), "presence": z.enum(["present","absent"]).describe("Whether the signal is present for this point. Use 'absent' for the explicit not-present bucket."), "signal_name": z.string().describe("Human-readable signal name, useful when the buyer has not resolved the signal definition.").optional(), "signal_value_name": z.string().describe("Human-readable label for the signal value bucket.").optional() }).passthrough().and(z.union([z.object({ "signal_ref": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "signal_id": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).and(z.intersection(z.union([z.any().refine((value) => !z.object({ "presence": z.literal("absent") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "presence": z.literal("absent") }), z.object({ "signal_value": z.null() }))]), z.union([z.any().refine((value) => !z.object({ "presence": z.literal("present") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "presence": z.literal("present") }), z.object({ "signal_value": z.union([z.string(), z.number(), z.boolean()]).optional() }))]))).describe("A signal value or signal-presence dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules."), z.object({ "kind": z.literal("time").describe("Dimension family discriminator."), "start_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time"), "end_time": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time") }).passthrough().describe("A calendar-window dimension for a ForecastPoint row. Variant of ForecastPoint dimensions; see forecast-point-dimensions.json for dispatch rules. Windows are half-open intervals [start_time, end_time): the row covers instants at or after start_time and strictly before end_time, so adjacent windows share a boundary without overlapping. end_time MUST be after start_time; JSON Schema draft-07 cannot compare sibling values, so conformance tooling enforces the ordering. Within one forecast, sellers MUST emit non-overlapping windows and SHOULD coalesce adjacent windows whose availability_status and metrics do not materially differ. When the request scoped the forecast with offer_filters.availability_horizon, a complete forecast partitions the requested horizon; a seller that cannot cover the full horizon signals the gap through the response's incomplete[] mechanism rather than silently omitting windows.")];
-    const { errors, failed } = schemas.reduce<{
-      errors: z.core.$ZodIssue[];
-      failed: number;
-    }>(
-      ({ errors, failed }, schema) =>
-        ((result) =>
-          result.error
-            ? {
-                errors: [...errors, ...result.error.issues],
-                failed: failed + 1,
-              }
-            : { errors, failed })(
-          schema.safeParse(x),
-        ),
-      { errors: [], failed: 0 },
-    );
-    const passed = schemas.length - failed;
-    if (passed !== 1) {
-      ctx.addIssue(errors.length ? {
-        path: [],
-        code: "invalid_union",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      } : {
-        path: [],
-        code: "custom",
-        errors: [errors],
-        message: "Invalid input: Should pass single schema. Passed " + passed,
-      });
-    }
-  })).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Dimension constraints represented by a ForecastPoint. Use this when one product, proposal, or signal coverage forecast needs to expose availability or forecasted delivery by country, region, placement, device, audience, signal value, time window, or intersections such as placement x country without creating separate products solely for each slice. Each item declares one dimension family via `kind`; when multiple items are present, the point represents their intersection. Sellers MUST NOT emit more than one item for each `kind` in a point. Consumers MUST NOT treat repeated kinds as OR semantics; repeated peer values such as two countries are a seller conformance issue. Dimension values are descriptors of the forecast row and are independent of pricing_options.").optional(), "availability_status": z.enum(["available","unavailable"]).describe("Bookability of the inventory a forecast row describes, as of the forecast's generated_at. A snapshot, never a hold: valid_until bounds freshness, and proposal finalization or purchase remains the commitment boundary.").optional(), "metrics": z.object({ "coverage_rate": z.intersection(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), z.object({ "low": z.any().optional(), "mid": z.any().optional(), "high": z.any().optional() })).describe("A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.").optional() }).catchall(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.")), "viewability": z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery.").optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "viewable_rate": z.intersection(z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), z.object({ "low": z.any().optional(), "mid": z.any().optional(), "high": z.any().optional() })).describe("A forecast range whose low, midpoint, and high values are rates in the inclusive interval from 0 to 1.").optional(), "viewed_seconds": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "standard": z.enum(["mrc","groupm"]).describe("Viewability measurement standard applied to determine whether an impression qualifies as viewable. These are materially different thresholds and should not be compared across standards.").optional() }).passthrough().and(z.union([z.any().refine((value) => !z.union([z.object({ "measurable_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewable_impressions": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewable_rate": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "viewed_seconds": z.any().refine((value) => value !== undefined, "Required") }).passthrough()]).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.object({ "standard": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).optional(), "vendor_metric_values": z.array(z.object({ "vendor": z.object({ "domain": z.string().regex(new RegExp("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$")).describe("Domain that hosts /.well-known/brand.json or is registered for the brand."), "brand_id": z.string().regex(new RegExp("^[a-z0-9_]+$")).describe("Brand within a house-of-brands manifest. Omit for a single-brand domain.").optional(), "countries": z.array(z.string().regex(new RegExp("^[A-Z]{2}$"))).min(1).refine((arr) => arr.every((item, i) => arr.indexOf(item) == i), "All items must be unique!").describe("Canonical set of ISO 3166-1 alpha-2 countries for this advertiser identity. Omit when the identity is global or the house does not split the brand geographically. Array order is not meaningful; producers MUST sort codes lexicographically before computing keys or signatures. This qualifies account and proposal identity and is not delivery targeting.").optional() }).passthrough().describe("Stable brand identity used to resolve the canonical brand manifest, optionally qualified by the countries of a commercial advertiser entity. The manifest URL is derived from domain; callers do not send brand assets or per-call brand overrides. Countries do not target delivery."), "metric_id": z.string().regex(new RegExp("^[a-z][a-z0-9_]*$")).min(1).max(64).describe("Identifier for a vendor-defined metric within the vendor's vocabulary. Stable lookup key; the vendor publishes the canonical list (with category, methodology, and standard alignment) in `brand.json` `agents[type='measurement']`. Lowercase with underscores so a future enum promotion into `available-metric.json` is a literal string lift. Identifier is namespaced by the vendor — the same `metric_id` may mean different things in different vendors' vocabularies."), "value": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together."), "unit": z.string().optional(), "measurable_impressions": z.object({ "low": z.number().gte(0).describe("Conservative (low-end) forecast value").optional(), "mid": z.number().gte(0).describe("Expected (most likely) forecast value").optional(), "high": z.number().gte(0).describe("Optimistic (high-end) forecast value").optional() }).catchall(z.any()).and(z.union([z.object({ "mid": z.any().refine((value) => value !== undefined, "Required") }).passthrough(), z.object({ "low": z.any().refine((value) => value !== undefined, "Required"), "high": z.any().refine((value) => value !== undefined, "Required") }).passthrough()])).describe("A forecast value with optional confidence bounds. Either mid (point estimate) or both low and high (range) must be provided. mid represents the most likely outcome. low and high represent conservative and optimistic estimates. All three can be provided together.").optional(), "breakdown": z.record(z.string(), z.any()).optional() }).passthrough().describe("Compact forecasted vendor metric with a BrandKey vendor pointer and no embedded brand assets.")).optional() }).passthrough().describe("Compact forecast row with numeric ranges and identity-only measurement-vendor references.")).min(1), "forecast_range_unit": z.enum(["spend","availability","reach_freq","weekly","daily","clicks","conversions","package"]).describe("Describes how to interpret the points array in a DeliveryForecast — what axis the curve represents").optional(), "method": z.enum(["estimate","modeled","guaranteed"]).describe("Method used to produce a delivery forecast"), "currency": z.string().regex(new RegExp("^[A-Z]{3}$")), "demographic_system": z.enum(["nielsen","nielsen_audio","barb","agf","oztam","mediametrie","custom"]).describe("Audience measurement systems for demographic notation in GRP forecasts and pricing, across video and audio channels. Specifies how demographics are written, not whose panel produced the numbers — provider identity is measurement_source.").optional(), "demographic": z.string().optional(), "measurement_source": z.string().regex(new RegExp("^[a-z0-9_]+$")).max(64).optional(), "reach_unit": z.enum(["individuals","households","devices","accounts","cookies","custom"]).describe("Unit of measurement for reach and audience size metrics. Different channels and measurement providers count reach in fundamentally different units, making cross-channel comparison impossible without declaring the unit.").optional(), "generated_at": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "valid_until": z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(), "ext": z.record(z.string(), z.any()).describe("Extension object for platform-specific, vendor-namespaced parameters. Extensions are always optional and must be namespaced under a vendor/platform key (e.g., ext.gam, ext.roku). Used for custom capabilities, partner-specific configuration, and features being proposed for standardization.").optional() }).passthrough().describe("Compact product forecast without legacy BrandRef or creative dependencies.").describe("Aggregate forecasted delivery for the proposal. For outcome_target requests, points carry the goal's metric or event key in metrics.").optional() }).passthrough().describe("Compact immutable proposal for the AdCP 3.2 lifecycle. commercial_terms is the sole authoritative commercial envelope; narrative fields do not duplicate legacy allocation or creative graphs.");
-      const exactSchema = objectSchema.superRefine((value, ctx) => {
-      const checked = z.intersection(z.intersection(z.union([z.any().refine((value) => !z.object({ "proposal_kind": z.enum(["media_buy_update","media_buy_cancellation"]) }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_kind": z.enum(["media_buy_update","media_buy_cancellation"]) }), z.object({ "parent_proposal_id": z.any().refine((value) => value !== undefined, "Required"), "media_buy_id": z.any().refine((value) => value !== undefined, "Required"), "base_media_buy_revision": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "proposal_status": z.literal("accepted") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_status": z.literal("accepted") }), z.object({ "media_buy_id": z.any().refine((value) => value !== undefined, "Required"), "accepted_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough())])), z.intersection(z.union([z.any().refine((value) => !z.object({ "proposal_status": z.literal("committed") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_status": z.literal("committed") }), z.object({ "expires_at": z.any().refine((value) => value !== undefined, "Required") }).passthrough())]), z.union([z.any().refine((value) => !z.object({ "proposal_kind": z.literal("media_buy_cancellation") }).safeParse(value).success, "Invalid input: Should NOT be valid against schema"), z.intersection(z.object({ "proposal_kind": z.literal("media_buy_cancellation") }), z.object({ "commercial_terms": z.object({ "cancellation_terms": z.any().refine((value) => value !== undefined, "Required") }).passthrough().optional() }))]))).safeParse(value);
-      if (!checked.success) {
-        for (const issue of checked.error.issues) {
-          ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
-        }
-      }
-      });
-      return Object.assign(exactSchema, {
-        pick: objectSchema.pick.bind(objectSchema),
-        omit: objectSchema.omit.bind(objectSchema),
-        extend: objectSchema.extend.bind(objectSchema),
-      });
-    })();
-
-export const MediaBuySchema: z.ZodType = z.object({
-    media_buy_id: z.string(),
-    name: z.string().min(1).max(255).regex(/\S/).optional(),
-    accepted_proposal_id: z.string().min(1).max(255).optional(),
-    accepted_proposal_terms_digest: z.string().regex(/^sha256:[A-Za-z0-9_-]{43}$/).optional(),
-    account: AccountSchema.optional(),
-    status: MediaBuyStatusSchema,
-    health: MediaBuyHealthSchema.and(z.string()).optional(),
-    impairments: z.array(ImpairmentSchema).optional(),
-    rejection_reason: z.string().optional(),
-    confirmed_at: z.iso.datetime().nullable(),
-    cancellation: z.object({
-        canceled_at: z.iso.datetime(),
-        canceled_by: CanceledBySchema,
-        reason: z.string().max(500).optional()
-    }).passthrough().optional(),
-    total_budget: z.number().min(0),
-    daily_budget_cap: z.number().min(0).optional(),
-    budget_cap_timezone: z.string().optional(),
-    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-    budget_allocation: BudgetAllocationSchema.optional(),
-    pacing: PacingSchema.optional(),
-    bidding: BiddingPolicySchema.optional(),
-    packages: z.array(PackageSchema),
-    context: ContextObjectSchema.optional(),
-    invoice_recipient: BusinessEntity1Schema.optional(),
-    creative_deadline: z.iso.datetime().optional(),
-    revision: z.int().min(1),
-    created_at: z.iso.datetime().optional(),
-    updated_at: z.iso.datetime().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const GetProductsResponseSchema: z.ZodObject<{ [K in keyof GetProductsResponse]-?: undefined extends GetProductsResponse[K] ? z.ZodOptional<z.ZodType<Exclude<GetProductsResponse[K], undefined>, Exclude<GetProductsResponse[K], undefined>>> : z.ZodType<GetProductsResponse[K], GetProductsResponse[K]> }, z.core.$loose> & z.ZodType<GetProductsResponse & Record<string, unknown>, GetProductsResponse & Record<string, unknown>> = z.object({
-    context_id: z.string().optional(),
-    context: ContextObjectSchema.optional(),
-    task_id: z.string().optional(),
-    status: TaskStatusSchema,
-    message: z.string().optional(),
-    timestamp: z.string().refine(adcpJsonSchemaDateTime, "Invalid date-time").optional(),
-    replayed: z.boolean().optional(),
-    adcp_error: ErrorSchema.optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(new RegExp("^[\\x20-\\x7E]+$")).optional(),
-    payload: z.object({}).passthrough().optional(),
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    products: z.array(ProductSchema).optional(),
-    targeting_resolution: ProductDiscoveryTargetingResolutionSchema.optional(),
-    extensions: z.record(z.string(), z.object({
-        extends: z.string(),
-        fields: z.object({}).passthrough(),
-        version: z.string().optional(),
-        description: z.string().optional()
-    }).passthrough()).optional(),
-    proposals: z.array(ProposalSchema).optional(),
-    errors: z.array(ErrorSchema).optional(),
-    reason: z.string().min(1).max(2000).optional(),
-    suggestions: z.array(z.string()).max(20).optional(),
-    property_list_applied: z.boolean().optional(),
-    catalog_applied: z.boolean().optional(),
-    refinement_applied: z.array(z.union([z.object({
-            scope: z.literal("request"),
-            status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
-            notes: z.string().optional()
-        }).passthrough(), z.object({
-            scope: z.literal("product"),
-            product_id: z.string(),
-            status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
-            notes: z.string().optional()
-        }).passthrough(), z.object({
-            scope: z.literal("proposal"),
-            proposal_id: z.string().max(255),
-            status: z.union([z.literal("applied"), z.literal("partial"), z.literal("unable")]),
-            notes: z.string().optional()
-        }).passthrough()])).optional(),
-    incomplete: z.array(z.object({
-        scope: z.union([z.literal("products"), z.literal("pricing"), z.literal("forecast"), z.literal("proposals"), z.literal("wholesale_feed")]),
-        description: z.string(),
-        estimated_wait: DurationSchema.optional()
-    }).passthrough()).optional(),
-    filter_diagnostics: z.object({
-        semantics: z.union([z.literal("only"), z.literal("any"), z.literal("approximate")]).optional(),
-        total_candidates: z.int().min(0).optional(),
-        excluded_by: z.record(z.string(), z.object({
-                count: z.int().min(0),
-                values: z.array(z.union([z.string(), z.object({}).passthrough()])).optional(),
-                notes: z.string().optional()
-            }).passthrough()).optional()
-    }).passthrough().optional(),
-    pagination: PaginationResponseSchema.optional(),
-    wholesale_feed_version: z.string().optional(),
-    pricing_version: z.string().optional(),
-    cache_scope: z.union([z.literal("public"), z.literal("account")]).optional(),
-    unchanged: z.literal(true).optional(),
-    sandbox: z.boolean().optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
 export const RequestProposalsResponseSchema = z.union([z.object({
         adcp_version: z.string().optional(),
         outcome: z.literal("proposed"),
@@ -18255,6 +18712,40 @@ export const RequestProposalsResponseSchema = z.union([z.object({
         forbid(["proposals", "products", "incomplete", "purchase_continuation", "task_id"]);
     }
 });
+
+export const MediaBuySchema: z.ZodType = z.object({
+    media_buy_id: z.string(),
+    name: z.string().min(1).max(255).regex(/\S/).optional(),
+    accepted_proposal_id: z.string().min(1).max(255).optional(),
+    accepted_proposal_terms_digest: z.string().regex(/^sha256:[A-Za-z0-9_-]{43}$/).optional(),
+    account: AccountSchema.optional(),
+    status: MediaBuyStatusSchema,
+    health: MediaBuyHealthSchema.and(z.string()).optional(),
+    impairments: z.array(ImpairmentSchema).optional(),
+    rejection_reason: z.string().optional(),
+    confirmed_at: z.iso.datetime().nullable(),
+    cancellation: z.object({
+        canceled_at: z.iso.datetime(),
+        canceled_by: CanceledBySchema,
+        reason: z.string().max(500).optional()
+    }).passthrough().optional(),
+    total_budget: z.number().min(0),
+    daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
+    budget_cap_timezone: z.string().optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+    budget_allocation: BudgetAllocationSchema.optional(),
+    pacing: PacingSchema.optional(),
+    bidding: BiddingPolicySchema.optional(),
+    packages: z.array(PackageSchema),
+    context: ContextObjectSchema.optional(),
+    invoice_recipient: BusinessEntity1Schema.optional(),
+    creative_deadline: z.iso.datetime().optional(),
+    revision: z.int().min(1),
+    created_at: z.iso.datetime().optional(),
+    updated_at: z.iso.datetime().optional(),
+    ext: ExtensionObjectSchema.optional()
+}).passthrough();
 
 export const RefineProposalsResponseSchema = z.union([z.object({
         adcp_version: z.string().optional(),
@@ -18497,30 +18988,6 @@ export const SyncCreativesResponseSchema: z.ZodType = z.object({
     adcp_major_version: z.number().int().gte(1).lte(99).optional()
 }).passthrough().and(z.union([SyncCreativesSuccessSchema, SyncCreativesErrorSchema, SyncCreativesSubmittedSchema]));
 
-export const CommittedMediaBuySchema = z.object({
-    status: z.literal("completed"),
-    media_buy_id: z.string(),
-    revision: z.number(),
-    media_buy_status: MediaBuyStatusSchema.optional(),
-    confirmed_at: z.string().optional().nullable(),
-    accepted_proposal: CanonicalProposalSchema.and(z.object({
-        proposal_status: z.literal("accepted"),
-        media_buy_id: z.string()
-    }).passthrough()),
-    purchase_bindings: z.array(z.object({
-        purchase_index: z.number(),
-        product_id: z.string(),
-        package_id: z.string()
-    }).passthrough()),
-    available_actions: z.array(CanonicalMediaBuyActionSchema),
-    warnings: z.array(WarningSchema.and(z.object({
-        code: z.union([z.literal("inventory_shortfall_forecast"), z.literal("flight_change_creates_pacing_risk")]).optional()
-    }).passthrough())).optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional(),
-    replayed: z.literal(true).optional()
-}).passthrough();
-
 export const CreateMediaBuySuccessSchema: z.ZodType = z.object({
     proposal_id: z.string().min(1).optional(),
     media_buy_id: z.string(),
@@ -18534,6 +19001,7 @@ export const CreateMediaBuySuccessSchema: z.ZodType = z.object({
     currency: z.string().regex(/^[A-Z]{3}$/).optional(),
     total_budget: z.number().min(0).optional(),
     daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
     budget_cap_timezone: z.string().optional(),
     budget_allocation: BudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
@@ -18843,65 +19311,6 @@ export const AvailablePackageSchema: z.ZodObject<{ [K in keyof AvailablePackage]
 
 export const ContextMatchResponseSchema = ContextMatchResponseRouterPublisherSchema;
 
-// @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
-export const GetProductsRequestSchema: z.ZodObject<{ [K in keyof GetProductsRequest]-?: undefined extends GetProductsRequest[K] ? z.ZodOptional<z.ZodType<Exclude<GetProductsRequest[K], undefined>, Exclude<GetProductsRequest[K], undefined>>> : z.ZodType<GetProductsRequest[K], GetProductsRequest[K]> }, z.core.$loose> & z.ZodType<GetProductsRequest & Record<string, unknown>, GetProductsRequest & Record<string, unknown>> = z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
-    buying_mode: z.union([z.literal("brief"), z.literal("wholesale"), z.literal("refine")]),
-    brief: z.string().optional(),
-    refine: z.array(z.union([z.object({
-            scope: z.literal("request"),
-            ask: z.string().min(1)
-        }).passthrough(), z.object({
-            scope: z.literal("product"),
-            product_id: z.string().min(1),
-            action: z.union([z.literal("include"), z.literal("omit"), z.literal("more_like_this")]).optional(),
-            ask: z.string().min(1).optional()
-        }).passthrough(), z.object({
-            scope: z.literal("proposal"),
-            proposal_id: z.string().min(1),
-            action: z.union([z.literal("include"), z.literal("omit"), z.literal("finalize")]).optional(),
-            ask: z.string().min(1).optional()
-        }).passthrough()])).optional(),
-    brand: BrandReferenceSchema.optional(),
-    acceptance_context: AcceptanceContextSchema.optional(),
-    catalog: CatalogSchema.optional(),
-    account: AccountReferenceSchema.optional(),
-    preferred_delivery_types: z.array(DeliveryTypeSchema).optional(),
-    filters: ProductFiltersSchema.optional(),
-    targeting_overlay: TargetingOverlaySchema.optional(),
-    required_overlay_support: TargetingOverlayRequirementsSchema.optional(),
-    property_list: PropertyListReferenceSchema.optional(),
-    fields: z.array(z.union([z.union([z.literal("product_id"), z.literal("name"), z.literal("description"), z.literal("publisher_properties"), z.literal("channels"), z.literal("video_placement_types"), z.literal("audio_distribution_types"), z.literal("sponsored_placement_types"), z.literal("social_placement_surfaces"), z.literal("format_options"), z.literal("placements"), z.literal("delivery_type"), z.literal("exclusivity"), z.literal("pricing_options"), z.literal("forecast"), z.literal("reporting_capabilities"), z.literal("measurement_terms"), z.literal("performance_standards"), z.literal("catalog_types"), z.literal("signal_targeting_allowed"), z.literal("signal_targeting_rules"), z.literal("demographic_targeting"), z.literal("audience_evidence"), z.literal("audience_evidence_selections"), z.literal("max_optimization_goals"), z.literal("catalog_match"), z.literal("list_applications"), z.literal("brief_relevance"), z.literal("acceptance_policy_profile_ids"), z.literal("identity"), z.literal("expires_at"), z.literal("allowed_actions")]), z.union([z.literal("format_ids"), z.literal("outcome_measurement"), z.literal("delivery_measurement"), z.literal("creative_policy"), z.literal("metric_optimization"), z.literal("conversion_tracking"), z.literal("data_provider_signals"), z.literal("included_signals"), z.literal("signal_targeting_options"), z.literal("overlay_support"), z.literal("targeting_resolution"), z.literal("collections"), z.literal("collection_targeting_allowed"), z.literal("installments"), z.literal("is_custom"), z.literal("product_card"), z.literal("product_card_detailed"), z.literal("enforced_policies"), z.literal("trusted_match")])])).optional(),
-    time_budget: DurationSchema.optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    pagination: PaginationRequestSchema.optional(),
-    if_wholesale_feed_version: z.string().optional(),
-    if_pricing_version: z.string().optional(),
-    context: ContextObjectSchema.optional(),
-    required_policies: z.array(z.string()).optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough();
-
-export const ListProductsRequestSchema = z.object({
-    adcp_version: z.string().optional(),
-    adcp_major_version: z.number().optional(),
-    idempotency_key: z.string().min(16).max(255).regex(/^[A-Za-z0-9_.:-]{16,255}$/).optional(),
-    context_id: z.string().min(1).optional(),
-    context: ContextObjectSchema.optional(),
-    governance_context: z.string().min(1).max(4096).optional(),
-    push_notification_config: PushNotificationConfigSchema.optional(),
-    account: CanonicalAccountReferenceSchema.optional(),
-    brand: BrandKeySchema.optional(),
-    criteria: ProductDiscoveryCriteriaSchema.optional(),
-    fields: ProductResponseFieldsSchema.optional(),
-    cursor: z.string().min(1).optional(),
-    max_results: z.int().min(1).max(100).optional(),
-    if_feed_version: z.string().optional(),
-    if_pricing_version: z.string().optional()
-}).passthrough();
-
 export const ListProductsResponseSchema = z.object({
     outcome: z.union([z.literal("listed"), z.literal("unchanged")]).optional(),
     products: z.array(CanonicalProductSchema).optional(),
@@ -18948,7 +19357,7 @@ export const ListProductsResponseSchema = z.object({
         ext: ExtensionObjectSchema.optional()
     }).passthrough()]));
 
-export const MediaBuyCommitmentResponseSchema = z.union([CommittedMediaBuySchema, CommitmentErrorSchema, CommitmentSubmittedSchema]);
+export const BuyProductsResponseSchema = MediaBuyCommitmentResponseSchema;
 
 export const AcceptProposalResponseSchema = MediaBuyCommitmentResponseSchema;
 
@@ -18994,6 +19403,7 @@ export const UpdateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof UpdateMediaB
         currency: z.string().regex(/^[A-Z]{3}$/)
     }).passthrough().optional(),
     daily_budget_cap: z.number().min(0).optional().nullable(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional().nullable(),
     budget_cap_timezone: z.string().min(1).optional().nullable(),
     budget_allocation: BudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
@@ -19027,6 +19437,7 @@ export const GetMediaBuysResponseMediaBuySchema: z.ZodType = z.object({
     currency: z.string().regex(/^[A-Z]{3}$/),
     total_budget: z.number().min(0).optional(),
     daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
     budget_cap_timezone: z.string().optional(),
     budget_allocation: BudgetAllocationSchema.optional(),
     pacing: PacingSchema.optional(),
@@ -19109,7 +19520,8 @@ export const GetReportingStatusResponseSchema = z.object({
         healthy: z.int().min(0),
         delayed: z.int().min(0),
         action_required: z.int().min(0),
-        complete: z.int().min(0)
+        complete: z.int().min(0),
+        consumer_status_pending: z.int().min(0).optional()
     }).passthrough().optional(),
     issues: z.array(ReportingStatusIssueSchema).optional(),
     periods: z.array(ReportingObligationSchema).optional(),
@@ -19125,7 +19537,7 @@ export const GetReportingStatusResponseSchema = z.object({
     ext: ExtensionObjectSchema.optional()
 }).passthrough().and(z.union([SuccessfulLookupSchema, FailedLookupSchema])).superRefine((value, ctx) => {
         // reporting evidence strictness
-        const closedStructures = {"scope":{"allowedFields":["period_start","period_end","scope_closed","media_buy_ids","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"],"requiredFields":["period_start","period_end","scope_closed","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"]},"deliveryConfigGeneration":{"allowedFields":["delivery_config_id","delivery_config_version","feed_purpose"],"requiredFields":["delivery_config_id","delivery_config_version","feed_purpose"]},"obligationCounts":{"allowedFields":["total","waiting","healthy","delayed","action_required","complete"],"requiredFields":["total","waiting","healthy","delayed","action_required","complete"]},"pagination":{"allowedFields":["has_more","cursor","total_count"],"requiredFields":["has_more"]},"paginationRequiredByView":{"periods":["has_more","total_count"],"revision":["has_more","total_count"]}} as const;
+        const closedStructures = {"scope":{"allowedFields":["period_start","period_end","scope_closed","media_buy_ids","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"],"requiredFields":["period_start","period_end","scope_closed","all_accessible_media_buys","delivery_config_generations","feed_purposes","finality","ledger_retained_from","coverage_complete"]},"deliveryConfigGeneration":{"allowedFields":["delivery_config_id","delivery_config_version","feed_purpose"],"requiredFields":["delivery_config_id","delivery_config_version","feed_purpose"]},"obligationCounts":{"allowedFields":["total","waiting","healthy","delayed","action_required","complete","consumer_status_pending"],"requiredFields":["total","waiting","healthy","delayed","action_required","complete"]},"pagination":{"allowedFields":["has_more","cursor","total_count"],"requiredFields":["has_more"]},"paginationRequiredByView":{"periods":["has_more","total_count"],"revision":["has_more","total_count"]}} as const;
         const addIssues = (schema: z.ZodType, candidate: unknown, path: Array<string | number>) => {
             const parsed = schema.safeParse(candidate);
             if (parsed.success) return;
@@ -19317,64 +19729,6 @@ export const ListedCreativeCanonicalFormatKindSchema: z.ZodType = z.object({
     webhook_activity: z.array(WebhookActivityRecordSchema).max(200).optional()
 }).passthrough();
 
-export const CheckGovernanceRequestSchema = z.object({}).passthrough().merge(z.object({
-    adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
-    adcp_major_version: z.number().int().gte(1).lte(99).optional(),
-    plan_id: z.string().optional(),
-    caller: z.string().refine(adcpJsonSchemaUri, "Invalid URI"),
-    purchase_type: PurchaseTypeSchema.optional(),
-    target_agent: z.string().refine(adcpJsonSchemaUri, "Invalid URI").optional(),
-    proposed_commitment: z.object({
-        amount: z.number().min(0),
-        currency: z.string().regex(/^[A-Z]{3}$/)
-    }).passthrough().optional(),
-    execution_commitment: z.object({
-        amount: z.number().min(0),
-        currency: z.string().regex(/^[A-Z]{3}$/)
-    }).passthrough().optional(),
-    tool: z.string().optional(),
-    payload: z.object({}).passthrough().optional(),
-    proposal: CanonicalProposalSchema.optional(),
-    governance_context: z.string().min(1).max(4096).regex(/^[\x20-\x7E]+$/).optional(),
-    consultation_context: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]+$/).optional(),
-    phase: GovernancePhaseSchema.optional(),
-    planned_delivery: PlannedDeliverySchema.optional(),
-    delivery_metrics: z.object({
-        statement_id: z.string().min(1).max(255).optional(),
-        statement_digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-        sequence: z.int().min(1).optional(),
-        issued_at: z.iso.datetime().optional(),
-        reporting_period: z.object({
-            start: z.iso.datetime(),
-            end: z.iso.datetime()
-        }).passthrough(),
-        spend: z.number().min(0).optional(),
-        cumulative_spend: z.number().min(0).optional(),
-        currency: z.string().regex(/^[A-Z]{3}$/).optional(),
-        impressions: z.int().min(0).optional(),
-        cumulative_impressions: z.int().min(0).optional(),
-        geo_distribution: z.record(z.string(), z.number()).optional(),
-        channel_distribution: z.record(z.string(), z.number()).optional(),
-        pacing: z.union([z.literal("ahead"), z.literal("on_track"), z.literal("behind")]).optional(),
-        audience_distribution: z.object({
-            baseline: z.union([z.literal("census"), z.literal("platform"), z.literal("custom")]),
-            baseline_description: z.string().optional(),
-            indices: z.record(z.string(), z.number()),
-            cumulative_indices: z.record(z.string(), z.number()).optional()
-        }).passthrough().optional()
-    }).passthrough().optional(),
-    modification_summary: z.string().max(1000).optional(),
-    runtime_attestations: z.array(AttestationReferenceSchema.and(z.object({
-        subject: z.object({
-            type: z.literal("resource"),
-            resource_type: z.literal("https://adcontextprotocol.org/claims/subjects/signal")
-        }).passthrough().optional()
-    }).passthrough())).max(10).optional(),
-    invoice_recipient: BusinessEntitySchema.optional(),
-    context: ContextObjectSchema.optional(),
-    ext: ExtensionObjectSchema.optional()
-}).passthrough());
-
 export const SyncPrincipalResponseSchema = z.object({
     context_id: z.string().optional(),
     context: ContextObjectSchema.optional(),
@@ -19436,8 +19790,10 @@ export const ComplyTestControllerRequestSchema: z.ZodObject<Record<string, z.Zod
         plan_id: z.string().optional(),
         rights_id: z.string().optional(),
         fixture: z.object({}).passthrough().optional(),
-        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("restate_snapshot"), z.literal("omit_obligation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
+        operation: z.union([z.literal("seed_inaccessible_item"), z.literal("query_eligibility"), z.literal("advance_time"), z.literal("recreate_catalog"), z.literal("prepare"), z.literal("expire_proposal"), z.literal("publish_zero_row"), z.literal("publish_nonempty"), z.literal("restate_snapshot"), z.literal("restate_after_received"), z.literal("omit_obligation"), z.literal("publish_official_adjustment"), z.literal("probe_scheduler_dst"), z.literal("suppress_readiness"), z.literal("advance_within_retention"), z.literal("revoke_access"), z.literal("publish_adjustment")]).optional(),
         target_health: z.union([z.literal("delayed"), z.literal("action_required")]).optional(),
+        received_reporting_revision_id: z.string().min(1).max(255).regex(/^[A-Za-z0-9_.:-]{1,255}$/).optional(),
+        advance_to: z.union([z.literal("within_grace"), z.literal("past_grace")]).optional(),
         catalog_id: z.string().min(1).max(255).optional(),
         catalog_generation: z.string().min(1).max(255).optional(),
         item_id: z.string().min(1).max(255).optional(),
@@ -19541,8 +19897,6 @@ export const MCPWebhookPayloadSchema: z.ZodType = z.object({
     result: AdCPAsyncResponseDataSchema.optional()
 }).passthrough();
 
-export const BuyProductsResponseSchema = MediaBuyCommitmentResponseSchema;
-
 // @ts-ignore -- preserve the public schema type across lossy TS-to-Zod projection details.
 export const CreateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof CreateMediaBuyRequest]-?: undefined extends CreateMediaBuyRequest[K] ? z.ZodOptional<z.ZodType<Exclude<CreateMediaBuyRequest[K], undefined>, Exclude<CreateMediaBuyRequest[K], undefined>>> : z.ZodType<CreateMediaBuyRequest[K], CreateMediaBuyRequest[K]> }, z.core.$loose> & z.ZodType<CreateMediaBuyRequest & Record<string, unknown>, CreateMediaBuyRequest & Record<string, unknown>> = z.object({
     adcp_version: z.string().regex(new RegExp("^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?)?$")).optional(),
@@ -19560,6 +19914,7 @@ export const CreateMediaBuyRequestSchema: z.ZodObject<{ [K in keyof CreateMediaB
         currency: z.string().regex(/^[A-Z]{3}$/)
     }).passthrough().optional(),
     daily_budget_cap: z.number().min(0).optional(),
+    frequency_cap: MediaBuyFrequencyCapSchema.optional(),
     budget_cap_timezone: z.string().min(1).optional(),
     budget_allocation: BudgetAllocationSchema.optional(),
     packages: z.array(PackageRequestSchema).optional(),

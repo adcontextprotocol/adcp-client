@@ -2052,7 +2052,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`const getReportingStatus = createReportingStatusHandler(store);`);
   ln(`const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads`);
   ln();
-  ln(`// AdCP 3.2.0-rc.2: identity comes from authenticated transport.`);
+  ln(`// AdCP 3.2.0-rc.3: identity comes from authenticated transport.`);
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);

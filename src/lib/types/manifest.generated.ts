@@ -1,8 +1,8 @@
-// AUTO-GENERATED FROM schemas/cache/3.2.0-rc.2/manifest.json — DO NOT EDIT.
+// AUTO-GENERATED FROM schemas/cache/3.2.0-rc.3/manifest.json — DO NOT EDIT.
 // Run `npm run generate-manifest-derived` to regenerate.
 
 /**
- * Manifest-derived constants for AdCP 3.2.0-rc.2.
+ * Manifest-derived constants for AdCP 3.2.0-rc.3.
  *
  * Single source of truth for tool↔protocol grouping, error-code metadata
  * (description + recovery + suggestion), and specialism→required-tools
@@ -12,8 +12,8 @@
  * previously lived in `src/lib/utils/capabilities.ts` and
  * `src/lib/types/error-codes.ts`.
  *
- * Source: `schemas/cache/3.2.0-rc.2/manifest.json` (adcp_version: 3.2.0-rc.2, generated_at:
- * 2026-09-13T18:15:31.349Z). Re-run `npm run sync-schemas` then
+ * Source: `schemas/cache/3.2.0-rc.3/manifest.json` (adcp_version: 3.2.0-rc.3, generated_at:
+ * 2026-09-14T11:59:57.201Z). Re-run `npm run sync-schemas` then
  * `npm run generate-manifest-derived` to refresh after a spec bump.
  */
 
@@ -84,7 +84,7 @@ export const STANDARD_ERROR_CODES_FROM_MANIFEST = {
     suggestion: "contact seller to resolve suspension"
   },
   "ACTION_NOT_ALLOWED": {
-    description: "The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the `media_buy_valid_action` value the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, `mode_mismatch`, or `condition_unresolved`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip).",
+    description: "The requested mutation maps to an action that is not currently available on this media buy. Sellers MUST populate `error.details` with `attempted_action` (the structured available-action identifier the request maps to), `reason` (an `action-not-allowed-reason` value: `wrong_status`, `not_supported_on_product`, `not_supported_on_buy`, `mode_mismatch`, or `condition_unresolved`), and `currently_available_actions` (echo of the buy's resolved `available_actions[]` so the buyer SDK can offer recovery without a separate get_media_buys round-trip).",
     recovery: "correctable",
     suggestion: "branch on error.details.reason: for wrong_status, wait for or transition to a status listed under the action's allowed_statuses; for mode_mismatch, this is a flow switch (not a retry against update_media_buy) — follow the mode named in available_actions[<action>].mode; for condition_unresolved, wait until the seller advertises the action after resolving its opaque condition; for not_supported_on_product or not_supported_on_buy, do not retry — the action is unavailable on this buy and buyer must select a different product or renegotiate"
   },
