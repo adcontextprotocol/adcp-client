@@ -9,7 +9,13 @@
 import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { getOrCreateClientResolution, getOrDiscoverProfile, runStep, type TestClient } from '../client';
+import {
+  createTestClient,
+  getOrCreateClientResolution,
+  getOrDiscoverProfile,
+  runStep,
+  type TestClient,
+} from '../client';
 import {
   closeScopedConnections,
   normalizeTransportOptions,
@@ -5124,10 +5130,13 @@ async function executeStep(
     };
   }
 
-  // Execute the task. When the step overrides auth, dispatch via the raw MCP
-  // probe so we can (a) strip credentials or send arbitrary Bearer values
-  // (which the SDK transport doesn't expose), and (b) capture the HTTP status
-  // + `WWW-Authenticate` header for http_* validations.
+  // Execute the task. MCP auth overrides use the raw MCP probe so the runner
+  // can control credentials while still completing the Streamable HTTP
+  // handshake. A2A auth overrides use a one-shot TestClient instead: this
+  // keeps agent-card discovery and message dispatch on the official A2A SDK
+  // path, including `supportedInterfaces` endpoint selection. The existing
+  // guarded A2A fetch boundary is wrapped with raw-response capture below so
+  // http_* validations still observe status + `WWW-Authenticate`.
   //
   // Idempotency omission scenarios set `step.omit_idempotency_key` to suppress
   // both the runner's `applyIdempotencyInvariant` (above) and the AdCP client's
@@ -5152,10 +5161,10 @@ async function executeStep(
   // `schema_invalid` default for expect_error steps.
   const testsSchemaInvalidRequest = step.expect_error === true && step.negative_path !== 'payload_well_formed';
 
-  // Raw MCP dispatch is reserved for steps that explicitly override auth.
-  // Missing-field vectors stay on the SDK transport with the skip flags below
-  // so Streamable HTTP session setup completes before the malformed tool call
-  // reaches the seller handler.
+  // Isolated auth-override dispatch is reserved for steps that explicitly
+  // override auth. Missing-field vectors stay on the shared SDK transport
+  // with the skip flags below so transport setup completes before the
+  // malformed tool call reaches the seller handler.
   let rawProbeHeaders: Record<string, string> | undefined;
   try {
     rawProbeHeaders = step.auth !== undefined ? authHeadersForStep(step.auth, options) : undefined;
@@ -5187,6 +5196,7 @@ async function executeStep(
   let caughtError: unknown;
   let httpResult: HttpProbeResult | undefined;
   let responseRecord: RunnerResponseRecord | undefined;
+  let requestUrl: string | undefined;
   let a2aEnvelope: A2ATaskEnvelope | undefined;
   let crossResponses: CrossResponseSet | undefined;
 
@@ -5279,31 +5289,94 @@ async function executeStep(
   if (useRawProbe) {
     const started = Date.now();
     try {
-      const probe = await rawMcpProbe({
-        agentUrl: runState.agentUrl,
-        toolName: effectiveStep.task,
-        args: request,
-        headers: rawProbeHeaders,
-        allowPrivateIp: options.allow_http === true,
-        fetchFn: options.transport?.trustedFetchFn,
-      });
-      httpResult = probe.httpResult;
-      taskResult = probe.taskResult;
-      const durationMs = Date.now() - started;
-      stepResult = {
-        duration_ms: durationMs,
-        passed: !httpResult.error,
-        error: httpResult.error,
-      };
-      const filteredHeaders = filterResponseHeaders(httpResult.headers);
-      responseRecord = {
-        transport: 'mcp',
-        payload: redactSecrets(httpResult.body),
-        ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
-        ...(filteredHeaders && { headers: filteredHeaders }),
-        duration_ms: durationMs,
-      };
+      if (options.protocol === 'a2a') {
+        const probeClient = createA2AAuthOverrideClient(runState.agentUrl, options, rawProbeHeaders ?? {});
+        const captured = await withRawResponseCapture(() =>
+          runStep(step.title, effectiveStep.task, () =>
+            executeStoryboardTask(probeClient, effectiveStep.task, request, {
+              skipIdempotencyAutoInject: testsIdempotencyKeyOmission,
+              skipAccountValidation: testsMissingAccount,
+              skipRequestValidation: testsSchemaInvalidRequest,
+              responseProjection:
+                effectiveStep.response_projection ??
+                defaultStoryboardResponseProjection(effectiveStep.task, effectiveStep.comply_scenario),
+              mediaBuyLifecycleCompatibility: options.mediaBuyLifecycleCompatibility,
+              signal: options.signal,
+            })
+          )
+        );
+        taskResult = captured.result.result;
+        stepResult = captured.result.step;
+        caughtError = captured.result.caughtError;
+        if (caughtError !== undefined && options.signal?.aborted) {
+          throw caughtError;
+        }
+
+        const rpcCapture = findA2aAuthProbeCapture(captured.captures, effectiveStep.task);
+        const crossOriginRpcCapture =
+          rpcCapture !== undefined && new URL(rpcCapture.url).origin !== new URL(runState.agentUrl).origin;
+        if (rpcCapture && !crossOriginRpcCapture) {
+          httpResult = httpProbeResultFromCapture(rpcCapture);
+          requestUrl = rpcCapture.url;
+          const filteredHeaders = filterResponseHeaders(httpResult.headers);
+          responseRecord = {
+            transport: 'a2a',
+            payload: redactSecrets(httpResult.body),
+            status: httpResult.status,
+            ...(filteredHeaders && { headers: filteredHeaders }),
+            duration_ms: rpcCapture.latencyMs,
+          };
+        } else {
+          const error = crossOriginRpcCapture
+            ? 'A2A auth probe selected a cross-origin RPC endpoint; credential-isolated responses cannot be graded'
+            : (stepResult.error ?? taskResult?.error ?? 'A2A auth probe produced no HTTP response');
+          const failureUrl = rpcCapture?.url ?? runState.agentUrl;
+          httpResult = {
+            url: failureUrl,
+            status: 0,
+            headers: {},
+            body: null,
+            error,
+          };
+          stepResult.error ??= error;
+          stepResult.passed = false;
+          requestUrl = failureUrl;
+          responseRecord = {
+            transport: 'a2a',
+            payload: null,
+            status: 0,
+            duration_ms: stepResult.duration_ms,
+          };
+        }
+        a2aEnvelope = rpcCapture && !crossOriginRpcCapture ? parseLastA2aMessageSendCapture([rpcCapture]) : undefined;
+      } else {
+        const probe = await rawMcpProbe({
+          agentUrl: runState.agentUrl,
+          toolName: effectiveStep.task,
+          args: request,
+          headers: rawProbeHeaders,
+          allowPrivateIp: options.allow_http === true,
+          fetchFn: options.transport?.trustedFetchFn,
+        });
+        httpResult = probe.httpResult;
+        taskResult = probe.taskResult;
+        const durationMs = Date.now() - started;
+        stepResult = {
+          duration_ms: durationMs,
+          passed: !httpResult.error,
+          error: httpResult.error,
+        };
+        const filteredHeaders = filterResponseHeaders(httpResult.headers);
+        responseRecord = {
+          transport: 'mcp',
+          payload: redactSecrets(httpResult.body),
+          ...(typeof httpResult.status === 'number' ? { status: httpResult.status } : {}),
+          ...(filteredHeaders && { headers: filteredHeaders }),
+          duration_ms: durationMs,
+        };
+      }
     } catch (err) {
+      if (options.signal?.aborted) throw err;
       stepResult = {
         duration_ms: Date.now() - started,
         passed: false,
@@ -5440,11 +5513,12 @@ async function executeStep(
     }
   }
 
+  const effectiveRequestUrl = requestUrl ?? runState.agentUrl;
   const requestRecord: RunnerRequestRecord = {
-    transport: useRawProbe ? 'mcp' : options.protocol === 'a2a' ? 'a2a' : 'mcp',
+    transport: options.protocol === 'a2a' ? 'a2a' : 'mcp',
     operation: effectiveStep.task,
     payload: redactSecrets(request),
-    ...(runState.agentUrl ? { url: redactOAuthUrlForOutput(runState.agentUrl) } : {}),
+    ...(effectiveRequestUrl ? { url: redactOAuthUrlForOutput(effectiveRequestUrl) } : {}),
   };
   const inputSchemaStripNotices = collectInputSchemaFieldStripNotices(
     (taskResult as { debug_logs?: unknown } | undefined)?.debug_logs,
@@ -7567,6 +7641,37 @@ function parseLastA2aMessageSendCapture(captures: readonly RawHttpCapture[]): A2
   };
 }
 
+/**
+ * Select the A2A RPC response for the authored storyboard task. A fresh client
+ * can issue both agent-card discovery and a `get_adcp_capabilities` SendMessage
+ * before the requested tool. Correlating on the safely captured skill name
+ * prevents either discovery response from being graded as the auth probe.
+ */
+function findA2aAuthProbeCapture(captures: readonly RawHttpCapture[], taskName: string): RawHttpCapture | undefined {
+  for (const capture of captures) {
+    if (capture.method === 'POST' && capture.requestAdcpSkill === taskName) return capture;
+  }
+  return undefined;
+}
+
+function httpProbeResultFromCapture(capture: RawHttpCapture): HttpProbeResult {
+  let body: unknown = capture.body;
+  const contentType = Object.entries(capture.headers).find(([name]) => name.toLowerCase() === 'content-type')?.[1];
+  if (contentType?.toLowerCase().includes('json')) {
+    try {
+      body = JSON.parse(capture.body);
+    } catch {
+      // Preserve malformed JSON bodies verbatim for diagnostics.
+    }
+  }
+  return {
+    url: capture.url,
+    status: capture.status,
+    headers: Object.fromEntries(Object.entries(capture.headers).map(([name, value]) => [name.toLowerCase(), value])),
+    body,
+  };
+}
+
 function tryParseJsonRpcEnvelope(
   body: string
 ): { jsonrpc?: unknown; id?: unknown; result?: unknown; error?: unknown } | undefined {
@@ -7752,6 +7857,63 @@ function authHeadersForStep(directive: StepAuthDirective, options: StoryboardRun
     throw new Error('test_kit.auth.api_key contains invalid characters (control chars or non-printable ASCII)');
   }
   return { authorization: `Bearer ${value}` };
+}
+
+const AUTH_OVERRIDE_HEADER_NAMES = new Set([
+  'authorization',
+  'proxy-authorization',
+  'cookie',
+  'x-adcp-auth',
+  'x-api-key',
+]);
+const AUTH_OVERRIDE_CREDENTIAL_HEADER_RE =
+  /(^|[-_])(auth(?:entication|orization)?|credentials?|secrets?|tokens?|keys?|api[-_]?keys?|access[-_]?keys?|private[-_]?keys?|password|passwd|signatures?|cert(?:ificate)?s?)([-_]|$)/i;
+
+function isCredentialHeaderName(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return AUTH_OVERRIDE_HEADER_NAMES.has(normalized) || AUTH_OVERRIDE_CREDENTIAL_HEADER_RE.test(normalized);
+}
+
+/**
+ * Create an isolated A2A client whose credential-bearing headers are exactly
+ * the step override. Removing `test_kit` is load-bearing: createTestClient
+ * otherwise promotes its API key back into `auth`, defeating `auth: none`.
+ * Credential-looking custom headers are removed as well, while non-auth
+ * routing headers remain intact. Functional request signing is deliberately
+ * disabled because it is another authentication channel and would defeat an
+ * unauthenticated probe. The configured transport (most importantly
+ * trustedFetchFn for private CAs / hosted egress) still flows through the
+ * protocol layer's guarded fetch boundary.
+ */
+function createA2AAuthOverrideClient(
+  agentUrl: string,
+  options: StoryboardRunOptions,
+  authHeaders: Record<string, string>
+): TestClient {
+  const headers = Object.fromEntries(
+    Object.entries(options.headers ?? {}).filter(([name]) => !isCredentialHeaderName(name))
+  );
+  let auth: StoryboardRunOptions['auth'];
+  for (const [name, value] of Object.entries(authHeaders)) {
+    if (name.toLowerCase() === 'authorization' && value.startsWith('Bearer ')) {
+      // Route bearer overrides through the normal AgentConfig auth field so
+      // the official A2A path emits both Authorization and x-adcp-auth, just
+      // like an ordinary SDK dispatch. Basic auth remains a custom header.
+      auth = { type: 'bearer', token: value.slice('Bearer '.length) };
+    } else {
+      headers[name] = value;
+    }
+  }
+
+  return createTestClient(agentUrl, 'a2a', {
+    ...options,
+    protocol: 'a2a',
+    auth,
+    test_kit: undefined,
+    _client: undefined,
+    functional_request_signing: undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+  });
 }
 
 function basicAuthHeadersForStep(

@@ -110,6 +110,45 @@ describe('rawResponseCapture', () => {
     assert.equal(captures[0].body, JSON.stringify({ echo: { hello: 'world' } }));
   });
 
+  test('retains only safe A2A request correlation metadata', async () => {
+    const { server, url } = await startServer((req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end('{"error":"unauthorized"}');
+    });
+    servers.push(server);
+
+    const capturingFetch = wrapFetchWithCapture(fetch);
+    const requestBody = JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'SendMessage',
+      params: {
+        message: {
+          parts: [{ data: { skill: 'list_creatives', input: { api_key: 'must-not-be-captured' } } }],
+        },
+      },
+    });
+    const { captures } = await withRawResponseCapture(async () => {
+      await capturingFetch(url, { method: 'POST', body: requestBody });
+      await capturingFetch(url, {
+        method: 'POST',
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'SendMessage', params: { message: { parts: {} } } }),
+      });
+      await capturingFetch(url, {
+        method: 'POST',
+        body: JSON.stringify({ jsonrpc: '2.0', method: 'SendMessage', params: { message: { parts: [null] } } }),
+      });
+    });
+
+    assert.equal(captures.length, 3, 'malformed correlation shapes remain observational and still dispatch');
+    assert.equal(captures[0].requestJsonRpcMethod, 'SendMessage');
+    assert.equal(captures[0].requestAdcpSkill, 'list_creatives');
+    assert.equal(captures[1].requestJsonRpcMethod, 'SendMessage');
+    assert.equal(captures[1].requestAdcpSkill, undefined);
+    assert.equal(captures[2].requestJsonRpcMethod, 'SendMessage');
+    assert.equal(captures[2].requestAdcpSkill, undefined);
+    assert.doesNotMatch(JSON.stringify(captures[0]), /must-not-be-captured/);
+  });
+
   test('truncates body when it exceeds maxBodyBytes', async () => {
     const big = 'A'.repeat(10_000);
     const { server, url } = await startServer((req, res) => {

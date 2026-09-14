@@ -1040,6 +1040,328 @@ describe('rawA2aProbe', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('storyboard runner: auth-override dispatch', () => {
+  it('uses the official A2A SDK endpoint with per-step auth and records A2A transport metadata', async () => {
+    const agentUrl = 'https://seller.example';
+    const rpcUrl = `${agentUrl}/rpc`;
+    const rpcCalls = [];
+    const fetchedUrls = [];
+    const fetchFn = async (input, init = {}) => {
+      const url = String(input);
+      fetchedUrls.push(url);
+
+      if (url === `${agentUrl}/.well-known/agent-card.json` || url === `${agentUrl}/.well-known/agent.json`) {
+        return new Response(
+          JSON.stringify({
+            name: 'A2A auth probe fixture',
+            description: 'A2A 1.0 auth override regression fixture',
+            version: '1.0.0',
+            supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }],
+            capabilities: {
+              streaming: false,
+              pushNotifications: false,
+              extensions: [{ uri: 'https://adcontextprotocol.org/extensions/adcp/v3', required: true }],
+            },
+            defaultInputModes: ['application/json'],
+            defaultOutputModes: ['application/json'],
+            skills: [
+              {
+                id: 'get_adcp_capabilities',
+                name: 'get_adcp_capabilities',
+                description: 'Capability discovery before the protected probe',
+                tags: ['adcp'],
+              },
+              {
+                id: 'list_creatives',
+                name: 'list_creatives',
+                description: 'Read-only protected probe',
+                tags: ['adcp'],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+
+      if (url === rpcUrl && init.method === 'POST') {
+        const body = JSON.parse(init.body);
+        const headers = Object.fromEntries(new Headers(init.headers));
+        rpcCalls.push({
+          skill: body.params?.message?.parts?.[0]?.data?.skill,
+          authorization: headers.authorization ?? null,
+          adcpAuth: headers['x-adcp-auth'] ?? null,
+          body,
+          headers,
+          url,
+        });
+        if (rpcCalls.at(-1).skill === 'get_adcp_capabilities') {
+          return new Response(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: body.id,
+              result: {
+                kind: 'task',
+                id: `capabilities-${rpcCalls.length}`,
+                contextId: `capabilities-context-${rpcCalls.length}`,
+                status: { state: 'completed', timestamp: new Date().toISOString() },
+                artifacts: [
+                  {
+                    artifactId: 'capabilities',
+                    parts: [
+                      {
+                        kind: 'data',
+                        data: {
+                          adcp_version: '3.2-rc.2',
+                          supported_protocols: ['creative'],
+                          tools: [{ name: 'list_creatives' }],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id,
+            error: { code: -32001, message: 'Authentication required' },
+          }),
+          {
+            status: 401,
+            headers: {
+              'content-type': 'application/json',
+              'www-authenticate': 'Bearer realm="agent", error="invalid_token"',
+            },
+          }
+        );
+      }
+
+      return new Response('not found', { status: 404 });
+    };
+    const storyboard = {
+      id: 'a2a_auth_override',
+      version: '1.0.0',
+      title: 'A2A auth overrides',
+      category: 'security',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'probes',
+          steps: [
+            {
+              id: 'probe_unauth',
+              title: 'Unauthenticated A2A probe',
+              task: 'list_creatives',
+              auth: 'none',
+              expect_error: true,
+              validations: [
+                { check: 'http_status', value: 401, description: 'rejects missing auth' },
+                { check: 'on_401_require_header', value: 'www-authenticate', description: 'advertises auth' },
+              ],
+            },
+            {
+              id: 'probe_invalid_api_key',
+              title: 'Invalid-key A2A probe',
+              task: 'list_creatives',
+              auth: { type: 'api_key', value_strategy: 'random_invalid' },
+              expect_error: true,
+              validations: [{ check: 'http_status', value: 401, description: 'rejects invalid auth' }],
+            },
+            {
+              id: 'probe_test_kit_api_key',
+              title: 'Test-kit-key A2A probe',
+              task: 'list_creatives',
+              auth: { type: 'api_key', from_test_kit: true },
+              expect_error: true,
+              validations: [{ check: 'http_status', value: 401, description: 'records protected response' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await runStoryboard(agentUrl, storyboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      headers: {
+        'x-tenant': 'buyer-7',
+        'x-auth-token': 'must-not-survive-an-auth-override',
+        'x-goog-api-key': 'must-not-survive-an-auth-override',
+        'ocp-apim-subscription-key': 'must-not-survive-an-auth-override',
+        'x-functions-key': 'must-not-survive-an-auth-override',
+      },
+      test_kit: { auth: { api_key: 'valid-test-key', probe_task: 'list_creatives' } },
+      transport: { trustedFetchFn: fetchFn },
+      _profile: { name: 'A2A auth probe fixture', tools: ['list_creatives'] },
+    });
+
+    assert.strictEqual(result.overall_passed, true, JSON.stringify(result));
+    const capabilityCalls = rpcCalls.filter(call => call.skill === 'get_adcp_capabilities');
+    const authProbeCalls = rpcCalls.filter(call => call.skill === 'list_creatives');
+    assert.strictEqual(capabilityCalls.length, 3, 'each isolated client performs capability discovery first');
+    assert.strictEqual(authProbeCalls.length, 3, 'all auth probes reach the card-selected A2A RPC endpoint');
+    assert.strictEqual(authProbeCalls[0].authorization, null, 'auth: none removes the test-kit credential');
+    assert.strictEqual(authProbeCalls[0].adcpAuth, null, 'auth: none removes the legacy AdCP auth header too');
+    assert.match(authProbeCalls[1].authorization, /^Bearer invalid-[0-9a-f]{64}$/);
+    assert.strictEqual(authProbeCalls[1].adcpAuth, authProbeCalls[1].authorization.slice('Bearer '.length));
+    assert.strictEqual(authProbeCalls[2].authorization, 'Bearer valid-test-key');
+    assert.strictEqual(authProbeCalls[2].adcpAuth, 'valid-test-key');
+    for (const call of authProbeCalls) {
+      assert.strictEqual(call.body.method, 'SendMessage', 'A2A probes use the official SDK SendMessage method');
+      assert.match(JSON.stringify(call.body), /list_creatives/, 'official SendMessage carries the selected skill');
+      assert.strictEqual(call.headers['x-tenant'], 'buyer-7', 'non-auth routing headers remain available');
+      assert.strictEqual(call.headers['x-auth-token'], undefined, 'credential-looking custom headers are stripped');
+      assert.strictEqual(call.headers['x-goog-api-key'], undefined, 'API-key custom headers are stripped');
+      assert.strictEqual(
+        call.headers['ocp-apim-subscription-key'],
+        undefined,
+        'gateway subscription keys are stripped'
+      );
+      assert.strictEqual(call.headers['x-functions-key'], undefined, 'gateway function keys are stripped');
+    }
+    assert.ok(fetchedUrls.includes(`${agentUrl}/.well-known/agent-card.json`), 'official SDK performs card discovery');
+
+    for (const step of result.phases[0].steps) {
+      assert.strictEqual(step.request.transport, 'a2a');
+      assert.strictEqual(step.request.url, rpcUrl);
+      assert.strictEqual(step.response_record.transport, 'a2a');
+      assert.strictEqual(step.response_record.status, 401);
+      assert.match(step.response_record.headers['www-authenticate'], /^Bearer /);
+    }
+  });
+
+  it('reports A2A auth-probe transport failures instead of grading discovery responses or empty captures', async () => {
+    const agentUrl = 'https://seller.example';
+    const rpcUrl = `${agentUrl}/rpc`;
+    const agentCard = {
+      name: 'A2A auth probe fixture',
+      description: 'A2A auth override failure fixture',
+      version: '1.0.0',
+      supportedInterfaces: [{ url: rpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }],
+      capabilities: {
+        streaming: false,
+        pushNotifications: false,
+        extensions: [{ uri: 'https://adcontextprotocol.org/extensions/adcp/v3', required: true }],
+      },
+      defaultInputModes: ['application/json'],
+      defaultOutputModes: ['application/json'],
+      skills: [{ id: 'list_creatives', name: 'list_creatives', description: 'Protected probe', tags: ['adcp'] }],
+    };
+    const storyboard = {
+      id: 'a2a_auth_transport_failure',
+      version: '1.0.0',
+      title: 'A2A auth transport failure',
+      category: 'security',
+      summary: '',
+      narrative: '',
+      agent: { interaction_model: '*', capabilities: [] },
+      caller: { role: 'buyer_agent' },
+      phases: [
+        {
+          id: 'p',
+          title: 'probe',
+          steps: [
+            {
+              id: 'probe_unauth',
+              title: 'Unauthenticated A2A probe',
+              task: 'list_creatives',
+              auth: 'none',
+              expect_error: true,
+              validations: [{ check: 'http_status', value: 401, description: 'requires an auth response' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    for (const failAt of ['discovery', 'rpc']) {
+      const fetchFn = async input => {
+        const url = String(input);
+        if (failAt === 'rpc' && url.includes('/.well-known/')) {
+          return new Response(JSON.stringify(agentCard), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        throw new Error(`${failAt} transport unavailable`);
+      };
+
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'a2a',
+        agentTools: ['list_creatives'],
+        transport: { trustedFetchFn: fetchFn },
+        _profile: { name: 'A2A auth probe fixture', tools: ['list_creatives'] },
+      });
+      const step = result.phases[0].steps[0];
+
+      assert.strictEqual(result.overall_passed, false, `${failAt} failure must not pass the storyboard`);
+      assert.strictEqual(step.request.transport, 'a2a');
+      assert.strictEqual(step.request.url, `${agentUrl}/`, 'a discovery response is never reported as the RPC URL');
+      assert.strictEqual(step.response_record.transport, 'a2a');
+      assert.strictEqual(step.response_record.status, 0);
+      assert.strictEqual(step.response_record.payload, null);
+      const statusValidation = step.validations.find(validation => validation.check === 'http_status');
+      assert.ok(statusValidation, 'the authored HTTP validation still runs');
+      assert.strictEqual(statusValidation.passed, false);
+      assert.strictEqual(statusValidation.actual, 0);
+    }
+
+    let crossOriginAuthorization;
+    const crossOriginRpcUrl = 'https://rpc.seller.example/rpc';
+    const crossOriginFetch = async (input, init = {}) => {
+      const url = String(input);
+      if (url.includes('/.well-known/')) {
+        return new Response(
+          JSON.stringify({
+            ...agentCard,
+            supportedInterfaces: [
+              { url: crossOriginRpcUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      if (url === crossOriginRpcUrl) {
+        crossOriginAuthorization = new Headers(init.headers).get('authorization');
+        const body = JSON.parse(init.body);
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'Authentication required' } }),
+          { status: 401, headers: { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="agent"' } }
+        );
+      }
+      return new Response('not found', { status: 404 });
+    };
+    const crossOriginStoryboard = structuredClone(storyboard);
+    crossOriginStoryboard.phases[0].steps[0].auth = { type: 'api_key', value_strategy: 'random_invalid' };
+    const crossOriginResult = await runStoryboard(agentUrl, crossOriginStoryboard, {
+      protocol: 'a2a',
+      agentTools: ['list_creatives'],
+      transport: { trustedFetchFn: crossOriginFetch },
+      _profile: { name: 'A2A auth probe fixture', tools: ['list_creatives'] },
+    });
+    const crossOriginStep = crossOriginResult.phases[0].steps[0];
+    assert.strictEqual(crossOriginAuthorization, null, 'the SDK does not forward credentials cross-origin');
+    assert.strictEqual(
+      crossOriginResult.overall_passed,
+      false,
+      'a credential-free cross-origin response is not graded'
+    );
+    assert.strictEqual(crossOriginStep.request.url, crossOriginRpcUrl);
+    assert.strictEqual(crossOriginStep.response_record.status, 0);
+    assert.strictEqual(crossOriginStep.response_record.payload, null);
+    const crossOriginStatusValidation = crossOriginStep.validations.find(
+      validation => validation.check === 'http_status'
+    );
+    assert.match(crossOriginStatusValidation.error, /cross-origin RPC endpoint/);
+  });
+
   it('resolves $test_kit.auth.probe_task → task_default when kit lacks the field', async () => {
     // Build a throwaway MCP-like endpoint that records the tool name seen.
     let seenTool;
