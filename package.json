@@ -295,6 +295,9 @@
       }
     },
     "./compliance-fixtures/reporting-consumer-status-v1.json": "./dist/lib/compliance-fixtures/reporting-consumer-status-v1.json",
+    "./compliance-fixtures/principal.yaml": "./dist/lib/compliance-fixtures/principal.yaml",
+    "./compliance-fixtures/reporting-core.yaml": "./dist/lib/compliance-fixtures/reporting-core.yaml",
+    "./compliance-fixtures/canonical-storyboards-provenance.json": "./dist/lib/compliance-fixtures/canonical-storyboards-provenance.json",
     "./conformance": {
       "import": {
         "types": "./dist/lib/conformance/index.d.mts",
@@ -551,7 +554,7 @@
     "sync:agents": "node scripts/import-claude-agents.mjs",
     "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
-    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
+    "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/sync-canonical-storyboard-fixtures.ts --copy-dist && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
     "pretest": "npm run build:lib",
     "test": "npm run test:node && npm test --workspace=packages/eslint-plugin --if-present && npm test --workspace=@adcp/reference-renderers",
@@ -582,6 +585,8 @@
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
     "sync-schemas:3.1-beta": "tsx scripts/sync-3-1-beta-schemas.ts",
     "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.18 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5 && npm run sync-schemas:3.1-beta",
+    "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
+    "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
@@ -601,7 +606,7 @@
     "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js' test/examples/proxy-seller-snap.test.js",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
-    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json",
+    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json",
     "check:packed-artifact": "node scripts/check-packed-artifact.mjs",
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
     "check:package-size": "node scripts/check-package-size.mjs",

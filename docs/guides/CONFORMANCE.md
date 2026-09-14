@@ -238,6 +238,50 @@ nightly job to broaden coverage.
 - **Semantic validation** — budget math, referential integrity across
   plans. The fuzzer checks shape, not semantics.
 
+## Canonical principal and reporting-core storyboards
+
+`@adcp/sdk/compliance-fixtures` ships the protocol-authored AdCP
+3.2.0-rc.3 `universal/principal` and `universal/reporting-core`
+storyboards as stable, runner-ready fixtures:
+
+```ts
+import {
+  loadCanonicalPrincipalStoryboard,
+  loadCanonicalReportingCoreStoryboard,
+  loadCanonicalStoryboardFixtureProvenance,
+} from '@adcp/sdk/compliance-fixtures';
+import { runStoryboard } from '@adcp/sdk/testing';
+
+const principal = loadCanonicalPrincipalStoryboard();
+await runStoryboard(agentUrl, principal.storyboard, options);
+
+const reportingCore = loadCanonicalReportingCoreStoryboard();
+await runStoryboard(agentUrl, reportingCore.storyboard, options);
+```
+
+Each loader returns the exact packaged YAML text, its runner-ready parsed
+storyboard, and the fixture's immutable source provenance. The loader also
+attaches the trusted compliance-cache root selected by the runner environment
+so a declared test kit is resolved by `runStoryboard`; reporting-core still requires an agent that
+advertises `comply_test_controller`. Consumers that need
+the unparsed files can resolve
+`@adcp/sdk/compliance-fixtures/principal.yaml` and
+`@adcp/sdk/compliance-fixtures/reporting-core.yaml`. Load the deeply immutable
+shared provenance with `loadCanonicalStoryboardFixtureProvenance()` or resolve it at
+`@adcp/sdk/compliance-fixtures/canonical-storyboards-provenance.json`.
+
+The manifest pins the upstream `adcontextprotocol/adcp` tag, full commit, release
+bundle SHA-256, Git blob IDs, per-file SHA-256 digests, and byte sizes. Refresh
+the vendored bytes with `npm run sync:canonical-storyboard-fixtures`; the command
+fetches only the manifest's immutable commit and refuses to write either file
+unless every recorded digest and size matches. Run
+`npm run check:canonical-storyboard-fixtures` for the network-free drift check.
+Updating to another protocol release requires reviewing and changing the
+provenance manifest first. Resolve the release tag to its full commit, then use
+`curl` piped to `wc -c`, `sha256sum`, and `git hash-object --stdin` for each raw
+file and verify the release bundle's `.tgz.sha256` sidecar before updating the
+manifest. The command never accepts moving branches or unverified content.
+
 ## Trusted Match Context router replay
 
 Context Match routers expose raw `POST /context`, not an MCP or A2A tool. A
