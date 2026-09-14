@@ -156,20 +156,22 @@ without a `term`; commercial actions return `authority: 'accepted_term'`. A buy
 with only an accepted proposal ID/digest can be renamed without hydrating that
 snapshot. A supplied snapshot must still identify the current accepted proposal.
 
-Explicit negotiated `allowed_statuses` can admit pause/resume while pending,
+Explicit negotiated `allowed_statuses` can admit pause/resume while the MediaBuy is pending,
 including clearing a create-time hold. Absent explicit scope, the existing status
 helper provides defaults. Terminal states never admit these actions. An existing
 package whose `paused` field is omitted uses the schema default `false`; missing
 packages and explicit unknown lifecycle states supply no positive authority.
-An additional local package `status` is checked for terminal or unknown state
-before interpreting the canonical `paused` flag. A true flag supplies positive hold state; false or omission preserves any
-known local status, otherwise defaulting to active. Negotiated `allowed_statuses` describes the MediaBuy lifecycle;
+An additional local package `status` is checked for terminal, pending, or unknown
+state before interpreting the canonical `paused` flag. Neither flag value can
+override those states. For operational packages, a true flag supplies hold state;
+false or omission preserves known local status, otherwise defaulting to active.
+Negotiated `allowed_statuses` describes the MediaBuy lifecycle;
 package controls also require explicit scope to operate while the buy is pending.
 Without explicit scope, package holds operate on active or paused buys independently
 of the buy's own hold, using the union of the status helper's pause/resume defaults.
-A local pending package status can still restrict pause. Positive `paused: true`
-allows clearing that hold independently of local delivery status, subject to the
-negotiated MediaBuy scope.
+Explicit local pending package status blocks both pause and resume, including
+clearing a true pause flag. Negotiated MediaBuy status scope never overrides that
+package-level restriction.
 Legacy flat hints never establish this metadata authority.
 
 ## Seller builder

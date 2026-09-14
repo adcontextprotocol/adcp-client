@@ -21,3 +21,5 @@ Known action IDs use closed canonical metadata. Readable live entries preserve u
 Modern term-linked live entries require the accepted snapshot for preflight/assertion; missing terms cannot silently downgrade to legacy compatibility. Legacy opaque references retain the existing compatibility path.
 
 Package holds operate independently on active or paused buys; pending buy states require explicit negotiated status scope.
+
+Explicit local pending package status takes precedence over both pause-flag values. A live resume grant cannot override it in buyer assessment, either preflight, seller assertion, or seller projection; negotiated MediaBuy-level pending scope remains separate.

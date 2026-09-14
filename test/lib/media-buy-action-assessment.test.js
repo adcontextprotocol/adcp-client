@@ -1631,3 +1631,82 @@ test('a modern term-linked projection cannot downgrade to legacy compatibility w
   assert.equal(preflightUpdateMediaBuy(legacy, request, { adcpVersion: '3.1.19' }).ok, true);
   assert.equal(assessActionAvailability(legacy, 'increase_budget', { request }).certainty, 'unknown');
 });
+
+test('explicit local pending package status outranks every pause flag for scoped resume', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const status of ['pending_start', 'pending_creatives']) {
+    for (const paused of [true, false, undefined]) {
+      for (const buyStatus of ['active', status]) {
+        const state = buy([term('resume', buyStatus === 'active' ? {} : { allowed_statuses: [buyStatus] })], {
+          status: buyStatus,
+          packages: [{ package_id: 'p1', status, ...(paused !== undefined && { paused }) }],
+          available_actions: [
+            {
+              action: 'resume',
+              mode: 'self_serve',
+              task: 'control_media_buy',
+              change_term_id: 'right_resume',
+              applicable_package_ids: ['p1'],
+            },
+          ],
+        });
+        const request = { packages: [{ package_id: 'p1', paused: false }] };
+        for (const assessment of [
+          assessActionAvailability(state, 'resume', { request }),
+          assessMediaBuyAction({ action: 'resume', buy: state, request }).availability,
+        ]) {
+          assert.equal(assessment.status, 'currently_unavailable', `${buyStatus}/${status}/${paused}`);
+          assert.equal(assessment.reason, 'wrong_status');
+        }
+        assert.equal(preflightMediaBuyActions(state, request).ok, false);
+        assert.equal(preflightUpdateMediaBuy(state, request).ok, false);
+        assert.throws(
+          () => assertUpdateMediaBuyAllowed(state, request),
+          e => e.code === 'ACTION_NOT_ALLOWED'
+        );
+        const projection = mediaBuyActionResolver.resolve({
+          buy: state,
+          request,
+          decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+        });
+        assert.deepEqual(projection.available_actions, []);
+        assert.equal(projection.unavailable[0].reason, 'wrong_status');
+        assert.equal(projection.request_assessments[0].status, 'currently_unavailable');
+        assert.equal(projection.request_assessments[0].reason, 'wrong_status');
+      }
+    }
+  }
+});
+
+test('local active and paused package controls remain executable on active and paused buys', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const buyStatus of ['active', 'paused']) {
+    for (const [status, paused, action] of [
+      ['active', false, 'pause'],
+      ['active', true, 'resume'],
+      ['paused', true, 'resume'],
+      ['paused', undefined, 'resume'],
+    ]) {
+      const state = buy([term(action)], {
+        status: buyStatus,
+        packages: [{ package_id: 'p1', status, ...(paused !== undefined && { paused }) }],
+      });
+      const request = { packages: [{ package_id: 'p1', paused: action === 'pause' }] };
+      const projection = mediaBuyActionResolver.resolve({
+        buy: state,
+        request,
+        decide: () => ({ ...accept(), applicable_package_ids: ['p1'] }),
+      });
+      assert.equal(projection.available_actions.length, 1);
+      assert.equal(projection.request_assessments[0].status, 'available_now');
+      state.available_actions = projection.available_actions;
+      assert.equal(assessActionAvailability(state, action, { request }).status, 'available_now');
+      assert.equal(assessMediaBuyAction({ action, buy: state, request }).availability.status, 'available_now');
+      assert.equal(preflightMediaBuyActions(state, request).ok, true);
+      assert.equal(preflightUpdateMediaBuy(state, request).ok, true);
+      assert.equal(assertUpdateMediaBuyAllowed(state, request).ok, true);
+    }
+  }
+});

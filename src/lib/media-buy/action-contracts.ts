@@ -356,7 +356,7 @@ export function withActionProposal<T extends ActionBuy>(buy: T, options: { propo
     : buy;
 }
 
-/** Lifecycle state for package controls; terminal state wins over a stale pause flag. */
+/** Explicit terminal, pending, or unknown package state takes precedence over pause flags. */
 export function packageActionStatus(
   pkg: { status?: string; canceled?: boolean; paused?: boolean } | undefined
 ): string | undefined {
@@ -364,8 +364,9 @@ export function packageActionStatus(
   if (pkg?.status && ['completed', 'canceled', 'failed', 'rejected'].includes(pkg.status)) return pkg.status;
   if (pkg?.status !== undefined && !(NON_TERMINAL_ACTION_STATUSES as readonly string[]).includes(pkg.status))
     return undefined;
+  if (pkg?.status === 'pending_start' || pkg?.status === 'pending_creatives') return pkg.status;
   // The package schema defaults an omitted paused flag to false. Absence of
-  // the package itself still supplies no state, and explicit terminal/unknown
+  // the package itself still supplies no state, and explicit non-operational
   // statuses are never replaced by that default.
   return pkg?.paused === true ? 'paused' : (pkg?.status ?? (pkg ? 'active' : undefined));
 }
