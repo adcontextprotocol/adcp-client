@@ -149,6 +149,17 @@ interface ExpectedReportingPeriodBase {
    * name. Enables the `currency_mismatch` arm. Omit to skip that check.
    */
   metricUnits?: Readonly<Record<string, string>>;
+  /**
+   * The seller's advertised `automated_recovery_window_seconds`, as the buyer
+   * recorded it when accepting the configuration generation.
+   *
+   * It lives on `reporting-delivery-capabilities.json`, **not** on the
+   * obligation, so the ledger cannot supply it — the buyer has to carry its own
+   * copy. Without it the SDK cannot compute the rc.3 posting deadline, so it
+   * marks nothing overdue and posts nothing automatically: silence is a counted
+   * unknown, whereas posting on a guessed clock would churn the status chain.
+   */
+  automatedRecoveryWindowSeconds?: number;
   /** Consumer-pinned finality rule, required whenever an official revision is accepted. */
   officialFinality?: {
     policyId: string;
@@ -237,6 +248,12 @@ export interface ReportingConsumerStatusPlanV1 {
   reportingObligationId?: string;
   reportingRevisionId?: string;
   observedRevisionContentSha256?: string;
+  /**
+   * The caller's current unsuperseded leaf, when the seller published one. A
+   * new statement must name it; omitting it on a chain that already has a leaf
+   * fails atomically rather than forking.
+   */
+  supersedesReportingStatusId?: string;
   consumerStatus: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable' | 'content_mismatch';
   mismatchCode?: ReportingMismatchCodeV1;
   failureCode?:
@@ -1263,7 +1280,10 @@ function planReportingConsumerStatuses(
       return {
         ...base,
         consumerStatus: 'obligation_missing' as const,
-        overdue: true,
+        // No obligation means no `expected_at` to anchor a deadline to. The
+        // buyer derived this period independently, so it is owed as soon as its
+        // own recovery window has elapsed past the period end.
+        ...independentDeadline(expected, now),
         reason: 'the independently expected period is absent from the seller ledger',
       };
     }
@@ -1273,13 +1293,18 @@ function planReportingConsumerStatuses(
       return {
         ...base,
         consumerStatus: 'obligation_missing' as const,
-        overdue: true,
+        ...independentDeadline(expected, now),
         reason: 'no obligation in the ledger matches this expected period',
       };
     }
 
-    const deadline = reportingConsumerStatusDeadline(obligation);
-    const overdue = deadline === undefined || now.getTime() >= Date.parse(deadline);
+    const deadline = reportingConsumerStatusDeadline(obligation, expected);
+    const overdue = deadline !== undefined && now.getTime() >= Date.parse(deadline);
+    // The seller publishes this caller's one unsuperseded leaf. A new statement
+    // MUST name it or the append fails atomically rather than forking the chain.
+    const supersedesReportingStatusId = (obligation as { current_consumer_status_id?: unknown })
+      .current_consumer_status_id;
+    const chain = typeof supersedesReportingStatusId === 'string' ? { supersedesReportingStatusId } : {};
     const selected = selectCurrent(obligation, ledger, expected);
     const revision = selected.revision;
 
@@ -1288,6 +1313,7 @@ function planReportingConsumerStatuses(
         ...base,
         reportingObligationId: obligation.reporting_obligation_id,
         consumerStatus: 'revision_missing' as const,
+        ...chain,
         ...(deadline ? { deadline } : {}),
         overdue,
         reason: 'the obligation exists but no required revision was available',
@@ -1302,6 +1328,7 @@ function planReportingConsumerStatuses(
         reportingRevisionId: revision.reporting_revision_id,
         observedRevisionContentSha256: revision.revision_content_sha256,
         consumerStatus: 'content_mismatch' as const,
+        ...chain,
         mismatchCode: mismatch.mismatchCode,
         ...(deadline ? { deadline } : {}),
         overdue,
@@ -1315,11 +1342,29 @@ function planReportingConsumerStatuses(
       reportingRevisionId: revision.reporting_revision_id,
       observedRevisionContentSha256: revision.revision_content_sha256,
       consumerStatus: 'received' as const,
+      ...chain,
       ...(deadline ? { deadline } : {}),
       overdue,
       reason: 'the exact revision content was consumed and honors every frozen contract fact',
     };
   });
+}
+
+/**
+ * Deadline for a period the seller omitted entirely.
+ *
+ * There is no obligation and therefore no `expected_at`, so the buyer anchors
+ * to its own period end plus the recovery window it recorded. Without that pin
+ * nothing is owed automatically.
+ */
+function independentDeadline(expected: ExpectedReportingPeriod, now: Date): { deadline?: string; overdue: boolean } {
+  const windowSeconds = expected.automatedRecoveryWindowSeconds;
+  const periodEnd = Date.parse(expected.periodEnd);
+  if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || !Number.isFinite(periodEnd)) {
+    return { overdue: false };
+  }
+  const deadline = new Date(periodEnd + windowSeconds * 1_000).toISOString();
+  return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
 }
 
 /** Facts the accepted generation froze, drawn from the obligation plus the buyer's own pins. */
@@ -1341,16 +1386,22 @@ function contractFactsFor(
 
 /**
  * `expected_at` + `automated_recovery_window_seconds`, the rc.3 posting
- * deadline. Returns `undefined` when the seller published no recovery window,
- * in which case the caller treats the status as owed immediately rather than
- * inventing a grace period the seller never advertised.
+ * deadline.
+ *
+ * The window is advertised on `reporting-delivery-capabilities.json`, not on
+ * the obligation, so it comes from the buyer's own pin on the expected period.
+ * `undefined` when the buyer did not record one — the caller then treats the
+ * status as *not* owed, because inventing a deadline would post on a clock the
+ * seller never advertised.
  */
-function reportingConsumerStatusDeadline(obligation: ManagedReportingObligation): string | undefined {
+function reportingConsumerStatusDeadline(
+  obligation: ManagedReportingObligation,
+  expected: ExpectedReportingPeriod
+): string | undefined {
+  const windowSeconds = expected.automatedRecoveryWindowSeconds;
+  if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds < 0) return undefined;
   const expectedAt = Date.parse(String(obligation.expected_at));
   if (!Number.isFinite(expectedAt)) return undefined;
-  const windowSeconds = (obligation as { automated_recovery_window_seconds?: unknown })
-    .automated_recovery_window_seconds;
-  if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds)) return undefined;
   return new Date(expectedAt + windowSeconds * 1_000).toISOString();
 }
 
@@ -1819,7 +1870,7 @@ export async function reconcileReporting<TCredential = unknown>(
             {
               ...(options.request.account ? { account: options.request.account } : {}),
               idempotency_key: idempotencyKey,
-              statuses: [wireConsumerStatus(plan, idempotencyKey)],
+              statuses: [wireConsumerStatus(plan)],
             },
             { signal }
           ),
@@ -1852,14 +1903,30 @@ export async function reconcileReporting<TCredential = unknown>(
 }
 
 /** Project a planned status onto the `sync_reporting_status` wire shape. */
-function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1, idempotencyKey: string): Record<string, unknown> {
+function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1): Record<string, unknown> {
   return {
-    // Deterministic in the batch key so an exact retry reuses the same ID and
-    // is idempotent rather than forking the chain.
+    // Derived from the statement's own content, never from a per-attempt
+    // idempotency key: the spec requires an exact retry to reuse the same ID.
+    // Hashing a fresh key would mint a new ID each attempt and fork the chain.
+    // Changed content hashes differently, which is what a supersession needs.
     reporting_status_id: `adcp-sdk.${createHash('sha256')
-      .update(canonical([idempotencyKey, plan.deliveryConfigId, plan.deliveryConfigVersion, plan.period]))
+      .update(
+        canonical([
+          plan.deliveryConfigId,
+          plan.deliveryConfigVersion,
+          plan.reportDefinitionId,
+          plan.period,
+          plan.consumerStatus,
+          plan.mismatchCode ?? null,
+          plan.failureCode ?? null,
+          plan.reportingRevisionId ?? null,
+          plan.observedRevisionContentSha256 ?? null,
+          plan.supersedesReportingStatusId ?? null,
+        ])
+      )
       .digest('hex')
       .slice(0, 32)}`,
+    ...(plan.supersedesReportingStatusId ? { supersedes_reporting_status_id: plan.supersedesReportingStatusId } : {}),
     delivery_config_id: plan.deliveryConfigId,
     delivery_config_version: plan.deliveryConfigVersion,
     report_definition_id: plan.reportDefinitionId,

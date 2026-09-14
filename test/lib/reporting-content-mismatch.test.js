@@ -196,3 +196,83 @@ describe('detectReportingContentMismatch', () => {
     assert.doesNotMatch(result.detail, /[\r\n\t]/);
   });
 });
+
+describe('rc.3 buyer posting deadline and chain identity', () => {
+  const { evaluateReportingLedger } = require('../../dist/lib/reporting/index.js');
+
+  const PERIOD_START = '2026-09-01T00:00:00Z';
+  const PERIOD_END = '2026-09-02T00:00:00Z';
+
+  const expectedPeriod = (overrides = {}) => ({
+    deliveryConfigId: 'cfg-1',
+    deliveryConfigVersion: 1,
+    reportDefinitionId: 'rd-1',
+    feedPurpose: 'analytics',
+    reportingProfile: 'profile-1',
+    mediaBuyIds: ['mb-1'],
+    destinationRef: undefined,
+    deliveryMethod: undefined,
+    requiredFinality: 'snapshot',
+    reconciliationMode: 'delivery_only',
+    coverageRequirement: 'full',
+    coverage: {
+      status: 'full',
+      media_buy_ids: ['mb-1'],
+      fully_covered_media_buy_ids: ['mb-1'],
+      partially_covered_media_buy_ids: [],
+      unsupported_media_buy_ids: [],
+      unknown_media_buy_ids: [],
+      package_ids: [],
+      covered_package_ids: [],
+      unsupported_package_ids: [],
+      unknown_package_ids: [],
+    },
+    reportDefinitionUri: 'https://seller.example/rd.json',
+    reportDefinitionSha256: 'd'.repeat(64),
+    schemaVersion: '1.0',
+    schemaUri: SCHEMA_URI,
+    schemaSha256: SCHEMA_SHA,
+    schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+    schemaRefPolicy: 'local_fragment_only',
+    verificationProfile: 'manifest_checksums',
+    periodStart: PERIOD_START,
+    periodEnd: PERIOD_END,
+    ...overrides,
+  });
+
+  // A ledger with no obligation at all: the seller omitted the period, so the
+  // buyer owes obligation_missing off its own independently derived clock.
+  const emptyLedger = () => ({
+    ledgerSnapshotId: 'snap-1',
+    ledgerAsOf: '2026-09-05T00:00:00Z',
+    accountId: 'acct-1',
+    scope: { scope_closed: true, coverage_complete: true },
+    obligations: [],
+    revisions: [],
+    materializations: [],
+    receipts: [],
+  });
+
+  const planFor = (expected, now) => evaluateReportingLedger(emptyLedger(), [expected], now).consumerStatuses[0];
+
+  test('an unpinned recovery window marks nothing overdue rather than everything', () => {
+    // `automated_recovery_window_seconds` is advertised on the delivery
+    // capabilities, not on the obligation, so the ledger cannot supply it. If a
+    // missing pin defaulted to overdue, every reconcile would post a status for
+    // every period immediately — the opposite of posting by the deadline.
+    const plan = planFor(expectedPeriod(), new Date('2030-01-01T00:00:00Z'));
+    assert.equal(plan.consumerStatus, 'obligation_missing');
+    assert.equal(plan.deadline, undefined);
+    assert.equal(plan.overdue, false, 'no pin means no auto-post, not an immediate one');
+  });
+
+  test('a pinned recovery window produces the deadline and flips overdue across it', () => {
+    const expected = expectedPeriod({ automatedRecoveryWindowSeconds: 3600 });
+    const before = planFor(expected, new Date('2026-09-02T00:30:00Z'));
+    const after = planFor(expected, new Date('2026-09-02T01:30:00Z'));
+
+    assert.equal(before.deadline, '2026-09-02T01:00:00.000Z', 'period end + the recovery window');
+    assert.equal(before.overdue, false);
+    assert.equal(after.overdue, true);
+  });
+});

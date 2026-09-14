@@ -16,7 +16,13 @@ stable, so the code does not flap between reads of the same bytes.
 
 **Posting against the deadline.** `ReportingReconciliationResult.consumerStatuses` plans a status for
 every expected period with its `expected_at` + `automated_recovery_window_seconds` deadline and an
-`overdue` flag. When the client supplies the new optional `syncReportingStatus`, overdue statuses are
+`overdue` flag. That window is advertised on the delivery **capabilities**, not on the obligation, so
+it comes from a new optional `ExpectedReportingPeriod.automatedRecoveryWindowSeconds` pin; without it
+nothing is marked overdue and nothing is auto-posted, because posting on a guessed clock would churn
+the status chain. Each planned statement also carries the seller-published
+`current_consumer_status_id` as `supersedes_reporting_status_id`, and its `reporting_status_id` is
+derived from the statement's own content so an exact retry reuses the ID instead of forking the
+chain. When the client supplies the new optional `syncReportingStatus`, overdue statuses are
 posted — the rc.3 duty is that clock, not scope close, and a buyer still retrying posts
 `revision_missing` and supersedes later rather than staying silent. `postedConsumerStatuses` reports
 what the seller actually recorded, so a per-item failure in the partial-success batch is never
