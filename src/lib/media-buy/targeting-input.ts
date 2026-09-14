@@ -30,6 +30,20 @@
  */
 
 /**
+ * Keys that must never be copied off a wire-supplied overlay.
+ *
+ * `targeting_overlay` arrives from `JSON.parse`, which happily produces an own
+ * `__proto__` key. Assigning that key with `=` invokes the inherited setter
+ * instead of creating an own property, which swaps the accumulator's prototype
+ * and makes attacker-chosen targeting dimensions readable on the result while
+ * staying invisible to `Object.keys`. The accumulator below is null-prototype,
+ * which already defuses the setter, but these keys are dropped outright so a
+ * later consumer that spreads the result into an ordinary object cannot
+ * reintroduce the problem.
+ */
+const UNSAFE_OVERLAY_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
  * Strict effective overlay derived from a request-only Targeting Input: the
  * same dimensions, with the `null` clear command removed from each.
  *
@@ -118,19 +132,29 @@ export function applyTargetingInput<TOverlay extends object>(
 export function hasTargetingClears(input: object | null | undefined): boolean {
   if (input === null) return true;
   if (!input) return false;
-  return Object.values(input).some(value => value === null);
+  // Mirror compactOverlay's key filter. A `{"__proto__": null}` payload is not
+  // a targeting clear — the projection drops that key entirely — so counting it
+  // here would make the two functions disagree about the same input.
+  return Object.entries(input).some(([key, value]) => value === null && !UNSAFE_OVERLAY_KEYS.has(key));
 }
 
 /**
  * Fold ordered `[key, value]` pairs into a strict overlay. Later pairs win, a
  * `null` value deletes the key outright, and `undefined` is treated as "not
  * mentioned" so an explicitly-undefined patch key cannot erase a prior value.
+ *
+ * The result is a plain object (not null-prototype) so it behaves normally for
+ * adopters, but it is assembled on a null-prototype accumulator so no wire key
+ * can reach a setter on `Object.prototype` on the way in.
  */
 function compactOverlay<T>(entries: Array<[string, unknown]>): T | undefined {
-  const merged: Record<string, unknown> = {};
+  const merged = Object.create(null) as Record<string, unknown>;
   for (const [key, value] of entries) {
+    if (UNSAFE_OVERLAY_KEYS.has(key)) continue;
     if (value === null) delete merged[key];
     else if (value !== undefined) merged[key] = value;
   }
-  return Object.keys(merged).length > 0 ? (merged as T) : undefined;
+  const keys = Object.keys(merged);
+  if (keys.length === 0) return undefined;
+  return Object.fromEntries(keys.map(key => [key, merged[key]])) as T;
 }

@@ -3490,8 +3490,13 @@ export function alignTargetingInputArrayCardinality(typeDefinitions: string): st
   const input = generatedObjectTypeProperties(typeDefinitions, 'TargetingOverlayInput');
   if (!overlay || !input) return typeDefinitions;
 
+  // Repair the extracted block in isolation, then splice it back exactly once.
+  // Rewriting `result` inside the loop would invalidate the `start`/`end`
+  // offsets on every correction that changes length, so a later property could
+  // silently fall outside the replacement window and stay broken while still
+  // being reported as fixed.
   const corrections: string[] = [];
-  let result = typeDefinitions;
+  let block = typeDefinitions.slice(input.start, input.end);
   for (const [name, inputProperty] of input.properties) {
     const overlayProperty = overlay.properties.get(name);
     if (!overlayProperty) continue;
@@ -3503,19 +3508,19 @@ export function alignTargetingInputArrayCardinality(typeDefinitions: string): st
       `${name}?: ${inputProperty.type};`,
       `${name}?: ${overlayProperty.type} | null;`
     );
-    result =
-      result.slice(0, input.start) +
-      result.slice(input.start, input.end).replace(inputProperty.declaration, repaired) +
-      result.slice(input.end);
+    const next = block.replace(inputProperty.declaration, repaired);
+    if (next === block) {
+      // Never report a correction that did not land: a silent no-op here is
+      // exactly the failure this function exists to prevent.
+      throw new Error(`alignTargetingInputArrayCardinality: could not repair TargetingOverlayInput.${name}`);
+    }
+    block = next;
     corrections.push(`${name}: ${nullStripped} -> ${overlayProperty.type}`);
   }
 
-  if (corrections.length > 0) {
-    console.log(
-      `🎯 Restored ${corrections.length} TargetingOverlayInput array dimension(s): ${corrections.join(', ')}`
-    );
-  }
-  return result;
+  if (corrections.length === 0) return typeDefinitions;
+  console.log(`🎯 Restored ${corrections.length} TargetingOverlayInput array dimension(s): ${corrections.join(', ')}`);
+  return typeDefinitions.slice(0, input.start) + block + typeDefinitions.slice(input.end);
 }
 
 export function renameKnownNumberedSemanticTypes(typeDefinitions: string): string {

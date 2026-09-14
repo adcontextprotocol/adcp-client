@@ -53,6 +53,33 @@ describe('request-only Targeting Input projection (DR-0020)', () => {
     });
   });
 
+  test('a wire-supplied __proto__ key cannot inject inherited targeting', () => {
+    // `targeting_overlay` comes off JSON.parse, which produces a real own
+    // `__proto__` key. Assigning it with `=` would invoke the inherited setter,
+    // swapping the result's prototype so an attacker-chosen dimension reads
+    // back on the overlay while staying invisible to Object.keys — and then
+    // gets persisted and echoed.
+    const hostile = JSON.parse('{"__proto__": {"geo_regions": ["INJECTED"]}, "geo_countries": ["US"]}');
+
+    const resolved = resolveTargetingInput(hostile);
+    assert.deepEqual(Object.keys(resolved), ['geo_countries']);
+    assert.equal(resolved.geo_regions, undefined, 'no dimension may arrive through the prototype');
+    assert.equal(Object.getPrototypeOf(resolved), Object.prototype);
+
+    const applied = applyTargetingInput({ geo_countries: ['CA'] }, hostile);
+    assert.equal(applied.geo_regions, undefined);
+    assert.equal(Object.getPrototypeOf(applied), Object.prototype);
+    // The global must be untouched either way.
+    assert.equal({}.geo_regions, undefined);
+  });
+
+  test('constructor and prototype keys are dropped rather than copied', () => {
+    const resolved = resolveTargetingInput(
+      JSON.parse('{"constructor": "x", "prototype": "y", "geo_countries": ["US"]}')
+    );
+    assert.deepEqual(Object.keys(resolved), ['geo_countries']);
+  });
+
   test('hasTargetingClears reports whether a patch carries any command', () => {
     assert.equal(hasTargetingClears({ geo_countries: ['US'] }), false);
     assert.equal(hasTargetingClears({ geo_countries: null }), true);
