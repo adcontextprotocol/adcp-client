@@ -65,7 +65,7 @@ function request(item) {
 }
 
 function response(result) {
-  return { adcp_version: '3.2-rc.2', adcp_major_version: 3, status: 'completed', results: [result] };
+  return { adcp_version: '3.2-rc.3', adcp_major_version: 3, status: 'completed', results: [result] };
 }
 
 const canonical = JSON.parse(fs.readFileSync(SCHEMAS.status, 'utf8'));

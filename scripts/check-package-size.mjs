@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 const MAX_PACKED_TARBALL_BYTES = 20_000_000;
 const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // AdCP 3.2.0-beta.10 adds the account-change schema family. The seller reporting
-// ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaces the preview
+// ledger adds ten public module artifacts. AdCP 3.2.0-rc.2 replaced the preview
 // schemas with its generated task surface and current compliance artifacts;
 // superseded rc.1 fixtures are excluded from the published package. Its
 // sync_reporting_status tool slice adds four publishable runtime/declaration artifacts.

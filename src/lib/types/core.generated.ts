@@ -1,5 +1,5 @@
-// Generated AdCP core types from official schemas v3.2.0-rc.2
-// Generated at: 2026-09-14T10:29:50.912Z
+// Generated AdCP core types from official schemas v3.2.0-rc.3
+// Generated at: 2026-09-14T14:16:05.638Z
 
 // ACCOUNTCURRENCYMODE CANONICAL ENUM
 /**
@@ -425,6 +425,7 @@ export type CanonicalMediaBuyActionName =
   | 'update_pacing'
   | 'update_bidding'
   | 'update_frequency_caps'
+  | 'update_media_buy_frequency_cap'
   | 'update_catalog_assignments'
   | 'update_keywords'
   | 'update_optimization_goals'
@@ -1127,6 +1128,18 @@ export type FormatIDParameter = 'dimensions' | 'duration' | 'pixel_ratio';
  */
 export type FrameRateType = 'constant' | 'variable';
 
+// FREQUENCYCAPCONTROLMODE CANONICAL ENUM
+/**
+ * A supported package frequency-cap control shape.
+ */
+export type FrequencyCapControlMode = 'max_impressions' | 'suppress' | 'max_impressions_and_suppress';
+
+// FREQUENCYCAPMUTABLEFIELD CANONICAL ENUM
+/**
+ * A logical frequency-cap field that a product implementation can change after creation. suppress covers the effective cooldown whether represented by suppress or the deprecated suppress_minutes alias.
+ */
+export type FrequencyCapMutableField = 'max_impressions' | 'per' | 'window' | 'suppress';
+
 // FREQUENCYCAPSCOPE CANONICAL ENUM
 /**
  * Scope for frequency cap application
@@ -1405,6 +1418,12 @@ export type MatchType = 'broad' | 'phrase' | 'exact';
  * How a seller honors a given action on a media buy. Buyers branch on this to decide whether to expect a synchronous response, an automatic-with-fallback flow, or seller-managed asynchronous processing. The mode is declared on each entry of `allowed_actions[]` (product, as `modes[]` array) or `available_actions[]` (buy, as singular `mode`). Requotes that fall outside the current buy envelope are not an action mode in 3.1; sellers return REQUOTE_REQUIRED from update_media_buy instead. Buyer SDKs MUST tolerate unknown future values by treating the affected action as unavailable until they re-fetch the product or buy and inspect the current `available_actions[]` / `allowed_actions[]` metadata.
  */
 export type MediaBuyActionMode = 'self_serve' | 'conditional_self_serve' | 'seller_managed' | 'requires_approval';
+
+// MEDIABUYFREQUENCYCAPCONTROLMODE CANONICAL ENUM
+/**
+ * The aggregate MediaBuy frequency-cap control shape supported in 3.2.
+ */
+export type MediaBuyFrequencyCapControlMode = 'max_impressions';
 
 // MEDIABUYHEALTH CANONICAL ENUM
 /**
@@ -4233,6 +4252,119 @@ export type DaypartSupport =
  * Concrete timezone identifier in the implementation's supported IANA Time Zone Database, such as America/New_York, CET, or UTC.
  */
 export type IANATimezoneIdentifier = string;
+/**
+ * Structured frequency-cap constraints. Count and duration declarations are exact: each uses either an exhaustive preset list or an inclusive range, never a unit-only promise. At product scope, omitted fields inherit the applicable seller-wide capability and never broaden it. Product mutability describes implementation capability; MediaBuy.available_actions remains authoritative for a live buy.
+ */
+export type FrequencyCapConstraints = {
+} & {
+  /**
+   * Logical cap fields that can change after creation. An empty array means create-only. For example, [max_impressions] permits changing the count while keeping per and window fixed. Omission means update support is undeclared and the legacy broad meaning applies.
+   */
+  mutable_fields?: FrequencyCapMutableField[];
+  /**
+   * FrequencyCap shapes accepted by the product. max_impressions_and_suppress means both controls may appear together and are enforced with AND semantics.
+   *
+   * @minItems 1
+   */
+  supported_control_modes?: [FrequencyCapControlMode, ...FrequencyCapControlMode[]];
+  /**
+   * Entity granularities accepted by max_impressions caps.
+   *
+   * @minItems 1
+   */
+  supported_per_units?: [ReachUnit, ...ReachUnit[]];
+  max_impressions_constraints?: FrequencyCapImpressionConstraints;
+  /**
+   * Exact supported max_impressions.window intervals, one entry per duration unit.
+   *
+   * @minItems 1
+   */
+  window_constraints?: [FrequencyCapIntervalConstraints, ...FrequencyCapIntervalConstraints[]];
+  /**
+   * Exact supported suppress cooldown intervals, one entry per duration unit.
+   *
+   * @minItems 1
+   */
+  suppression_constraints?: [FrequencyCapIntervalConstraints, ...FrequencyCapIntervalConstraints[]];
+  ext?: ExtensionObject;
+};
+/**
+ * Exact supported max_impressions presets or range.
+ */
+export type FrequencyCapImpressionConstraints = {
+  minimum?: number;
+  maximum?: number;
+  /**
+   * @minItems 1
+   */
+  allowed_values?: [number, ...number[]];
+  ext?: ExtensionObject;
+} & {
+};
+/**
+ * Exact supported intervals for one duration unit, declared as either an exhaustive preset list or an inclusive integer range. The two forms are mutually exclusive.
+ */
+export type FrequencyCapIntervalConstraints = {
+  unit: FrequencyCapDurationUnit;
+  minimum_interval?: number;
+  maximum_interval?: number;
+  /**
+   * @minItems 1
+   */
+  allowed_intervals?: [number, ...number[]];
+  ext?: ExtensionObject;
+} & (
+  | {
+    }
+  | {
+    }
+) & {
+    unit: FrequencyCapDurationUnit;
+    minimum_interval?: number;
+    maximum_interval?: number;
+    /**
+     * @minItems 1
+     */
+    allowed_intervals?: [number, ...number[]];
+    ext?: ExtensionObject;
+  } & (
+    | {
+      }
+    | {
+      }
+  ) & {
+    unit: FrequencyCapDurationUnit;
+    minimum_interval?: number;
+    maximum_interval?: number;
+    /**
+     * @minItems 1
+     */
+    allowed_intervals?: [number, ...number[]];
+    ext?: ExtensionObject;
+  } & (
+    | {
+      }
+    | {
+      }
+  ) & {
+    unit: FrequencyCapDurationUnit;
+    minimum_interval?: number;
+    maximum_interval?: number;
+    /**
+     * @minItems 1
+     */
+    allowed_intervals?: [number, ...number[]];
+    ext?: ExtensionObject;
+  } & (
+    | {
+      }
+    | {
+      }
+  );
+/**
+ * A duration unit supported for a frequency-cap window or suppression period.
+ */
+export type FrequencyCapDurationUnit = 'seconds' | 'minutes' | 'hours' | 'days' | 'campaign';
 export type BrowserSupport =
   | Supported
   | {
@@ -4246,7 +4378,7 @@ export type KeywordSupport =
       ext?: ExtensionObject;
     };
 /**
- * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package and max_packages. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. The daypart_targets boolean is the backward-compatible exception: true promises inventory_local only, and structured support opts into IANA zones. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching.
+ * Product-scoped package targeting dimensions that may be supplied or changed after discovery. This is the seller response shape and may disclose seller limits such as max_values_per_package and max_packages. Product.overlay_support is the binding selectable-targeting contract: presence means the seller can apply protocol-valid values within the declared systems, countries, values, types, versions, and limits. Inherent product coverage alone does not satisfy a future-support requirement. Support does not guarantee inventory or a value-specific forecast before values are supplied; fixed prices and floors remain binding for supported selections. geo_regions and geo_regions_exclude are independent: structured support either exhaustively declares every value active in the seller's support snapshot for a country or lists the exact finite selectable subset. Buyer minimums use targeting-overlay-requirements.json. A requirement value of true matches true or any valid support object; an object requirement matches true or a containing support object. The daypart_targets boolean is the backward-compatible exception: true promises inventory_local only, and structured support opts into IANA zones. Every valid structured support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Unrequested object fields and numeric seller limits do not participate in matching. A product declares at most one of frequency_cap: true and frequency_cap_support. Legacy frequency_cap: true keeps its broad meaning within seller-wide limits, including update support. A constrained or create-only product instead advertises frequency_cap_support, so older buyers safely treat it as unsupported.
  */
 export interface TargetingOverlaySupport {
   geo_countries?: CountrySupport;
@@ -4285,6 +4417,10 @@ export interface TargetingOverlaySupport {
         ext?: ExtensionObject;
       };
   frequency_cap?: Supported;
+  /**
+   * Independently positive constrained package-cap support. Mutually exclusive with legacy frequency_cap: a product declares one form or the other.
+   */
+  frequency_cap_support?: FrequencyCapConstraints;
   property_list?: Supported;
   property_list_exclude?: Supported;
   collection_list?: Supported;
@@ -4525,7 +4661,7 @@ export type KeywordRequirement =
       supported_match_types: MatchType[];
     };
 /**
- * Buyer minimum requirements for targeting dimensions that will be selected on packages later. This request shape deliberately excludes seller limits such as max_values_per_package and max_packages. Matching is capability containment: where a field permits a boolean form, a requirement value of true matches product support true or any valid positive support object, and product support true satisfies every protocol-valid structured requirement except daypart_targets, where true promises inventory_local only. Otherwise, structured product support must contain the structured requirement. For geo_regions and geo_regions_exclude, every requested country must exist; requested all_values requires supported all_values; and requested values must be a subset of supported values unless support declares all_values. For geo_places and geo_places_exclude, every requested system and country key must exist and each requested place-type and system-version array must be a subset of the corresponding product array. Include and exclude fields match independently. Every valid structured requirement or support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Object fields the buyer did not request do not participate. Missing or unknown required fields do not match. Numeric seller limits are disclosed only in Product.overlay_support and never participate in matching.
+ * Buyer minimum requirements for targeting dimensions that will be selected on packages later. This request shape deliberately excludes seller limits such as max_values_per_package and max_packages. Matching is capability containment: where a field permits a boolean form, a requirement value of true matches product support true or any valid positive support object, and product support true satisfies every protocol-valid structured requirement except daypart_targets, where true promises inventory_local only. Otherwise, structured product support must contain the structured requirement. For geo_regions and geo_regions_exclude, every requested country must exist; requested all_values requires supported all_values; and requested values must be a subset of supported values unless support declares all_values. For geo_places and geo_places_exclude, every requested system and country key must exist and each requested place-type and system-version array must be a subset of the corresponding product array. Include and exclude fields match independently. Every valid structured requirement or support object represents a positive capability; empty, extension-only, and false-only objects are invalid. Object fields the buyer did not request do not participate. Missing or unknown required fields do not match. Numeric seller limits are disclosed only in Product.overlay_support and never participate in matching. Legacy frequency_cap: true matches only the unchanged broad declaration. frequency_cap_support matches either legacy true or a containing structured declaration; an empty object requests either positive form. A requirement carries at most one of the two.
  */
 export interface TargetingOverlayRequirements {
   geo_countries?: Required;
@@ -4556,6 +4692,7 @@ export interface TargetingOverlayRequirements {
         age: Required;
       };
   frequency_cap?: Required;
+  frequency_cap_support?: FrequencyCapRequirements;
   property_list?: Required;
   property_list_exclude?: Required;
   collection_list?: Required;
@@ -4627,6 +4764,38 @@ export interface CatalogRequirement {
    */
   system_versions?: [string, ...string[]];
 }
+/**
+ * Minimum structured package-cap support. Matches a broad legacy frequency_cap: true or a containing frequency_cap_support object. Mutually exclusive with a frequency_cap: true requirement, which would exclude every constrained product.
+ */
+export interface FrequencyCapRequirements {
+  /**
+   * Require each listed logical field to be mutable after creation. Matches a product whose mutable_fields contains every listed value, or a product that omits mutable_fields, or legacy frequency_cap: true. A product declaring mutable_fields: [] is create-only and never matches a non-empty list.
+   *
+   * @minItems 1
+   */
+  mutable_fields?: [FrequencyCapMutableField, ...FrequencyCapMutableField[]];
+  /**
+   * @minItems 1
+   */
+  supported_control_modes?: [FrequencyCapControlMode, ...FrequencyCapControlMode[]];
+  /**
+   * @minItems 1
+   */
+  supported_per_units?: [ReachUnit, ...ReachUnit[]];
+  /**
+   * Require each listed unit to be a supported max_impressions.window unit after seller-wide inheritance.
+   *
+   * @minItems 1
+   */
+  supported_window_units?: [FrequencyCapDurationUnit, ...FrequencyCapDurationUnit[]];
+  /**
+   * Require each listed unit to be a supported suppress unit after seller-wide inheritance.
+   *
+   * @minItems 1
+   */
+  supported_suppression_units?: [FrequencyCapDurationUnit, ...FrequencyCapDurationUnit[]];
+}
+// CANONICALFORMATOPTION PRIORITY CANONICAL SCHEMA
 /**
  * One exact first-class manifest tracker selector in a seller production execution contract. AdCP 3.2 supports pixel_tracker, vast_tracker, and daast_tracker only; URL-slot selectors are not part of this union.
  */
@@ -5022,6 +5191,10 @@ export interface CancellationPolicy {
 }
 // MEDIABUYAVAILABLEACTION PRIORITY CANONICAL SCHEMA
 /**
+ * The action identifier.
+ */
+export type MediaBuyAvailableActionID = MediaBuyValidAction | 'update_media_buy_frequency_cap';
+/**
  * The accepted proposal change_terms[].term_id from which this current-state action projection was derived.
  */
 export type MediaBuyChangeTermID = string;
@@ -5029,12 +5202,16 @@ export type MediaBuyChangeTermID = string;
  * Deprecated 3.1 opaque commercial-terms pointer. A 3.2 compatibility projection MAY echo change_term_id here for older buyers, but new buyers MUST prefer change_term_id and MUST NOT assume an arbitrary 3.1 value identifies an accepted change term.
  */
 export type MediaBuyTermsReference = string;
+/**
+ * A package identifier to which a package-scoped media-buy action currently applies.
+ */
+export type ApplicablePackageID = string;
 
 /**
  * An action currently available on a media buy, resolved against the buy's current status, accepted commercial_terms.change_terms, account authorization, and applicable governance delegation. Authoritative for current availability, but not a replacement for negotiated rights: when explicit change_terms exist, this projection may temporarily omit an action because state changed, but MUST NOT silently replace its negotiated service mode, SLA, constraints, conditions, or contract reference. The containing array is uniquely keyed by action.
  */
 export interface MediaBuyAvailableAction {
-  action: MediaBuyValidAction;
+  action: MediaBuyAvailableActionID;
   mode: MediaBuyActionMode;
   /**
    * Compact-lifecycle task for this resolved action: operational control, commercial refinement, or creative lifecycle mutation.
@@ -5043,6 +5220,10 @@ export interface MediaBuyAvailableAction {
   sla?: SLAWindow;
   change_term_id?: MediaBuyChangeTermID;
   terms_ref?: MediaBuyTermsReference;
+  /**
+   * For a package-scoped action, the exact packages currently eligible. Omission means every relevant package. Root actions omit this field.
+   */
+  applicable_package_ids?: ApplicablePackageID[];
 }
 /**
  * Optional SLA commitment for this action on this buy. Absence means no commitment, not zero commitment.
@@ -5080,7 +5261,7 @@ export type EffectiveTimingConstraints = {
  * An action a seller declares as allowed on buys created against this product, scoped to the buy statuses where the action is permitted and the modes available. Advisory template only — the authoritative per-buy resolution lives in `available_actions[]` on the buy response (which may diverge from the product template based on negotiated terms, account tier, or buy-level overrides). The containing `allowed_actions[]` array is uniquely keyed by `action`; sellers MUST NOT emit two entries with the same `action` value. JSON Schema `uniqueItems` only catches structurally identical objects, so validators MUST enforce action-uniqueness separately.
  */
 export interface ProductAllowedAction {
-  action: MediaBuyValidAction;
+  action: MediaBuyAvailableActionID;
   /**
    * Modes available for this action on this product. A product may declare multiple modes (for example `self_serve` within tolerances, escalating to `requires_approval` outside) — the buy-side `available_actions[<action>].mode` resolves to the singular mode in effect at mutation time. SDKs that see multiple modes MUST NOT assume which one will fire; they must read the resolved `mode` on the buy.
    */
@@ -5640,330 +5821,115 @@ export type OptimizationGoal =
       priority?: number;
     };
 /**
- * Complete effective targeting overlay to apply to this package. On update, this replaces the package's current effective targeting, including values originally accepted through configured-product selection; omit the field to leave targeting unchanged. Every replacement must remain executable by the product. Sellers reject unsupported or partially applicable changes and use REQUOTE_REQUIRED when a change, including a broader inventory set, falls outside the priced envelope. placement_selection is purchased-inventory targeting; mode default restores the product default, and successful readback echoes the committed selected set when enumerable. If the replacement removes a placement referenced by an existing creative assignment, the seller MUST reject the update unless the same atomic package mutation supplies a compatible complete creative_assignments replacement. Sellers MUST NOT silently delete assignments or retain orphan placement refs.
+ * Per-dimension targeting patch for this package. Omit targeting_overlay, or omit an individual dimension inside it, to leave the corresponding effective targeting unchanged. A non-null dimension replaces its current value; null clears it, including a value inherited from configured-product selection or a product default. Every resulting effective overlay must remain executable by the product. Sellers reject unsupported or partially applicable changes and use REQUOTE_REQUIRED when a change, including a broader inventory set, falls outside the priced envelope. placement_selection is purchased-inventory targeting; mode default restores the product default, null clears the dimension when the product permits it, and successful readback echoes the committed selected set when enumerable. If a patch removes a placement referenced by an existing creative assignment, the seller MUST reject the update unless the same atomic package mutation supplies a compatible complete creative_assignments replacement. Sellers MUST NOT silently delete assignments or retain orphan placement refs.
  */
-export type TargetingOverlay = {
-} & {
-  /**
-   * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
-   *
-   * @minItems 1
-   */
-  geo_countries?: [string, ...string[]];
-  /**
-   * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
-   *
-   * @minItems 1
-   */
-  geo_countries_exclude?: [string, ...string[]];
-  /**
-   * Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.
-   *
-   * @minItems 1
-   */
-  geo_regions?: [string, ...string[]];
-  /**
-   * Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.
-   *
-   * @minItems 1
-   */
-  geo_regions_exclude?: [string, ...string[]];
-  /**
-   * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  geo_metros?: [
-    {
-      system: MetroAreaSystem;
-      /**
-       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    },
-    ...{
-      system: MetroAreaSystem;
-      /**
-       * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }[]
-  ];
-  /**
-   * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  geo_metros_exclude?: [
-    {
-      system: MetroAreaSystem;
-      /**
-       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    },
-    ...{
-      system: MetroAreaSystem;
-      /**
-       * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
-       *
-       * @minItems 1
-       */
-      values: [string, ...string[]];
-    }[]
-  ];
-  /**
-   * Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  geo_postal_areas?: [PostalArea, ...PostalArea[]];
-  /**
-   * Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  geo_postal_areas_exclude?: [PostalArea, ...PostalArea[]];
-  /**
-   * Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.
-   *
-   * @minItems 1
-   */
-  geo_places?: [GeographicPlaceArea, ...GeographicPlaceArea[]];
-  /**
-   * Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.
-   *
-   * @minItems 1
-   */
-  geo_places_exclude?: [GeographicPlaceArea, ...GeographicPlaceArea[]];
-  /**
-   * Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.
-   *
-   * @minItems 1
-   */
-  daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
-  /**
-   * @deprecated
-   * Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.
-   */
-  axe_include_segment?: string;
-  /**
-   * @deprecated
-   * Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.
-   */
-  axe_exclude_segment?: string;
-  /**
-   * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  audience_include?: [string, ...string[]];
-  /**
-   * Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  audience_exclude?: [string, ...string[]];
-  signal_targeting_groups?: PackageSignalTargetingGroups;
-  /**
-   * @deprecated
-   * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
-   *
-   * @minItems 1
-   */
-  signal_targeting?: [SignalTargeting, ...SignalTargeting[]];
-  demographics?: DemographicTargetingIntent;
-  frequency_cap?: FrequencyCap;
-  property_list?: PropertyListReference;
-  property_list_exclude?: PropertyListReference;
-  collection_list?: CollectionListReference;
-  collection_list_exclude?: CollectionListReference;
-  placement_selection?: PlacementSelection;
-  collection_selection?: CollectionSelection;
-  /**
-   * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
-   */
-  age_restriction?: {
+export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
+  TargetingVerifiedAgeBasisConstraint & {
+    geo_countries?: GeoCountries | null;
+    geo_countries_exclude?: GeoCountriesExclude | null;
+    geo_regions?: GeoRegions | null;
+    geo_regions_exclude?: GeoRegionsExclude | null;
+    geo_metros?: TargetingGeoMetros;
+    geo_metros_exclude?: GeoMetrosExclude | null;
+    geo_postal_areas?: GeoPostalAreas | null;
+    geo_postal_areas_exclude?: GeoPostalAreasExclude | null;
+    geo_places?: GeoPlaces | null;
+    geo_places_exclude?: GeoPlacesExclude | null;
+    daypart_targets?: DaypartTargets | null;
+    axe_include_segment?: string | null;
+    axe_exclude_segment?: string | null;
+    audience_include?: AudienceInclude | null;
+    audience_exclude?: AudienceExclude | null;
+    signal_targeting_groups?: TargetingSignalGroups | null;
     /**
-     * Minimum age required
-     */
-    min: number;
-    /**
-     * Whether verified age (not inferred) is required for compliance
-     */
-    verification_required?: boolean;
-    /**
-     * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+     * @deprecated
+     * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
      *
      * @minItems 1
      */
-    accepted_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
+    signal_targeting?: [SignalTargeting, ...SignalTargeting[]] | null;
+    demographics?: DemographicTargetingIntent | null;
+    frequency_cap?: TargetingFrequencyCap | null;
+    property_list?: TargetingPropertyList | null;
+    property_list_exclude?: PropertyListReference | null;
+    collection_list?: TargetingCollectionList | null;
+    collection_list_exclude?: CollectionListReference | null;
+    placement_selection?: PlacementSelection | null;
+    collection_selection?: TargetingCollectionSelection | null;
+    age_restriction?: AgeRestriction | null;
+    device_platform?: DevicePlatform | null;
+    device_platform_exclude?: DevicePlatformExclude | null;
+    device_type?: DeviceType | null;
+    device_type_exclude?: DeviceTypeExclude | null;
+    browser?: Browser | null;
+    browser_exclude?: BrowserExclude | null;
+    store_catchments?: StoreCatchments | null;
+    geo_proximity?: GeoProximity | null;
+    language?: TargetingLanguages;
+    keyword_targets?: TargetingKeywords;
+    negative_keywords?: TargetingNegativeKeywords;
   };
-  /**
-   * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
-   *
-   * @minItems 1
-   */
-  device_platform?: [DevicePlatform, ...DevicePlatform[]];
-  /**
-   * Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
-   *
-   * @minItems 1
-   */
-  device_platform_exclude?: [DevicePlatform, ...DevicePlatform[]];
-  /**
-   * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
-   *
-   * @minItems 1
-   */
-  device_type?: [DeviceType, ...DeviceType[]];
-  /**
-   * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
-   *
-   * @minItems 1
-   */
-  device_type_exclude?: [DeviceType, ...DeviceType[]];
-  /**
-   * Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.
-   *
-   * @minItems 1
-   */
-  browser?: [BrowserFamily, ...BrowserFamily[]];
-  /**
-   * Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
-   *
-   * @minItems 1
-   */
-  browser_exclude?: [BrowserFamily, ...BrowserFamily[]];
-  /**
-   * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
-   *
-   * @minItems 1
-   */
-  store_catchments?: [
-    {
-      /**
-       * Synced store-type catalog ID from sync_catalogs.
-       */
-      catalog_id: string;
-      /**
-       * Filter to specific stores within the catalog. Omit to target all stores.
-       *
-       * @minItems 1
-       */
-      store_ids?: [string, ...string[]];
-      /**
-       * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
-       *
-       * @minItems 1
-       */
-      catchment_ids?: [string, ...string[]];
-    },
-    ...{
-      /**
-       * Synced store-type catalog ID from sync_catalogs.
-       */
-      catalog_id: string;
-      /**
-       * Filter to specific stores within the catalog. Omit to target all stores.
-       *
-       * @minItems 1
-       */
-      store_ids?: [string, ...string[]];
-      /**
-       * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
-       *
-       * @minItems 1
-       */
-      catchment_ids?: [string, ...string[]];
-    }[]
-  ];
-  /**
-   * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  geo_proximity?: [
-    (
-      | {
-        }
-      | {
-        }
-      | {
-        }
-    ),
-    ...(
-      | {
-        }
-      | {
-        }
-      | {
-        }
-    )[]
-  ];
-  /**
-   * Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.
-   *
-   * @minItems 1
-   */
-  language?: [LanguageTag, ...LanguageTag[]];
-  /**
-   * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  keyword_targets?: [
-    {
-      /**
-       * The keyword to target
-       */
-      keyword: string;
-      match_type: MatchType;
-      /**
-       * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
-       */
-      bid_price?: number;
-    },
-    ...{
-      /**
-       * The keyword to target
-       */
-      keyword: string;
-      match_type: MatchType;
-      /**
-       * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
-       */
-      bid_price?: number;
-    }[]
-  ];
-  /**
-   * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
-   *
-   * @minItems 1
-   */
-  negative_keywords?: [
-    {
-      /**
-       * The keyword to exclude
-       */
-      keyword: string;
-      match_type: MatchType;
-    },
-    ...{
-      /**
-       * The keyword to exclude
-       */
-      keyword: string;
-      match_type: MatchType;
-    }[]
-  ];
-};
+/**
+ * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+ *
+ * @minItems 1
+ */
+export type GeoCountries = [string, ...string[]];
+/**
+ * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+ *
+ * @minItems 1
+ */
+export type GeoCountriesExclude = [string, ...string[]];
+/**
+ * Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.
+ *
+ * @minItems 1
+ */
+export type GeoRegions = [string, ...string[]];
+/**
+ * Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.
+ *
+ * @minItems 1
+ */
+export type GeoRegionsExclude = [string, ...string[]];
+/**
+ * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingGeoMetros = [GeoMetro, ...GeoMetro[]] | null;
+/**
+ * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type GeoMetrosExclude = [
+  {
+    system: MetroAreaSystem;
+    /**
+     * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+     *
+     * @minItems 1
+     */
+    values: [string, ...string[]];
+  },
+  ...{
+    system: MetroAreaSystem;
+    /**
+     * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+     *
+     * @minItems 1
+     */
+    values: [string, ...string[]];
+  }[]
+];
+/**
+ * Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type GeoPostalAreas = [PostalArea, ...PostalArea[]];
 /**
  * Postal area values. Prefer the native country + postal system form. Deprecated legacy country-fused postal-system tokens remain accepted for compatibility.
  */
@@ -6030,6 +5996,18 @@ export type PostalCountrySystem = (
   system: PostalCodeSystem;
 };
 /**
+ * Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type GeoPostalAreasExclude = [PostalArea, ...PostalArea[]];
+/**
+ * Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.
+ *
+ * @minItems 1
+ */
+export type GeoPlaces = [GeographicPlaceArea, ...GeographicPlaceArea[]];
+/**
  * A catalog-backed named place target. Values are stable identifiers in the declared system. Entries within geo_places form a union; different geographic inclusion dimensions intersect. value_labels are diagnostic only and MUST NOT be used to resolve targeting.
  */
 export type GeographicPlaceArea = {
@@ -6086,6 +6064,30 @@ export type GeographicPlaceArea = {
  * Collision-safe identifier namespace for geographic places. Registered tokens have protocol-defined semantics. Unregistered systems MUST use an absolute HTTPS URI controlled by the catalog owner; consumers compare URI systems as exact opaque strings.
  */
 export type GeographicPlaceIdentifierSystem = ('geonames' | 'google_ads' | 'microsoft_ads') | string;
+/**
+ * Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.
+ *
+ * @minItems 1
+ */
+export type GeoPlacesExclude = [GeographicPlaceArea, ...GeographicPlaceArea[]];
+/**
+ * Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.
+ *
+ * @minItems 1
+ */
+export type DaypartTargets = [DaypartTarget, ...DaypartTarget[]];
+/**
+ * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type AudienceInclude = [string, ...string[]];
+/**
+ * Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type AudienceExclude = [string, ...string[]];
 /**
  * Buy-time selection of one seller-offered signal inside a package signal targeting group. The signal_ref uses scope 'product' for a product-local signal option, scope 'data_provider' for a signal defined in a data provider's published adagents.json signals[], or scope 'signal_source' for a source-native signal that is not published in adagents.json signals[]. The selected product's inline Product.signal_targeting_options, get_signals feed when inline options are omitted, and signal_targeting_rules define buy-time eligibility. Inclusion and exclusion are controlled by the parent group operator: use operator 'any' to include users matching the signal expression and operator 'none' to exclude users matching the signal expression. For binary signals, value MUST be true; do not use value=false for exclusion inside signal_targeting_groups. Use audience_include/audience_exclude only for buyer-managed first-party audiences registered through sync_audiences.
  */
@@ -6179,9 +6181,9 @@ export type DemographicAgeRange = {
   include_unknown: boolean;
 };
 /**
- * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set.
+ * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set. Field location determines scope; this value has no scope discriminator. The MediaBuy root uses the narrower media-buy-frequency-cap schema, which permits maximum impressions only in 3.2.
  */
-export type FrequencyCap = {
+export type TargetingFrequencyCap = {
 } & {
   /**
    * Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {"interval": 60, "unit": "minutes"} for a 1-hour cooldown). Preferred over suppress_minutes.
@@ -6193,7 +6195,7 @@ export type FrequencyCap = {
    */
   suppress_minutes?: number;
   /**
-   * Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window; 'campaign' applies a fixed cap across the full flight.
+   * Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window. campaign applies across the owning field's full flight: the package flight for a targeting overlay, or the MediaBuy flight for a root cap.
    */
   max_impressions?: number;
   /**
@@ -6206,7 +6208,7 @@ export type FrequencyCap = {
   window?: Duration;
 };
 /**
- * Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. On update, the surrounding targeting_overlay replacement semantics apply.
+ * Purchased placement selection within the product. This constrains package inventory; it is distinct from creative_assignments[].placement_refs, which only route individual creatives within the purchased set. On create, mode selected supplies the complete selected set and mode default uses the product default. In request-side Targeting Input, a non-null value replaces this dimension, omission preserves or inherits it, and null clears it when the product permits that broader inventory set.
  */
 export type PlacementSelection = SelectedPlacements | ProductDefaultPlacements;
 /**
@@ -6214,9 +6216,142 @@ export type PlacementSelection = SelectedPlacements | ProductDefaultPlacements;
  */
 export type PlacementIdentity = PublisherCatalogPlacementIdentity | SellerInlinePlacementIdentity;
 /**
- * Purchased collection selection within the product. On create, mode selected supplies the complete selected set and mode default uses the product's full bundle. On package readback this is the committed selection sellers MUST echo as concrete selectors, materializing any collection_list composition; collection_list fields remain the buyer-managed list mechanism. On update, the surrounding targeting_overlay replacement semantics apply.
+ * Purchased collection selection within the product. On create, mode selected supplies the complete selected set and mode default uses the product's full bundle. On package readback this is the committed selection sellers MUST echo as concrete selectors, materializing any collection_list composition; collection_list fields remain the buyer-managed list mechanism. In request-side Targeting Input, a non-null value replaces this dimension, omission preserves or inherits it, and null clears it when the product permits that broader inventory set.
  */
-export type CollectionSelection = SelectedCollections | ProductDefaultCollections;
+export type TargetingCollectionSelection = SelectedCollections | ProductDefaultCollections;
+/**
+ * Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
+ *
+ * @minItems 1
+ */
+export type DevicePlatformExclude = [DevicePlatform, ...DevicePlatform[]];
+/**
+ * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
+ *
+ * @minItems 1
+ */
+export type DeviceTypeExclude = [DeviceType, ...DeviceType[]];
+/**
+ * Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.
+ *
+ * @minItems 1
+ */
+export type Browser = [BrowserFamily, ...BrowserFamily[]];
+/**
+ * Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
+ *
+ * @minItems 1
+ */
+export type BrowserExclude = [BrowserFamily, ...BrowserFamily[]];
+/**
+ * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
+ *
+ * @minItems 1
+ */
+export type StoreCatchments = [
+  {
+    /**
+     * Synced store-type catalog ID from sync_catalogs.
+     */
+    catalog_id: string;
+    /**
+     * Filter to specific stores within the catalog. Omit to target all stores.
+     *
+     * @minItems 1
+     */
+    store_ids?: [string, ...string[]];
+    /**
+     * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
+     *
+     * @minItems 1
+     */
+    catchment_ids?: [string, ...string[]];
+  },
+  ...{
+    /**
+     * Synced store-type catalog ID from sync_catalogs.
+     */
+    catalog_id: string;
+    /**
+     * Filter to specific stores within the catalog. Omit to target all stores.
+     *
+     * @minItems 1
+     */
+    store_ids?: [string, ...string[]];
+    /**
+     * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
+     *
+     * @minItems 1
+     */
+    catchment_ids?: [string, ...string[]];
+  }[]
+];
+/**
+ * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type GeoProximity = [
+  (
+    | {
+      }
+    | {
+      }
+    | {
+      }
+  ),
+  ...(
+    | {
+      }
+    | {
+      }
+    | {
+      }
+  )[]
+];
+/**
+ * Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.
+ *
+ * @minItems 1
+ */
+export type TargetingLanguages = [LanguageTag, ...LanguageTag[]] | null;
+/**
+ * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingKeywords =
+  | [
+      {
+        /**
+         * The keyword to target
+         */
+        keyword: string;
+        match_type: MatchType;
+        /**
+         * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+         */
+        bid_price?: number;
+      },
+      ...{
+        /**
+         * The keyword to target
+         */
+        keyword: string;
+        match_type: MatchType;
+        /**
+         * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+         */
+        bid_price?: number;
+      }[]
+    ]
+  | null;
+/**
+ * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingNegativeKeywords = [NegativeKeyword, ...NegativeKeyword[]] | null;
 /**
  * Assignment of a creative asset to a package with optional rotation and placement routing. Used in create_media_buy and update_media_buy requests. Buyers identify the stored creative with `creative_id` only. A generic `id` alias, if present due to adapter-internal payload reuse, is not an AdCP identifier and sellers MUST ignore it on input. Note: sync_creatives does not support package rotation, placement_refs, or placement_ids - use create/update_media_buy for package-level trafficking controls.
  */
@@ -7757,7 +7892,7 @@ export interface PackageUpdate {
    * Replace all optimization goals for this package. Uses replacement semantics — omit to leave goals unchanged.
    */
   optimization_goals?: OptimizationGoal[];
-  targeting_overlay?: TargetingOverlay;
+  targeting_overlay?: TargetingOverlayInput;
   /**
    * Keyword targets to add or update on this package. Upserts by (keyword, match_type) identity: if the pair already exists, its bid_price is updated; if not, a new keyword target is added. Use targeting_overlay.keyword_targets in create_media_buy to set the initial list.
    */
@@ -7808,7 +7943,7 @@ export interface PackageUpdate {
     match_type: MatchType;
   }[];
   /**
-   * Replace creative assignments for this package with optional rotation, grouping, weights, and placement routing. Uses replacement semantics - omit to leave assignments unchanged. rotation_mode is package-scoped: omission resolves to weighted, and every assignment MUST resolve to the same effective mode. In sequential mode, sequence_position MUST be unique within each package-local group. Sellers reject conflicts with VALIDATION_ERROR before mutation. When the same mutation narrows targeting_overlay.placement_selection, this complete replacement MUST remove or reroute every assignment reference that would otherwise be orphaned; the seller validates both changes atomically.
+   * Replace creative assignments for this package with optional rotation, grouping, weights, and placement routing. Uses replacement semantics - omit to leave assignments unchanged. rotation_mode is package-scoped: omission resolves to weighted, and every assignment MUST resolve to the same effective mode. In sequential mode, sequence_position MUST be unique within each package-local group. Sellers reject conflicts with VALIDATION_ERROR before mutation. When the same mutation narrows or clears targeting_overlay.placement_selection, this complete replacement MUST remove or reroute every assignment reference that would otherwise be orphaned; the seller validates both changes atomically.
    */
   creative_assignments?: CreativeAssignment[];
   /**
@@ -7899,6 +8034,28 @@ export interface AttributionWindow {
   model?: AttributionModel;
 }
 /**
+ * Unknown-age delivery cannot satisfy a minimum-age eligibility policy. When demographic audience targeting and age_restriction are both present, include_unknown must be false.
+ */
+export interface TargetingUnknownAgeEligibilityConstraint {
+}
+/**
+ * A legal verification requirement always narrows demographic targeting. When the buyer supplies accepted_bases and age_restriction requires verification, verified must be accepted; otherwise the constraints have an empty intersection and the request is invalid.
+ */
+export interface TargetingVerifiedAgeBasisConstraint {
+}
+/**
+ * A targeted metro area.
+ */
+export interface GeoMetro {
+  system: MetroAreaSystem;
+  /**
+   * Metro codes within the system (e.g., ['501', '602'] for Nielsen DMAs)
+   *
+   * @minItems 1
+   */
+  values: [string, ...string[]];
+}
+/**
  * @deprecated
  */
 export interface PostalAreaWithFusedSystem {
@@ -7940,7 +8097,7 @@ export interface DaypartTarget {
 /**
  * Basic Boolean grouping for seller-offered signals. v1 supports a required top-level operator 'all' and child groups with operator 'any' for include groups or 'none' for exclusion groups. Example semantics: group 1 any(A, B) plus group 2 none(C, D) means (A OR B) AND NOT (C OR D). Signal entries reference named signal definitions with signal_ref scope 'product' for product-local signal options or scope 'data_provider' for external signals published in adagents.json signals[]. For simple include-only targeting, send one child group with operator 'any'. Sellers SHOULD reject entries that are not available for the product through inline signal_targeting_options or get_signals, are not active for the account, or exceed the product's signal_targeting_allowed/signal_targeting_rules/product terms. Signal targeting limits are product-scoped, not declared in get_adcp_capabilities, because products may be backed by different ad servers. Sellers MUST echo applied signal_targeting_groups on the resulting package state, including fixed/default selections. Sellers MAY return REQUOTE_REQUIRED when a targeting mutation changes commercial terms.
  */
-export interface PackageSignalTargetingGroups {
+export interface TargetingSignalGroups {
   /**
    * Groups-level operator. Required even though v1 only supports 'all': every child group must be satisfied.
    */
@@ -7977,6 +8134,23 @@ export interface DemographicTargetingIntent {
 /**
  * Reference to a property list for targeting specific properties within this product. The package runs on the intersection of the product's publisher_properties and this list. Sellers SHOULD return a validation error if the product has property_targeting_allowed: false.
  */
+export interface TargetingPropertyList {
+  /**
+   * URL of the agent managing the property list
+   */
+  agent_url: string;
+  /**
+   * Identifier for the property list within the agent
+   */
+  list_id: string;
+  /**
+   * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
+   */
+  auth_token?: string;
+}
+/**
+ * Reference to a property list whose properties must not carry the buyer's ads. Matched properties are removed from delivery. Use for brand-safety do-not-run lists (apps, sites). Exclude wins on overlap with property_list, and applies regardless of the product's property_targeting_allowed flag. Seller must declare support in get_adcp_capabilities.
+ */
 export interface PropertyListReference {
   /**
    * URL of the agent managing the property list
@@ -7993,6 +8167,23 @@ export interface PropertyListReference {
 }
 /**
  * Reference to a collection list for including specific collections (programs, publications, channels) within this product. The package runs on the intersection of matched collections and this list. Use for inclusion-based collection targeting. Seller must declare support in get_adcp_capabilities.
+ */
+export interface TargetingCollectionList {
+  /**
+   * URL of the agent managing the collection list
+   */
+  agent_url: string;
+  /**
+   * Identifier for the collection list within the agent
+   */
+  list_id: string;
+  /**
+   * JWT or other authorization token for accessing the list. Optional if the list is public or caller has implicit access.
+   */
+  auth_token?: string;
+}
+/**
+ * Reference to a collection list for excluding specific collections (programs, publications, channels) from this product. Matched collections must not carry the buyer's ads. Use for brand safety do-not-air lists. Seller must declare support in get_adcp_capabilities.
  */
 export interface CollectionListReference {
   /**
@@ -8095,6 +8286,35 @@ export interface CollectionSelector {
 export interface ProductDefaultCollections {
   mode: 'default';
   ext?: ExtensionObject;
+}
+/**
+ * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
+ */
+export interface AgeRestriction {
+  /**
+   * Minimum age required
+   */
+  min: number;
+  /**
+   * Whether verified age (not inferred) is required for compliance
+   */
+  verification_required?: boolean;
+  /**
+   * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+   *
+   * @minItems 1
+   */
+  accepted_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
+}
+/**
+ * An excluded keyword.
+ */
+export interface NegativeKeyword {
+  /**
+   * The keyword to exclude
+   */
+  keyword: string;
+  match_type: MatchType;
 }
 /**
  * @deprecated
@@ -15902,6 +16122,10 @@ export type ReportingDeliveryConfiguration = {
   coverage_requirement: 'full' | 'allow_partial';
   required_finality: ReportingFinality;
   reconciliation_mode: ReportingReconciliationMode;
+  /**
+   * Reserved: which party's count of this feed is authoritative. seller (the default, and the only value any 3.2 seller accepts) means the seller produces every revision and the consumer may only attest to what it consumed. consumer is reserved for the buyer-deposited billing revision task scoped to a later minor; until that task exists sellers MUST reject it with UNSUPPORTED_FEATURE. Reserving the field now keeps a future buyer-basis billing feed additive instead of breaking the billing-feed constraints. See https://github.com/adcontextprotocol/adcp/issues/7440.
+   */
+  authoritative_party?: 'seller' | 'consumer';
   schedule: ReportingSchedule;
   method?: ReportingDeliveryMethod;
   /**
@@ -15915,7 +16139,7 @@ export type ReportingDeliveryConfiguration = {
 export type ReportingFeedPurpose = 'pacing' | 'analytics' | 'billing';
 export type ReportingMediaBuyID = string;
 /**
- * Whether producer-side delivery evidence is sufficient or the selected consumer must submit an authenticated matching receipt. Billing MUST use consumer_receipt.
+ * Whether producer-side delivery evidence is sufficient or the selected consumer must submit an authenticated matching receipt. A seller-authoritative billing feed MUST use consumer_receipt.
  */
 export type ReportingReconciliationMode = 'delivery_only' | 'consumer_receipt';
 /**
@@ -15952,7 +16176,176 @@ export type ReportingDeliveryConfigurationLifecycleState =
   | 'action_required'
   | 'inactive';
 export type ReportingPackageID = string;
+/**
+ * Structured reporting condition that explains delayed or action_required health without exposing credentials, provider response bodies, or internal stack traces.
+ */
+export type ReportingStatusIssue = {
+} & {
+  /**
+   * Seller-issued stable identifier for this logical issue: re-emissions and later polls of the same unresolved condition reuse it, and resolution retires it, so consumers can project AdCP reporting issues into durable work items. A recurrence after resolution receives a new id.
+   */
+  issue_id: string;
+  code:
+    | 'REPORT_OVERDUE'
+    | 'PRODUCTION_FAILED'
+    | 'DELIVERY_FAILED'
+    | 'ACCESS_REQUIRED'
+    | 'CONFIGURATION_REQUIRED'
+    | 'REPORTING_COVERAGE_INCOMPLETE'
+    | 'RESOURCE_EXPIRED'
+    | 'READER_INCOMPATIBLE'
+    | 'HISTORY_UNAVAILABLE'
+    | 'RECEIPT_REQUIRED'
+    | 'RECEIPT_REJECTED'
+    | 'ADJUSTMENT_RECEIPT_REQUIRED'
+    | 'ADJUSTMENT_RECEIPT_REJECTED'
+    | 'CONSUMER_STATUS_MISMATCH';
+  severity: ReportingStatusSeverity;
+  /**
+   * When the seller first observed this logical condition, carried unchanged across every re-emission until the issue is retired. It anchors the escalation clock advertised as consumer_mismatch_escalation_seconds and lets a consumer age an issue without keeping its own first-seen table. Required when code is CONSUMER_STATUS_MISMATCH.
+   */
+  opened_at?: string;
+  /**
+   * Optional seller-maintained lifecycle for this issue_id. open is the default when omitted. acknowledged means a human on responsible_party has taken it up but the condition persists. resolved means the underlying condition no longer holds; a recurrence uses a new issue_id. waived means the parties agreed off-protocol to stop acting on it. Only open and acknowledged issues appear in issues[]; retiring an issue removes it from the projection rather than publishing it at resolved or waived, so a reader that treats a nonempty issues[] as degradation stays correct. Retiring is never a way to discharge a condition that still holds: for CONSUMER_STATUS_MISMATCH see the consumer_mismatch_lifecycle rule.
+   */
+  issue_state?: 'open' | 'acknowledged' | 'resolved' | 'waived';
+  /**
+   * Optional opaque, non-secret correlation string for the party's own tracker — a ticket key, incident ID, or case number. Untrusted display text only. The character class excludes whitespace and the solidus, so the value cannot express a URL or a sentence; receivers compare, store, and display it as inert text and never dereference, resolve, or execute it. It confers no authorization and MUST NOT be used to look up state across accounts or callers.
+   */
+  external_ref?: string;
+  responsible_party: 'buyer' | 'seller' | 'provider';
+  recommended_action:
+    | 'wait_for_retry'
+    | 'contact_buyer'
+    | 'contact_seller'
+    | 'contact_provider'
+    | 'repair_access'
+    | 'update_configuration'
+    | 'change_reporting_scope'
+    | 'use_supported_reader';
+  /**
+   * Untrusted display text only. SDKs and agents dispatch exclusively on closed code/recommended_action values and never execute embedded links or instructions.
+   */
+  message?: string;
+  reporting_obligation_id?: string;
+  /**
+   * Current authenticated consumer status statement that caused this mismatch.
+   */
+  reporting_status_id?: string;
+  delivery_config_id?: string;
+  delivery_config_version?: number;
+  feed_purpose?: ReportingFeedPurpose;
+  /**
+   * @minItems 1
+   */
+  media_buy_ids?: [ReportingMediaBuyID, ...ReportingMediaBuyID[]];
+  /**
+   * @minItems 1
+   */
+  package_ids?: [ReportingPackageID, ...ReportingPackageID[]];
+  period_start?: string;
+  period_end?: string;
+  expected_at?: string;
+} & {
+  /**
+   * Seller-issued stable identifier for this logical issue: re-emissions and later polls of the same unresolved condition reuse it, and resolution retires it, so consumers can project AdCP reporting issues into durable work items. A recurrence after resolution receives a new id.
+   */
+  issue_id: string;
+  code:
+    | 'REPORT_OVERDUE'
+    | 'PRODUCTION_FAILED'
+    | 'DELIVERY_FAILED'
+    | 'ACCESS_REQUIRED'
+    | 'CONFIGURATION_REQUIRED'
+    | 'REPORTING_COVERAGE_INCOMPLETE'
+    | 'RESOURCE_EXPIRED'
+    | 'READER_INCOMPATIBLE'
+    | 'HISTORY_UNAVAILABLE'
+    | 'RECEIPT_REQUIRED'
+    | 'RECEIPT_REJECTED'
+    | 'ADJUSTMENT_RECEIPT_REQUIRED'
+    | 'ADJUSTMENT_RECEIPT_REJECTED'
+    | 'CONSUMER_STATUS_MISMATCH';
+  severity: ReportingStatusSeverity;
+  /**
+   * When the seller first observed this logical condition, carried unchanged across every re-emission until the issue is retired. It anchors the escalation clock advertised as consumer_mismatch_escalation_seconds and lets a consumer age an issue without keeping its own first-seen table. Required when code is CONSUMER_STATUS_MISMATCH.
+   */
+  opened_at?: string;
+  /**
+   * Optional seller-maintained lifecycle for this issue_id. open is the default when omitted. acknowledged means a human on responsible_party has taken it up but the condition persists. resolved means the underlying condition no longer holds; a recurrence uses a new issue_id. waived means the parties agreed off-protocol to stop acting on it. Only open and acknowledged issues appear in issues[]; retiring an issue removes it from the projection rather than publishing it at resolved or waived, so a reader that treats a nonempty issues[] as degradation stays correct. Retiring is never a way to discharge a condition that still holds: for CONSUMER_STATUS_MISMATCH see the consumer_mismatch_lifecycle rule.
+   */
+  issue_state?: 'open' | 'acknowledged' | 'resolved' | 'waived';
+  /**
+   * Optional opaque, non-secret correlation string for the party's own tracker — a ticket key, incident ID, or case number. Untrusted display text only. The character class excludes whitespace and the solidus, so the value cannot express a URL or a sentence; receivers compare, store, and display it as inert text and never dereference, resolve, or execute it. It confers no authorization and MUST NOT be used to look up state across accounts or callers.
+   */
+  external_ref?: string;
+  responsible_party: 'buyer' | 'seller' | 'provider';
+  recommended_action:
+    | 'wait_for_retry'
+    | 'contact_buyer'
+    | 'contact_seller'
+    | 'contact_provider'
+    | 'repair_access'
+    | 'update_configuration'
+    | 'change_reporting_scope'
+    | 'use_supported_reader';
+  /**
+   * Untrusted display text only. SDKs and agents dispatch exclusively on closed code/recommended_action values and never execute embedded links or instructions.
+   */
+  message?: string;
+  reporting_obligation_id?: string;
+  /**
+   * Current authenticated consumer status statement that caused this mismatch.
+   */
+  reporting_status_id?: string;
+  delivery_config_id?: string;
+  delivery_config_version?: number;
+  feed_purpose?: ReportingFeedPurpose;
+  /**
+   * @minItems 1
+   */
+  media_buy_ids?: [ReportingMediaBuyID, ...ReportingMediaBuyID[]];
+  /**
+   * @minItems 1
+   */
+  package_ids?: [ReportingPackageID, ...ReportingPackageID[]];
+  period_start?: string;
+  period_end?: string;
+  expected_at?: string;
+};
 export type ReportingStatusSeverity = 'delayed' | 'action_required';
+/**
+ * Current hard MediaBuy-level cap. Sellers MUST echo it whenever set. Its counter aggregates exposures across all participating packages; each package targeting_overlay.frequency_cap remains independently binding.
+ */
+export type MediaBuyFrequencyCap = FrequencyCap & {
+};
+/**
+ * Frequency capping settings for package-level application. Two types of frequency control can be used independently or together: suppress enforces a cooldown between consecutive exposures; max_impressions + per + window caps total exposures per entity in a time window. When both suppress and max_impressions are set, an impression is delivered only if both constraints permit it (AND semantics). At least one of suppress, suppress_minutes, or max_impressions must be set. Field location determines scope; this value has no scope discriminator. The MediaBuy root uses the narrower media-buy-frequency-cap schema, which permits maximum impressions only in 3.2.
+ */
+export type FrequencyCap = {
+} & {
+  /**
+   * Cooldown period between consecutive exposures to the same entity. Prevents back-to-back ad delivery (e.g. {"interval": 60, "unit": "minutes"} for a 1-hour cooldown). Preferred over suppress_minutes.
+   */
+  suppress?: Duration;
+  /**
+   * @deprecated
+   * Deprecated — use suppress instead. Cooldown period in minutes between consecutive exposures to the same entity (e.g. 60 for a 1-hour cooldown).
+   */
+  suppress_minutes?: number;
+  /**
+   * Maximum number of impressions per entity per window. For duration windows, implementations typically use a rolling window. campaign applies across the owning field's full flight: the package flight for a targeting overlay, or the MediaBuy flight for a root cap.
+   */
+  max_impressions?: number;
+  /**
+   * Entity granularity for impression counting. Required when max_impressions is set.
+   */
+  per?: ReachUnit;
+  /**
+   * Time window for the max_impressions cap (e.g. {"interval": 7, "unit": "days"} or {"interval": 1, "unit": "campaign"} for the full flight). Required when max_impressions is set.
+   */
+  window?: Duration;
+};
 /**
  * How a media buy's total budget is allocated across its packages. Fixed allocation preserves independent package budgets. Seller-optimized allocation delegates continuous cross-package allocation to the seller within the media-buy total, package caps, minimum-spend targets, flight windows, and pacing controls. When a seller-optimized media-buy BiddingPolicy carries cost_per or roas, that control binds to this allocation block's primary optimization goal rather than independently to each package goal.
  */
@@ -16342,6 +16735,254 @@ export type AttestationEvaluation = {
   ext?: ExtensionObject;
 };
 /**
+ * Complete effective targeting accepted for this package, including targeting bound through configured product selection plus package-specific targeting. Sellers MUST echo an applied package frequency_cap independently from any MediaBuy root cap. Sellers MUST also echo placement, property, and collection selection so buyers can audit purchased inventory: placements via placement_selection, collections via collection_selection (the committed concrete selectors, materialized even when the selection was produced through collection_list references).
+ */
+export type TargetingOverlay = TargetingUnknownAgeEligibilityConstraint &
+  TargetingVerifiedAgeBasisConstraint & {
+    /**
+     * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+     *
+     * @minItems 1
+     */
+    geo_countries?: [string, ...string[]];
+    /**
+     * Exclude specific countries from delivery. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
+     *
+     * @minItems 1
+     */
+    geo_countries_exclude?: [string, ...string[]];
+    /**
+     * Restrict delivery to exact canonical ISO 3166-2 subdivisions (states, provinces, regions, departments, or other subdivision categories). Unknown identifiers are invalid. At create or update, sellers MUST reject unsupported identifiers and MUST NOT silently widen, drop, or partially apply the list. During get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome. Exact internal translation preserves accepted identifiers in package readback.
+     *
+     * @minItems 1
+     */
+    geo_regions?: [string, ...string[]];
+    /**
+     * Exclude exact canonical ISO 3166-2 subdivisions. Support is independent from geo_regions inclusion support. Unknown identifiers and values also present in geo_regions are invalid. At create or update, sellers MUST reject unsupported identifiers and partial application; during get_products, a seller may instead return a sparse, buyer-reviewable targeting_resolution modification for a valid but unsupported requested outcome.
+     *
+     * @minItems 1
+     */
+    geo_regions_exclude?: [string, ...string[]];
+    geo_metros?: TargetingGeoMetros;
+    /**
+     * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
+     *
+     * @minItems 1
+     */
+    geo_metros_exclude?: [
+      {
+        system: MetroAreaSystem;
+        /**
+         * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+         *
+         * @minItems 1
+         */
+        values: [string, ...string[]];
+      },
+      ...{
+        system: MetroAreaSystem;
+        /**
+         * Metro codes to exclude within the system (e.g., ['501', '602'] for Nielsen DMAs)
+         *
+         * @minItems 1
+         */
+        values: [string, ...string[]];
+      }[]
+    ];
+    /**
+     * Restrict delivery to specific postal areas. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
+     *
+     * @minItems 1
+     */
+    geo_postal_areas?: [PostalArea, ...PostalArea[]];
+    /**
+     * Exclude specific postal areas from delivery. Prefer the native country + postal system form. The deprecated legacy country-fused postal-system tokens remain accepted for compatibility. Seller must declare supported systems in get_adcp_capabilities.
+     *
+     * @minItems 1
+     */
+    geo_postal_areas_exclude?: [PostalArea, ...PostalArea[]];
+    /**
+     * Restrict delivery to catalog-backed named places. Values MUST be stable identifiers in the declared system, not display names. Sellers must declare supported systems, countries, and place types in get_adcp_capabilities and reject unsupported entries rather than silently dropping them.
+     *
+     * @minItems 1
+     */
+    geo_places?: [GeographicPlaceArea, ...GeographicPlaceArea[]];
+    /**
+     * Exclude catalog-backed named places. Uses the same identifier-based shape as geo_places. Sellers MUST reject overlap with geo_places for the same country, system, place_type, and value.
+     *
+     * @minItems 1
+     */
+    geo_places_exclude?: [GeographicPlaceArea, ...GeographicPlaceArea[]];
+    /**
+     * Restrict delivery to specific time windows. Each entry specifies days of week, an hour range, and an optional timezone that defaults to inventory_local. A concrete IANA zone uses one shared civil-time clock, while inventory_local evaluates each inventory unit in its seller-assigned local timezone. Entries are independent and MAY use different clocks.
+     *
+     * @minItems 1
+     */
+    daypart_targets?: [DaypartTarget, ...DaypartTarget[]];
+    /**
+     * @deprecated
+     * Deprecated: Use TMP provider fields instead. AXE segment ID to include for targeting.
+     */
+    axe_include_segment?: string;
+    /**
+     * @deprecated
+     * Deprecated: Use TMP provider fields instead. AXE segment ID to exclude from targeting.
+     */
+    axe_exclude_segment?: string;
+    /**
+     * Restrict delivery to members of these first-party CRM audiences. Only users present in the uploaded lists are eligible. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Not for lookalike expansion — express that intent in the campaign brief. Seller must declare support in get_adcp_capabilities.
+     *
+     * @minItems 1
+     */
+    audience_include?: [string, ...string[]];
+    /**
+     * Suppress delivery to members of these first-party CRM audiences. Matched users are excluded regardless of other targeting. References audience_id values from sync_audiences on the same seller account — audience IDs are not portable across sellers. Seller must declare support in get_adcp_capabilities.
+     *
+     * @minItems 1
+     */
+    audience_exclude?: [string, ...string[]];
+    signal_targeting_groups?: TargetingSignalGroups;
+    /**
+     * @deprecated
+     * DEPRECATED. Use signal_targeting_groups for package-level signal targeting. Legacy flat signal_targeting remains accepted during the SignalRef migration window but cannot express grouped include/exclude composition or product-scoped pricing.
+     *
+     * @minItems 1
+     */
+    signal_targeting?: [SignalTargeting, ...SignalTargeting[]];
+    demographics?: DemographicTargetingIntent;
+    frequency_cap?: FrequencyCap;
+    property_list?: TargetingPropertyList;
+    property_list_exclude?: PropertyListReference;
+    collection_list?: TargetingCollectionList;
+    collection_list_exclude?: CollectionListReference;
+    placement_selection?: PlacementSelection;
+    collection_selection?: TargetingCollectionSelection;
+    /**
+     * Age restriction for compliance. Use for legal requirements (alcohol, gambling), not audience targeting.
+     */
+    age_restriction?: {
+      /**
+       * Minimum age required
+       */
+      min: number;
+      /**
+       * Whether verified age (not inferred) is required for compliance
+       */
+      verification_required?: boolean;
+      /**
+       * Accepted verification methods. If omitted, any method the platform supports is acceptable.
+       *
+       * @minItems 1
+       */
+      accepted_methods?: [AgeVerificationMethod, ...AgeVerificationMethod[]];
+    };
+    /**
+     * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
+     *
+     * @minItems 1
+     */
+    device_platform?: [DevicePlatform, ...DevicePlatform[]];
+    /**
+     * Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
+     *
+     * @minItems 1
+     */
+    device_platform_exclude?: [DevicePlatform, ...DevicePlatform[]];
+    /**
+     * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+     *
+     * @minItems 1
+     */
+    device_type?: [DeviceType, ...DeviceType[]];
+    /**
+     * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
+     *
+     * @minItems 1
+     */
+    device_type_exclude?: [DeviceType, ...DeviceType[]];
+    /**
+     * Restrict delivery to specific canonical browser families in the impression delivery and rendering environment, not the post-click landing-page browser. Values MUST NOT be inferred solely from operating system, device, web/mobile-web inventory, or placement. Values in this array use OR semantics. When browser is supplied, families not listed are ineligible: other includes a seller-recognized family that is not explicitly enumerated, while unknown includes a browser the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Browser and device constraints intersect; a seller that cannot enforce the exact combination MUST exclude or explicitly reconfigure the product during discovery and MUST reject it at create or update rather than silently widening delivery. Browser versions and seller-native IDs are intentionally unsupported.
+     *
+     * @minItems 1
+     */
+    browser?: [BrowserFamily, ...BrowserFamily[]];
+    /**
+     * Exclude specific canonical browser families from delivery. other excludes seller-recognized families that are not explicitly enumerated; unknown excludes browsers the seller cannot classify into a recognized family. When the same family appears in browser and browser_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
+     *
+     * @minItems 1
+     */
+    browser_exclude?: [BrowserFamily, ...BrowserFamily[]];
+    /**
+     * Target users within store catchment areas from a synced store catalog. Each entry references a store-type catalog and optionally narrows to specific stores or catchment zones.
+     *
+     * @minItems 1
+     */
+    store_catchments?: [
+      {
+        /**
+         * Synced store-type catalog ID from sync_catalogs.
+         */
+        catalog_id: string;
+        /**
+         * Filter to specific stores within the catalog. Omit to target all stores.
+         *
+         * @minItems 1
+         */
+        store_ids?: [string, ...string[]];
+        /**
+         * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
+         *
+         * @minItems 1
+         */
+        catchment_ids?: [string, ...string[]];
+      },
+      ...{
+        /**
+         * Synced store-type catalog ID from sync_catalogs.
+         */
+        catalog_id: string;
+        /**
+         * Filter to specific stores within the catalog. Omit to target all stores.
+         *
+         * @minItems 1
+         */
+        store_ids?: [string, ...string[]];
+        /**
+         * Catchment zone IDs to target (e.g., 'walk', 'drive'). Omit to target all catchment zones.
+         *
+         * @minItems 1
+         */
+        catchment_ids?: [string, ...string[]];
+      }[]
+    ];
+    /**
+     * Target users within travel time, distance, or a custom boundary around arbitrary geographic points. Multiple entries use OR semantics — a user within range of any listed point is eligible. For campaigns targeting 10+ locations, consider using store_catchments with a location catalog instead. Seller must declare support in get_adcp_capabilities.
+     *
+     * @minItems 1
+     */
+    geo_proximity?: [
+      (
+        | {
+          }
+        | {
+          }
+        | {
+          }
+      ),
+      ...(
+        | {
+          }
+        | {
+          }
+        | {
+          }
+      )[]
+    ];
+    language?: TargetingLanguages;
+    keyword_targets?: TargetingKeywords;
+    negative_keywords?: TargetingNegativeKeywords;
+  };
+/**
  * Canonical demographic predicate and exact seller execution details. Include whenever demographic targeting was requested or applied.
  */
 export type DemographicTargetingResolution = {
@@ -16648,6 +17289,7 @@ export interface MediaBuy {
    * @minimum 0
    */
   daily_budget_cap?: number;
+  frequency_cap?: MediaBuyFrequencyCap;
   /**
    * IANA timezone defining the shared calendar-day boundary for every aggregate and package daily cap on this media buy. Sellers MUST echo it whenever any daily cap is set.
    */
@@ -16919,64 +17561,6 @@ export interface ReportingCoverage {
      */
     package_ids?: [ReportingPackageID, ...ReportingPackageID[]];
   }[];
-}
-/**
- * Structured reporting condition that explains delayed or action_required health without exposing credentials, provider response bodies, or internal stack traces.
- */
-export interface ReportingStatusIssue {
-  /**
-   * Seller-issued stable identifier for this logical issue: re-emissions and later polls of the same unresolved condition reuse it, and resolution retires it, so consumers can project AdCP reporting issues into durable work items. A recurrence after resolution receives a new id.
-   */
-  issue_id: string;
-  code:
-    | 'REPORT_OVERDUE'
-    | 'PRODUCTION_FAILED'
-    | 'DELIVERY_FAILED'
-    | 'ACCESS_REQUIRED'
-    | 'CONFIGURATION_REQUIRED'
-    | 'REPORTING_COVERAGE_INCOMPLETE'
-    | 'RESOURCE_EXPIRED'
-    | 'READER_INCOMPATIBLE'
-    | 'HISTORY_UNAVAILABLE'
-    | 'RECEIPT_REQUIRED'
-    | 'RECEIPT_REJECTED'
-    | 'ADJUSTMENT_RECEIPT_REQUIRED'
-    | 'ADJUSTMENT_RECEIPT_REJECTED'
-    | 'CONSUMER_STATUS_MISMATCH';
-  severity: ReportingStatusSeverity;
-  responsible_party: 'buyer' | 'seller' | 'provider';
-  recommended_action:
-    | 'wait_for_retry'
-    | 'contact_buyer'
-    | 'contact_seller'
-    | 'contact_provider'
-    | 'repair_access'
-    | 'update_configuration'
-    | 'change_reporting_scope'
-    | 'use_supported_reader';
-  /**
-   * Untrusted display text only. SDKs and agents dispatch exclusively on closed code/recommended_action values and never execute embedded links or instructions.
-   */
-  message?: string;
-  reporting_obligation_id?: string;
-  /**
-   * Current authenticated consumer status statement that caused this mismatch.
-   */
-  reporting_status_id?: string;
-  delivery_config_id?: string;
-  delivery_config_version?: number;
-  feed_purpose?: ReportingFeedPurpose;
-  /**
-   * @minItems 1
-   */
-  media_buy_ids?: [ReportingMediaBuyID, ...ReportingMediaBuyID[]];
-  /**
-   * @minItems 1
-   */
-  package_ids?: [ReportingPackageID, ...ReportingPackageID[]];
-  period_start?: string;
-  period_end?: string;
-  expected_at?: string;
 }
 /**
  * Single webhook delivery attempt surfaced to a calling principal as a buyer-side debug aid. Represents one HTTP attempt of a logical webhook fire from the seller to the buyer's registered endpoint — retries of the same logical fire share `idempotency_key` and differ by `attempt`. This is the canonical record shape for any AdCP resource that exposes a `webhook_activity[]` log on its read API; see snapshot-and-log.mdx § Webhook activity log pattern for the full normative contract (scoping, retention, three-state presence, request-field conventions).
@@ -17425,6 +18009,7 @@ export type Product = {
   signal_targeting_allowed?: boolean;
   demographic_targeting?: DemographicTargetingCapability;
   overlay_support?: TargetingOverlaySupport;
+  media_buy_support?: ProductMediaBuySupport;
   identity?: ProductIdentity;
   targeting_resolution?: ProductTargetingResolution;
   /**
@@ -18061,6 +18646,15 @@ export type VendorPricingOption = {
  * Pricing model for a vendor service. Discriminated by model: 'cpm' (fixed CPM), 'percent_of_media' (percentage of spend with optional CPM cap), 'flat_fee' (fixed charge per reporting period), 'per_unit' (fixed price per unit of work), or 'custom' (escape hatch for models not covered by the enumerated forms — requires a description and structured metadata).
  */
 export type VendorPricing = CpmPricing | PercentOfMediaPricing | FlatFeePricing | PerUnitPricing | CustomPricing;
+/**
+ * Optional product support detail for aggregate MediaBuy frequency caps. Aggregate support in 3.2 is max-impressions only.
+ */
+export type MediaBuyFrequencyCapSupport = FrequencyCapConstraints & {
+  /**
+   * @minItems 1
+   */
+  supported_control_modes?: [MediaBuyFrequencyCapControlMode, ...MediaBuyFrequencyCapControlMode[]];
+};
 /**
  * Sparse, buyer-reviewable change from targeting requested in get_products to targeting bound to a returned configured product. Entries are applied in array order to the original targeting_overlay; after every entry, the complete result MUST validate against targeting.json. A seller MUST NOT emit two replace operations for the same path or combine replace and remove_values on the same path. Selecting the configured product_id accepts the ordered result.
  */
@@ -19027,7 +19621,18 @@ export interface DemographicTargetingCapability {
   };
 }
 /**
- * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap; create and update reject that overlay under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
+ * Binding product participation in shared MediaBuy-level controls. This is separate from overlay_support because a root frequency cap aggregates exposures across packages rather than targeting one package. Returned products MUST cover every field requested through required_media_buy_support.
+ */
+export interface ProductMediaBuySupport {
+  /**
+   * This product can participate in the seller's shared counter for a root MediaBuy.frequency_cap. A buy mixing this product with one that lacks this declaration, or whose resolved supported_per_units omits the root cap's per value, is rejected atomically.
+   */
+  frequency_cap?: true;
+  frequency_cap_constraints?: MediaBuyFrequencyCapSupport;
+  ext?: ExtensionObject;
+}
+/**
+ * Experimental product-scoped identity and reach-measurement facts. Absence is undeclared, not a claim that the product has persistent identifiers. Sellers implementing this surface MUST list media_buy.product_identity in experimental_features on get_adcp_capabilities. When persistent_identifier is false, the product MUST NOT declare overlay_support.frequency_cap, overlay_support.frequency_cap_support, or media_buy_support.frequency_cap; create and update reject those caps under the ordinary exact-apply-or-reject rule. Delivery for the product MUST NOT report devices, accounts, or cookies as reach_unit. Individuals and households remain valid for panel-based or place-based modeled measurement. When delivery reports reach or frequency with reach_unit custom, reach_methodology is required and explains that unit.
  */
 export interface ProductIdentity {
   /**
@@ -19533,7 +20138,7 @@ export type GetProductsResponse = AdCPVersionEnvelope &
     extensions?: {
     };
     /**
-     * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
+     * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
      */
     proposals?: Proposal[];
     /**
@@ -19685,7 +20290,7 @@ export type GetProductsResponse = AdCPVersionEnvelope &
     };
     pagination?: PaginationResponse;
     /**
-     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, required_overlay_support, deprecated property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
      */
     wholesale_feed_version?: string;
     /**
@@ -19693,7 +20298,7 @@ export type GetProductsResponse = AdCPVersionEnvelope &
      */
     pricing_version?: string;
     /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, required_overlay_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under (agent, buying_mode, filters, targeting_overlay, required_overlay_support, deprecated property_list, catalog, account_id). When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay for the (agent, filters, targeting, support, mode) tuple. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 sellers correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
      */
     cache_scope?: 'public' | 'account';
     /**
@@ -19735,6 +20340,7 @@ export type Proposal = {
    */
   budget_allocation?: BudgetAllocation;
   pacing?: Pacing;
+  frequency_cap?: MediaBuyFrequencyCap;
   proposal_status?: ProposalStatus;
   /**
    * When this proposal expires and can no longer be executed. For draft proposals, indicates when indicative pricing becomes stale. For committed proposals, indicates when the inventory hold lapses — the buyer must call create_media_buy before this time.
@@ -19819,6 +20425,7 @@ export type CanonicalPricingOption = {
   commission_rate?: number;
   commission_basis_description?: string;
 };
+export type ProductPurchaseImpressions = number;
 /**
  * Canonical 3.2 optimization objective. Monetary execution policy belongs in BiddingPolicy; legacy monetary targets and unbound attention metrics are excluded.
  */
@@ -19888,7 +20495,7 @@ export type CanonicalOptimizationGoal =
 /**
  * Buyer evidence-admissibility policy carried into the accepted purchase snapshot.
  */
-export type ProductAudienceEvidenceRequirements = {
+export type ProductPurchaseAudienceEvidenceRequirements = {
 } & {
   requirement_mode: 'required' | 'preferred';
   evidence_presence: 'required' | 'when_available';
@@ -20082,6 +20689,7 @@ export type CanonicalProduct = {
   signal_targeting_rules?: SignalTargetingRules;
   demographic_targeting?: DemographicTargetingCapability;
   overlay_support?: TargetingOverlaySupport1;
+  media_buy_support?: ProductMediaBuySupport;
   identity?: ProductIdentity;
   /**
    * @minItems 1
@@ -21612,6 +22220,7 @@ export interface CommercialTerms {
    * Hard aggregate daily spend ceiling accepted as part of these terms. It bounds total spend without creating purchase allocations.
    */
   daily_budget_cap?: number;
+  frequency_cap?: MediaBuyFrequencyCap;
   /**
    * Shared IANA calendar-day boundary for aggregate and purchase daily caps in these terms.
    */
@@ -21675,7 +22284,7 @@ export interface BrandKey {
   countries?: [string, ...string[]];
 }
 /**
- * One canonical product selection shared by buy_products inputs and compact proposal snapshots. Direct purchases accept published terms as-is; sellers resolve omitted inherited flight, measurement, and performance terms into the accepted commercial snapshot. Changes to those terms belong in the proposal lifecycle. Creative content and creative assignments are intentionally absent.
+ * One resolved canonical product selection in a compact proposal or accepted commercial snapshot. Request-side buy_products selections use product-purchase-input.json. This strict snapshot shape contains effective non-null targeting and resolved inherited terms. Creative content and creative assignments are intentionally absent.
  */
 export interface ProductPurchase {
   product_id: string;
@@ -21705,7 +22314,7 @@ export interface ProductPurchase {
    * Soft lifetime spend target for seller-optimized allocation.
    */
   min_spend_target?: number;
-  impressions?: number;
+  impressions?: ProductPurchaseImpressions;
   /**
    * Resolved package flight start. On direct-purchase input, omission inherits the MediaBuy start; accepted proposal snapshots carry the resolved timestamp.
    */
@@ -21721,7 +22330,7 @@ export interface ProductPurchase {
    * @minItems 1
    */
   optimization_goals?: [CanonicalOptimizationGoal, ...CanonicalOptimizationGoal[]];
-  audience_evidence_requirements?: ProductAudienceEvidenceRequirements;
+  audience_evidence_requirements?: ProductPurchaseAudienceEvidenceRequirements;
   /**
    * Exact immutable audience-evidence snapshots selected for package construction.
    *
@@ -21734,7 +22343,7 @@ export interface ProductPurchase {
   agency_estimate_number?: string;
   context?: ContextObject;
   ext?: ExtensionObject;
-  measurement_terms?: CanonicalMeasurementTerms;
+  measurement_terms?: ProductPurchaseMeasurementTerms;
   /**
    * Published or negotiated metric thresholds and measurement vendors. Direct buyers may omit this to inherit the product defaults; accepted proposal snapshots preserve every applicable standard.
    *
@@ -21755,7 +22364,7 @@ export interface AudienceEvidencePin {
 /**
  * Published or negotiated billing-measurement and makegood terms for this purchase. Direct buyers may omit this to inherit the product default; accepted proposal snapshots preserve the resolved terms.
  */
-export interface CanonicalMeasurementTerms {
+export interface ProductPurchaseMeasurementTerms {
   billing_measurement?: {
     vendor: BrandKey;
     max_variance_percent?: number;
@@ -21938,6 +22547,23 @@ export interface CanonicalReportingCapabilities {
   measurement_windows?: [MeasurementWindow, ...MeasurementWindow[]];
 }
 /**
+ * Default billing measurement and makegood terms inherited by a direct purchase unless a negotiated proposal replaces them.
+ */
+export interface CanonicalMeasurementTerms {
+  billing_measurement?: {
+    vendor: BrandKey;
+    max_variance_percent?: number;
+    measurement_window?: string;
+    finalization_deadline_hours?: number;
+  };
+  makegood_policy?: {
+    /**
+     * @minItems 1
+     */
+    available_remedies: [MakegoodRemedy, ...MakegoodRemedy[]];
+  };
+}
+/**
  * Re-export of `TargetingOverlaySupport` under the legacy codegen artifact name.
  *
  * `TargetingOverlaySupport1` is a json-schema-to-typescript under-resolution artifact —
@@ -22040,6 +22666,12 @@ export interface CanonicalMediaBuyActionFields {
   sla?: SLAWindow;
   change_term_id?: MediaBuyChangeTermID;
   terms_ref?: MediaBuyTermsReference;
+  /**
+   * Exact eligible packages for a package-scoped action; omission means all relevant packages.
+   *
+   * @minItems 1
+   */
+  applicable_package_ids?: [ApplicablePackageID, ...ApplicablePackageID[]];
 }
 export interface CommitmentError {
   status: 'failed';
@@ -22301,6 +22933,7 @@ export interface UpdateMediaBuySuccess {
    * Post-update hard aggregate daily spend ceiling. Echoed when the update sets or changes the aggregate daily cap; omitted after the cap is removed.
    */
   daily_budget_cap?: number;
+  frequency_cap?: MediaBuyFrequencyCap;
   /**
    * Post-update IANA timezone shared by every aggregate and package daily cap. Echoed whenever the update affects daily caps or their timezone.
    */
@@ -25762,7 +26395,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
     extensions?: {
     };
     /**
-     * Optional array of proposed media plans with budget allocations across products. Publishers include proposals when they can provide strategic guidance based on the brief. Proposals are actionable - buyers can refine them via follow-up get_products calls within the same session, or execute them directly via create_media_buy.
+     * Optional legacy proposed media plans. When the request carries media_buy_frequency_cap, every returned proposal echoes the bound value as proposal.frequency_cap. Buyers may refine or execute a committed proposal by ID.
      */
     proposals?: Proposal[];
     /**
@@ -25914,7 +26547,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
     };
     pagination?: PaginationResponse;
     /**
-     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, required_overlay_support, deprecated property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
+     * Opaque token representing the version of the wholesale product feed state used to compose this response. Sellers that implement conditional-fetch (if_wholesale_feed_version) MUST return this on every wholesale-mode response so buyers can cache and probe later. Buyers MUST treat the value as opaque — no format, no ordering, no inspection. The token is scope-keyed: it describes a version for the cache_scope declared on this response, NOT a global agent version. A buyer caches `(cache_scope, wholesale_feed_version)` pairs and presents the matching token on the next request. Scoping dimensions: (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) for cache_scope: 'public'; that tuple plus account_id for cache_scope: 'account'. pagination.cursor is NOT part of the scoping tuple. See specs/wholesale-feed-webhooks.md for the full cache layering model.
      */
     wholesale_feed_version?: string;
     /**
@@ -25922,7 +26555,7 @@ export type GetProductsCompletion = AdCPVersionEnvelope &
      */
     pricing_version?: string;
     /**
-     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, required_overlay_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under (agent, buying_mode, filters, targeting_overlay, required_overlay_support, deprecated property_list, catalog, account_id). When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay for the (agent, filters, targeting, support, mode) tuple. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts — the canonical safety invariant of the entire cache layering model. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed — pre-3.1 sellers correctly emit no cache_scope and remain conformant to their declared version. This is a tightening within 3.1, not a 3.0 break.
+     * Declares whether the wholesale_feed_version and pricing_version on this response describe a universal layer or an account-specific overlay. REQUIRED on every 3.1+ response (the 3.1 schema enforces this — the safety property of the two-layer cache model depends on it). 'public': this response describes the seller's published rate card; the buyer MAY dedupe under (agent, buying_mode, filters, targeting_overlay, media_buy_frequency_cap, required_overlay_support, required_media_buy_support, deprecated property_list, catalog) without scoping by account. 'account': this response includes account-specific overrides; the buyer MUST cache the version under that tuple plus account_id. When the request did NOT include `account`, the seller MUST return `cache_scope: 'public'`. When the request included `account`, the seller MUST return either: 'public' (this account prices off the public rate card — buyer dedupes) or 'account' (account-specific overrides exist — buyer caches under the account key). Sellers MAY return 'public' on an account-scoped request that previously had overrides — buyers SHOULD interpret this as a downgrade and drop their account-overlay. Without schema-required cache_scope, a seller silently omitting the field on an account-scoped response would cause buyers to mis-key the cache and serve account-overlay payloads to other accounts. **Backward-compatibility note for 3.1 validators:** SDKs that validate strictly against the 3.1 schema MUST select the validator based on the server-declared `adcp_version` (release-precision version negotiation, 3.1). For responses with `adcp_version` starting `3.0`, the 3.1 cache_scope-required constraint MUST be relaxed.
      */
     cache_scope?: 'public' | 'account';
     /**
@@ -28686,6 +29319,13 @@ export interface PropertyReference {
 }
 
 
+// core/collection-selection.json
+/**
+ * Complete purchased collection set within a product. Mode selected names the complete required set (partial selection requires product collection_targeting_allowed: true; exactly restating the full bundle is an inherent match); mode default accepts the product's full bundle. Package readback MUST echo the committed selection here as concrete selectors, materializing any collection_list composition; a purchase made with mode default therefore reads back as mode selected naming the product's complete bundle. Rejection of a schema-valid selector that references an unknown collection_id or publisher_domain uses REFERENCE_NOT_FOUND per the error-code registry (INVALID_REQUEST applies only to schema-invalid shapes such as a selected-mode item omitting collection_ids). Sellers reject unknown, duplicate, or partially applicable selectors rather than silently changing the selection.
+ */
+export type CollectionSelection = SelectedCollections | ProductDefaultCollections;
+
+
 // core/collection.json
 /**
  * A recurring inventory container — a named program, publication, event series, rotation, or programmed channel that produces bookable installments on a defined cadence. The kind field indicates how to interpret this collection: 'series' for TV/podcast programs, 'publication' for print/newsletter titles, 'event_series' for live events, 'rotation' for DOOH scheduling, and 'channel' for continuously programmed audio or video streams regardless of carriage or monetization model. Declared in the publisher's adagents.json and referenced by products via collection selectors.
@@ -31402,6 +32042,34 @@ export interface MediaBuyFeatures {
   [k: string]: boolean | BiddingPolicyCapability | undefined;
 }
 
+// core/media-buy-frequency-cap-capability.json
+/**
+ * Complete seller-wide executable domain for aggregate MediaBuy frequency caps. Unlike product detail, this root capability cannot inherit omitted values: it declares the supported max-impression mode, entity units, impression limits, and exact window intervals. Product constraints may only narrow this domain.
+ */
+export type MediaBuyFrequencyCapCapability = FrequencyCapConstraints & {
+  supported_control_modes: MediaBuyFrequencyCapControlMode[];
+};
+
+// core/media-buy-frequency-cap-requirement.json
+/**
+ * Buyer minimum product-support detail for an aggregate MediaBuy frequency cap. Aggregate support in 3.2 is max-impressions only.
+ */
+export type MediaBuyFrequencyCapRequirement = FrequencyCapRequirements & {
+  supported_control_modes?: MediaBuyFrequencyCapControlMode[];
+};
+
+// core/media-buy-support-requirements.json
+/**
+ * Buyer minimums for product participation in shared MediaBuy-level execution. Missing or unknown required capabilities exclude the product.
+ */
+export interface ProductMediaBuySupportRequirements {
+  /**
+   * Require product participation in one shared MediaBuy frequency-cap counter.
+   */
+  frequency_cap?: true;
+  frequency_cap_constraints?: MediaBuyFrequencyCapRequirement;
+}
+
 // core/missing-metric.json
 /**
  * One metric the binding reporting contract declared but that is not populated in a delivery report. Symmetric with `committed_metrics` and discriminated by `scope`.
@@ -31632,6 +32300,21 @@ export type PackageDeliveryMetricValue = ({
   qualifier: {
   };
 };
+
+// core/package-signal-targeting-groups.json
+/**
+ * Top-level basic Boolean composition for package signal targeting. The groups-level operator is required; v1 supports operator 'all', meaning every child group must be satisfied. This represents the portable baseline: (any of include group 1) AND (any of include group 2) AND NOT (any of exclude group N).
+ */
+export interface PackageSignalTargetingGroups {
+  /**
+   * Groups-level operator. Required even though v1 only supports 'all': every child group must be satisfied.
+   */
+  operator: 'all';
+  /**
+   * Signal targeting groups to evaluate. Use operator 'any' for include groups and 'none' for exclusion groups.
+   */
+  groups: PackageSignalTargetingGroup[];
+}
 
 // core/performance-feedback-assertion.json
 /**
@@ -32575,6 +33258,57 @@ export interface PrincipalState {
   }[];
 }
 
+// core/product-audience-evidence-requirements.json
+/**
+ * Buyer-authored evidence policy for compact product discovery. Organization selectors are stable keys and never carry brand assets or content provenance.
+ */
+export interface ProductAudienceEvidenceRequirements {
+  requirement_mode: 'required' | 'preferred';
+  evidence_presence: 'required' | 'when_available';
+  accepted_methodologies?: AudienceEvidenceMethodology[];
+  excluded_methodologies?: AudienceEvidenceMethodology[];
+  accepted_evidence_types?: ('measured' | 'forecast' | 'seller_declared')[];
+  accepted_providers?: BrandKey[];
+  excluded_providers?: BrandKey[];
+  accepted_subject_types?: AudienceSubjectType[];
+  accepted_resolution_methods?: AudienceResolutionMethod[];
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  minimum_confidence?: number;
+  maximum_age?: Duration & {
+    unit?: 'seconds' | 'minutes' | 'hours' | 'days';
+  };
+  methodology_documentation_required?: boolean;
+  independent_attestation_required?: boolean;
+  accepted_attestation_issuers?: (
+    | {
+        type: 'brand';
+        brand: BrandKey;
+        ext?: ExtensionObject;
+      }
+    | {
+        type: 'agent';
+        /**
+         * @pattern ^https:\/\/[^\/?#@]+(?:\/[^?#]*)?(?:\?[^#]*)?$
+         */
+        agent_url: string;
+        ext?: ExtensionObject;
+      }
+    | {
+        type: 'origin';
+        /**
+         * @pattern ^https:\/\/[^\/?#@]+$
+         */
+        origin: string;
+        ext?: ExtensionObject;
+      }
+  )[];
+  accepted_attestation_claim_types?: string[];
+  ext?: ExtensionObject;
+}
+
 // core/product-change-map.json
 /**
  * Product IDs mapped to deterministic membership actions. Object keys are product identifiers, so contradictory actions for one product cannot be represented.
@@ -32927,29 +33661,6 @@ export interface ProductFilters {
 }
 
 // core/product-offer-filters.json
-/**
- * Inventory coverage in the specified proximity boundaries: OR within this field, AND across offer filters. Does not add delivery targeting, require targeting support, or rescope pricing or forecasts.
- *
- * @minItems 1
- */
-export type GeoProximity = [
-  (
-    | {
-      }
-    | {
-      }
-    | {
-      }
-  ),
-  ...(
-    | {
-      }
-    | {
-      }
-    | {
-      }
-  )[]
-];
 /**
  * Offer, commercial-fit, availability, and reporting filters for product discovery. This compact schema is independent of the legacy delivery-targeting filter graph. Brand and issuer selectors are stable keys; callers do not send brand assets or content provenance.
  */
@@ -34124,19 +34835,29 @@ export interface ReportingConsumerStatus {
    */
   reporting_revision_id?: string;
   /**
-   * revision_content_sha256 independently recomputed from the exact consumed Core revision binding. Required only for received; unlike a Reconciled Billing receipt it carries no materialization evidence, row totals, canonical digest, or billing acceptance.
+   * revision_content_sha256 independently recomputed from the exact consumed Core revision binding. Required for received and content_mismatch, where it proves which exact revision content the consumer read; unlike a Reconciled Billing receipt it carries no materialization evidence, row totals, canonical digest, or billing acceptance.
    * @pattern ^[A-Fa-f0-9]{64}$
    */
   observed_revision_content_sha256?: string;
   /**
-   * received means the exact revision content was successfully consumed; obligation_missing means the independently expected period was absent from the seller ledger; revision_missing means the obligation existed but no required revision was available after expected_at; unreadable means a named revision was advertised but its exact content could not be consumed. None of these values reconciles billing evidence.
+   * received means the exact revision content was successfully consumed; obligation_missing means the independently expected period was absent from the seller ledger; revision_missing means the obligation existed but no required revision was available after expected_at; unreadable means a named revision was advertised but its exact content could not be consumed; content_mismatch means the exact revision content was read but contradicts a fact the accepted configuration generation already fixed, named by the closed mismatch_code. None of these values reconciles billing evidence, and content_mismatch in particular is not a measurement dispute.
    */
-  consumer_status: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable';
+  consumer_status: 'received' | 'obligation_missing' | 'revision_missing' | 'unreadable' | 'content_mismatch';
   /**
    * When the consumer established this status. For received, this is when the named revision first became consumable to this consumer; sellers use it as buyer-attributed arrival evidence rather than silently substituting publication time.
    * @format date-time
    */
   status_as_of: string;
+  /**
+   * Closed reason the consumed revision contradicts the accepted configuration generation. Each value is decidable from the obligation, the pinned report definition, and the revision itself, with no reference to either party's own measurement. scope_media_buy_missing: a media buy frozen in the obligation's media_buy_ids denominator is absent from the revision and is not represented by an explicit zero row, so the revision cannot distinguish zero delivery from an omitted buy. coverage_short: the revision covers fewer packages than the obligation's frozen coverage.covered_package_ids claims. metric_missing: a metric named in the pinned report definition's metrics[].name is absent from the revision. schema_nonconformant: rows do not validate against the reporting profile's pinned schema_uri and schema_sha256. currency_mismatch: a value's unit disagrees with the unit the pinned report definition fixed for that metric, or a control total's unit disagrees with the profile-defined unit for that name. period_mismatch: the revision carries a time dimension declared by the pinned grain whose values fall outside the obligation's half-open period. Precedence when more than one applies: schema_nonconformant is used only when the failure is structural validation against the pinned schema; a metric that is simply absent uses metric_missing even when the pinned schema declares it required. Each names a contract fact already fixed by the accepted generation, never a difference of opinion about counts. Agents dispatch on this value, not on prose.
+   */
+  mismatch_code?:
+    | 'scope_media_buy_missing'
+    | 'coverage_short'
+    | 'metric_missing'
+    | 'schema_nonconformant'
+    | 'currency_mismatch'
+    | 'period_mismatch';
   /**
    * Typed reason a named revision was unreadable. Agents dispatch on this value, not prose or provider response bodies.
    */
@@ -34368,6 +35089,29 @@ export interface ReportingDeliveryCapabilities {
    * @format int
    */
   status_retention_days: number;
+  /**
+   * Maximum interval after a CONSUMER_STATUS_MISMATCH issue's opened_at during which the seller may keep that issue at a non-escalated recommended_action. After it, the issue MUST be action_required with a contact_ recommended_action naming the diagnosed responsible_party. Declaring it requires operations_contact so the escalation has a destination. Absence means the seller publishes no escalation commitment; it never means an unbounded one.
+   * @minimum 0
+   * @format int
+   */
+  consumer_mismatch_escalation_seconds?: number;
+  /**
+   * Optional non-secret human escalation path for reporting issues the protocol cannot resolve. It is display metadata for an operator, not an AdCP endpoint: agents MUST NOT dereference, probe, or send protocol traffic to these values, and they carry no authorization. Required when consumer_mismatch_escalation_seconds is advertised.
+   */
+  operations_contact?: {
+    /**
+     * HTTPS page a human uses to open or track a reporting issue, such as a support portal or status page. Same hardened origin shape as the offering document URIs: never an IP literal, userinfo URL, loopback host, AdCP task endpoint, webhook target, or credentialed link.
+     * @maxLength 2048
+     * @pattern ^https:\/\/(?![^\/]*@)(?!localhost(?:[:\/]|$))(?!\[)(?!\d+(?:\.\d+){3}(?::|\/|$))(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?(?:\/|$)
+     */
+    url?: string;
+    /**
+     * Monitored operations mailbox for reporting escalations. A role address, not an individual.
+     * @maxLength 254
+     * @format email
+     */
+    email?: string;
+  };
   /**
    * Optional evidence-scoped observed performance for advertised offerings. offering_id values MUST be unique and name offerings in this capability block.
    */
@@ -38309,7 +39053,7 @@ export interface AccountSetupRequiredDetails {
  * Details payload for ACTION_NOT_ALLOWED errors. Lets buyer SDKs offer a structured recovery path without a separate get_media_buys round-trip.
  */
 export interface ActionNotAllowedDetails {
-  attempted_action: MediaBuyValidAction;
+  attempted_action: MediaBuyAvailableActionID;
   reason: ActionNotAllowedReason;
   /**
    * Echo of the buy's resolved `available_actions[]` at rejection time. Buyer SDKs render this to the caller as the recovery option set.
@@ -39437,7 +40181,7 @@ export interface OutcomeTarget {
 
 // media-buy/package-control.json
 /**
- * Operational controls for an existing package that remain inside its accepted commercial envelope. targeting_overlay is a complete replacement; keyword add/remove arrays are incremental, and the same keyword MUST NOT appear in both directions. Creative mutation, flight changes, new products, pricing changes, and billing-term changes require their dedicated lifecycle or a refined proposal.
+ * Operational controls for an existing package that remain inside its accepted commercial envelope. targeting_overlay is a per-dimension patch; keyword add/remove arrays are incremental, and the same keyword MUST NOT appear in both directions. Creative mutation, flight changes, new products, pricing changes, and billing-term changes require their dedicated lifecycle or a refined proposal.
  */
 export interface PackageControl {
   /**
@@ -39473,7 +40217,7 @@ export interface PackageControl {
    * @maxLength 500
    */
   cancellation_reason?: string;
-  targeting_overlay?: TargetingOverlay;
+  targeting_overlay?: TargetingOverlayInput;
   /**
    * Replace the package's promoted catalogs with references previously managed through sync_catalogs.
    */
@@ -39487,7 +40231,7 @@ export interface PackageControl {
 
 // media-buy/product-discovery-criteria.json
 /**
- * Structured criteria shared by product listing and proposal requests. Offer filters decide which commercial offers may be returned; targeting_overlay constrains deliverable inventory; required_overlay_support requires package-level targeting capability for values the buyer will supply later; acceptance_context supplies facts for advisory seller-policy preflight.
+ * Structured criteria shared by product listing and proposal requests. Offer filters decide which commercial offers may be returned; targeting_overlay constrains deliverable inventory; required_overlay_support requires package-level targeting capability; required_media_buy_support requires participation in shared MediaBuy controls; acceptance_context supplies facts for advisory seller-policy preflight.
  */
 export interface ProductDiscoveryCriteria {
   /**
@@ -39496,7 +40240,9 @@ export interface ProductDiscoveryCriteria {
   product_ids?: string[];
   offer_filters?: ProductOfferFilters;
   targeting_overlay?: TargetingOverlay;
+  media_buy_frequency_cap?: MediaBuyFrequencyCap;
   required_overlay_support?: TargetingOverlayRequirements;
+  required_media_buy_support?: ProductMediaBuySupportRequirements;
   outcome_target?: OutcomeTarget;
   acceptance_context?: AcceptanceContext;
   catalog?: CatalogSelection;
@@ -39529,6 +40275,8 @@ export type ProductResponseFields = (
   | 'signal_targeting_allowed'
   | 'signal_targeting_rules'
   | 'demographic_targeting'
+  | 'overlay_support'
+  | 'media_buy_support'
   | 'audience_evidence'
   | 'audience_evidence_selections'
   | 'max_optimization_goals'
@@ -39541,6 +40289,81 @@ export type ProductResponseFields = (
   | 'allowed_actions'
 )[];
 
+
+// media-buy/product-purchase-input.json
+/**
+ * Canonical format options selected from the published product offer. Legacy named-format identifiers are not accepted.
+ *
+ * @minItems 1
+ */
+export type FormatOptionRefs = [FormatOptionReference, ...FormatOptionReference[]];
+/**
+ * Previously synchronized account catalog IDs promoted by this selection. Callers manage catalog bodies through sync_catalogs rather than inlining them here.
+ *
+ * @minItems 1
+ */
+export type CatalogIds = [string, ...string[]];
+/**
+ * @minItems 1
+ */
+export type OptimizationGoals = [CanonicalOptimizationGoal, ...CanonicalOptimizationGoal[]];
+/**
+ * Exact immutable audience-evidence snapshots selected for package construction.
+ *
+ * @minItems 1
+ */
+export type AudienceEvidencePins = [AudienceEvidencePin, ...AudienceEvidencePin[]];
+/**
+ * Published or negotiated metric thresholds and measurement vendors. Direct buyers may omit this to inherit the product defaults; accepted proposal snapshots preserve every applicable standard.
+ *
+ * @minItems 1
+ */
+export type PerformanceStandards = [CanonicalPerformanceStandard, ...CanonicalPerformanceStandard[]];
+/**
+ * Request-only canonical product selection for buy_products. It shares the strict Product Purchase field shapes but uses Targeting Input so a buyer can distinguish inheritance, replacement, and explicit clearing. Accepted commercial snapshots use product-purchase.json and contain only resolved, non-null effective targeting.
+ */
+export interface ProductPurchaseInput {
+  product_id: string;
+  pricing_option_id: string;
+  pricing?: CanonicalPricingOption;
+  format_option_refs?: FormatOptionRefs;
+  catalog_ids?: CatalogIds;
+  /**
+   * Hard spend cap for this selection in the media-buy currency.
+   */
+  budget?: number;
+  /**
+   * Optional hard daily spend ceiling for this purchase. It is subordinate to the media-buy aggregate daily cap and is not a reserved daily allocation. Its day boundary is the media buy's budget_cap_timezone.
+   */
+  daily_budget_cap?: number;
+  /**
+   * Soft lifetime spend target for seller-optimized allocation.
+   */
+  min_spend_target?: number;
+  impressions?: ProductPurchaseImpressions;
+  /**
+   * Resolved package flight start. On direct-purchase input, omission inherits the MediaBuy start; accepted proposal snapshots carry the resolved timestamp.
+   */
+  start_time?: string;
+  /**
+   * Resolved package flight end. On direct-purchase input, omission inherits the MediaBuy end; accepted proposal snapshots carry the resolved timestamp.
+   */
+  end_time?: string;
+  pacing?: Pacing;
+  bidding?: BiddingPolicy;
+  targeting_overlay?: TargetingOverlayInput;
+  optimization_goals?: OptimizationGoals;
+  audience_evidence_requirements?: ProductPurchaseAudienceEvidenceRequirements;
+  audience_evidence_pins?: AudienceEvidencePins;
+  /**
+   * Package-level agency estimate or authorization reference.
+   */
+  agency_estimate_number?: string;
+  context?: ContextObject;
+  ext?: ExtensionObject;
+  measurement_terms?: ProductPurchaseMeasurementTerms;
+  performance_standards?: PerformanceStandards;
+}
 
 // media-buy/product-refinement.json
 /**
@@ -39644,7 +40467,7 @@ export interface ProposalDecline {
 
 // media-buy/proposal-refinement.json
 /**
- * Fork an immutable proposal or finalize a draft into a held committed snapshot. Revising with structured criteria, typed boundaries, product changes, requested alternatives, and/or a semantic ask creates one or more new drafts; finalizing changes no terms. Refining an accepted proposal creates a draft amendment or cancellation proposal against its MediaBuy; the source remains accepted and unchanged.
+ * Fork an immutable proposal or finalize a draft into a held committed snapshot. Revising with structured criteria, typed boundaries, product changes, requested alternatives, and/or a semantic ask creates one or more new drafts; finalizing changes no terms. Refining an accepted proposal creates a draft amendment or cancellation proposal against its MediaBuy; the source remains accepted and unchanged. A revised product mix must support the resulting root frequency cap; because omitted criteria inherit, clearing the cap is explicit through remove_media_buy_frequency_cap.
  */
 export type ProposalRefinement = {
   /**
@@ -39713,6 +40536,10 @@ export type ProposalRefinement = {
    */
   ask?: string;
   criteria?: ProductDiscoveryCriteria;
+  /**
+   * Request a revised draft whose commercial terms omit the existing MediaBuy frequency cap. Omission inherits it. To replace it, provide criteria.media_buy_frequency_cap instead.
+   */
+  remove_media_buy_frequency_cap?: true;
 } & (
   | {
       action: 'finalize';

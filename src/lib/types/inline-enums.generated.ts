@@ -761,11 +761,6 @@ export const DownstreamConnectionRequirement_ScopeValues = ["account", "identity
 /** single | DownstreamConnectionRequirement.status */
 export const DownstreamConnectionRequirement_StatusValues = ["connected", "missing", "pending", "expired", "revoked", "not_required", "unknown"] as const;
 
-// ====== Duration ======
-
-/** single | Duration.unit */
-export const Duration_UnitValues = ["seconds", "minutes", "hours", "days", "campaign"] as const;
-
 // ====== EducationItem ======
 
 /** single | EducationItem.degree_type */
@@ -885,7 +880,7 @@ export const GetProductsCompletion_CacheScopeValues = ["public", "account"] as c
 /** single | GetProductsRequest.buying_mode */
 export const GetProductsRequest_BuyingModeValues = ["brief", "wholesale", "refine"] as const;
 /** array of | GetProductsRequest.fields */
-export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "identity", "expires_at", "allowed_actions", "format_ids", "outcome_measurement", "delivery_measurement", "creative_policy", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_options", "overlay_support", "targeting_resolution", "collections", "collection_targeting_allowed", "installments", "is_custom", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
+export const GetProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "identity", "expires_at", "allowed_actions", "format_ids", "outcome_measurement", "delivery_measurement", "creative_policy", "metric_optimization", "conversion_tracking", "data_provider_signals", "included_signals", "signal_targeting_options", "targeting_resolution", "collections", "collection_targeting_allowed", "installments", "is_custom", "product_card", "product_card_detailed", "enforced_policies", "trusted_match"] as const;
 
 // ====== GetSignalsRequest ======
 
@@ -1052,7 +1047,7 @@ export const ListCreativesRequest_FieldsValues = ["creative_id", "name", "format
 // ====== ListProductsRequest ======
 
 /** array of | ListProductsRequest.fields */
-export const ListProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "identity", "expires_at", "allowed_actions"] as const;
+export const ListProductsRequest_FieldsValues = ["product_id", "name", "description", "publisher_properties", "channels", "video_placement_types", "audio_distribution_types", "sponsored_placement_types", "social_placement_surfaces", "format_options", "placements", "delivery_type", "exclusivity", "pricing_options", "forecast", "reporting_capabilities", "measurement_terms", "performance_standards", "catalog_types", "signal_targeting_allowed", "signal_targeting_rules", "demographic_targeting", "overlay_support", "media_buy_support", "audience_evidence", "audience_evidence_selections", "max_optimization_goals", "catalog_match", "list_applications", "brief_relevance", "acceptance_policy_profile_ids", "identity", "expires_at", "allowed_actions"] as const;
 
 // ====== MacroDeclaration ======
 
@@ -1457,9 +1452,11 @@ export const ReportingCanonicalizationContract_MediaTypeValues = ["application/v
 // ====== ReportingConsumerStatus ======
 
 /** single | ReportingConsumerStatus.consumer_status */
-export const ReportingConsumerStatus_ConsumerStatusValues = ["received", "obligation_missing", "revision_missing", "unreadable"] as const;
+export const ReportingConsumerStatus_ConsumerStatusValues = ["received", "obligation_missing", "revision_missing", "unreadable", "content_mismatch"] as const;
 /** single | ReportingConsumerStatus.failure_code */
 export const ReportingConsumerStatus_FailureCodeValues = ["access_denied", "resource_not_found", "integrity_mismatch", "reader_incompatible", "transport_failed"] as const;
+/** single | ReportingConsumerStatus.mismatch_code */
+export const ReportingConsumerStatus_MismatchCodeValues = ["scope_media_buy_missing", "coverage_short", "metric_missing", "schema_nonconformant", "currency_mismatch", "period_mismatch"] as const;
 
 // ====== ReportingCoverage ======
 
@@ -1485,6 +1482,8 @@ export const ReportingDeliveryCapabilities_StatusTaskValues = ["get_reporting_st
 
 // ====== ReportingDeliveryConfiguration ======
 
+/** single | ReportingDeliveryConfiguration.authoritative_party */
+export const ReportingDeliveryConfiguration_AuthoritativePartyValues = ["seller", "consumer"] as const;
 /** single | ReportingDeliveryConfiguration.coverage_requirement */
 export const ReportingDeliveryConfiguration_CoverageRequirementValues = ["full", "allow_partial"] as const;
 
@@ -1546,6 +1545,8 @@ export const ReportingScheduleOffering_PeriodTimezonePolicyValues = ["fixed", "a
 
 /** single | ReportingStatusIssue.code */
 export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE", "RECEIPT_REQUIRED", "RECEIPT_REJECTED", "ADJUSTMENT_RECEIPT_REQUIRED", "ADJUSTMENT_RECEIPT_REJECTED", "CONSUMER_STATUS_MISMATCH"] as const;
+/** single | ReportingStatusIssue.issue_state */
+export const ReportingStatusIssue_IssueStateValues = ["open", "acknowledged", "resolved", "waived"] as const;
 /** single | ReportingStatusIssue.recommended_action */
 export const ReportingStatusIssue_RecommendedActionValues = ["wait_for_retry", "contact_buyer", "contact_seller", "contact_provider", "repair_access", "update_configuration", "change_reporting_scope", "use_supported_reader"] as const;
 /** single | ReportingStatusIssue.responsible_party */
@@ -2348,6 +2349,13 @@ export const ProductAudienceEvidenceRequirements_RequirementModeValues = Audienc
 // --- ProductDefaultPlacements ---
 /** @deprecated use `ProductDefaultCollections_ModeValues` — same literal set, ProductDefaultPlacements.mode duplicates the canonical export. */
 export const ProductDefaultPlacements_ModeValues = ProductDefaultCollections_ModeValues;
+// --- ProductPurchaseAudienceEvidenceRequirements ---
+/** @deprecated use `AudienceEvidence_EvidenceTypeValues` — same literal set, ProductPurchaseAudienceEvidenceRequirements.accepted_evidence_types duplicates the canonical export. */
+export const ProductPurchaseAudienceEvidenceRequirements_AcceptedEvidenceTypesValues = AudienceEvidence_EvidenceTypeValues;
+/** @deprecated use `AudienceEvidenceRequirements_EvidencePresenceValues` — same literal set, ProductPurchaseAudienceEvidenceRequirements.evidence_presence duplicates the canonical export. */
+export const ProductPurchaseAudienceEvidenceRequirements_EvidencePresenceValues = AudienceEvidenceRequirements_EvidencePresenceValues;
+/** @deprecated use `AudienceEvidenceRequirements_RequirementModeValues` — same literal set, ProductPurchaseAudienceEvidenceRequirements.requirement_mode duplicates the canonical export. */
+export const ProductPurchaseAudienceEvidenceRequirements_RequirementModeValues = AudienceEvidenceRequirements_RequirementModeValues;
 // --- ProductTarget ---
 /** @deprecated use `ProductLocalFormatOptionReference_ScopeValues` — same literal set, ProductTarget.kind duplicates the canonical export. */
 export const ProductTarget_KindValues = ProductLocalFormatOptionReference_ScopeValues;
@@ -2481,6 +2489,9 @@ export const SyncCreativesSubmitted_StatusValues = BuildCreativeAsyncSubmitted_S
 // --- TagURL ---
 /** @deprecated use `DisplayTagFormatDeclaration_FormatKindValues` — same literal set, TagURL.asset_type duplicates the canonical export. */
 export const TagURL_AssetTypeValues = DisplayTagFormatDeclaration_FormatKindValues;
+// --- TargetingSignalGroups ---
+/** @deprecated use `PackageSignalTargetingGroups_OperatorValues` — same literal set, TargetingSignalGroups.operator duplicates the canonical export. */
+export const TargetingSignalGroups_OperatorValues = PackageSignalTargetingGroups_OperatorValues;
 // --- TextAsset ---
 /** @deprecated use `GroupTextAsset_AssetTypeValues` — same literal set, TextAsset.asset_type duplicates the canonical export. */
 export const TextAsset_AssetTypeValues = GroupTextAsset_AssetTypeValues;
