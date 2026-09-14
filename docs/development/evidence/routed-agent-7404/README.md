@@ -75,7 +75,9 @@ creative-asset preflight, account checks, controller scenario declarations,
 authentication, OAuth metadata applicability, and transport observations use the selected profile/options.
 Validation-only coverage does not require a transport route. Phase-local repeated
 step IDs cannot share capability decisions. Fixture resolution binds each seed or
-discovery operation to that operation's selected agent toolset.
+discovery operation to that operation's selected agent toolset, only when its
+strategy is reached. An unused fallback cannot require another route. Failed
+stateful routes preserve the dependency cascade.
 Dynamic task references resolve before protocol routing and ambiguity checks, so a
 conflicting dynamic step cannot be discovered only after earlier calls have run. Tool-family applicability and fixture-availability skips cannot conceal an
 unresolved route or failed discovery. Independent missing runtime adapters remain

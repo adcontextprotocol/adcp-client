@@ -13,7 +13,7 @@ const { routedAgentOptions } = require('../../dist/lib/testing/storyboard/agent-
 
 // Real routed discovery and MCP dispatch, with deterministic protocol fixtures.
 // No union/profile injection stands in for options.agents.
-async function startAgent(tools, capabilities = {}, rejectTools = false) {
+async function startAgent(tools, capabilities = {}, rejectTools = false, products = []) {
   const calls = [];
   const authorization = [];
   const connections = [];
@@ -26,7 +26,7 @@ async function startAgent(tools, capabilities = {}, rejectTools = false) {
       return;
     }
     const mcp = new McpServer({ name: 'routing-contract-test', version: '1.0.0' });
-    for (const name of new Set(['get_adcp_capabilities', ...tools])) {
+    for (const name of new Set([...(capabilities === null ? [] : ['get_adcp_capabilities']), ...tools])) {
       mcp.registerTool(name, {}, async () => {
         calls.push(name);
         authorization.push(req.headers.authorization);
@@ -43,7 +43,7 @@ async function startAgent(tools, capabilities = {}, rejectTools = false) {
             : name === 'get_signals'
               ? { signals: [] }
               : name === 'get_products'
-                ? { products: [] }
+                ? { products, cache_scope: 'public' }
                 : {};
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
       });
@@ -87,7 +87,10 @@ function sets(result) {
 
 async function run(topology, sb, options = {}, entryOptions = {}) {
   const entries = await Promise.all(
-    Object.entries(topology).map(async ([key, [tools, caps, reject]]) => [key, await startAgent(tools, caps, reject)])
+    Object.entries(topology).map(async ([key, [tools, caps, reject, products]]) => [
+      key,
+      await startAgent(tools, caps, reject, products),
+    ])
   );
   const agents = Object.fromEntries(entries);
   try {
@@ -817,4 +820,133 @@ test('routed controller scenario declarations accept object maps without inherit
       scenarios ? { detected: true, scenarios: ['query_upstream_traffic'] } : { detected: false }
     );
   }
+});
+
+for (const strategies of [['discover'], ['discover', 'seed']]) {
+  test(`fixture ${strategies.join(' then ')} never resolves an unused ambiguous controller`, async () => {
+    const sb = storyboard([{ id: 'later', task: 'get_adcp_capabilities', agent: 'seller' }]);
+    sb.fixtures = { products: [{ product_id: 'fixture-product' }] };
+    sb.fixture_resolution = {
+      products: [{ handle: 'fixture-product', strategies, match: [{ path: '/product_id', operator: 'present' }] }],
+    };
+    const { result, calls } = await run(
+      {
+        seller: [
+          ['get_products'],
+          { supported_protocols: ['media_buy'] },
+          false,
+          [
+            require('./test-fixtures').createTestProduct({
+              product_id: 'seller-product',
+              format_ids: undefined,
+              format_options: [
+                {
+                  format_option_id: 'display',
+                  format_kind: 'image',
+                  params: { width: 300, height: 250 },
+                  canonical_formats_only: true,
+                },
+              ],
+            }),
+          ],
+        ],
+        controller_a: [['comply_test_controller'], { compliance_testing: { scenarios: ['seed_product'] } }],
+        controller_b: [['comply_test_controller'], { compliance_testing: { scenarios: ['seed_product'] } }],
+      },
+      sb
+    );
+    assert.deepEqual(
+      sets(result),
+      { selected: ['seed_product.fixture-product', 'later'], skipped: [], failed: [] },
+      JSON.stringify({ result, calls })
+    );
+    assert.equal(result.fixture_resolutions[0].strategy, 'discover');
+    assert.deepEqual(
+      result.fixture_resolutions[0].strategies_attempted.map(attempt => attempt.strategy),
+      ['discover']
+    );
+    assert.deepEqual(calls, {
+      seller: ['get_adcp_capabilities', 'get_adcp_capabilities', 'get_products', 'get_adcp_capabilities'],
+      controller_a: ['get_adcp_capabilities'],
+      controller_b: ['get_adcp_capabilities'],
+    });
+  });
+}
+
+test('controller applicability cannot conceal a failed route or authorize dependent stateful calls', async () => {
+  const healthy = await startAgent(['get_signals'], { supported_protocols: ['signals'] });
+  const sb = storyboard([
+    { id: 'broken', task: 'get_adcp_capabilities', agent: 'broken', stateful: true },
+    { id: 'dependent', task: 'get_signals', agent: 'healthy', stateful: true },
+    { id: 'read', task: 'get_adcp_capabilities', agent: 'healthy' },
+  ]);
+  sb.requires = ['controller'];
+  try {
+    const result = await runStoryboard('', sb, {
+      discovery_resilient: true,
+      strictResponseSchemaValidation: false,
+      invariants: [],
+      agents: { broken: { url: 'http://127.0.0.1:1/mcp' }, healthy: { url: healthy.url } },
+    });
+    assert.deepEqual(sets(result), {
+      selected: ['broken', 'read'],
+      skipped: [['dependent', 'prerequisite_failed']],
+      failed: ['broken', 'dependent'],
+    });
+    assert.equal(result.overall_passed, false);
+    assert.deepEqual(healthy.calls, ['get_adcp_capabilities', 'get_adcp_capabilities']);
+  } finally {
+    await closeConnections();
+    await healthy.close();
+  }
+});
+
+test('a legacy routed agent without capability discovery did not opt into signing', async () => {
+  const sb = storyboard([
+    { id: 'legacy', task: 'get_signals', agent: 'legacy' },
+    { id: 'signed', task: 'get_signals', agent: 'signed' },
+  ]);
+  sb.id = 'signed_requests';
+  const { result, calls } = await run(
+    {
+      legacy: [['get_signals'], null],
+      signed: [['get_signals'], { supported_protocols: ['signals'], request_signing: { supported: true } }],
+    },
+    sb
+  );
+  assert.deepEqual(
+    sets(result),
+    { selected: ['signed'], skipped: [['legacy', 'not_applicable']], failed: [] },
+    JSON.stringify(result)
+  );
+  assert.equal(result.phases[0].steps[0].skip.requirement, 'request_signer');
+  assert.deepEqual(calls, { legacy: [], signed: ['get_adcp_capabilities', 'get_adcp_capabilities', 'get_signals'] });
+});
+
+test('reachable routed agents still enforce the controller prerequisite', async () => {
+  const sb = storyboard([{ id: 'later', task: 'get_adcp_capabilities', agent: 'a' }]);
+  sb.requires = ['controller'];
+  const { result, calls } = await run({ a: [[], {}], b: [[], {}] }, sb);
+  assert.deepEqual(sets(result), {
+    selected: [],
+    skipped: [['requirement_unmet:controller', 'missing_test_controller']],
+    failed: [],
+  });
+  assert.equal(result.phases[0].steps[0].skip.requirement, 'controller');
+  assert.deepEqual(calls, { a: ['get_adcp_capabilities'], b: ['get_adcp_capabilities'] });
+});
+
+test('validation-only rows do not prevent a whole-storyboard capability skip', async () => {
+  const sb = storyboard([
+    { id: 'probe', task: 'get_adcp_capabilities', agent: 'a' },
+    { id: 'coverage', validations: [{ check: 'present', path: 'value' }] },
+  ]);
+  sb.requires_capability = { path: 'request_signing.supported', equals: true };
+  const { result, calls } = await run({ a: [[], { request_signing: { supported: false } }] }, sb);
+  assert.deepEqual(sets(result), {
+    selected: [],
+    skipped: [['capability_unsupported', 'capability_unsupported']],
+    failed: [],
+  });
+  assert.deepEqual(calls, { a: ['get_adcp_capabilities'] });
 });

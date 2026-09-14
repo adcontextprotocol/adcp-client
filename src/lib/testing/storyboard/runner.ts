@@ -2573,7 +2573,12 @@ async function executeStoryboardPass(
             options.adcpVersion
           );
           if (rootDetail === null && allRequires.includes('request_signer')) {
-            const requirement = await checkRequires(['request_signer'], storyboard, selectedOptions, selected.profile);
+            const requirement = await checkRequires(['request_signer'], storyboard, selectedOptions, {
+              ...selected.profile!,
+              // Routed discovery is authoritative. A legacy agent without a
+              // capabilities response did not opt into request signing.
+              raw_capabilities: selected.profile!.raw_capabilities ?? {},
+            });
             if ('requirement' in requirement) {
               rootDetail = requirement.detail;
               routedStepRequirements.set(step, requirement.requirement);
@@ -2642,7 +2647,11 @@ async function executeStoryboardPass(
   if (storyboardCapabilityPredicates(storyboard).length > 0) {
     const unmetDetail = routingContext
       ? routedRootCapabilitySkips.length > 0 &&
-        routedRootCapabilitySkips.length === storyboard.phases.reduce((n, phase) => n + phase.steps.length, 0)
+        routedRootCapabilitySkips.length ===
+          storyboard.phases.reduce(
+            (n, phase) => n + phase.steps.filter(step => step.task !== VALIDATION_ONLY_TASK).length,
+            0
+          )
         ? routedRootCapabilitySkips[0]!
         : null
       : evaluateStoryboardCapabilityGates(storyboard, profile, options.agentTools, options.adcpVersion);
@@ -2657,7 +2666,7 @@ async function executeStoryboardPass(
 
   if (allRequires.length) {
     const requirementCheck = await checkRequires(
-      allRequires,
+      routedErrors.size > 0 ? allRequires.filter(requirement => requirement !== 'controller') : allRequires,
       storyboard,
       options,
       routingContext ? undefined : profile
@@ -3010,60 +3019,44 @@ async function executeStoryboardPass(
   let fixtureResolutionRecords: FixtureResolutionRecord[] | undefined;
   let fixtureCoverageGap: FixtureResolutionCoverageGap | undefined;
   {
-    let fixtureSeedClient = clients[0]!;
-    let fixtureDiscoveryClient = clients[0]!;
-    let fixtureSeedOptions = options;
-    let fixtureDiscoveryOptions = options;
-    if (
-      routingContext &&
-      options.agents &&
-      options.skip_controller_seeding !== true &&
-      (storyboard.prerequisites?.controller_seeding === true || storyboard.fixture_resolution !== undefined)
-    ) {
-      const fixtureStep = (task: string): StoryboardStep => ({
-        id: `__fixture_resolution_${task}__`,
-        title: `Fixture resolution via ${task}`,
-        task,
+    let seeding;
+    try {
+      seeding =
+        creativeAssetFixtureGap || skipControllerSeedingForPhaseGates
+          ? null
+          : preSeeded !== undefined
+            ? preSeeded.result
+            : await runControllerSeeding(
+                clients[0]!,
+                storyboard,
+                options,
+                context,
+                clients[0]!,
+                routingContext
+                  ? task => {
+                      // Resolve only a fixture strategy that is actually reached.
+                      // No union member can authorize a selected agent's operation.
+                      if (!options.agentTools?.includes(task))
+                        return { client: clients[0]!, options: { ...options, agentTools: [] } };
+                      const selected = dispatch.nextFor({
+                        id: `__fixture_resolution_${task}__`,
+                        title: `Fixture resolution via ${task}`,
+                        task,
+                      });
+                      return { client: selected.client, options: selected.options! };
+                    }
+                  : undefined
+              );
+    } catch (error) {
+      if (!(error instanceof RoutingError)) throw error;
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, {
+        step: 'Resolve fixture agent routes',
+        passed: false,
+        duration_ms: 0,
+        error: redactOAuthUrlsInText(error.message),
       });
-      // Each fixture operation has its own selected contract. The union can
-      // establish topology availability, but cannot authorize a fallback route.
-      fixtureSeedOptions = { ...options, agentTools: [] };
-      fixtureDiscoveryOptions = { ...options, agentTools: [] };
-      try {
-        if (options.agentTools?.includes('comply_test_controller')) {
-          const selected = dispatch.nextFor(fixtureStep('comply_test_controller'));
-          fixtureSeedClient = selected.client;
-          fixtureSeedOptions = selected.options!;
-        }
-        if (options.agentTools?.includes('get_products')) {
-          const selected = dispatch.nextFor(fixtureStep('get_products'));
-          fixtureDiscoveryClient = selected.client;
-          fixtureDiscoveryOptions = selected.options!;
-        }
-      } catch (error) {
-        if (!callerOwnsClients) await closeScopedConnections(options.protocol);
-        return buildDiscoveryFailedResult(agentUrls, storyboard, {
-          step: 'Resolve fixture agent routes',
-          passed: false,
-          duration_ms: 0,
-          error: redactOAuthUrlsInText(error instanceof Error ? error.message : String(error)),
-        });
-      }
     }
-    const seeding = creativeAssetFixtureGap
-      ? null
-      : skipControllerSeedingForPhaseGates
-        ? null
-        : preSeeded !== undefined
-          ? preSeeded.result
-          : await runControllerSeeding(
-              fixtureSeedClient,
-              storyboard,
-              fixtureSeedOptions,
-              context,
-              fixtureDiscoveryClient,
-              fixtureDiscoveryOptions
-            );
     if (seeding) {
       const attach = preSeeded === undefined || preSeeded.attach;
       if (attach) {
@@ -3530,6 +3523,7 @@ async function executeStoryboardPass(
         priorStepResults.set(step.id, failed);
         failedCount++;
         phasePassed = false;
+        if (step.stateful) phaseStatefulCascades.set(phase.id, null);
         continue;
       }
       // OAuth metadata absence belongs to the selected route, including a
