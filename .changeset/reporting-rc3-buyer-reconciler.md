@@ -49,6 +49,25 @@ the obligation, so it comes from `ExpectedReportingPeriod.automatedRecoveryWindo
 either pin marks nothing overdue and posts nothing, because posting on a guessed clock would churn
 the status chain.
 
+**Identity that survives a retry.** `reporting_status_id` is derived from the claim the statement
+makes — configuration generation, report definition, period, status, revision, recomputed digest,
+`mismatch_code` / `failure_code`, and the leaf it supersedes — and no longer from `status_as_of`,
+which for `received` and `unreadable` is the buyer's own clock and is new on every re-plan.
+`idempotency_key` is likewise derived from the batch body rather than minted per attempt: it is
+documented as _"Exact retries reuse the key and body"_, and a fresh key made the seller's batch
+replay unreachable by construction. Together they make a reconstructed post byte-identical to the one
+whose response was lost, so the seller replays it instead of appending a second statement. The leaf
+stays in the ID derivation on purpose — it is stable across attempts at the same claim, and it keeps
+a claim that genuinely recurs later in a chain (`received`, then `unreadable` after a flaky read,
+then `received` again) from colliding with the earlier identical one.
+
+**Row-level mismatch codes are reachable.** Detection runs a second time once the rows are in hand,
+so `metric_missing` and the other row-gated codes can fire through the reconciler at all. Only
+`observedMetricNames` is derived, only when the buyer pinned `committedMetrics`, and a metric counts
+as present if any row carries it at top level or under `totals` or the revision declares a control
+total for it — the remaining row predicates would need the profile's own row shape, and guessing at
+them risks exactly the false accusation the row gating exists to prevent.
+
 **Saying nothing when there is nothing to say.** Each plan names the caller's current leaf in
 `supersedes_reporting_status_id` — resolved from the caller's own append-only history, now loaded
 onto `ReportingLedger.consumerStatuses`, so the chain is named even before any obligation exists.

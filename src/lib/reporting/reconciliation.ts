@@ -18,6 +18,7 @@ import {
   detectReportingContentMismatch,
   type ReportingContractFactsV1,
   type ReportingMismatchCodeV1,
+  type ReportingRowEvidenceV1,
 } from './content-mismatch';
 import { isReportingControlTotals, isReportingReceiptEvidence, isReportingVerificationEvidence } from './evidence';
 import {
@@ -2161,13 +2162,14 @@ export async function reconcileReporting<TCredential = unknown>(
     // the record of everything the seller had already accepted.
     for (let offset = 0; offset < owed.length; offset += CONSUMER_STATUS_BATCH_MAX) {
       const batch = owed.slice(offset, offset + CONSUMER_STATUS_BATCH_MAX);
+      const wireStatuses = batch.map(wireConsumerStatus);
       const response = await callBeforeDeadline(
         signal =>
           options.client.syncReportingStatus!(
             {
               ...(options.request.account ? { account: options.request.account } : {}),
-              idempotency_key: generateIdempotencyKey(),
-              statuses: batch.map(wireConsumerStatus),
+              idempotency_key: consumerStatusBatchKey(wireStatuses),
+              statuses: wireStatuses,
             },
             { signal }
           ),
@@ -2222,6 +2224,8 @@ interface ConsumedReportingRevisionV1 {
   /** When this consumer finished consuming it — buyer-attributed arrival evidence. */
   consumedAt: string;
   rowCount: number;
+  /** The complete ordered row sequence, concatenated across every cursor page. */
+  rows: readonly unknown[];
 }
 
 interface UnconsumableReportingRevisionV1 {
@@ -2290,15 +2294,43 @@ async function attestConsumerStatusPlan(
     );
   }
 
+  // Now that rows are in hand, re-run detection with the row evidence the
+  // planner could not have. Four of the six codes are row-level predicates, so
+  // without this pass they are unreachable through the reconciler no matter
+  // what the seller published.
+  const expected = options.expectedPeriods.find(
+    candidate =>
+      candidate.deliveryConfigId === plan.deliveryConfigId &&
+      candidate.deliveryConfigVersion === plan.deliveryConfigVersion &&
+      candidate.reportDefinitionId === plan.reportDefinitionId &&
+      candidate.periodStart === plan.period.start &&
+      candidate.periodEnd === plan.period.end
+  );
+  const obligation = ledger.obligations.find(
+    candidate => candidate.reporting_obligation_id === plan.reportingObligationId
+  );
+  const revision = ledger.revisions.find(candidate => candidate.reporting_revision_id === plan.reportingRevisionId);
+  const mismatch =
+    expected && obligation && revision
+      ? detectReportingContentMismatch(
+          contractFactsFor(obligation, expected),
+          revision,
+          rowEvidenceFor(contractFactsFor(obligation, expected), revision, outcome.rows)
+        )
+      : undefined;
+
   return withSuppression(
     {
       ...plan,
+      consumerStatus: mismatch ? 'content_mismatch' : 'received',
+      mismatchCode: mismatch?.mismatchCode,
       observedRevisionContentSha256: outcome.digest,
       requiresConsumption: false,
       // `status_as_of` is when the revision became consumable to *this*
       // consumer, floored by the superseded leaf so the chain never moves
       // backwards.
       statusAsOf: latestInstant([outcome.consumedAt, plan.earliestStatusAsOf]) ?? plan.earliestStatusAsOf,
+      reason: mismatch?.detail ?? 'the exact revision content was consumed and honors every frozen contract fact',
     },
     leaf
   );
@@ -2432,7 +2464,94 @@ async function consumeReportingRevision(
       detail: 'the recomputed revision binding digest does not match the content_sha256 the seller published',
     };
   }
-  return { digest, consumedAt, rowCount: rows.length };
+  return { digest, consumedAt, rowCount: rows.length, rows };
+}
+
+/**
+ * What the buyer's reader observed in the rows it just consumed.
+ *
+ * Only `observedMetricNames` is derived, and only when the buyer pinned
+ * `committedMetrics`. The other three row-level predicates would need the
+ * profile's own row shape — which media buy a row belongs to, which time
+ * dimension the pinned grain declares, whether the rows validate against the
+ * pinned schema — and guessing at any of them risks a false `content_mismatch`,
+ * which pins the caller's view at `action_required` until the buyer backs down.
+ *
+ * Even the metric derivation is deliberately timid: a metric counts as present
+ * if any row carries it at top level or under `totals` (the shape the reporting
+ * profile's own control totals are computed from), **or** if the revision
+ * declares a control total for it. A metric absent from every one of those is
+ * absent in any reading.
+ */
+function rowEvidenceFor(
+  facts: ReportingContractFactsV1,
+  revision: ManagedReportingRevision,
+  rows: readonly unknown[]
+): ReportingRowEvidenceV1 {
+  if (!facts.committedMetrics) return {};
+  const observed = new Set((revision.control_totals ?? []).map(total => total.name));
+  const record = (value: unknown): Record<string, unknown> | undefined =>
+    typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  for (const row of rows) {
+    const fields = record(row);
+    if (!fields) continue;
+    for (const key of Object.keys(fields)) observed.add(key);
+    const totals = record(fields.totals);
+    if (totals) for (const key of Object.keys(totals)) observed.add(key);
+  }
+  return { observedMetricNames: [...observed] };
+}
+
+/**
+ * Immutable identity for one statement, derived from the claim it makes.
+ *
+ * `immutability` requires an exact retry to reuse the ID and content, so the
+ * derivation excludes everything that moves between attempts at the same claim
+ * — most importantly `status_as_of`, which for `received` and `unreadable` is
+ * the buyer's own clock and is therefore new on every re-plan.
+ *
+ * `supersedes_reporting_status_id` **is** included, and is not a moving part:
+ * a post that did not land leaves the leaf exactly where it was, so a retry
+ * hashes the same value. What it buys is distinctness for a claim that
+ * genuinely recurs later in the chain — `received` on a revision, then
+ * `unreadable` on it after a flaky read, then `received` again — where an
+ * ID derived from the claim alone would collide with the first statement and
+ * be replayed as an exact retry, silently leaving `unreadable` as the leaf.
+ */
+function consumerStatusId(plan: ReportingConsumerStatusPlanV1): string {
+  return `adcp-sdk.${createHash('sha256')
+    .update(
+      canonical([
+        plan.deliveryConfigId,
+        plan.deliveryConfigVersion,
+        plan.reportDefinitionId,
+        plan.period,
+        plan.consumerStatus,
+        plan.mismatchCode ?? null,
+        plan.failureCode ?? null,
+        plan.reportingRevisionId ?? null,
+        plan.observedRevisionContentSha256 ?? null,
+        plan.supersedesReportingStatusId ?? null,
+      ])
+    )
+    .digest('hex')
+    .slice(0, 32)}`;
+}
+
+/**
+ * Batch key derived from the batch body.
+ *
+ * `idempotency_key` is documented as "Exact retries reuse the key and body", so
+ * a key minted fresh per attempt makes the seller's batch replay unreachable by
+ * construction: a transport-level retry of the identical request would be
+ * ingested as a new batch instead of replaying the original ordered result.
+ * Deriving it from the body makes "same body" and "same key" the same
+ * condition.
+ */
+function consumerStatusBatchKey(statuses: ReadonlyArray<Record<string, unknown>>): string {
+  return `adcp-sdk-batch.${createHash('sha256').update(canonical(statuses)).digest('hex').slice(0, 32)}`;
 }
 
 /** Project a planned status onto the `sync_reporting_status` wire shape. */
@@ -2457,39 +2576,17 @@ function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1): Record<string,
     );
   }
   return {
-    // Derived from the statement's own content, never from a per-attempt
-    // idempotency key: the spec requires an exact retry to reuse the same ID.
-    // Hashing a fresh key would mint a new ID each attempt and fork the chain.
-    // Changed content hashes differently, which is what a supersession needs.
-    reporting_status_id: `adcp-sdk.${createHash('sha256')
-      .update(
-        canonical([
-          plan.deliveryConfigId,
-          plan.deliveryConfigVersion,
-          plan.reportDefinitionId,
-          plan.period,
-          plan.consumerStatus,
-          plan.mismatchCode ?? null,
-          plan.failureCode ?? null,
-          plan.reportingRevisionId ?? null,
-          plan.observedRevisionContentSha256 ?? null,
-          plan.supersedesReportingStatusId ?? null,
-          plan.statusAsOf,
-        ])
-      )
-      .digest('hex')
-      .slice(0, 32)}`,
+    reporting_status_id: consumerStatusId(plan),
     ...(plan.supersedesReportingStatusId ? { supersedes_reporting_status_id: plan.supersedesReportingStatusId } : {}),
     delivery_config_id: plan.deliveryConfigId,
     delivery_config_version: plan.deliveryConfigVersion,
     report_definition_id: plan.reportDefinitionId,
     period: plan.period,
     consumer_status: plan.consumerStatus,
-    // Deterministic, not the reconcile clock. The ID is derived from statement
-    // content, so a wall-clock timestamp would make an "exact retry" reuse the
-    // same ID with different content — which the spec calls an idempotency
-    // conflict. For `received` the spec also wants when the revision first
-    // became consumable, not when we happened to poll.
+    // The buyer's own instant, deliberately outside the ID derivation above:
+    // for `received` the spec wants when the revision became consumable to this
+    // consumer, which moves between re-plans, and an ID that moved with it
+    // could never be reused by a retry.
     status_as_of: plan.statusAsOf,
     ...(plan.reportingObligationId ? { reporting_obligation_id: plan.reportingObligationId } : {}),
     ...(plan.reportingRevisionId ? { reporting_revision_id: plan.reportingRevisionId } : {}),

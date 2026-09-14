@@ -379,6 +379,134 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.match(premature.results[0].errors[0].message, /expected/i);
   });
 
+  test('a read that throws is unreadable/transport_failed', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    seller.client.getMediaBuyDelivery = async () => {
+      throw new Error('connection reset by peer');
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.equal(result.postedConsumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.postedConsumerStatuses[0].failureCode, 'transport_failed');
+    // The provider's own error text is untrusted; the wire carries a closed
+    // code precisely so agents dispatch on it instead.
+    assert.doesNotMatch(result.postedConsumerStatuses[0].reason, /connection reset/);
+  });
+
+  test('a reader that cannot serve the exact revision is unreadable/reader_incompatible', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getMediaBuyDelivery;
+    seller.client.getMediaBuyDelivery = async params => {
+      // Rows, but no binding: a reader that does not implement the exact
+      // revision selector cannot produce consumption evidence, and guessing
+      // that the rows are complete would be the forgery this loop must avoid.
+      const { reporting_revision_binding: _binding, ...page } = await honest(params);
+      return page;
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.equal(result.postedConsumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.postedConsumerStatuses[0].failureCode, 'reader_incompatible');
+  });
+
+  test('a metric promised by the pinned definition and absent from the rows is metric_missing', async () => {
+    const seller = await harness();
+    const at = seller.anchor + DAY + 3 * HOUR;
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    seller.observeAt(at);
+    const [revision] = await seller.store.listRevisions(
+      [...seller.store.obligations.values()][0].reporting_obligation_id
+    );
+
+    // metric_missing is a row-level predicate: it cannot be decided from
+    // revision metadata, so it is only reachable once the reconciler has
+    // actually consumed the rows.
+    const expected = [
+      expectedPeriod(seller.request, seller.anchor, {
+        committedMetrics: ['impressions', 'spend', 'viewable_impressions'],
+      }),
+    ];
+    const result = await seller.reconcile(at, expected);
+
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    const posted = result.postedConsumerStatuses[0];
+    assert.equal(posted.consumerStatus, 'content_mismatch');
+    assert.equal(posted.mismatchCode, 'metric_missing');
+    assert.match(posted.reason, /viewable_impressions/);
+    assert.equal(posted.observedRevisionContentSha256, revision.wireRevision.revision_content_sha256);
+  });
+
+  test('a lost response does not produce a second statement, and an exact retry replays', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // The seller records the batch and the response never gets back.
+    const honest = seller.client.syncReportingStatus;
+    let sent;
+    seller.client.syncReportingStatus = async params => {
+      sent = params;
+      await honest(params);
+      throw new Error('socket hang up');
+    };
+    await assert.rejects(() => seller.reconcile(at, expected), /socket hang up/);
+    assert.equal(seller.store.consumerStatements.length, 1, 'the seller did record it');
+
+    // Re-plan from scratch against a ledger that discloses nothing about the
+    // chain — the case where suppression cannot save the buyer, so the ID and
+    // the batch key have to carry the weight on their own. Both are derived
+    // from the statement's content, so the reconstructed request is
+    // byte-identical to the one whose response was lost.
+    seller.client.syncReportingStatus = honest;
+    const honestRead = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honestRead(params);
+      return {
+        ...page,
+        consumer_statuses: [],
+        periods: page.periods.map(({ current_consumer_status_id: _leaf, ...period }) => ({
+          ...period,
+          consumer_status_count: 0,
+        })),
+      };
+    };
+    let replanned;
+    seller.client.syncReportingStatus = async params => {
+      replanned = params;
+      return honest(params);
+    };
+
+    const retry = await seller.reconcile(at + HOUR, expected);
+    assert.equal(replanned.idempotency_key, sent.idempotency_key, 'the batch key is derived from the body');
+    assert.deepEqual(replanned.statuses, sent.statuses, 'and the body reconstructs byte-identically');
+    assert.equal(seller.store.consumerStatements.length, 1, 'a replay is not a second statement');
+    assert.equal(retry.postedConsumerStatuses.length, 1, 'the buyer sees it as posted, because it is');
+    assert.deepEqual(retry.failedConsumerStatuses, []);
+
+    // With the chain visible again, there is simply nothing left to say.
+    seller.client.getReportingStatus = honestRead;
+    seller.client.syncReportingStatus = honest;
+    const next = await seller.reconcile(at + 2 * HOUR, expected);
+    assert.deepEqual(next.postedConsumerStatuses, []);
+    assert.equal(next.consumerStatuses[0].suppressed, 'unchanged');
+    assert.equal(seller.store.consumerStatements.length, 1);
+  });
+
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
