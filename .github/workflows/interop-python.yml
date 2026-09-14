@@ -2,7 +2,7 @@ name: Reference Seller Interop
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 13.x]
   workflow_dispatch:
     inputs:
       python_ref:
