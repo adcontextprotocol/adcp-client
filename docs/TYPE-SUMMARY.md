@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-13
+> Generated at: 2026-09-14
 > @adcp/sdk v14.0.0-rc.35
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -1323,12 +1323,37 @@ _Response (success branch):_
   periods: Reporting Obligation[]
   revisions: Reporting Revision[]
   adjustments: Reporting Adjustment[]
+  consumer_statuses: Reporting Consumer Status[]
   adjustment_receipts: Reporting Adjustment Receipt[]
   pagination: Pagination Response
   revision: Reporting Revision
   materializations: Reporting Materialization[]
   receipts: Reporting Receipt[]
   errors: Error[]
+  context: Context
+}
+```
+
+#### `sync_reporting_status`
+
+Submit authenticated consumer status for expected reporting periods.
+
+_Request:_
+```
+{
+  account: Canonical Account Ref  // required
+  idempotency_key: string  // required
+  statuses: object[]  // required
+  adcp_version: string
+  context: Context
+}
+```
+
+_Response (success branch):_
+```
+{
+  status: 'completed'  // required
+  results: (Recorded reporting consumer status | Unchanged reporting consumer status | Failed reporting consumer status)[]  // required
   context: Context
 }
 ```
@@ -2743,14 +2768,15 @@ const producer = createReportingProducer({ store, source, offerings, contact });
 await producer.planObligations();
 await producer.runWorker();
 const getReportingStatus = createReportingStatusHandler(store);
+const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
 
-// AdCP 3.2.0-rc.2 preview: identity comes from authenticated transport.
+// AdCP 3.2.0-rc.2: identity comes from authenticated transport.
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
-  resolveConsumerId: context => context.agent.agent_url,
+  resolveConsumerId: context => context.agent.id,
 });
 ```
 
-The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
 
 ## Key Enums
 

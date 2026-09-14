@@ -1,6 +1,6 @@
 # Ad Context Protocol (AdCP)
 
-> Generated at: 2026-09-13
+> Generated at: 2026-09-14
 > Library: @adcp/sdk v14.0.0-rc.35
 > AdCP major version: 3
 > Canonical URL: https://adcontextprotocol.github.io/adcp-client/llms.txt
@@ -601,7 +601,19 @@ Request parameters for reconciling managed reporting obligations, revisions, and
 
 **Response (success branch):**
 - Required: `status: 'completed'`
-- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `changes_checkpoint: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, +14 more
+- Optional: `view: 'summary' | 'periods' | 'revision'`, `ledger_snapshot_id: string`, `ledger_as_of: string`, `changes_checkpoint: string`, `account_id: string`, `scope: object`, `health: Reporting Health`, `coverage: Reporting Coverage`, +15 more
+
+#### `sync_reporting_status`
+
+Submit authenticated consumer status for expected reporting periods.
+
+**Request:**
+- Required: `account: Canonical Account Ref`, `idempotency_key: string`, `statuses: object[]`
+- Optional: `adcp_version: string`, `context: Context`
+
+**Response (success branch):**
+- Required: `status: 'completed'`, `results: (Recorded reporting consumer status | Unchanged reporting consumer status | Failed reporting consumer status)[]`
+- Optional: `context: Context`
 
 #### `sync_reporting_receipts`
 
@@ -1487,6 +1499,9 @@ Flow: `get_adcp_capabilities → get_products`
 **Seller filters products by accepted pricing currencies** — Verifies that get_products filters.pricing_currencies returns only products buyable in the requested media pricing currency and prunes returned product pricing_options.
 Flow: `get_products`
 
+**Product coverage is preserved across discovery surfaces** — Checks legacy and compact coverage predicates against independent negative controls without configuring delivery targeting.
+Flow: `get_products → list_products`
+
 **Seller applies deterministic product filters in every buying mode** — Verifies schema-valid get_products filters affect brief curation, wholesale feeds, and refinement instead of silently no-oping.
 Flow: `get_products`
 
@@ -1711,8 +1726,11 @@ Flow: `get_adcp_capabilities → get_principal → sync_principal → get_princi
 **Pagination cursor integrity — list_property_lists** — Validates the cursor↔has_more invariant by walking a paginated list_property_lists response from a continuation page to a terminal page.
 Flow: `get_adcp_capabilities → create_property_list → list_property_lists`
 
-**Read-tool idempotency_key tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade accept an optional idempotency_key without strict wrapper rejection.
+**Read-tool idempotency_key envelope tolerance** — Validates that read-only AdCP tasks and the 3.x get_products compatibility facade tolerate an optional idempotency_key without claiming read-response replay.
 Flow: `get_adcp_capabilities → get_products → list_accounts → list_creative_formats → list_creatives → get_adcp_capabilities`
+
+**Reliable Reporting: consumer-status loop** — Validates opt-in buyer-to-seller reporting status, missing-obligation identity, caller-scoped mismatch, and immutable supersession.
+Flow: `comply_test_controller → sync_reporting_status → get_reporting_status → comply_test_controller → sync_reporting_status → comply_test_controller → get_reporting_status → get_media_buy_delivery → sync_reporting_status → get_reporting_status → comply_test_controller → get_reporting_status → sync_reporting_status → get_reporting_status`
 
 **Reliable Reporting: Core declaration** — Validates the proper-name Reliable Reporting 1.0 declaration and its required Core tier without requiring optional tiers or a sandbox controller.
 Flow: `get_adcp_capabilities`
@@ -1741,6 +1759,26 @@ Flow: `replay_webhook_vector`
 **Wholesale feed bulk-change webhook registration** — Validates account-level notification_configs[] registration for agents that advertise wholesale_feed.bulk_change webhook events.
 Flow: `sync_accounts`
 
+### Media buy buyer
+
+**Buyer agent media buy creation and idempotent activation** — Buyer agent that creates media buys with correct idempotency keys, handles transient failures with retry, and coordinates creative assignment.
+Flow: `create_media_buy → get_task_status → sync_creatives`
+
+**Buyer agent product discovery and candidate selection** — Buyer agent that discovers seller inventory, interprets product capabilities, and assembles a candidate shortlist from a brief.
+Flow: `get_adcp_capabilities → get_products → list_products → get_products`
+
+**Buyer agent delivery monitoring and pacing response** — Buyer agent that monitors delivery via webhooks and polling, detects variance, and responds to pacing drift.
+Flow: `get_media_buy_delivery → get_media_buys`
+
+**Buyer agent proposal negotiation and terms handling** — Buyer agent that requests proposals, refines terms, handles TERMS_REJECTED, and accepts or declines offers.
+Flow: `request_proposals → refine_proposals → accept_proposal`
+
+**Buyer agent error recovery and resilience** — Buyer agent that handles seller offline, auth expiry, stale digest, idempotency collisions, and rate limiting.
+Flow: `get_products → create_media_buy`
+
+**Orchestrator multi-seller fan-out and reconciliation** — Orchestrator agent that coordinates across multiple sellers, handles partial failures, and reconciles cross-agent state.
+Flow: `get_products → create_media_buy`
+
 ### 
 
 **Generative creative agent** — Agent that takes a brief and generates finished creatives from scratch — no input assets required.
@@ -1748,6 +1786,10 @@ Flow: `get_adcp_capabilities → build_creative → sync_catalogs → build_crea
 
 **Account-scoped creative transformer agent** — Agent that exposes account-scoped transformers (voices, models, render configs) via list_transformers, then builds and refines creatives by transformer_id + typed config — with variant fan-out and strict config validation.
 Flow: `get_adcp_capabilities → list_transformers → build_creative`
+
+**Buyer fixture publisher contract** — Contract for the runner-side reference sell-side agent used by buyer storyboards.
+
+**Buyer-orchestrator compliance track** — Certification levels for buyer and orchestrator agents: basic (discovery + activation), standard (+ negotiation + monitoring), advanced (+ recovery + multi-agent orchestration).
 
 **Runner output contract** — Required failure-detail shape that AdCP storyboard runners MUST emit so implementors can self-diagnose validation failures.
 

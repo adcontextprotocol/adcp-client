@@ -11,6 +11,7 @@ const {
   createReportingDeliveryHandler,
   createReportingProducer,
   createReportingStatusHandler,
+  createSyncReportingStatusHandler,
   PostgresReportingLedgerStore,
 } = require('@adcp/sdk/reporting/ledger');
 const {
@@ -90,6 +91,7 @@ function createReportingLifecycleReference({ pool, source = createSimulatedRepor
   };
   const getReportingStatus = createReportingStatusHandler(store, { resolveConsumerId });
   const getMediaBuyDelivery = createReportingDeliveryHandler(store);
+  const syncReportingStatus = createSyncReportingStatusHandler(store, { resolveConsumerId });
   const server = createAdcpServer({
     name: 'Reliable Reporting lifecycle reference seller',
     version: '1.0.0',
@@ -97,7 +99,7 @@ function createReportingLifecycleReference({ pool, source = createSimulatedRepor
     idempotency: createIdempotencyStore({ backend: memoryBackend(), ttlSeconds: 86_400 }),
     resolveAccount: async ref => ({ account_id: ref.account_id }),
     resolveAccountFromAuth: async () => ({ account_id: 'fixture-lifecycle-controller' }),
-    mediaBuy: { getReportingStatus, getMediaBuyDelivery },
+    mediaBuy: { getReportingStatus, getMediaBuyDelivery, syncReportingStatus },
   });
   const controls = {
     scenarios: ['reporting_core_lifecycle_probe'],

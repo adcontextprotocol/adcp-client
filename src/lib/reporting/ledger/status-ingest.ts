@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { AccountReferenceSchema, ReportingConsumerStatusSchema, SyncReportingStatusRequestSchema } from '../../schemas';
+import type { ReportingConsumerStatus, SyncReportingStatusRequest, SyncReportingStatusResponse } from '../../types';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
 import {
@@ -25,68 +27,14 @@ import {
   type ReportingLedgerConsumerStatementV1,
 } from './types';
 
-const id = z
+const statusId = z
   .string()
-  .min(1)
+  .min(16)
   .max(255)
   .regex(/^[A-Za-z0-9_.:-]+$/);
-const statusId = id.min(16);
-const instant = z
-  .string()
-  .max(64)
-  .refine(value => {
-    try {
-      canonicalReportingInstant(value);
-      return true;
-    } catch {
-      return false;
-    }
-  }, 'value must be an RFC 3339 instant');
-const accountReference = z
-  .record(z.string(), z.unknown())
-  .refine(
-    value =>
-      (typeof value.account_id === 'string' && value.account_id.length > 0) ||
-      (isRecord(value.brand) && typeof value.operator === 'string' && value.operator.length > 0),
-    'account must be an ID reference or buyer-declared natural key'
-  );
-const periodSchema = z
-  .object({ start: instant, end: instant, source_timezone: z.string().min(1).max(255) })
-  .strict()
-  .refine(value => Date.parse(value.start) < Date.parse(value.end), 'period must be half-open');
 
-export const ReportingConsumerStatusPreviewV1Schema = z
-  .object({
-    reporting_status_id: statusId,
-    supersedes_reporting_status_id: statusId.optional(),
-    delivery_config_id: z
-      .string()
-      .min(1)
-      .max(64)
-      .regex(/^[A-Za-z0-9_.:-]+$/),
-    delivery_config_version: z.number().int().min(1),
-    report_definition_id: id,
-    period: periodSchema,
-    reporting_obligation_id: id.optional(),
-    reporting_revision_id: id.optional(),
-    observed_revision_content_sha256: z
-      .string()
-      .regex(/^[A-Fa-f0-9]{64}$/)
-      .optional(),
-    consumer_status: z.enum(['received', 'obligation_missing', 'revision_missing', 'unreadable']),
-    status_as_of: instant,
-    failure_code: z
-      .enum(['access_denied', 'resource_not_found', 'integrity_mismatch', 'reader_incompatible', 'transport_failed'])
-      .optional(),
-    consumer_commit_ref: z
-      .string()
-      .min(1)
-      .max(512)
-      .regex(/^[A-Za-z0-9_.:-]+$/)
-      .optional(),
-    seller_ledger_snapshot_id: z.string().min(1).max(255).optional(),
-    seller_ledger_as_of: instant.optional(),
-  })
+/** Published AdCP 3.2.0-rc.2 consumer status schema with bounded instants. */
+export const ReportingConsumerStatusV1Schema = ReportingConsumerStatusSchema.omit({ recorded_at: true })
   .strict()
   .superRefine((value, context) => {
     const require = (field: keyof typeof value) => {
@@ -128,17 +76,44 @@ export const ReportingConsumerStatusPreviewV1Schema = z
         message: 'snapshot identity and time pair',
       });
     }
+    for (const [path, instant] of [
+      [['status_as_of'], value.status_as_of],
+      [['period', 'start'], value.period.start],
+      [['period', 'end'], value.period.end],
+      [['seller_ledger_as_of'], value.seller_ledger_as_of],
+    ] as const) {
+      if (instant === undefined) continue;
+      if (instant.length > 64) {
+        context.addIssue({
+          code: 'custom',
+          path: [...path],
+          message: 'Reporting instants must not exceed 64 characters',
+        });
+      }
+    }
+    if (value.period.source_timezone.length > 255) {
+      context.addIssue({
+        code: 'custom',
+        path: ['period', 'source_timezone'],
+        message: 'source_timezone must not exceed 255 characters',
+      });
+    }
   });
 
-export const SyncReportingStatusPreviewRequestV1Schema = z
+/** Published AdCP 3.2.0-rc.2 request schema. */
+export const SyncReportingStatusRequestV1Schema = SyncReportingStatusRequestSchema;
+
+// Validate the envelope independently so one malformed status does not reject
+// valid siblings. Each status is checked against the published schema below.
+const SyncReportingStatusEnvelopeV1Schema = z
   .object({
-    account: accountReference,
+    account: AccountReferenceSchema,
     idempotency_key: z
       .string()
       .min(16)
       .max(255)
       .regex(/^[A-Za-z0-9_.:-]+$/),
-    statuses: z.array(ReportingConsumerStatusPreviewV1Schema).min(1).max(100),
+    statuses: z.array(z.unknown()).min(1).max(100),
     adcp_version: z.string().optional(),
     adcp_major_version: z.number().int().optional(),
     context: z.unknown().optional(),
@@ -146,22 +121,9 @@ export const SyncReportingStatusPreviewRequestV1Schema = z
   })
   .strict();
 
-const SyncReportingStatusPreviewEnvelopeV1Schema = SyncReportingStatusPreviewRequestV1Schema.extend({
-  statuses: z.array(z.unknown()).min(1).max(100),
-});
-
-export type ReportingConsumerStatusPreviewV1 = z.infer<typeof ReportingConsumerStatusPreviewV1Schema>;
-export type SyncReportingStatusPreviewRequestV1 = z.infer<typeof SyncReportingStatusPreviewRequestV1Schema>;
-
-export interface SyncReportingStatusPreviewResponseV1 {
-  adcp_version: string;
-  adcp_major_version: number;
-  status: 'completed';
-  results: Array<
-    | { result: 'recorded' | 'unchanged'; consumer_status: ReportingConsumerStatusPreviewV1 & { recorded_at: string } }
-    | { result: 'failed'; reporting_status_id: string; errors: Array<{ code: string; message: string }> }
-  >;
-}
+export type ReportingConsumerStatusV1 = ReportingConsumerStatus;
+export type SyncReportingStatusRequestV1 = SyncReportingStatusRequest;
+export type SyncReportingStatusResponseV1 = SyncReportingStatusResponse;
 
 export interface SyncReportingStatusHandlerOptionsV1<TContext = unknown> {
   /** Resolve the durable authenticated consumer principal. Payloads cannot assert it. */
@@ -175,10 +137,10 @@ class ReportingStatusValidationError extends Error {}
 export function createSyncReportingStatusHandler<TContext = unknown>(
   store: ReportingConsumerStatusLedgerStore,
   options: SyncReportingStatusHandlerOptionsV1<TContext>
-): (request: SyncReportingStatusPreviewRequestV1, context: TContext) => Promise<SyncReportingStatusPreviewResponseV1> {
+): (request: SyncReportingStatusRequestV1, context: TContext) => Promise<SyncReportingStatusResponseV1> {
   const activeReadsByAccount = new Map<string, number>();
   return async (requestInput, context) => {
-    const parsed = SyncReportingStatusPreviewEnvelopeV1Schema.safeParse(requestInput);
+    const parsed = SyncReportingStatusEnvelopeV1Schema.safeParse(requestInput);
     if (!parsed.success) {
       const rawStatuses = isRecord(requestInput) && Array.isArray(requestInput.statuses) ? requestInput.statuses : [];
       const ids =
@@ -191,7 +153,7 @@ export function createSyncReportingStatusHandler<TContext = unknown>(
       return failed(ids, 'VALIDATION_ERROR', 'Reporting consumer status request is invalid');
     }
     const request = parsed.data;
-    const parsedStatuses = request.statuses.map(value => ReportingConsumerStatusPreviewV1Schema.safeParse(value));
+    const parsedStatuses = request.statuses.map(value => ReportingConsumerStatusV1Schema.safeParse(value));
     const statusIds = parsedStatuses.map((value, index) =>
       value.success ? value.data.reporting_status_id : reportingStatusId(request.statuses[index])
     );
@@ -293,7 +255,7 @@ async function validateStatus(
   configurations: ReportingLedgerConfigurationV1[],
   accountId: string,
   consumerId: string,
-  status: ReportingConsumerStatusPreviewV1,
+  status: ReportingConsumerStatusV1,
   now: Date,
   clockSkewMilliseconds = 5 * 60_000
 ): Promise<void> {
@@ -395,7 +357,7 @@ async function validateStatus(
 function isExactPeriod(
   configuration: ReportingLedgerConfigurationV1,
   configurations: ReportingLedgerConfigurationV1[],
-  period: ReportingConsumerStatusPreviewV1['period']
+  period: ReportingConsumerStatusV1['period']
 ): boolean {
   if (period.source_timezone !== configuration.sourceTimezone) return false;
   const duration = configuration.schedule.periodMilliseconds;
@@ -465,12 +427,12 @@ function rawStatusChainIdentity(
 
 function wireConsumerStatus(
   status: ReportingLedgerConsumerStatementV1
-): ReportingConsumerStatusPreviewV1 & { recorded_at: string } {
+): ReportingConsumerStatusV1 & { recorded_at: string } {
   const { consumerId: _consumerId, account_id: _accountId, ...wire } = status;
   return wire;
 }
 
-function failed(ids: string[], code: string, message: string): SyncReportingStatusPreviewResponseV1 {
+function failed(ids: string[], code: string, message: string): SyncReportingStatusResponseV1 {
   return {
     adcp_version: wireAdcpVersion(),
     adcp_major_version: ADCP_MAJOR_VERSION,
@@ -485,7 +447,7 @@ function failed(ids: string[], code: string, message: string): SyncReportingStat
 
 function completed(
   results: Awaited<ReturnType<ReportingConsumerStatusLedgerStore['syncConsumerStatusBatch']>>
-): SyncReportingStatusPreviewResponseV1 {
+): SyncReportingStatusResponseV1 {
   return {
     adcp_version: wireAdcpVersion(),
     adcp_major_version: ADCP_MAJOR_VERSION,

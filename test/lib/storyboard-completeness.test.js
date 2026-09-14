@@ -134,10 +134,18 @@ describe('storyboard structural completeness', () => {
               it('has required fields', () => {
                 assert.ok(step.id, 'missing step id');
                 assert.ok(step.title, 'missing step title');
-                assert.ok(step.task, 'missing task');
+                if (step.task === undefined) {
+                  assert.ok(
+                    Array.isArray(step.validations) && step.validations.length > 0,
+                    'a validation-only step must have validations'
+                  );
+                } else {
+                  assert.ok(step.task, 'missing task');
+                }
               });
 
               it('has a request builder or sample_request', () => {
+                if (step.task === undefined) return;
                 // Synthetic runner tasks (HTTP probes, flag accumulators) build their
                 // own request; they don't need a builder or sample_request.
                 if (HARNESS_TASKS.has(step.task) || isTestKitReference(step.task)) return;
@@ -161,7 +169,7 @@ describe('response schema coverage', () => {
   for (const sb of storyboards) {
     for (const phase of sb.phases) {
       for (const step of phase.steps) {
-        allTasks.add(step.task);
+        if (typeof step.task === 'string') allTasks.add(step.task);
       }
     }
   }
@@ -178,8 +186,14 @@ describe('response schema coverage', () => {
   }
 });
 
-describe('AdCP 3.2 beta.10 request schema coverage', () => {
-  for (const task of ['get_principal', 'sync_principal', 'get_reporting_status', 'sync_reporting_receipts']) {
+describe('AdCP 3.2 request schema coverage', () => {
+  for (const task of [
+    'get_principal',
+    'sync_principal',
+    'get_reporting_status',
+    'sync_reporting_status',
+    'sync_reporting_receipts',
+  ]) {
     it(`${task} has a registered request schema`, () => {
       assert.ok(TOOL_REQUEST_SCHEMAS[task], `Task "${task}" has no request schema in TOOL_REQUEST_SCHEMAS`);
     });
@@ -191,7 +205,7 @@ describe('task execution coverage', () => {
   for (const sb of storyboards) {
     for (const phase of sb.phases) {
       for (const step of phase.steps) {
-        allTasks.add(step.task);
+        if (typeof step.task === 'string') allTasks.add(step.task);
       }
     }
   }

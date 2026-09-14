@@ -1454,6 +1454,13 @@ export const ReportingCanonicalizationContract_AlgorithmValues = ["adcp_jcs_rows
 /** single | ReportingCanonicalizationContract.media_type */
 export const ReportingCanonicalizationContract_MediaTypeValues = ["application/vnd.adcp.reporting-canonicalization+json"] as const;
 
+// ====== ReportingConsumerStatus ======
+
+/** single | ReportingConsumerStatus.consumer_status */
+export const ReportingConsumerStatus_ConsumerStatusValues = ["received", "obligation_missing", "revision_missing", "unreadable"] as const;
+/** single | ReportingConsumerStatus.failure_code */
+export const ReportingConsumerStatus_FailureCodeValues = ["access_denied", "resource_not_found", "integrity_mismatch", "reader_incompatible", "transport_failed"] as const;
+
 // ====== ReportingCoverage ======
 
 /** single | ReportingCoverage.status */
@@ -1461,6 +1468,8 @@ export const ReportingCoverage_StatusValues = ["full", "partial", "none", "unkno
 
 // ====== ReportingDeliveryCapabilities ======
 
+/** single | ReportingDeliveryCapabilities.consumer_status_task */
+export const ReportingDeliveryCapabilities_ConsumerStatusTaskValues = ["sync_reporting_status"] as const;
 /** single | ReportingDeliveryCapabilities.ledger_notification */
 export const ReportingDeliveryCapabilities_LedgerNotificationValues = ["reporting.ledger_changed"] as const;
 /** single | ReportingDeliveryCapabilities.readiness_notification */
@@ -1536,7 +1545,7 @@ export const ReportingScheduleOffering_PeriodTimezonePolicyValues = ["fixed", "a
 // ====== ReportingStatusIssue ======
 
 /** single | ReportingStatusIssue.code */
-export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE", "RECEIPT_REQUIRED", "RECEIPT_REJECTED", "ADJUSTMENT_RECEIPT_REQUIRED", "ADJUSTMENT_RECEIPT_REJECTED"] as const;
+export const ReportingStatusIssue_CodeValues = ["REPORT_OVERDUE", "PRODUCTION_FAILED", "DELIVERY_FAILED", "ACCESS_REQUIRED", "CONFIGURATION_REQUIRED", "REPORTING_COVERAGE_INCOMPLETE", "RESOURCE_EXPIRED", "READER_INCOMPATIBLE", "HISTORY_UNAVAILABLE", "RECEIPT_REQUIRED", "RECEIPT_REJECTED", "ADJUSTMENT_RECEIPT_REQUIRED", "ADJUSTMENT_RECEIPT_REJECTED", "CONSUMER_STATUS_MISMATCH"] as const;
 /** single | ReportingStatusIssue.recommended_action */
 export const ReportingStatusIssue_RecommendedActionValues = ["wait_for_retry", "contact_buyer", "contact_seller", "contact_provider", "repair_access", "update_configuration", "change_reporting_scope", "use_supported_reader"] as const;
 /** single | ReportingStatusIssue.responsible_party */
@@ -2133,6 +2142,9 @@ export const FailedPrincipalRead_KindValues = CommitmentError_StatusValues;
 // --- FailedPrincipalSync ---
 /** @deprecated use `CommitmentError_StatusValues` — same literal set, FailedPrincipalSync.kind duplicates the canonical export. */
 export const FailedPrincipalSync_KindValues = CommitmentError_StatusValues;
+// --- FailedReportingConsumerStatus ---
+/** @deprecated use `CommitmentError_StatusValues` — same literal set, FailedReportingConsumerStatus.result duplicates the canonical export. */
+export const FailedReportingConsumerStatus_ResultValues = CommitmentError_StatusValues;
 // --- FailedReportingReceipt ---
 /** @deprecated use `CommitmentError_StatusValues` — same literal set, FailedReportingReceipt.result duplicates the canonical export. */
 export const FailedReportingReceipt_ResultValues = CommitmentError_StatusValues;
@@ -2200,6 +2212,9 @@ export const IndividualAudioAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeV
 export const IndividualBriefAsset_AssetTypeValues = BriefAsset_AssetTypeValues;
 /** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualBriefAsset.item_type duplicates the canonical export. */
 export const IndividualBriefAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualCardAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualCardAsset.item_type duplicates the canonical export. */
+export const IndividualCardAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
 // --- IndividualCatalogAsset ---
 /** @deprecated use `CatalogAsset_AssetTypeValues` — same literal set, IndividualCatalogAsset.asset_type duplicates the canonical export. */
 export const IndividualCatalogAsset_AssetTypeValues = CatalogAsset_AssetTypeValues;
@@ -2215,6 +2230,12 @@ export const IndividualCssAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeVal
 export const IndividualDaastAsset_AssetTypeValues = GroupDaastAsset_AssetTypeValues;
 /** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualDaastAsset.item_type duplicates the canonical export. */
 export const IndividualDaastAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualDaastTrackerAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualDaastTrackerAsset.item_type duplicates the canonical export. */
+export const IndividualDaastTrackerAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualDisplayTagAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualDisplayTagAsset.item_type duplicates the canonical export. */
+export const IndividualDisplayTagAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
 // --- IndividualHtmlAsset ---
 /** @deprecated use `GroupHtmlAsset_AssetTypeValues` — same literal set, IndividualHtmlAsset.asset_type duplicates the canonical export. */
 export const IndividualHtmlAsset_AssetTypeValues = GroupHtmlAsset_AssetTypeValues;
@@ -2235,6 +2256,12 @@ export const IndividualJavaScriptAsset_ItemTypeValues = BaseIndividualAsset_Item
 export const IndividualMarkdownAsset_AssetTypeValues = GroupMarkdownAsset_AssetTypeValues;
 /** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualMarkdownAsset.item_type duplicates the canonical export. */
 export const IndividualMarkdownAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualPixelTrackerAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualPixelTrackerAsset.item_type duplicates the canonical export. */
+export const IndividualPixelTrackerAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualPublishedPostAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualPublishedPostAsset.item_type duplicates the canonical export. */
+export const IndividualPublishedPostAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
 // --- IndividualTextAsset ---
 /** @deprecated use `GroupTextAsset_AssetTypeValues` — same literal set, IndividualTextAsset.asset_type duplicates the canonical export. */
 export const IndividualTextAsset_AssetTypeValues = GroupTextAsset_AssetTypeValues;
@@ -2250,6 +2277,9 @@ export const IndividualUrlAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeVal
 export const IndividualVastAsset_AssetTypeValues = GroupVastAsset_AssetTypeValues;
 /** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualVastAsset.item_type duplicates the canonical export. */
 export const IndividualVastAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
+// --- IndividualVastTrackerAsset ---
+/** @deprecated use `BaseIndividualAsset_ItemTypeValues` — same literal set, IndividualVastTrackerAsset.item_type duplicates the canonical export. */
+export const IndividualVastTrackerAsset_ItemTypeValues = BaseIndividualAsset_ItemTypeValues;
 // --- IndividualVideoAsset ---
 /** @deprecated use `GroupVideoAsset_AssetTypeValues` — same literal set, IndividualVideoAsset.asset_type duplicates the canonical export. */
 export const IndividualVideoAsset_AssetTypeValues = GroupVideoAsset_AssetTypeValues;
@@ -2332,6 +2362,9 @@ export const ProvisionRecipient_ModeValues = ProvisionBinding_ModeValues;
 export const RawAttestation_MethodValues = DigestAttestation_MethodValues;
 /** @deprecated use `DigestAttestation_PurposeValues` — same literal set, RawAttestation.purpose duplicates the canonical export. */
 export const RawAttestation_PurposeValues = DigestAttestation_PurposeValues;
+// --- RecordedReportingConsumerStatus ---
+/** @deprecated use `RecordedReportingAdjustmentReceipt_ResultValues` — same literal set, RecordedReportingConsumerStatus.result duplicates the canonical export. */
+export const RecordedReportingConsumerStatus_ResultValues = RecordedReportingAdjustmentReceipt_ResultValues;
 // --- RecordedReportingReceipt ---
 /** @deprecated use `RecordedReportingAdjustmentReceipt_ResultValues` — same literal set, RecordedReportingReceipt.result duplicates the canonical export. */
 export const RecordedReportingReceipt_ResultValues = RecordedReportingAdjustmentReceipt_ResultValues;
@@ -2460,6 +2493,9 @@ export const TimeForecastDimension_KindValues = TimeBasedPricingOption_PricingMo
 // --- UnavailableLookup ---
 /** @deprecated use `CommitmentError_StatusValues` — same literal set, UnavailableLookup.status duplicates the canonical export. */
 export const UnavailableLookup_StatusValues = CommitmentError_StatusValues;
+// --- UnchangedReportingConsumerStatus ---
+/** @deprecated use `UnchangedReportingAdjustmentReceipt_ResultValues` — same literal set, UnchangedReportingConsumerStatus.result duplicates the canonical export. */
+export const UnchangedReportingConsumerStatus_ResultValues = UnchangedReportingAdjustmentReceipt_ResultValues;
 // --- UnchangedReportingReceipt ---
 /** @deprecated use `UnchangedReportingAdjustmentReceipt_ResultValues` — same literal set, UnchangedReportingReceipt.result duplicates the canonical export. */
 export const UnchangedReportingReceipt_ResultValues = UnchangedReportingAdjustmentReceipt_ResultValues;

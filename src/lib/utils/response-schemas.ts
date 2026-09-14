@@ -74,6 +74,7 @@ export const TOOL_RESPONSE_SCHEMAS: Partial<Record<string, z.ZodType>> = {
   // reporting evidence boundaries. Keep this current-version guard adjacent to
   // it for the remaining cross-field reporting invariants.
   get_reporting_status: schemas.GetReportingStatusResponseSchema.and(GetReportingStatusResponseCurrentSchema),
+  sync_reporting_status: schemas.SyncReportingStatusResponseSchema,
   sync_reporting_receipts: schemas.SyncReportingReceiptsResponseSchema,
   provide_performance_feedback: schemas.ProvidePerformanceFeedbackResponseSchema,
 

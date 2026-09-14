@@ -47,9 +47,9 @@ When `get_reporting_status` omits a period, the operational default horizon is t
 
 `projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and `reporting.status_changed` transitions, then calls only subscribers already authorized and supplied by the host.
 
-## Consumer status preview
+## Consumer status ingest
 
-AdCP 3.2.0-rc.2 adds `sync_reporting_status`. This draft stack exposes the handler and runtime validation from the ledger subpath while preserving the ratified schemas under `schemas-preview/` from protocol commit `388e78e63`; a dedicated protocol-adoption change will move the SDK default pin from rc.1 and regenerate the complete type surface.
+The SDK is pinned to AdCP 3.2.0-rc.2 and exposes `sync_reporting_status` from the ledger subpath. Its request, response, consumer-status, obligation, issue, delivery-capabilities, and reporting-status types come from the published rc.2 schema bundle.
 
 ```ts
 const syncReportingStatus = createSyncReportingStatusHandler(store, {

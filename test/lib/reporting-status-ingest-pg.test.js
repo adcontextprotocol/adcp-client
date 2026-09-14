@@ -3,7 +3,7 @@ const { after, before, describe, test } = require('node:test');
 
 const DATABASE_URL = process.env.REPORTING_LEDGER_PG_URL;
 
-describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'PostgreSQL URL not set' }, () => {
+describe('sync_reporting_status ingest', { skip: !DATABASE_URL && 'PostgreSQL URL not set' }, () => {
   const schema = `adcp_reporting_status_${process.pid}`;
   let bootstrap;
   let pool;
@@ -932,14 +932,10 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       consumer_status: 'received',
     };
     assert.equal(
-      ledger.ReportingConsumerStatusPreviewV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() })
-        .success,
+      ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, recorded_at: new Date().toISOString() }).success,
       false
     );
-    assert.equal(
-      ledger.ReportingConsumerStatusPreviewV1Schema.safeParse({ ...valid, unexpected: true }).success,
-      false
-    );
+    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse({ ...valid, unexpected: true }).success, false);
     const result = await sync(
       {
         account: request.account,
@@ -1011,7 +1007,7 @@ describe('sync_reporting_status preview ingest', { skip: !DATABASE_URL && 'Postg
       },
       status_as_of: '2016-12-31T23:59:60Z',
     };
-    assert.equal(ledger.ReportingConsumerStatusPreviewV1Schema.safeParse(leapSecond).success, true);
+    assert.equal(ledger.ReportingConsumerStatusV1Schema.safeParse(leapSecond).success, true);
     const leapBatch = await leapSync(
       {
         account: request.account,

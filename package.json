@@ -365,7 +365,6 @@
         "default": "./dist/lib/reporting/ledger/index.js"
       }
     },
-    "./schemas-preview/*": "./schemas-preview/*",
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -492,6 +491,7 @@
     "!compliance/cache/3.2.0-beta.0/**/*",
     "!compliance/cache/3.2.0-beta.1/**/*",
     "!compliance/cache/3.2.0-beta.8/**/*",
+    "!compliance/cache/3.2.0-rc.1/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -505,8 +505,6 @@
     "MIGRATION-v8.md",
     "docs/guides/**/*.md",
     "docs/recipes/**/*.md",
-    "schemas-preview/**/*.json",
-    "schemas-preview/README.md",
     "docs/examples/**/*",
     "examples/README.md",
     "examples/CONTRIBUTING.md",
@@ -734,7 +732,7 @@
     },
     "minimatch": "^10.2.1"
   },
-  "adcp_version": "3.2.0-rc.1",
+  "adcp_version": "3.2.0-rc.2",
   "sideEffects": [
     "**/default-invariants.*"
   ]

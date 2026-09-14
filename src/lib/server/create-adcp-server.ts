@@ -260,6 +260,7 @@ import type {
   GetMediaBuysRequestSchema,
   GetMediaBuyDeliveryRequestSchema,
   GetReportingStatusRequestSchema,
+  SyncReportingStatusRequestSchema,
   SyncReportingReceiptsRequestSchema,
   ProvidePerformanceFeedbackRequestSchema,
   GetTaskStatusRequestSchema,
@@ -318,7 +319,10 @@ import type {
   AcquireRightsRequestSchema,
   UpdateRightsRequestSchema,
 } from '../types/schemas.generated';
-import { AccountReferenceSchema } from '../types/schemas.generated';
+import {
+  AccountReferenceSchema,
+  SyncReportingStatusRequestSchema as SyncReportingStatusRequestRuntimeSchema,
+} from '../types/schemas.generated';
 
 import type {
   AcquireRightsAcquired,
@@ -343,6 +347,7 @@ import type {
   GetMediaBuysResponse,
   GetMediaBuyDeliveryResponse,
   GetReportingStatusResponse,
+  SyncReportingStatusResponse,
   SyncReportingReceiptsResponse,
   GetTaskStatusResponse,
   ListTasksResponse,
@@ -713,6 +718,11 @@ export interface AdcpToolMap {
     result: ServerPayload<GetReportingStatusResponse>;
     response: GetReportingStatusResponse;
   };
+  sync_reporting_status: {
+    params: z.input<typeof SyncReportingStatusRequestSchema>;
+    result: ServerPayload<SyncReportingStatusResponse>;
+    response: SyncReportingStatusResponse;
+  };
   sync_reporting_receipts: {
     params: z.input<typeof SyncReportingReceiptsRequestSchema>;
     result: ServerPayload<SyncReportingReceiptsResponse>;
@@ -1076,6 +1086,7 @@ export interface MediaBuyHandlers<TAccount = unknown> {
   getMediaBuys?: DomainHandler<'get_media_buys', TAccount>;
   getMediaBuyDelivery?: DomainHandler<'get_media_buy_delivery', TAccount>;
   getReportingStatus?: DomainHandler<'get_reporting_status', TAccount>;
+  syncReportingStatus?: DomainHandler<'sync_reporting_status', TAccount>;
   syncReportingReceipts?: DomainHandler<'sync_reporting_receipts', TAccount>;
   providePerformanceFeedback?: DomainHandler<'provide_performance_feedback', TAccount>;
   listCreativeFormats?: DomainHandler<'list_creative_formats', TAccount>;
@@ -1582,6 +1593,7 @@ export const MEDIA_BUY_MCP_TOOL_PROFILE = [
   'sync_creatives',
   'sync_event_sources',
   'sync_governance',
+  'sync_reporting_status',
   'sync_reporting_receipts',
 ] as const;
 
@@ -2977,6 +2989,13 @@ const REFINE_PROPOSALS_INPUT_SHAPE = {
   adcp_version: SHALLOW_HINT_FIELD_SCHEMA,
   adcp_major_version: SHALLOW_HINT_FIELD_SCHEMA,
 } as unknown as ZodRawShapeCompat;
+// `sync_reporting_status` is intentionally a partial-success batch. Validate
+// the official envelope at the framework boundary, while leaving each status
+// item to the registered handler so one malformed sibling cannot reject all.
+const SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA = SyncReportingStatusRequestRuntimeSchema.extend({
+  statuses: z.array(z.unknown()).min(1).max(100),
+});
+
 function getToolInputShapes(): ToolInputShapeMap {
   cachedToolInputShapes ??= TOOL_INPUT_SHAPES as unknown as ToolInputShapeMap;
   return cachedToolInputShapes;
@@ -3002,6 +3021,28 @@ function validateFrameworkPayload(
   version: Parameters<typeof validateRequest>[2],
   proposalCapabilities?: ProposalRefinementCapabilities
 ) {
+  if (toolName === 'sync_reporting_status' && direction === 'request') {
+    const parsed = SYNC_REPORTING_STATUS_ENVELOPE_SCHEMA.safeParse(payload);
+    return parsed.success
+      ? {
+          valid: true as const,
+          issues: [] as ValidationIssue[],
+          schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
+          variant: undefined,
+        }
+      : {
+          valid: false as const,
+          issues: parsed.error.issues.map(issue => ({
+            pointer: `/${issue.path.map(value => String(value).replaceAll('~', '~0').replaceAll('/', '~1')).join('/')}`,
+            message: issue.message,
+            keyword: issue.code,
+            schemaPath: '#/local/envelope-validation',
+            schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
+          })),
+          schemaId: '/schemas/media-buy/sync-reporting-status-request.json',
+          variant: undefined,
+        };
+  }
   if (toolName !== 'refine_proposals') {
     return direction === 'request'
       ? validateRequest(toolName, payload, version)
@@ -3088,6 +3129,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   get_media_buys: { wrap: getMediaBuysResponse, annotations: RO },
   get_media_buy_delivery: { wrap: deliveryResponse, annotations: RO },
   get_reporting_status: { wrap: null, annotations: RO },
+  sync_reporting_status: { wrap: null, annotations: IDEMP },
   sync_reporting_receipts: { wrap: null, annotations: IDEMP },
   provide_performance_feedback: { wrap: performanceFeedbackResponse, annotations: MUT },
 
@@ -3373,6 +3415,7 @@ const MEDIA_BUY_ENTRIES: HandlerEntry[] = [
   { handlerKey: 'getMediaBuys', toolName: 'get_media_buys' },
   { handlerKey: 'getMediaBuyDelivery', toolName: 'get_media_buy_delivery' },
   { handlerKey: 'getReportingStatus', toolName: 'get_reporting_status' },
+  { handlerKey: 'syncReportingStatus', toolName: 'sync_reporting_status' },
   { handlerKey: 'syncReportingReceipts', toolName: 'sync_reporting_receipts' },
   { handlerKey: 'providePerformanceFeedback', toolName: 'provide_performance_feedback' },
   { handlerKey: 'listCreativeFormats', toolName: 'list_creative_formats' },
