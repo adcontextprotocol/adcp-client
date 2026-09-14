@@ -372,6 +372,12 @@ test('rejects out-of-scope and orphan records before evaluating ledger completen
       });
     },
     raw => {
+      raw.revisions.push({
+        ...structuredClone(revision),
+        reporting_revision_id: 'orphan-same-scope',
+      });
+    },
+    raw => {
       raw.materializations.push({
         ...structuredClone(materialization('orphan-materialization')),
         reporting_obligation_id: 'missing-obligation',
@@ -427,6 +433,35 @@ test('rejects out-of-scope and orphan records before evaluating ledger completen
       error => error.code === 'LEDGER_GRAPH_INTEGRITY_FAILED'
     );
   }
+});
+
+test('loads a scope-matched Core revision without a managed materialization', async () => {
+  const raw = response([]);
+  raw.periods[0].reconciliation_mode = 'delivery_only';
+  raw.periods[0].reconciliation_status = 'not_required';
+  delete raw.periods[0].destination_ref;
+  delete raw.periods[0].materialization_count;
+  delete raw.periods[0].successful_materialization_count;
+  delete raw.periods[0].receipt_count;
+  delete raw.periods[0].accepted_receipt_count;
+  raw.materializations = [];
+  raw.pagination.total_count = raw.periods.length + raw.revisions.length;
+
+  const ledger = await loadReportingLedger(
+    {
+      async getReportingStatus() {
+        return raw;
+      },
+    },
+    { account: { account_id: 'account-1' }, period: { start: period.start, end: period.end } }
+  );
+
+  assert.equal(ledger.obligations.length, 1);
+  assert.equal(ledger.revisions.length, 1);
+  assert.equal(ledger.materializations.length, 0);
+  const evaluated = evaluateReportingLedger(ledger, [expectedPeriod()]);
+  assert.ok(!evaluated.obligations[0].reasons.includes('MISSING_CURRENT_REVISION'));
+  assert.ok(evaluated.obligations[0].reasons.includes('MISSING_VERIFIED_MATERIALIZATION'));
 });
 
 test('rejects unbounded ledger loading and snapshot restart policies', async () => {
