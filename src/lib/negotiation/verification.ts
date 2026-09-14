@@ -1097,6 +1097,7 @@ function verifyConstraints(
     cpm &&
     !terms.purchases.every(
       purchase =>
+        purchase.pricing !== undefined &&
         (purchase.pricing.pricing_model === 'cpm' || purchase.pricing.pricing_model === 'vcpm') &&
         purchase.pricing.currency === cpm.currency &&
         typeof purchase.pricing.fixed_price === 'number' &&

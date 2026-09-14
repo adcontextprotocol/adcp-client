@@ -1,5 +1,13 @@
 /** Public AdCP proposal-negotiation types (introduced by the 3.2 contract). */
 
+import type {
+  CanonicalDeliveryForecast,
+  CanonicalProposal as GeneratedCanonicalProposal,
+  ProductPurchase as GeneratedProductPurchase,
+} from '../types/core.generated';
+
+export type { CanonicalDeliveryForecast, CanonicalForecastPoint } from '../types/core.generated';
+
 export const PROPOSAL_REFINEMENT_DIMENSIONS = [
   'total_budget',
   'cpm',
@@ -148,14 +156,32 @@ export interface ProposalResolvedPricing {
 export interface ProposalPurchase {
   product_id: string;
   pricing_option_id: string;
-  pricing: ProposalResolvedPricing;
+  /** Resolved pricing is required in accepted snapshots but optional on direct-purchase inputs. */
+  pricing?: ProposalResolvedPricing | GeneratedProductPurchase['pricing'];
+  format_option_refs?: GeneratedProductPurchase['format_option_refs'];
+  catalog_ids?: GeneratedProductPurchase['catalog_ids'];
+  budget?: GeneratedProductPurchase['budget'];
+  daily_budget_cap?: GeneratedProductPurchase['daily_budget_cap'];
+  min_spend_target?: GeneratedProductPurchase['min_spend_target'];
   impressions?: number;
-  start_time: string;
-  end_time: string;
+  start_time?: string;
+  end_time?: string;
+  pacing?: GeneratedProductPurchase['pacing'];
+  bidding?: GeneratedProductPurchase['bidding'];
+  targeting_overlay?: GeneratedProductPurchase['targeting_overlay'];
+  optimization_goals?: GeneratedProductPurchase['optimization_goals'];
+  audience_evidence_requirements?: GeneratedProductPurchase['audience_evidence_requirements'];
+  audience_evidence_pins?: GeneratedProductPurchase['audience_evidence_pins'];
+  agency_estimate_number?: GeneratedProductPurchase['agency_estimate_number'];
+  context?: GeneratedProductPurchase['context'];
+  ext?: GeneratedProductPurchase['ext'];
+  measurement_terms?: GeneratedProductPurchase['measurement_terms'];
+  performance_standards?: GeneratedProductPurchase['performance_standards'];
 }
 
 export interface ProposalCommercialTerms<TPurchase extends ProposalPurchase = ProposalPurchase> {
-  brand: Record<string, unknown>;
+  /** Keep the legacy open object while accepting the generated compact BrandKey. */
+  brand: Record<string, unknown> | GeneratedCanonicalProposal['commercial_terms']['brand'];
   purchases: TPurchase[];
   start_time: string;
   end_time: string;
@@ -177,7 +203,9 @@ export interface CanonicalProposal<TTerms extends ProposalCommercialTerms = Prop
   brief_alignment?: string;
   commercial_terms: TTerms;
   terms_digest: string;
-  insertion_order?: Record<string, unknown>;
+  insertion_order?: Record<string, unknown> | GeneratedCanonicalProposal['insertion_order'];
+  total_budget_guidance?: GeneratedCanonicalProposal['total_budget_guidance'];
+  forecast?: CanonicalDeliveryForecast;
 }
 
 export type ProposalRefinementReason =
