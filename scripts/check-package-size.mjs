@@ -37,13 +37,15 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // module (CJS + ESM + both declaration flavours), for +4 more.
 // The 14.x adoption pass adds an existing-platform guide, a release worksheet,
 // and a compile-gated thin integration example; byte budgets remain unchanged.
+// The targeting-input migration follow-up adds one compile-gated provider
+// adapter example; byte budgets remain unchanged.
 // Canonical principal/reporting-core distribution adds two YAML files, one
 // provenance manifest, and one dual-format module/declaration set (+7 files).
 // The rc.3 buyer-side consumer-status loop adds one module,
 // `reporting/content-mismatch` (CJS + ESM + both declaration flavours), for +4.
 // Its reconciliation changes are edits to existing modules, and the unpacked
 // total is unchanged against the 120 MiB ceiling.
-const MAX_PACKED_FILE_COUNT = 6_073;
+const MAX_PACKED_FILE_COUNT = 6_074;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

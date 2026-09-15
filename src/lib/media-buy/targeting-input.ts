@@ -44,8 +44,9 @@
 const UNSAFE_OVERLAY_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 /**
- * Strict effective overlay derived from a request-only Targeting Input: the
- * same dimensions, with the `null` clear command removed from each.
+ * Strict overlay projection derived from a request-only Targeting Input: the
+ * same dimensions, with the `null` clear command removed from each. This does
+ * not materialize configured-product defaults omitted by a create request.
  *
  * Generic rather than hardcoded to the generated `TargetingOverlay` because
  * the per-tool payload types widen non-empty-array tuples (`[string,
@@ -69,8 +70,10 @@ export type TargetingInputFor<T> = { [K in keyof T]?: T[K] | null };
  * Resolve a request-only Targeting Input into the strict effective overlay,
  * dropping every `null` clear command.
  *
- * Use this on the **create** path, and whenever a request-shaped overlay is
- * about to become an accepted snapshot, a readback value, or durable state.
+ * Use this on the **create** path only when no configured/product targeting
+ * defaults need to be materialized. Otherwise pass those strict defaults and
+ * the request to {@link applyTargetingInput}. Also use this projection whenever
+ * a request-shaped overlay without a baseline is about to become strict state.
  *
  * Returns `undefined` when the input is absent, is an explicit whole-overlay
  * clear, or resolves to no surviving dimensions — a cleared dimension is absent
