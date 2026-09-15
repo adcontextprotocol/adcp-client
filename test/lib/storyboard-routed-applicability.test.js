@@ -19,13 +19,19 @@ async function startAgent(
   rejectTools = false,
   products = [],
   metadataStatus = 404,
-  metadataResponse = {}
+  metadataResponse = {},
+  rejectedAuthorization
 ) {
   const calls = [];
   const authorization = [];
   const connections = [];
   const metadataRequests = [];
   const server = http.createServer(async (req, res) => {
+    if (rejectedAuthorization && req.headers.authorization === rejectedAuthorization) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized test credential' }));
+      return;
+    }
     if (req.url.includes('/.well-known/')) {
       metadataRequests.push(req.url);
       res.writeHead(metadataStatus, { 'content-type': 'application/json' });
@@ -1218,6 +1224,72 @@ test('routing failures retain unavailable outputs through normal and skipped pha
       assert.equal(result.failed_count, 1, label);
       assert.equal(result.overall_passed, false, label);
     }
+  }
+});
+
+test('selected capability skips retain output protection before OAuth absence handling', async () => {
+  for (const eligible of [false, true]) {
+    const sb = storyboard([
+      { id: 'probe', task: 'protected_resource_metadata', agent: 'a' },
+      {
+        id: 'producer',
+        task: 'get_adcp_capabilities',
+        agent: 'a',
+        context_outputs: [{ key: 'needed', path: 'identity.brand_json_url' }],
+      },
+      {
+        id: 'consumer',
+        task: 'get_signals',
+        agent: 'b',
+        expect_error: true,
+        sample_request: { signal_spec: '$context.needed' },
+      },
+    ]);
+    sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
+    const { result, calls } = await run(
+      {
+        a: [[], { account: { require_operator_auth: eligible }, oauth: { supported: false } }],
+        b: [
+          ['get_signals'],
+          { account: { require_operator_auth: true }, oauth: { supported: true }, supported_protocols: ['signals'] },
+          true,
+        ],
+      },
+      sb
+    );
+    const [probe, producer, consumer] = result.phases[0].steps;
+    assert.equal(probe.skip_reason, eligible ? 'oauth_not_advertised' : 'not_applicable');
+    assert.equal(producer.skip_reason, eligible ? 'oauth_not_advertised' : 'not_applicable');
+    assert.equal(consumer.skip_reason, eligible ? undefined : 'capability_prerequisite_unavailable');
+    assert.equal(calls.b.filter(task => task === 'get_signals').length, eligible ? 1 : 0);
+  }
+});
+
+test('failed discovery retains route identity when credentials share a URL', async () => {
+  const agent = await startAgent([], {}, false, [], 404, {}, 'Bearer failed-route');
+  try {
+    const result = await runStoryboard('', storyboard([{ id: 'failed', task: 'get_adcp_capabilities', agent: 'b' }]), {
+      invariants: [],
+      discovery_resilient: true,
+      agents: {
+        a: { url: agent.url, auth: { type: 'bearer', token: 'healthy-route' } },
+        b: { url: agent.url, auth: { type: 'bearer', token: 'failed-route' } },
+      },
+    });
+    const step = result.phases[0].steps[0];
+    assert.equal(step.passed, false);
+    assert.equal(step.agent_index, 2);
+    const source = require('node:fs').readFileSync(require.resolve('../../bin/adcp.js'), 'utf8');
+    const start = source.indexOf(
+      "let agentTag = '';",
+      source.indexOf('async function handleAgentsRoutedStoryboardRun')
+    );
+    const end = source.indexOf('console.log(', start);
+    const rendered = require('node:vm').runInNewContext(`${source.slice(start, end)} agentTag;`, { step, result });
+    assert.equal(rendered, '[b] ');
+  } finally {
+    await closeConnections();
+    await agent.close();
   }
 });
 

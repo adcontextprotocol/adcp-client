@@ -2567,6 +2567,7 @@ async function executeStoryboardPass(
     );
     const failedAgentKey = step.agent ?? options.default_agent;
     const failedAgentUrl = failedAgentKey ? options.agents?.[failedAgentKey]?.url : undefined;
+    const failedAgentIndex = failedAgentKey ? Object.keys(options.agents ?? {}).indexOf(failedAgentKey) : -1;
     return {
       storyboard_id: storyboard.id,
       step_id: step.id,
@@ -2579,6 +2580,7 @@ async function executeStoryboardPass(
       context,
       error: detail,
       ...(failedAgentUrl && { agent_url: redactOAuthUrlForOutput(failedAgentUrl) }),
+      ...(failedAgentIndex >= 0 && { agent_index: failedAgentIndex + 1 }),
       extraction: { path: 'none' },
     };
   };
@@ -3665,7 +3667,12 @@ async function executeStoryboardPass(
       ) {
         routedOauthAbsent.add(assignment.instanceIndex);
       }
-      if (phaseAbsent || (assignment && routedOauthAbsent.has(assignment.instanceIndex))) {
+      // Explicit capability skips must reach their normal output/state
+      // bookkeeping even when this route also does not advertise OAuth.
+      if (
+        (phaseAbsent || (assignment && routedOauthAbsent.has(assignment.instanceIndex))) &&
+        !routedStepCapabilitySkips.has(step)
+      ) {
         const cascadeResult: StoryboardStepResult = {
           storyboard_id: storyboard.id,
           step_id: step.id,
