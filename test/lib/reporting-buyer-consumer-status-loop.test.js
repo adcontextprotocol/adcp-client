@@ -1086,7 +1086,11 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
 
   test('an unreadable expected_at falls back to the obligation schedule the spec defines', async () => {
     const seller = await harness();
-    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    // No buyer pin: the obligation's own `schedule.delivery_sla` has to be the
+    // only path to a deadline, or this test passes through the pin instead and
+    // says nothing about the fallback.
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
@@ -1096,18 +1100,27 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     // an unreadable `expected_at` is recoverable from the seller's own number
     // rather than silencing the period forever.
     const honest = seller.client.getReportingStatus;
+    let scheduledSla;
     seller.client.getReportingStatus = async params => {
       const page = await honest(params);
-      return { ...page, periods: page.periods.map(period => ({ ...period, expected_at: 'soon' })) };
+      return {
+        ...page,
+        periods: page.periods.map(period => {
+          scheduledSla = period.schedule?.delivery_sla;
+          return { ...period, expected_at: 'soon' };
+        }),
+      };
     };
 
     const result = await seller.reconcile(at, expected);
+    assert.equal(scheduledSla, `PT${SLA_SECONDS}S`, 'the obligation carries the duration being resolved');
     assert.equal(result.postedConsumerStatuses.length, 1, 'recovered rather than silenced');
     assert.equal(
       result.postedConsumerStatuses[0].statusAsOf,
       new Date(seller.anchor + DAY + SLA_SECONDS * 1_000).toISOString(),
       'period end + schedule.delivery_sla'
     );
+    assert.deepEqual(result.failedConsumerStatuses, []);
   });
 
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {

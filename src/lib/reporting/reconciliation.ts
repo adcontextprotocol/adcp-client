@@ -1668,11 +1668,16 @@ const REVISION_DISQUALIFYING_REASONS = new Set([
   'REVISION_SCOPE_MISMATCH',
   // Deliberately *not* REVISION_CHAIN_SCOPE_MISMATCH: it fires when any
   // candidate in the chain is off-scope, including a long-superseded one, so a
-  // perfectly valid current revision would be reported as missing.
-  // REVISION_SCOPE_MISMATCH already covers the revision actually being named.
-  // (In practice `assertReportingLedgerGraph` refuses an off-scope revision
-  // before planning ever runs, so this is defence in depth rather than a live
-  // path — which is also why the test covers the in-scope predecessor case.)
+  // perfectly valid current revision would be reported as missing. Nothing is
+  // lost by dropping it — the head-only predicate REVISION_SCOPE_MISMATCH
+  // tests the same fields against the revision actually being named.
+  //
+  // An earlier version of this comment claimed `assertReportingLedgerGraph`
+  // refuses an off-scope revision first, making this defence in depth. That is
+  // wrong: that assertion checks the materialization-to-obligation join and
+  // `revision.account_id`, not `report_definition_id`, `reporting_profile`,
+  // `media_buy_ids` or `period`. For a managed-delivery obligation, candidates
+  // are joined purely by materialization revision id, so this is a live path.
 ]);
 
 interface ConsumerStatusDraft {
@@ -3005,7 +3010,16 @@ async function consumeReportingRevision(
     // buyer's own ceiling and stays silent. Anything else is content this
     // reader cannot digest, which is what `reader_incompatible` names.
     if (error instanceof RangeError) return { budgetExhausted: 'revision' };
-    return { failureCode: 'reader_incompatible', detail: 'the revision rows could not be canonicalized' };
+    // The message is this SDK's own canonicalizer talking, not a provider
+    // response body, so carrying it is safe and it is the only clue a genuine
+    // defect leaves. `detail` stays local — the wire carries the closed code.
+    const detail = error instanceof Error ? boundedDiagnostic(error.message) : '';
+    return {
+      failureCode: 'reader_incompatible',
+      detail: detail
+        ? `the revision rows could not be canonicalized: ${detail}`
+        : 'the revision rows could not be canonicalized',
+    };
   }
   if (!sameSha256(digest, binding.content_sha256)) {
     return {

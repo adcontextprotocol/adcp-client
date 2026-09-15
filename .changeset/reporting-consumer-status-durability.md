@@ -11,7 +11,8 @@ anything that was not a `RangeError`, out of a call site with no `catch`. The th
 `reconcileReporting` after receipts had already been synced, losing the caller's record of durable
 work. Canonicalization failures are now classified: a `RangeError` is a size failure and stays silent
 as the buyer's own budget, anything else is `unreadable` / `reader_incompatible`, which is what that
-code means.
+code means — carrying the canonicalizer's own bounded message in the local `reason` so a genuine
+defect stays visible.
 
 **A conformant seller could be silenced permanently.** `expected_at` was validated against a stricter
 pattern than the `format: date-time` check this SDK uses on the seller's own payloads, so a lowercase
@@ -32,6 +33,12 @@ earlier `local_budget_exhausted`, under-charging is unbounded memory.
 `reporting_status_id` hash and the seller-side chain key, so a seller that varied it forked the
 buyer's own chain and then pinned it at `leaf_undisclosed`. The ingest path already bounds it at 255
 characters; this read path now does too.
+
+**Scope note.** `deadline_unknown` suppression now applies only to `obligation_missing` and
+`revision_missing` — the two statuses `expected_period` actually conditions on `expected_at`. The
+others are unaffected in practice because a plan with no deadline is never `overdue`, and the
+posting loop only attests and posts overdue plans; the narrowing just stops the label being applied
+to statuses whose validity never depended on it.
 
 Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
 does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been
