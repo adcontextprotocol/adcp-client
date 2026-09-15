@@ -43,6 +43,7 @@ jobs:
       - name: Lint GitHub Actions workflows
         run: npm run lint:workflows
 
+      # Run before the producer gates unit shards, which also discover this test.
       - name: Test CI artifact contract
         run: node --test test/ci-artifact-reuse.test.js
 
@@ -221,7 +222,10 @@ jobs:
         id: archive
         shell: bash
         run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::Library Build checkout does not match this workflow run."
+            exit 1
+          fi
           tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist schemas/cache compliance/cache
           digest=$(sha256sum "$RUNNER_TEMP/library-dist.tar.gz" | cut -d ' ' -f 1)
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
@@ -260,6 +264,8 @@ jobs:
 
       # No token, repository or run-id override: download only from this run.
       # The digest comes from the producer job, never from inside the artifact.
+      # An absent/expired artifact fails the download itself: rerun all jobs
+      # to recreate it after the one-day retention window.
       - name: Download library output
         uses: actions/download-artifact@v7
         with:
@@ -900,6 +906,10 @@ jobs:
         if: matrix.mode == 'package'
         run: npm run verify:package
 
+  # These cells deliberately test Node-20-built output under Node 24 / Undici 7,
+  # including the packed Undici 7 override at Node 20.19.0. Build-toolchain
+  # compatibility is checked at the two Node floors in the package matrix;
+  # network cells no longer exercise code generation under their own runtime.
   node-undici-network-matrix:
     name: Node ${{ matrix.node }} / Undici ${{ matrix.undici }}
     runs-on: ubuntu-latest

@@ -74,6 +74,10 @@ test('artifact identity and digest are bound to the producing job and this workf
 });
 
 test('all consumers verify before use, without rebuilding or waiting for package checks', () => {
+  const downloadingJobs = Object.entries(jobs)
+    .filter(([, job]) => job.steps.some(step => step.uses?.startsWith('actions/download-artifact@')))
+    .map(([name]) => name);
+  assert.deepEqual(downloadingJobs.sort(), [...consumers].sort(), 'Every artifact consumer must be audited');
   for (const name of consumers) {
     const job = jobs[name];
     assert.equal(job.needs, 'library-build', name);
@@ -191,7 +195,9 @@ test('the actual archive/verification scripts round-trip output and reject stale
   assert.match(result.stdout, /::error::Missing library-build artifact/);
   // Existing dist never makes a failed verification succeed.
   assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
-  assert.notEqual(shell(archive.run, cwd, { ...env, GITHUB_SHA: '0'.repeat(40) }).status, 0);
+  const wrongCheckout = shell(archive.run, cwd, { ...env, GITHUB_SHA: '0'.repeat(40) });
+  assert.notEqual(wrongCheckout.status, 0);
+  assert.match(wrongCheckout.stdout, /::error::Library Build checkout does not match this workflow run/);
 });
 
 test('package smoke still skips doc-only changes and rebuilds for workflow changes or an unavailable base', t => {
