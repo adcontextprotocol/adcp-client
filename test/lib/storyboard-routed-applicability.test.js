@@ -1426,3 +1426,34 @@ test('stateful routed capability cascades retain neutral origin, rescue, and rea
     assert.equal(calls.b.filter(task => task === 'get_signals').length, mode === 'unavailable' ? 0 : 1, mode);
   }
 });
+
+test('unrescued missing tools outrank deferred capability skips when both triggers exist', async () => {
+  for (const rescued of [false, true]) {
+    const sb = storyboard([
+      { id: 'missing_tool', task: 'get_adcp_capabilities', requires_tool: 'get_signals', agent: 'b', stateful: true },
+      { id: 'capability_skip', task: 'get_adcp_capabilities', agent: 'a', stateful: true },
+      {
+        id: 'substitute',
+        task: 'get_adcp_capabilities',
+        agent: rescued ? 'b' : 'a',
+        stateful: true,
+        provides_state_for: 'missing_tool',
+      },
+    ]);
+    sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
+    sb.phases.push({
+      id: 'dependent',
+      title: 'Dependent',
+      steps: [{ id: 'downstream', title: 'Downstream', task: 'get_adcp_capabilities', agent: 'b', stateful: true }],
+    });
+    const { result } = await run(
+      { a: [[], { account: { require_operator_auth: false } }], b: [[], { account: { require_operator_auth: true } }] },
+      sb
+    );
+    const downstream = result.phases.find(phase => phase.phase_id === 'dependent').steps[0];
+    assert.equal(downstream.passed, rescued);
+    assert.equal(downstream.skipped === true, !rescued);
+    assert.equal(downstream.skip_reason, rescued ? undefined : 'prerequisite_failed');
+    assert.equal(result.overall_passed, rescued);
+  }
+});

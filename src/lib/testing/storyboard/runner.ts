@@ -4040,6 +4040,31 @@ async function executeStoryboardPass(
       }
     }
 
+    // Phase-end cascade resolution for deferred `missing_tool` triggers
+    // (#1144). A stateful step that skipped with a hard-missing reason
+    // and had at least one declared substitute (`provides_state_for`,
+    // formerly `peer_substitutes_for`) was deferred above. If none of
+    // the declared substitutes passed, the substitution path failed to
+    // establish state — promote to a hard cascade with a detail message
+    // that names the substitute(s) tried so adopters reading the report
+    // see the substitution chain rather than a bare `missing_tool`
+    // cascade origin.
+    if (
+      phasePendingMissingTool &&
+      !phaseRescuedTargets.has(phasePendingMissingTool.stepId) &&
+      !phaseStatefulCascades.has(phase.id)
+    ) {
+      const subs = phasePendingMissingTool.substitutes;
+      const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
+      phaseStatefulCascades.set(phase.id, {
+        stepId: phasePendingMissingTool.stepId,
+        reason: phasePendingMissingTool.reason,
+        substitution_chain: `declared substitute ${subsList} did not pass`,
+      });
+    }
+
+    // Unrescued missing-tool state takes precedence over capability-only
+    // unavailability when both deferred triggers exist in this phase.
     // Phase-end cascade resolution for deferred `not_applicable` triggers.
     // If a stateful step skipped not_applicable earlier in this phase and
     // no stateful peer subsequently passed, we MAY promote to a hard cascade
@@ -4076,29 +4101,6 @@ async function executeStoryboardPass(
           };
         }
       }
-    }
-
-    // Phase-end cascade resolution for deferred `missing_tool` triggers
-    // (#1144). A stateful step that skipped with a hard-missing reason
-    // and had at least one declared substitute (`provides_state_for`,
-    // formerly `peer_substitutes_for`) was deferred above. If none of
-    // the declared substitutes passed, the substitution path failed to
-    // establish state — promote to a hard cascade with a detail message
-    // that names the substitute(s) tried so adopters reading the report
-    // see the substitution chain rather than a bare `missing_tool`
-    // cascade origin.
-    if (
-      phasePendingMissingTool &&
-      !phaseRescuedTargets.has(phasePendingMissingTool.stepId) &&
-      !phaseStatefulCascades.has(phase.id)
-    ) {
-      const subs = phasePendingMissingTool.substitutes;
-      const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
-      phaseStatefulCascades.set(phase.id, {
-        stepId: phasePendingMissingTool.stepId,
-        reason: phasePendingMissingTool.reason,
-        substitution_chain: `declared substitute ${subsList} did not pass`,
-      });
     }
 
     // Phase-end re-grading for rescued targets (adcp#3734, AdCP 3.0.3+).
