@@ -940,6 +940,111 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(seller.store.consumerStatements.length, 0);
   });
 
+  /**
+   * Drive the `schedule.delivery_sla` fallback with full control of the period
+   * end. No revision is published, so the status is `revision_missing` and its
+   * `status_as_of` is exactly the derived `expected_at`.
+   */
+  async function scheduledExpectedAt({ periodStart, periodEnd, deliverySla, periodTimezone = 'UTC' }) {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    // The seller's observation boundary stays where its own ledger is coherent;
+    // only the buyer's reconcile clock moves, which is what `overdue` reads.
+    seller.observeAt(seller.anchor + DAY + 3 * HOUR);
+    const at = Date.parse(periodEnd) + 400 * DAY;
+    // This case is about the instant the buyer derives, not about posting it.
+    delete seller.client.syncReportingStatus;
+    // No buyer pin: the obligation's own schedule must be the only path.
+    const { deliverySlaSeconds: _pin, ...base } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [{ ...base, periodStart, periodEnd }];
+
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      // The summary view carries no `periods`, and it shares this client.
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({
+          ...period,
+          period: { ...period.period, start: periodStart, end: periodEnd },
+          expected_at: 'soon',
+          schedule: { ...period.schedule, delivery_sla: deliverySla, period_timezone: periodTimezone },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    return result.consumerStatuses[0];
+  }
+
+  test('a calendar delivery_sla resolves; the schema permits P1M and P1Y', async () => {
+    // `reporting-schedule.json` allows Y and M on `delivery_sla`, and this
+    // SDK's own validator accepts them — so a parser that understood only
+    // D/H/M/S silenced a conformant seller, which is the failure this fallback
+    // exists to prevent.
+    const monthly = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P1M',
+    });
+    assert.equal(monthly.suppressed, undefined, 'P1M is resolvable, not a reason to fall silent');
+    assert.equal(monthly.statusAsOf, '2026-10-02T00:00:00.000Z');
+
+    const yearly = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P1Y',
+    });
+    assert.equal(yearly.statusAsOf, '2027-09-02T00:00:00.000Z');
+  });
+
+  test('a calendar month clamps to month end rather than overflowing', async () => {
+    // Jan 31 + P1M is the last day of February, not March 3. This is the one
+    // place ISO duration implementations genuinely differ, so it is pinned.
+    const nonLeap = await scheduledExpectedAt({
+      periodStart: '2026-01-30T00:00:00.000Z',
+      periodEnd: '2026-01-31T00:00:00.000Z',
+      deliverySla: 'P1M',
+    });
+    assert.equal(nonLeap.statusAsOf, '2026-02-28T00:00:00.000Z');
+
+    const leap = await scheduledExpectedAt({
+      periodStart: '2028-01-30T00:00:00.000Z',
+      periodEnd: '2028-01-31T00:00:00.000Z',
+      deliverySla: 'P1M',
+    });
+    assert.equal(leap.statusAsOf, '2028-02-29T00:00:00.000Z', 'a leap year has the 29th to clamp to');
+
+    const acrossLeapDay = await scheduledExpectedAt({
+      periodStart: '2028-02-28T00:00:00.000Z',
+      periodEnd: '2028-02-29T00:00:00.000Z',
+      deliverySla: 'P1Y',
+    });
+    assert.equal(acrossLeapDay.statusAsOf, '2029-02-28T00:00:00.000Z', 'Feb 29 + P1Y has no Feb 29 to land on');
+  });
+
+  test('calendar arithmetic happens in the schedule period_timezone', async () => {
+    // `period_timezone` is "Required IANA timezone for ... calendar
+    // arithmetic", and the point of requiring it is that a fixed offset cannot
+    // express a DST transition. Midnight in New York stays midnight across one.
+    const acrossDst = await scheduledExpectedAt({
+      periodStart: '2026-02-28T05:00:00.000Z',
+      periodEnd: '2026-03-01T05:00:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'America/New_York',
+    });
+    // 2026-03-01T05:00Z is midnight EST; 2026-04-01 midnight is EDT (-4).
+    assert.equal(acrossDst.statusAsOf, '2026-04-01T04:00:00.000Z');
+
+    const unknownZone = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'Mars/Olympus_Mons',
+    });
+    assert.equal(unknownZone.suppressed, 'deadline_unknown', 'an unresolvable zone derives nothing, not a guess');
+  });
+
   test('a forked revision chain suppresses rather than blaming the seller', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];

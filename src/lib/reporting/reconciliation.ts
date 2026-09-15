@@ -1899,11 +1899,8 @@ function reportingExpectedAt(
   // seller's own `expected_at` is unreadable the buyer can still recompute the
   // seller's number rather than falling back to its own pin — same instant, by
   // the spec's own definition.
-  const scheduledSeconds = reportingDeliverySlaSeconds(obligation);
-  const periodEndFromObligation = Date.parse(expected.periodEnd);
-  if (scheduledSeconds !== undefined && Number.isFinite(periodEndFromObligation)) {
-    return new Date(periodEndFromObligation + scheduledSeconds * 1_000).toISOString();
-  }
+  const scheduled = reportingScheduledExpectedAt(obligation, expected.periodEnd);
+  if (scheduled !== undefined) return scheduled;
   const slaSeconds =
     expected.requiredFinality === 'official' && typeof expected.officialAfterSeconds === 'number'
       ? expected.officialAfterSeconds
@@ -1914,24 +1911,129 @@ function reportingExpectedAt(
   return new Date(periodEnd + slaSeconds * 1_000).toISOString();
 }
 
-/** `schedule.delivery_sla` off the obligation, as seconds. */
-function reportingDeliverySlaSeconds(obligation: ManagedReportingObligation | undefined): number | undefined {
-  const schedule = (obligation as { schedule?: { delivery_sla?: unknown } } | undefined)?.schedule;
-  return typeof schedule?.delivery_sla === 'string' ? iso8601DurationSeconds(schedule.delivery_sla) : undefined;
+/**
+ * `expected_at` recomputed as "the resolved period end plus `delivery_sla`".
+ *
+ * Calendar-aware, because `reporting-schedule.json` permits `Y` and `M` on
+ * `delivery_sla` and names `period_timezone` as the zone its "calendar
+ * arithmetic" happens in. A parser that only understood `D`/`H`/`M`/`S` would
+ * reject `P1M` — a value the schema allows and this SDK's own validator
+ * accepts — and silence a conformant seller, which is the whole failure this
+ * fallback exists to prevent.
+ */
+function reportingScheduledExpectedAt(
+  obligation: ManagedReportingObligation | undefined,
+  periodEnd: string
+): string | undefined {
+  const schedule = (obligation as { schedule?: { delivery_sla?: unknown; period_timezone?: unknown } } | undefined)
+    ?.schedule;
+  if (typeof schedule?.delivery_sla !== 'string') return undefined;
+  const duration = parseIso8601Duration(schedule.delivery_sla);
+  const anchor = Date.parse(periodEnd);
+  if (!duration || !Number.isFinite(anchor)) return undefined;
+  const timeZone = boundedSourceTimezone(schedule.period_timezone) ?? 'UTC';
+  const shifted = addCalendarDuration(anchor, duration, timeZone);
+  return shifted === undefined ? undefined : new Date(shifted).toISOString();
+}
+
+interface Iso8601Duration {
+  years: number;
+  months: number;
+  days: number;
+  seconds: number;
+}
+
+/** The non-negative subset `reporting-schedule.json` permits on `delivery_sla`. */
+function parseIso8601Duration(value: string): Iso8601Duration | undefined {
+  const match =
+    /^P(?=\d|T)(?=.*\d)(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)D)?(?:T(?=\d)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(value);
+  if (!match) return undefined;
+  const [, years, months, days, hours, minutes, seconds] = match;
+  return {
+    years: Number(years ?? 0),
+    months: Number(months ?? 0),
+    days: Number(days ?? 0),
+    seconds: Number(hours ?? 0) * 3_600 + Number(minutes ?? 0) * 60 + Number(seconds ?? 0),
+  };
 }
 
 /**
- * Seconds in a non-negative ISO 8601 duration, for the subset
- * `reporting-schedule.json` permits on `delivery_sla`.
+ * Add a duration to an instant, treating date components as calendar
+ * arithmetic in `timeZone` and time components as exact elapsed time — the
+ * ordinary ISO 8601 reading, and the one `period_timezone` exists to support.
  *
- * Years and months are deliberately unsupported: they are calendar-dependent,
- * so resolving them here would invent an instant the seller did not mean.
+ * Month-end clamps: adding `P1M` to Jan 31 lands on the last day of February,
+ * not March 3. Overflowing into a day the target month does not have is the
+ * one place implementations differ, so it is pinned by test.
  */
-function iso8601DurationSeconds(value: string): number | undefined {
-  const match = /^P(?!$)(?:(\d+)D)?(?:T(?!$)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(value);
-  if (!match) return undefined;
-  const [, days, hours, minutes, seconds] = match;
-  return Number(days ?? 0) * 86_400 + Number(hours ?? 0) * 3_600 + Number(minutes ?? 0) * 60 + Number(seconds ?? 0);
+function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZone: string): number | undefined {
+  const parts = zonedParts(instant, timeZone);
+  if (!parts) return undefined;
+  const totalMonths = parts.month - 1 + duration.years * 12 + duration.months;
+  const year = parts.year + Math.floor(totalMonths / 12);
+  const month = (totalMonths % 12) + 1;
+  const day = Math.min(parts.day, daysInMonth(year, month));
+  const wall = Date.UTC(year, month - 1, day, parts.hour, parts.minute, parts.second);
+  const resolved = instantForWallTime(wall, timeZone);
+  if (resolved === undefined) return undefined;
+  return resolved + duration.days * 86_400_000 + duration.seconds * 1_000;
+}
+
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** Calendar fields of an instant as read in `timeZone`. */
+function zonedParts(
+  instant: number,
+  timeZone: string
+): { year: number; month: number; day: number; hour: number; minute: number; second: number } | undefined {
+  try {
+    const formatted = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(new Date(instant));
+    const field = (type: string): number => Number(formatted.find(part => part.type === type)?.value);
+    const parts = {
+      year: field('year'),
+      month: field('month'),
+      day: field('day'),
+      // Intl renders midnight as hour 24 in some locales' hourCycle.
+      hour: field('hour') % 24,
+      minute: field('minute'),
+      second: field('second'),
+    };
+    return Object.values(parts).every(Number.isFinite) ? parts : undefined;
+  } catch {
+    // An unknown IANA zone: the seller named something this runtime cannot
+    // resolve, so there is no instant to derive rather than a guessed one.
+    return undefined;
+  }
+}
+
+/**
+ * The instant at which `timeZone` reads the given wall-clock time.
+ *
+ * Two passes: the first offset is read at the wrong instant by up to the
+ * offset itself, the second corrects it. Around a DST transition a wall time
+ * can be ambiguous or absent; the earlier instant is taken, which is the
+ * conventional choice and is deterministic either way.
+ */
+function instantForWallTime(wall: number, timeZone: string): number | undefined {
+  let guess = wall;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const parts = zonedParts(guess, timeZone);
+    if (!parts) return undefined;
+    const readBack = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    guess += wall - readBack;
+  }
+  return guess;
 }
 
 /**

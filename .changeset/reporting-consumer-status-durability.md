@@ -22,7 +22,11 @@ and no statement, forever. The pattern now matches what the SDK itself accepts, 
 March 2, and re-emitting the seller's bytes would put that contradiction on a statement the buyer
 signs. When `expected_at` is genuinely unreadable the buyer now recomputes it from
 `obligation.schedule.delivery_sla` — `reporting-schedule.json` defines `expected_at` as exactly that
-sum and makes `schedule` required — instead of falling silent.
+sum and makes `schedule` required — instead of falling silent. That resolution is **calendar-aware**:
+the schema permits `Y` and `M` on `delivery_sla` and names `period_timezone` as the zone its
+"calendar arithmetic" happens in, so `P1M` is resolved as a calendar month in that zone, clamping to
+month end (Jan 31 + `P1M` is the last day of February, and a leap year has the 29th to clamp to).
+An unresolvable timezone derives nothing rather than a guess.
 
 **Deeply nested rows walked past the byte ceiling.** The size estimate charged an unexamined subtree
 a flat 64 bytes however large it was, so `{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes. A subtree past
