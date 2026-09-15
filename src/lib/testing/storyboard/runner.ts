@@ -3976,10 +3976,12 @@ async function executeStoryboardPass(
       if (result.skipped) {
         skippedCount++;
         context = result.context;
-        if (
-          routingContext &&
-          (isHardMissingStateSkipReason(result.skip_reason) || result.skip_reason === 'prerequisite_failed')
-        ) {
+        const hardPrerequisite =
+          isHardMissingStateSkipReason(result.skip_reason) || result.skip_reason === 'prerequisite_failed';
+        // Phase grading is shared by all routing modes. Skipped failures do
+        // not increment executed-failure counts, but cannot grade a phase green.
+        if (result.skip_reason === 'prerequisite_failed' && !result.passed) phasePassed = false;
+        if (routingContext && hardPrerequisite) {
           recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
           if (!result.passed) {
             phasePassed = false;

@@ -1118,6 +1118,60 @@ test('neutral routed stateful cascades survive explicit dependency hops without 
   }
 });
 
+test('failed prerequisite rows grade required phases consistently across routing modes', async () => {
+  for (const mode of ['single', 'replica', 'routed']) {
+    for (const optional of [false, true]) {
+      const a = await startAgent(['get_signals'], { supported_protocols: ['signals'] });
+      const b = await startAgent(['get_signals'], { supported_protocols: ['signals'] });
+      try {
+        const sb = storyboard([
+          {
+            id: 'missing',
+            task: 'get_signals',
+            sample_request: { signal_spec: '$context.missing' },
+            ...(mode === 'routed' ? { agent: 'a' } : {}),
+          },
+          { id: 'read', task: 'get_adcp_capabilities', ...(mode === 'routed' ? { agent: 'a' } : {}) },
+        ]);
+        sb.phases[0].optional = optional;
+        if (optional) {
+          sb.phases.push({
+            id: 'independent',
+            title: 'Independent',
+            depends_on: [],
+            steps: [
+              {
+                id: 'independent',
+                title: 'Independent',
+                task: 'get_adcp_capabilities',
+                ...(mode === 'routed' ? { agent: 'a' } : {}),
+              },
+            ],
+          });
+        }
+        const result = await runStoryboard(mode === 'routed' ? '' : mode === 'replica' ? [a.url, b.url] : a.url, sb, {
+          strictResponseSchemaValidation: false,
+          invariants: [],
+          ...(mode === 'routed' ? { agents: { a: { url: a.url }, b: { url: b.url } } } : {}),
+        });
+        const label = `${mode}/${optional}`;
+        const missing = result.phases[0].steps[0];
+        assert.equal(missing.skip_reason, 'prerequisite_failed', label);
+        assert.equal(missing.passed, false, label);
+        assert.equal(result.phases[0].passed, false, label);
+        assert.equal(result.overall_passed, optional, label);
+        assert.equal(result.failed_count, 0, label);
+        assert.equal(result.passed_count, optional ? 2 : 1, label);
+        assert.equal(result.skipped_count, 1, label);
+        assert.equal([...a.calls, ...b.calls].filter(task => task === 'get_signals').length, 0, label);
+      } finally {
+        await closeConnections();
+        await Promise.all([a.close(), b.close()]);
+      }
+    }
+  }
+});
+
 test('OAuth presence escalates optional failures only on the agent that served metadata', async () => {
   const present = await startAgent(
     ['get_signals'],
