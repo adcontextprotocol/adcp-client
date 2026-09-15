@@ -289,15 +289,13 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(resolveBundleKey('v2.6'), 'v2.6');
   });
 
-  test(`${ADCP_VERSION} opt-in bundle compiles and accepts wholesale-feed request fields`, () => {
-    // Runtime guard for the 3.1 prerelease opt-in: a consumer pinning the
-    // current prerelease gets a compiled validator that accepts the wholesale-feed
-    // request fields (if_wholesale_feed_version / if_pricing_version) the type
-    // surface exposes via `@adcp/sdk/types/v3-1-beta`. Without this, the
-    // type-side worked but the wire-side could regress silently.
+  test(`${ADCP_VERSION} primary bundle compiles and accepts wholesale-feed request fields`, () => {
+    // Runtime guard for the exact current prerelease: its compiled validator
+    // accepts the wholesale-feed request fields exposed by the primary type
+    // surface. Without this, type generation and wire validation could drift.
     _resetValidationLoader(ADCP_VERSION);
     const v = getValidator('get_products', 'request', ADCP_VERSION);
-    assert.ok(v, '3.1 prerelease get_products::request must compile from the opt-in bundle');
+    assert.ok(v, `${ADCP_VERSION} get_products::request must compile from the primary bundle`);
     const ok = v({
       adcp_version: ADCP_RELEASE_PRECISION,
       brief: 'wholesale catalog mirror probe',

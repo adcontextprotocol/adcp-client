@@ -52,6 +52,8 @@ export type {
   ExtensionObject,
   PlacementPresentationDocument,
   PlacementPresentationReference,
+  WholesaleFeedEvent,
+  WholesaleFeedWebhook,
 } from './core.generated';
 // Supporting proposal-discovery criteria types are part of the public 3.2
 // negotiation surface and must not require deep generated-file imports.

@@ -21,7 +21,7 @@
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind } from './types';
-import { BETA_VERSIONS_TO_TRY } from './cache-versions';
+import { SCHEMA_VERSIONS_TO_TRY } from './cache-versions';
 
 interface CanonicalSchema {
   properties?: {
@@ -49,15 +49,15 @@ function findCacheRoot(): string {
   //      loader's source location. Used when running from a source
   //      checkout (e.g. `tsx`, vitest) before `build:lib`.
   //
-  // Within both, versions are tried in `BETA_VERSIONS_TO_TRY` order:
+  // Within both, versions are tried in `SCHEMA_VERSIONS_TO_TRY` order:
   // current pin/bundle wins; older prereleases survive for adopters who
   // haven't synced; `latest` is last-resort and skipped in dist (the symlink
   // is intentionally not copied — adopters pinned to 3.0.x GA hit the
   // throw below rather than silently picking up a v3.0 cache that
   // lacks canonical-format schemas).
   const candidates = [
-    ...BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', 'schemas-data', v)),
-    ...BETA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v)),
+    ...SCHEMA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', 'schemas-data', v)),
+    ...SCHEMA_VERSIONS_TO_TRY.map(v => path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v)),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;

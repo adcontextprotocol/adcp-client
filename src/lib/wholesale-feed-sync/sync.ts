@@ -1,7 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import type * as V31Beta from '../types/v3-1-beta';
+import type { AccountReference, GetProductsResponse, GetSignalsResponse } from '../types';
+import type {
+  LegacyWholesaleFeedEvent,
+  LegacyWholesaleFeedWebhook,
+  LegacyWholesaleProduct,
+  LegacyWholesaleSignal,
+} from './protocol-types';
 import type {
   WholesaleFeedSyncClient,
   WholesaleFeedSyncConfig,
@@ -12,12 +18,10 @@ import type {
   ResolvedCapabilities,
   SignalFilter,
 } from './types';
+import { assertLegacyWholesaleFeedRepresentation } from './webhook-notification';
 
-type Product = V31Beta.Product;
-// `signals` is an inline array type on GetSignalsResponse (no top-level
-// Signal export in the generated bundle). Extract the element type so
-// the index map and search helpers stay strongly-typed.
-type Signal = NonNullable<V31Beta.GetSignalsResponse['signals']>[number];
+type Product = LegacyWholesaleProduct;
+type Signal = LegacyWholesaleSignal;
 type FeedMetadata = {
   wholesaleFeedVersion: string | undefined;
   pricingVersion: string | undefined;
@@ -49,7 +53,7 @@ const VERSION_MISMATCH_RECOVERY_BACKOFF_MS = 5;
  * import { AdCPClient } from '@adcp/sdk';
  * import { WholesaleFeedSync } from '@adcp/sdk/wholesale-feed-sync';
  *
- * const client = new AdCPClient({ agentUrl, adcpVersion: '3.1-beta' });
+ * const client = new AdCPClient({ agentUrl });
  * const sync = new WholesaleFeedSync({ client });
  *
  * sync.on('product.priced', ({ event }) => {
@@ -64,7 +68,7 @@ const VERSION_MISMATCH_RECOVERY_BACKOFF_MS = 5;
  */
 export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private readonly client: WholesaleFeedSyncClient;
-  private readonly account: V31Beta.AccountReference | undefined;
+  private readonly account: AccountReference | undefined;
   private readonly webhookScope: NonNullable<WholesaleFeedSyncConfig['webhookScope']> | undefined;
   private readonly webhookDedupStore: WholesaleFeedSyncConfig['webhookDedupStore'] | undefined;
   private readonly probeIntervalMs: number;
@@ -261,12 +265,16 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   }
 
   /**
-   * Apply one beta-3 account-level wholesale feed webhook to the local mirror.
+   * Apply one legacy-view account-level wholesale feed webhook to the local mirror.
    * Call this from your HTTP webhook receiver after signature/auth validation.
    * Stale or out-of-order deliveries repair through conditional wholesale
    * reads instead of applying a suspect delta.
    */
-  async applyWebhook(webhook: V31Beta.WholesaleFeedWebhook): Promise<void> {
+  async applyWebhook(webhook: LegacyWholesaleFeedWebhook): Promise<void> {
+    // JavaScript callers may cross this boundary with decoded `unknown`.
+    // Validate before dedupe/version state changes so canonical list_products
+    // payloads cannot be acknowledged by this legacy get_products mirror.
+    assertLegacyWholesaleFeedRepresentation(webhook as unknown as Record<string, unknown>);
     const epoch = this.lifecycleEpoch;
     const event = webhook.event;
     if (!event || webhook.notification_type !== event.event_type) {
@@ -514,7 +522,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
       }
       const result = (await this.client.getProducts(params as never)) as {
-        data?: V31Beta.GetProductsResponse;
+        data?: GetProductsResponse;
       };
       if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
       const body = result.data;
@@ -552,7 +560,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         if (metadata.pricingVersion) params.if_pricing_version = metadata.pricingVersion;
       }
       const result = (await this.client.getSignals(params as never)) as {
-        data?: V31Beta.GetSignalsResponse;
+        data?: GetSignalsResponse;
       };
       if (!this.isLifecycleCurrent(epoch)) return { cancelled: true, unchanged: false, items: into, metadata };
       const body = result.data;
@@ -572,10 +580,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     return { cancelled: false, unchanged: false, items: into, metadata };
   }
 
-  private async recoverFromBulkChange(
-    event: V31Beta.WholesaleFeedEvent,
-    epoch = this.lifecycleEpoch
-  ): Promise<boolean> {
+  private async recoverFromBulkChange(event: LegacyWholesaleFeedEvent, epoch = this.lifecycleEpoch): Promise<boolean> {
     this.emit('resyncing', { reason: 'bulk_change' });
     const affected = this.bulkChangeAffectedEntityType(event);
     if (affected === 'signal' && !this.signals.queryable) {
@@ -588,7 +593,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   }
 
   private async recoverFromVersionMismatch(
-    event: V31Beta.WholesaleFeedEvent,
+    event: LegacyWholesaleFeedEvent,
     epoch = this.lifecycleEpoch
   ): Promise<boolean> {
     this.emit('resyncing', { reason: 'version_mismatch' });
@@ -666,14 +671,14 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
 
   // ====== Private: event application ======
 
-  private currentWholesaleFeedVersionForEvent(event: V31Beta.WholesaleFeedEvent): string | undefined {
+  private currentWholesaleFeedVersionForEvent(event: LegacyWholesaleFeedEvent): string | undefined {
     if (event.event_type.startsWith('product.')) return this.productWholesaleFeedVersion;
     if (event.event_type.startsWith('signal.')) return this.signalWholesaleFeedVersion;
     const affected = this.bulkChangeAffectedEntityType(event);
     return affected === 'signal' ? this.signalWholesaleFeedVersion : this.productWholesaleFeedVersion;
   }
 
-  private bulkChangeAffectedEntityType(event: V31Beta.WholesaleFeedEvent): 'product' | 'signal' {
+  private bulkChangeAffectedEntityType(event: LegacyWholesaleFeedEvent): 'product' | 'signal' {
     const affected = (event.payload as { affected_entity_type?: string }).affected_entity_type;
     if (affected === 'product' || affected === 'signal') return affected;
     throw new Error(
@@ -709,7 +714,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     this.signalCacheScope = metadata.cacheScope;
   }
 
-  private rememberWebhookVersion(webhook: V31Beta.WholesaleFeedWebhook): void {
+  private rememberWebhookVersion(webhook: LegacyWholesaleFeedWebhook): void {
     const event = webhook.event;
     if (event.event_type.startsWith('product.')) {
       this.productWholesaleFeedVersion = webhook.wholesale_feed_version;
@@ -722,7 +727,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     }
   }
 
-  private assertWebhookScope(webhook: V31Beta.WholesaleFeedWebhook): void {
+  private assertWebhookScope(webhook: LegacyWholesaleFeedWebhook): void {
     const expectedAccountId = this.expectedWebhookAccountId();
     if (expectedAccountId && webhook.account_id !== expectedAccountId) {
       throw new Error('WholesaleFeedSync: wholesale feed webhook account_id does not match this mirror.');
@@ -737,7 +742,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     return this.account && 'account_id' in this.account ? this.account.account_id : undefined;
   }
 
-  private webhookDedupeKey(webhook: V31Beta.WholesaleFeedWebhook): string {
+  private webhookDedupeKey(webhook: LegacyWholesaleFeedWebhook): string {
     return [
       this.webhookScope?.senderId ?? 'default',
       webhook.account_id,
@@ -746,7 +751,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     ].join(':');
   }
 
-  private webhookEventDedupeKey(webhook: V31Beta.WholesaleFeedWebhook): string {
+  private webhookEventDedupeKey(webhook: LegacyWholesaleFeedWebhook): string {
     return [
       this.webhookScope?.senderId ?? 'default',
       webhook.account_id,
@@ -775,7 +780,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     }
   }
 
-  private applyEvent(event: V31Beta.WholesaleFeedEvent): void {
+  private applyEvent(event: LegacyWholesaleFeedEvent): void {
     switch (event.event_type) {
       case 'product.created':
       case 'product.updated': {
@@ -852,7 +857,7 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
     }
   }
 
-  private emitTypedEvent(event: V31Beta.WholesaleFeedEvent): void {
+  private emitTypedEvent(event: LegacyWholesaleFeedEvent): void {
     // event_type is the discriminator; every value maps to a typed listener
     // name. The switch keeps TypeScript honest about exhaustiveness.
     switch (event.event_type) {
@@ -891,11 +896,11 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
   private emitDiffs(previousProducts: Map<string, Product>, previousSignals: Map<string, Signal>): void {
     const now = new Date().toISOString();
     const makeEvent = (
-      event_type: V31Beta.WholesaleFeedEvent['event_type'],
-      entity_type: V31Beta.WholesaleFeedEvent['entity_type'],
+      event_type: LegacyWholesaleFeedEvent['event_type'],
+      entity_type: LegacyWholesaleFeedEvent['entity_type'],
       entity_id: string,
       payload: object
-    ): V31Beta.WholesaleFeedEvent =>
+    ): LegacyWholesaleFeedEvent =>
       ({
         // crypto.randomUUID() emits a v4 UUID, NOT v7. Synthetic events
         // are flagged via `synthetic: true` on the emit envelope so
@@ -908,8 +913,8 @@ export class WholesaleFeedSync extends EventEmitter<WholesaleFeedSyncEvents> {
         entity_id,
         created_at: now,
         payload,
-      }) as V31Beta.WholesaleFeedEvent;
-    const emit = (channel: keyof WholesaleFeedSyncEvents, event: V31Beta.WholesaleFeedEvent): void => {
+      }) as LegacyWholesaleFeedEvent;
+    const emit = (channel: keyof WholesaleFeedSyncEvents, event: LegacyWholesaleFeedEvent): void => {
       this.emit('event', { event, synthetic: true });
       this.emit(channel as 'product.created', { event, synthetic: true });
     };

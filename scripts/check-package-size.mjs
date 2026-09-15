@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertPublishProtocolArtifacts } from './check-publish-protocol-artifacts.mjs';
 
 // Compact local-ref schema bundles and omission of source maps bring the
 // package below pnpm's default fetch-timeout boundary on moderate links. Keep
@@ -46,9 +47,10 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // Its reconciliation changes are edits to existing modules, and the unpacked
 // total is unchanged against the 120 MiB ceiling.
 // Unified action assessment adds nine module sets (36 artifacts) and one guide.
-// Superseded rc.2 compliance and historical compatibility test schemas are not
-// published. Main 6e11406a contributes 6,074 files plus 37 action artifacts.
-// Byte budgets stay fixed.
+// Superseded preview compliance and historical compatibility test schemas are
+// not published. Retiring the v3.1 beta type bundle removes eight artifacts;
+// its current legacy-view wholesale type replacement adds four, for 6,107
+// published files. Byte budgets stay fixed.
 const MAX_PACKED_FILE_COUNT = 6_111;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
@@ -139,6 +141,15 @@ export function checkPackageSize(repoRoot) {
       throw new Error(`packed package is missing a required bundled schema archive: ${expectedArchivePath}`);
     }
   }
+
+  const manifest = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const versionSource = readFileSync(path.join(repoRoot, 'src', 'lib', 'version.ts'), 'utf8');
+  const compatibleBlock = /export const COMPATIBLE_ADCP_VERSIONS = \[([\s\S]*?)\] as const;/.exec(versionSource)?.[1];
+  if (compatibleBlock === undefined) {
+    throw new Error('could not read COMPATIBLE_ADCP_VERSIONS from src/lib/version.ts');
+  }
+  const compatibleVersions = [...compatibleBlock.matchAll(/'([^']+)'/g)].map(match => match[1]);
+  assertPublishProtocolArtifacts({ packageInfo, manifest, currentProtocolVersion, compatibleVersions });
 
   const cjsSchema = packageInfo.files.find(file => file.path === 'dist/lib/types/schemas.generated.d.ts');
   const esmSchema = packageInfo.files.find(file => file.path === 'dist/lib/types/schemas.generated.d.mts');

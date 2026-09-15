@@ -3,7 +3,7 @@
 // definition — we wrap each one in a minimal v1 Product and run it
 // through the projection to see how many land cleanly in v2 shape.
 //
-// Skips in CI when the 3.1-beta cache + vendored catalog aren't
+// Skips in CI when a 3.1+ cache + vendored catalog aren't
 // present — same pattern as the v2 → v1 prototype tests.
 
 const { test, describe } = require('node:test');
@@ -21,19 +21,18 @@ const {
 const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
 // Track whichever 3.1+ cache the workspace happens to have synced —
-// CI syncs `3.1.0-beta.1` via `npm run sync-schemas:3.1-beta`; older
-// workspaces may still have `3.1.0-beta.0`. Either is fine; the
-// registry loader (`src/lib/v2/projection/registry.ts`) reads from
-// whichever exists.
+// CI syncs the maintained 3.1 stable cache; the current primary cache and
+// `latest` remain valid fallbacks.
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
-const REGISTRY_EXISTS = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
+const CURRENT_VERSION = readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
+const REGISTRY_EXISTS = ['3.1.18', CURRENT_VERSION, 'latest'].some(v =>
   existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
 );
 
 const SKIP_REASON =
   existsSync(CATALOG_PATH) && REGISTRY_EXISTS
     ? false
-    : 'requires a 3.1+ schemas/cache/<beta>/ + vendored aao-reference-formats.json — only present in workspaces with a local 3.1-beta sync';
+    : 'requires a maintained 3.1+ schema cache and vendored aao-reference-formats.json';
 
 function loadCatalog() {
   return JSON.parse(readFileSync(CATALOG_PATH, 'utf-8'));

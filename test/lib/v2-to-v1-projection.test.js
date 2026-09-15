@@ -23,16 +23,13 @@ const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 
 // The projection layer reads the v1-canonical-mapping registry and the
 // canonical-format schemas (for v1_translatable). Both live under
-// `schemas/cache/<3.1+>/` — CI now syncs `3.1.0-beta.1` via
-// `npm run sync-schemas:3.1-beta`; the loader (registry.ts) tracks
-// whichever 3.1 beta the workspace has.
+// `schemas/cache/<3.1+>/`; CI syncs the maintained stable and current bundles.
 const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
-const REGISTRY_EXISTS = ['3.1.0-beta.1', '3.1.0-beta.0', 'latest'].some(v =>
+const CURRENT_VERSION = readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
+const REGISTRY_EXISTS = ['3.1.18', CURRENT_VERSION, 'latest'].some(v =>
   existsSync(path.join(SCHEMAS_CACHE_ROOT, v, 'registries', 'v1-canonical-mapping.json'))
 );
-const SKIP_REASON = REGISTRY_EXISTS
-  ? false
-  : 'requires a 3.1+ schemas/cache/<beta>/ — only present in workspaces with a local 3.1-beta sync';
+const SKIP_REASON = REGISTRY_EXISTS ? false : 'requires a maintained 3.1+ schema cache';
 
 function customProduct(overrides = {}) {
   return {

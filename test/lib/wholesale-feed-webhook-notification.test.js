@@ -50,7 +50,7 @@ describe('wholesale-feed webhook notification normalizer', () => {
     assert.strictEqual(webhooks.WholesaleFeedWebhookNotificationError, WholesaleFeedWebhookNotificationError);
   });
 
-  test('normalizes canonical deliveries with distinct delivery and event identifiers', () => {
+  test('normalizes valid deliveries with distinct delivery and event identifiers', () => {
     const normalized = parseWholesaleFeedWebhookNotification(makeNotification());
 
     assert.strictEqual(normalized.idempotencyKey, 'delivery-01HZNX6T5H0R3GX7X7R54PKNPS');
@@ -192,6 +192,82 @@ describe('wholesale-feed webhook notification normalizer', () => {
         assert.ok(err instanceof WholesaleFeedWebhookNotificationError);
         assert.strictEqual(err.code, 'wholesale_feed_webhook_cache_scope_mismatch');
         assert.strictEqual(err.field, 'cache_scope');
+        return true;
+      }
+    );
+  });
+
+  test('rejects canonical product views and canonical payload fields', () => {
+    const event = {
+      event_id: 'evt_product_update',
+      event_type: 'product.updated',
+      entity_type: 'product',
+      entity_id: 'prod_ctv',
+      created_at: '2026-05-25T12:00:00Z',
+      payload: {
+        product_id: 'prod_ctv',
+        product: {},
+        applies_to: { scope: 'account', account_ids: ['acc_acme'] },
+      },
+    };
+
+    assert.throws(
+      () => parseWholesaleFeedWebhookNotification(makeNotification({ event, product_payload_view: 'canonical' })),
+      err => {
+        assert.strictEqual(err.code, 'wholesale_feed_webhook_field_invalid');
+        assert.strictEqual(err.field, 'product_payload_view');
+        return true;
+      }
+    );
+
+    assert.throws(
+      () =>
+        parseWholesaleFeedWebhookNotification(
+          makeNotification({
+            event: {
+              ...event,
+              payload: { ...event.payload, canonical_product: {} },
+            },
+            product_payload_view: 'legacy',
+          })
+        ),
+      err => {
+        assert.strictEqual(err.code, 'wholesale_feed_webhook_field_invalid');
+        assert.strictEqual(err.field, 'event.payload.canonical_product');
+        return true;
+      }
+    );
+  });
+
+  test('rejects canonical pricing payloads and product views on non-product events', () => {
+    const event = {
+      event_id: 'evt_product_priced',
+      event_type: 'product.priced',
+      entity_type: 'product',
+      entity_id: 'prod_ctv',
+      created_at: '2026-05-25T12:00:00Z',
+      payload: {
+        product_id: 'prod_ctv',
+        pricing_options: [{}],
+        canonical_pricing_options: [{}],
+        applies_to: { scope: 'account', account_ids: ['acc_acme'] },
+      },
+    };
+
+    assert.throws(
+      () => parseWholesaleFeedWebhookNotification(makeNotification({ event, product_payload_view: 'legacy' })),
+      err => {
+        assert.strictEqual(err.code, 'wholesale_feed_webhook_field_invalid');
+        assert.strictEqual(err.field, 'event.payload.canonical_pricing_options');
+        return true;
+      }
+    );
+
+    assert.throws(
+      () => parseWholesaleFeedWebhookNotification(makeNotification({ product_payload_view: 'legacy' })),
+      err => {
+        assert.strictEqual(err.code, 'wholesale_feed_webhook_field_invalid');
+        assert.strictEqual(err.field, 'product_payload_view');
         return true;
       }
     );
