@@ -1064,12 +1064,17 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(plan.deadline, undefined);
 
     // Years and months take a different path to the same place.
+    // P8000Y is the value the range guard actually exists for: it resolves
+    // fine, but `toISOString` renders a year past 9999 in expanded form
+    // (`+010026-…`), which is not a valid instant. `P999999999Y` overflows to
+    // NaN inside `Date` and is caught regardless, so it proves nothing.
     const centuries = await scheduledExpectedAt({
       periodStart: '2026-09-01T00:00:00.000Z',
       periodEnd: '2026-09-02T00:00:00.000Z',
-      deliverySla: 'P999999999Y',
+      deliverySla: 'P8000Y',
     });
     assert.equal(centuries.suppressed, 'deadline_unknown');
+    assert.doesNotMatch(String(centuries.statusAsOf ?? ''), /^\+/);
   });
 
   test('a seller cannot push the deadline out past the buyer own pin', async () => {
@@ -1429,7 +1434,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(pagesSent(), 256, 'the read ran to completion');
   });
 
-  test('a row too deep to size is the buyer own limit, not a seller failure', async () => {
+  test('a row too deep to size is reported, not used to buy silence', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
@@ -1457,9 +1462,14 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     );
 
     const result = await seller.reconcile(at, expected);
-    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
-    assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
-    assert.deepEqual(result.postedConsumerStatuses, []);
+    // Not silence. Silence is reserved for limits the adopter configured; a
+    // shape the reader cannot size is the seller's choice, and letting it
+    // suppress the statement would hand a seller permanent immunity from
+    // `revision_missing` for the price of one strange row.
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.equal(result.consumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.consumerStatuses[0].failureCode, 'reader_incompatible');
+    assert.equal(result.postedConsumerStatuses.length, 1, 'and it is on the record');
   });
 
   test('large strings are charged for what they hold, so the ceiling still binds', async () => {
@@ -1476,6 +1486,161 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 400 } });
     assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
     assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a seller-dated expected_at cannot precede the period it describes', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `expected_at` is "the resolved period end plus this duration", so it can
+    // never precede the period end. Unclamped, a seller could date the buyer's
+    // own durable statement in year 1.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({ ...period, expected_at: '0001-01-01T00:00:00.000Z' })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(
+      result.consumerStatuses[0].statusAsOf,
+      new Date(seller.anchor + DAY).toISOString(),
+      'clamped up to the period end, not year 1'
+    );
+    // The harness seller's own store still holds the real expected_at, so it
+    // refuses this statement — which is the honest outcome for a wire value
+    // that contradicts the ledger behind it, and is visible rather than silent.
+    assert.equal(result.failedConsumerStatuses.length, 1);
+  });
+
+  test('an unreadable expected_at is not rescued by a pin or a schedule', async () => {
+    const seller = await harness();
+    // Both fallbacks live and both able to produce an instant. The short-circuit
+    // is the only thing stopping them, and every other test that touches an
+    // unreadable `expected_at` strips them — so without this one, deleting the
+    // short-circuit silently reverts documented behaviour: the buyer would post
+    // against a deadline the seller does not hold and be refused every run.
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    let sawSchedule = false;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => {
+          sawSchedule = typeof period.schedule?.delivery_sla === 'string';
+          return { ...period, expected_at: 'not-a-date' };
+        }),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(sawSchedule, true, 'the schedule fallback was available');
+    assert.equal(expected[0].deliverySlaSeconds, SLA_SECONDS, 'and so was the buyer pin');
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.match(result.consumerStatuses[0].reason, /seller has to correct it/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a nonexistent local time advances by the gap and an ambiguous one takes the earlier offset', async () => {
+    // The two halves of `period_generation`'s DST rule, at real transitions.
+    // The existing timezone test sits four weeks from any transition, so it
+    // proves a conversion happens and nothing about the edges.
+    const gap = await scheduledExpectedAt({
+      periodStart: '2026-02-07T07:30:00.000Z',
+      periodEnd: '2026-02-08T07:30:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'America/New_York',
+    });
+    // 02:30 on 2026-03-08 does not exist; advancing by the one-hour gap gives
+    // 03:30 EDT.
+    assert.equal(gap.statusAsOf, '2026-03-08T07:30:00.000Z');
+
+    const ambiguous = await scheduledExpectedAt({
+      periodStart: '2026-09-30T05:30:00.000Z',
+      periodEnd: '2026-10-01T05:30:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'America/New_York',
+    });
+    // 01:30 on 2026-11-01 happens twice; the earlier offset is EDT.
+    assert.equal(ambiguous.statusAsOf, '2026-11-01T05:30:00.000Z');
+  });
+
+  test('a pure-time delivery_sla is exact, including across an ambiguous local hour', async () => {
+    // `PT{n}S` is the only shape this SDK's own seller emits. Routing it
+    // through wall-clock conversion shifted `PT0S` by an hour at a DST
+    // boundary and dropped sub-second precision.
+    // A pure-time SLA is elapsed time and needs no calendar at all, so it must
+    // resolve even when the zone does not. Routing it through wall-clock
+    // conversion made it depend on a timezone it has no business consulting:
+    // an unrecognized `period_timezone` then silenced a seller whose deadline
+    // was perfectly computable.
+    const exact = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'PT3600S',
+      periodTimezone: 'Mars/Olympus_Mons',
+    });
+    assert.notEqual(exact.suppressed, 'deadline_unknown');
+    assert.equal(exact.statusAsOf, '2026-09-02T01:00:00.000Z');
+
+    const subSecond = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.500Z',
+      periodEnd: '2026-09-02T00:00:00.500Z',
+      deliverySla: 'PT3600S',
+      periodTimezone: 'UTC',
+    });
+    assert.equal(subSecond.statusAsOf, '2026-09-02T01:00:00.500Z', 'sub-second precision preserved');
+  });
+
+  test('a calendar delivery_sla carries the anchor sub-second remainder', async () => {
+    const plan = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.250Z',
+      periodEnd: '2026-09-02T00:00:00.250Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'UTC',
+    });
+    assert.equal(plan.statusAsOf, '2026-10-02T00:00:00.250Z');
+  });
+
+  test('a leaf status_as_of is normalized before it becomes the buyer floor', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    await seller.reconcile(at, expected);
+    assert.equal(seller.store.consumerStatements.length, 1);
+
+    // The leaf's spelling feeds the monotonicity floor, which feeds
+    // `status_as_of`, which feeds `reporting_status_id`. An equivalent
+    // spelling must not produce a different chain.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        consumer_statuses: (page.consumer_statuses ?? []).map(statement => ({
+          ...statement,
+          // Strictly later than expected_at, so the floor genuinely comes from
+          // the leaf; at equal instants `latestInstant` keeps the first and the
+          // leaf's spelling never surfaces.
+          status_as_of: '2026-09-02T03:00:00+00:00',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at + HOUR, expected);
+    assert.equal(result.consumerStatuses[0].statusAsOfFloor, '2026-09-02T03:00:00.000Z', 'normalized, not echoed');
   });
 
   test('a lowercase RFC 3339 expected_at is read, not treated as unreadable', async () => {

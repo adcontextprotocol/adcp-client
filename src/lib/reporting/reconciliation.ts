@@ -1579,7 +1579,12 @@ function planReportingConsumerStatuses(
     // `expected_period`: obligation_missing and revision_missing are valid only
     // at or after expected_at. Dating them from the period end instead makes a
     // conformant seller reject every one of them.
-    const establishedAt = expectedAt ?? expected.periodEnd;
+    // `expected_at` is "the resolved period end plus this duration", so it can
+    // never precede the period end. Clamping up is deterministic and stops a
+    // seller dating the buyer's own durable statement in, say, year 1; a
+    // far-*future* `expected_at` is deliberately left alone, because that is
+    // the seller declaring a long SLA, which the spec makes its prerogative.
+    const establishedAt = latestInstant([expectedAt, expected.periodEnd]) ?? expected.periodEnd;
 
     if (missing.has(expected) || !obligationForPeriod) {
       return finalizeConsumerStatusPlan(
@@ -2149,7 +2154,11 @@ const MIN_RFC3339_INSTANT = -62_167_219_200_000;
 const MAX_RFC3339_INSTANT = 253_402_300_799_999;
 
 function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  // Same two-digit-year hazard `utcWallTime` exists for: `Date.UTC(50, …)`
+  // means 1950, and year 0 is a leap year where 1900 is not.
+  const probe = new Date(0);
+  probe.setUTCFullYear(year, month, 0);
+  return probe.getUTCDate();
 }
 
 /**
@@ -2182,6 +2191,9 @@ function zonedParts(
   try {
     const formatted = new Intl.DateTimeFormat('en-US', {
       timeZone,
+      // Read the era so a proleptic year can be refused rather than silently
+      // relocated: without it `en-US` renders year 0 (1 BC) as year `1`.
+      era: 'short',
       hour12: false,
       year: 'numeric',
       month: '2-digit',
@@ -2191,6 +2203,10 @@ function zonedParts(
       second: '2-digit',
     }).formatToParts(new Date(instant));
     const field = (type: string): number => Number(formatted.find(part => part.type === type)?.value);
+    // Anything before year 1 is refused outright. Deriving a deadline from a
+    // relocated year would be a guess, and this arithmetic has no business
+    // reaching back past the Common Era anyway.
+    if (/^b/i.test(formatted.find(part => part.type === 'era')?.value ?? '')) return undefined;
     const parts = {
       year: field('year'),
       month: field('month'),
@@ -2336,7 +2352,20 @@ function normalizedInstant(value: unknown): string | undefined {
     if (/(?:Z|z)$/.test(value) && !leapSecond) return undefined;
   }
   // A leap second is the instant immediately before the next one.
-  return new Date(parsed + (leapSecond ? 1_000 : 0)).toISOString();
+  const instant = parsed + (leapSecond ? 1_000 : 0);
+  // Range-checked like every sibling derivation. `RFC3339_INSTANT` allows
+  // offsets to ±23:59, so `9999-12-31T23:59:59-23:59` is a value this SDK's own
+  // validator calls conformant and which parses past the RFC 3339 year range,
+  // and `toISOString` would render it expanded (`+010000-…`).
+  //
+  // Defence in depth, deliberately untested: `latestInstant` already refuses a
+  // string that does not match `RFC3339_INSTANT`, and `establishedAt` is
+  // clamped to the period end, so today there is no reachable path by which an
+  // expanded-year instant lands on a plan. Rather than write a test that would
+  // pass with this line removed, the reason it cannot be observed is recorded
+  // here — if either of those two guards is ever relaxed, this is what keeps
+  // the invariant.
+  return isRepresentableInstant(instant) ? new Date(instant).toISOString() : undefined;
 }
 
 /** A usable, bounded source timezone, or `undefined` to fall through. */
@@ -3297,7 +3326,14 @@ async function consumeReportingRevision(
       // accumulated in memory and then serialized again by `canonicalize`.
       for (const row of response.reporting_rows ?? []) {
         rows.push(row);
-        bytes += approximateRowBytes(row);
+        const sized = approximateRowBytes(row);
+        if (sized === undefined) {
+          return {
+            failureCode: 'reader_incompatible',
+            detail: 'a revision row is structured too deeply or too intricately for this reader to size',
+          };
+        }
+        bytes += sized;
         if (rows.length > maxRows || bytes > MAX_CONSUMED_REVISION_BYTES) {
           return { budgetExhausted: 'revision' };
         }
@@ -3399,30 +3435,41 @@ async function consumeReportingRevision(
  * unbounded accumulation, not to measure it, and a serializing measurement
  * would itself be the cost being guarded against.
  */
-function approximateRowBytes(row: unknown): number {
+function approximateRowBytes(row: unknown): number | undefined {
   // Strings and primitives are sized in O(1) and never consume budget: they
   // carry the bytes, and charging them a flat constant is what created both
   // failure directions. Only *containers* are budgeted, because they are what
   // makes the walk expensive.
   //
-  // Exceeding either bound returns `Infinity`, which the caller reads as the
-  // buyer's own budget running out. That is deliberate: a structure this SDK
-  // cannot size is a limitation of the buyer's estimator, not evidence that the
-  // seller published something unreadable.
+  // Exceeding either bound returns `undefined`, and the caller turns that into
+  // `unreadable` / `reader_incompatible` — a claim against the seller, not
+  // silence. That direction matters: `local_budget_exhausted` suppresses the
+  // statement entirely, so if an unsizeable shape landed there a seller could
+  // buy permanent immunity from `revision_missing` by publishing one. Silence
+  // is reserved for limits the *adopter* configured (`maxPages`,
+  // `maxRevisionRows`, `maxLoadMs`); the shape of a row is the seller's choice,
+  // and a reader that cannot consume it is exactly what `reader_incompatible`
+  // names.
   let containers = MAX_ROW_ESTIMATE_CONTAINERS;
-  const visit = (value: unknown, depth: number): number => {
+  const visit = (value: unknown, depth: number): number | undefined => {
     if (typeof value === 'string') return value.length * 2;
     if (value === null || typeof value !== 'object') return 16;
-    if (depth >= MAX_ROW_ESTIMATE_DEPTH) return Number.POSITIVE_INFINITY;
+    if (depth >= MAX_ROW_ESTIMATE_DEPTH) return undefined;
     containers -= 1;
-    if (containers < 0) return Number.POSITIVE_INFINITY;
+    if (containers < 0) return undefined;
     let total = 32;
     if (Array.isArray(value)) {
-      for (const item of value) total += visit(item, depth + 1);
+      for (const item of value) {
+        const child = visit(item, depth + 1);
+        if (child === undefined) return undefined;
+        total += child;
+      }
       return total;
     }
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      total += key.length * 2 + visit(child, depth + 1);
+      const sized = visit(child, depth + 1);
+      if (sized === undefined) return undefined;
+      total += key.length * 2 + sized;
     }
     return total;
   };

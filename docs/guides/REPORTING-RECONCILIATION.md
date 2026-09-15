@@ -143,7 +143,7 @@ must carry a digest the buyer recomputed from rows it actually read.
 | `deadline_unknown` | No deadline could be derived. | Record the pin named in `reason`, or take up the malformed `expected_at` with the seller. |
 | `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
 | `posting_unavailable` | No poster is wired, so there is nothing to append to. | Supply `client.syncReportingStatus`. |
-| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, or the revision was too large or too deeply structured for the SDK to size. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. The size and depth ceilings are not tunable. Never reported as a seller failure. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, or the revision exceeded the SDK's size ceiling. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. The byte ceiling is not tunable. Never reported as a seller failure — a row the SDK cannot *size* is reported as `unreadable` / `reader_incompatible` instead, because the shape is the seller's choice. |
 | `leaf_undisclosed` | Your chain has more than one unsuperseded leaf, or the seller named a current leaf it did not return. | A seller-side defect either way; the buyer declines to guess which leaf to supersede. |
 | `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
 

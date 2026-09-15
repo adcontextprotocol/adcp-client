@@ -40,10 +40,12 @@ duration whose result falls outside the RFC 3339 year range derives nothing rath
 
 **Row size accounting is bounded by work, not by depth.** The estimate charged an unexamined subtree
 a flat constant, which cut both ways: too small and nesting walked past the ceiling
-(`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), too large and 24 KB of empty nested objects silenced
-the buyer with a `local_budget_exhausted` that blamed its own budget. It now walks a bounded number
-of nodes per row and charges each for what it holds, which closes the bypass without handing a seller
-a cheap way to buy silence. Strings and primitives are sized in O(1) and never consume that budget,
+(`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), too large and a structurally deep row silenced the
+buyer with a `local_budget_exhausted` that blamed its own budget. It now walks a bounded number
+of nodes per row and charges each for what it holds, which closes the bypass. A row the estimator cannot
+size is reported as `unreadable` / `reader_incompatible` rather than suppressed: silence is reserved
+for limits the adopter configured, so a seller cannot buy immunity from `revision_missing` by
+publishing an awkward shape. Strings and primitives are sized in O(1) and never consume that budget,
 so neither a very wide row nor a very large string can be hidden from the ceiling or used to trip it
 early; a structure too deep to size is reported as the buyer's own limit rather than as an unreadable
 revision.
@@ -67,7 +69,8 @@ so an adopter whose pin disagreed with the seller's echo will see the chain key 
 upgrade. And a `expected_at` that is present but not a string (rather than merely malformed) now
 suppresses instead of falling through to the pin.
 
-`suppressed` gains `posting_unavailable`: with no `client.syncReportingStatus` wired, a plan used to
+`suppressed` gains `posting_unavailable`, widening that exported union — an adopter switching
+exhaustively on it will see a new arm. Concretely: with no `client.syncReportingStatus` wired, a plan used to
 come back live, due and unsuppressed while silently going nowhere.
 
 Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
