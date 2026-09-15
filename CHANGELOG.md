@@ -1,5 +1,187 @@
 # Changelog
 
+## 14.0.0-rc.37
+
+### Major Changes
+
+- 5582908: **Breaking (correction inside the unreleased v14):** `AccountStore.resolution: 'derived'` is now an upstream-managed account-id namespace, matching the account-reference model settled in [adcp#5062](https://github.com/adcontextprotocol/adcp/pull/5062). The previous wire semantics were inverted and unusable for the adapters the mode exists for — buyers who called `list_accounts` got ids that every subsequent call rejected.
+
+  Wire contract:
+  - `{ account_id }` is the durable reference for `'derived'` and is now **accepted** (it was refused with `INVALID_REQUEST`); the `{ brand, operator }` natural-key arm is now **refused** with `INVALID_REQUEST` (`field: 'account.brand'`) and a `list_accounts` suggestion.
+  - `list_accounts` is **required** for `'derived'` — `createAdcpServerFromPlatform` throws `PlatformConfigError` when neither `accounts.list` nor `opts.accounts.listAccounts` is wired. It is the discovery contract for a namespace the agent doesn't own; credential-bound singletons expose one row.
+  - `sync_accounts` is not categorically blocked: natural-key provisioning entries fail per-row with `UNSUPPORTED_PROVISIONING`, natural-key _references_ fail per-row with `INVALID_REQUEST`, and `account: { account_id }` settings-update entries pass through.
+  - A declared `'derived'` resolution projects `account.require_operator_auth: true` on `get_adcp_capabilities`, like a declared `'explicit'`.
+
+  Tenant-isolation hardening (`'derived'` only):
+  - `accounts.resolve` must verify buyer-supplied ids; the framework backstops it — a resolved account whose `id` isn't the one the buyer named is refused with `ACCOUNT_NOT_FOUND` (with a dev-mode warning), so an un-migrated resolver that ignores `ref` fails closed instead of cross-serving.
+  - `sync_accounts` and `sync_governance` entries — the two account references that never passed through `accounts.resolve` — are now resolved against the caller's reachable set before any write, on both the platform and merge-seam wirings.
+  - The `comply_test_controller` sandbox gate no longer accepts a wire `sandbox: true` claim alongside an `account_id` the resolver refused.
+
+  API:
+  - `createDerivedAccountStore` verifies buyer-supplied `account_id` against what the caller's credential can reach (fail closed → `ACCOUNT_NOT_FOUND`), auto-selects the account on ref-less tools only when exactly one is reachable, and wires a filtered, paged `list_accounts`. New `listAccounts` / `lookupAccount` options support credentials that reach many accounts; `toAccount` keeps its signature for the single-account case.
+  - Added `AccountResolutionMode` / `CanonicalAccountResolutionMode` types and the `normalizeAccountResolution()`, `isAccountResolutionMode()`, `refHasNaturalKey()` helpers. An unrecognized `resolution` value is now a `PlatformConfigError` rather than silently inheriting another mode's enforcement. No alias spelling is introduced — `'derived'` stays the single name.
+
+  Migration: [13 → 14 § derived account resolution](https://github.com/adcontextprotocol/adcp-client/blob/main/docs/migration-13-to-14.md#derived-account-resolution-is-now-an-upstream-managed-account-id-namespace). Fixes #1647 and #1628.
+
+### Minor Changes
+
+- ecf1c74: Adopt the signed AdCP 3.2.0-rc.3 schema and compliance bundles as the default wire release.
+
+  Moving the pin activates the `content_mismatch` consumer status and its closed
+  `mismatch_code` across the published `ReportingConsumerStatusSchema` /
+  `SyncReportingStatusRequestSchema` exports and the seller ledger's consumer-status types.
+  The machinery that keeps those two in step with the bundle landed separately in #2911,
+  which derives both the ledger statement type and the Zod conditional arms from the pinned
+  schema; this pin is what supplies the rc.3 arms it reads. Verified: the regenerated
+  validator requires the obligation id, the revision id, the recomputed
+  `observed_revision_content_sha256`, and `mismatch_code` for `content_mismatch`, forbids
+  `failure_code` there, and forbids `mismatch_code` on the four pre-existing statuses.
+
+  rc.3 also publishes `core/media-buy-available-action-id.json`, so the generated
+  `update_media_buy` dispatch table gains the structured-only
+  `update_media_buy_frequency_cap` action and its `frequency_cap` field binding. Media-buy
+  preflight already resolved that binding from the generated table, so the shared
+  media-buy frequency cap becomes dispatchable with no adopter change.
+
+  3.2 prereleases remain exact pins: rc.3 replaces rc.2 in `COMPATIBLE_ADCP_VERSIONS` and
+  only the current prerelease's schema bundle ships. Pin `adcpVersion: '3.2-rc'` to follow
+  whichever 3.2 release candidate a given SDK build carries.
+
+- d4d6780: Return correctable `ACCOUNT_REQUIRED` when an account-scoped server operation omits `account` and authentication cannot select one, including compact lifecycle mutations, async discovery, and task polling. Buyer retry policy re-discovers the account before retrying. Buyer-supplied unknown, unauthorized, or mismatched account references continue to return terminal `ACCOUNT_NOT_FOUND`.
+- 46eb301: Accept the pinned AdCP 3.2 proposal-refinement frequency-cap, outcome-target,
+  and acceptance-context fields in buyer preflight, including remove-only shared
+  frequency-cap revisions, fail closed on invalid or contradictory cap removal,
+  and publicly expose their exact schema-derived supporting types.
+- dd96794: Export the protocol-authored AdCP 3.2.0-rc.3 universal principal and reporting-core storyboards with immutable provenance and drift-checked loaders.
+- 5591b93: Bound transport-diagnostics body capture and observer flushing so observability cannot stall request completion. Preserve postal-country fallback validation for countries outside the registered system list, add whole-operation cancellation to `validateAdAgents`, and expose client-scoped capability evidence priming for applications that already perform a trusted preflight. Add generated release upgrade guidance and a compiling thin existing-platform integration recipe.
+- 39b0714: Expose the standalone proposal commercial-terms verifier through `@adcp/sdk/negotiation/verification` with ESM/CJS types. Fail closed on unsupported schema keywords, cross-bundle references, and changed validation contracts throughout the commercial-terms schema graph. Preserve digest-first exhaustive comparison and legacy opaque contract-reference behavior, and document runtime schema coupling and upstream shim retirement.
+
+  Enforce schema-declared targeting disjointness, geographic label membership, language-tag grammar, and IANA timezone annotations before comparing terms, with validators isolated from ordinary SDK schema validation. Pin extensible-enum annotations while preserving explicit enum membership for binding snapshots.
+
+- 3a5edd3: Add account change webhook normalization, branded advisory/checkpoint cursor types, and an acknowledged async drain with snapshot bootstrap and structured CURSOR_EXPIRED recovery. Expose the existing change-feed declaration in normalized capabilities and provide a subscriber-preserving account notification registration builder. Include packed MCP schema/type regressions, training-seller integration and runner support for persistent account-change webhook observations and an adopter migration guide. Durable storage, projection transactions and subscription runtime remain adopter/server responsibilities.
+- 537f193: Implement the AdCP 3.2.0-rc.3 Reliable Reporting consumer-status hardening in the seller ledger.
+
+  **`content_mismatch` projection.** The fifth consumer status conflicts with a healthy/complete seller
+  projection like the other negative statuses and is immediately `action_required`. It is a
+  contract-fact disagreement naming the exact bytes the consumer read, never a measurement dispute.
+
+  **Stale-`received` grace.** A `received` statement made stale _only_ by a seller restatement now
+  projects the caller-scoped view as `delayed` — with `wait_for_retry` — until a bounded re-read
+  deadline, then `action_required`. The deadline is the `created_at` of the first revision that
+  superseded the one the consumer named plus the generation's `delivery_sla`, falling back to
+  `automated_recovery_window_seconds` when that SLA is zero. Later restatements supersede later
+  revisions and cannot restart it. Previously every conflict escalated immediately.
+
+  **Escalation.** `createReportingStatusHandler` accepts `consumerMismatchEscalation`
+  (`escalationSeconds` + `operationsContact`, mirroring the capability block's both-or-neither rule).
+  Past `opened_at` plus that window an open mismatch becomes `action_required` with a `contact_*`
+  action naming the diagnosed party; `wait_for_retry` and `repair_access` do not survive the boundary,
+  and escalation takes precedence over an open grace window.
+
+  **Issue lifecycle.** Issues emit `opened_at`, fixed at first emission and carried unchanged across
+  re-emission and across the `delayed` → `action_required` transition under one stable `issue_id`. It
+  is derived from immutable ledger facts, not the read time, so polling cannot reset the escalation
+  clock. `issue_state` (`open` / `acknowledged`) and `external_ref` are optional and now validated at
+  the response boundary. `projectReportingConsumerStatusMismatchV1` is exported so a custom store can
+  reuse the exact projection.
+
+  **`obligation_counts.consumer_status_pending`.** Emitted on the summary view whenever a consumer
+  principal is resolved. Counts obligations past `expected_at` plus the recovery window with an empty
+  status chain for the caller. Never a health input; overlaps the health counts rather than
+  partitioning them.
+
+  **Reserved `authoritative_party`.** `assertSupportedReportingAuthoritativeParty` refuses
+  `'consumer'` with `UNSUPPORTED_FEATURE` instead of coercing it to `'seller'`, and
+  `installConfiguration` applies it before any other validation. Call it from `sync_accounts` too.
+
+  The lifecycle harness (`examples/reliable-reporting-lifecycle`) gains a `restate_after_received`
+  probe operation mirroring the comply controller's: it restates only against the revision the caller
+  currently reports as `received`, returns `stale_received_grace_deadline`, and is convergent on repeat.
+
+  **Cross-tenant fix.** A persisted `CONSUMER_STATUS_MISMATCH` issue is no longer republished. The
+  issue store is keyed by obligation and carries no consumer dimension, so echoing a persisted one
+  handed every other consumer on that obligation the causing `reporting_status_id`, its `opened_at`
+  (another tenant's exact ingest timing), and any `external_ref` ticket key. The projection recomputes
+  the mismatch from the caller's own current leaf on every read, so the persisted copy was redundant
+  as well as unsafe. Retired (`resolved` / `waived`) issues are dropped from the projection rather
+  than emitted with the state elided.
+
+  **Health-filter fix.** `PostgresReportingLedgerStore` applies the `health` query filter while
+  building the snapshot, and it carried a second copy of the mismatch rule that hardcoded
+  `action_required`. With rc.3's `delayed` grace window that made a stale-`received` obligation
+  unreachable under _every_ filter — excluded from the snapshot when the caller asked for `delayed`,
+  dropped by the handler when they asked for `action_required`. Both now call one shared projection in
+  `./health`, and the store accepts `consumerMismatchEscalation` so the two cannot disagree.
+
+  `opened_at` is now the later of the first supersession and the causing statement's `recorded_at`; a
+  buyer that posts `received` naming an already-superseded revision no longer gets an issue dated
+  before the seller could have observed it, which with a short escalation window would have been born
+  already escalated. Grace and escalation comparisons use the ledger's exact instant comparators
+  instead of `Date.parse`, which floors sub-millisecond fractions and returns `NaN` for the leap
+  seconds this module accepts. Persisted issues preserve their `openedAt` across re-upsert, and
+  `HISTORY_UNAVAILABLE` is anchored to its period rather than the read time.
+
+  `UnsupportedReportingFeatureError` extends `AdcpError` so the framework maps it to
+  `UNSUPPORTED_FEATURE`/`terminal`; as a plain `Error` it would have been projected to
+  `SERVICE_UNAVAILABLE`/`transient`, telling the buyer to retry the request it refuses.
+  `assertSupportedReportingAuthoritativeParty` is exported from the package root, rejects a
+  wrong-shaped argument instead of silently passing, treats an explicit `null` as a request rather
+  than absence, and reports buyer-supplied values as bounded structured details.
+  `consumerMismatchEscalation` is validated at wiring time — `NaN` silently disabled escalation and a
+  negative window escalated everything.
+
+  `reportingConsumerStatusCapabilityV1(escalation)` projects the same option into the capability
+  document's `consumer_mismatch_escalation_seconds` + `operations_contact`, so the advertised window
+  and the window the reads enforce come from one value and cannot drift.
+
+  **Ingest rejects a `content_mismatch` against a superseded revision.** `expected_period` makes it
+  _"valid only against a revision the seller currently requires for that period"_, but existence,
+  account ownership, obligation membership, and a matching content digest are all satisfiable by a
+  long-superseded revision — so a buyer could dispute stale bytes and pin its own caller-scoped view
+  at `action_required`, which the seller may then not clear while that statement is the leaf.
+  Deciding currency needs the sibling revision set, so `ReportingConsumerStatusLedgerStore` gains an
+  optional `listRevisionMetadata`; `ReportingLedgerStore` implementors are already covered through
+  `listRevisions`. A store that can do neither now **rejects** `content_mismatch` rather than
+  accepting a statement it cannot validate — the other four statuses are unaffected, and
+  `content_mismatch` is new in rc.3 so no existing adapter regresses.
+
+  `consumer_status_pending` now starts strictly _after_ the deadline, since the duty is to post "no
+  later than" it. A negative-status issue's `opened_at` takes the later of the statement's
+  `recorded_at` and the earliest qualifying revision, so a statement filed during a seller outage no
+  longer surfaces on recovery already past its escalation boundary. And
+  `createReportingStatusHandler` inherits `consumerMismatchEscalation` from the store and throws on a
+  disagreement, so a health-filtered periods read cannot contradict the summary.
+
+- ecf1c74: Add request-only Targeting Input helpers for the AdCP 3.2 null-clear semantics (DR-0020) and stop
+  `createMediaBuyStore` from persisting a clear command.
+
+  `resolveTargetingInput`, `applyTargetingInput`, and `hasTargetingClears` are exported from the root
+  and `@adcp/sdk/server`. They project between the request-only Targeting Input — where a dimension may
+  be `null` to suppress a product default on create or clear stored state on update — and the strict
+  Targeting Overlay used by discovery criteria, accepted commercial snapshots, mutation responses, and
+  package readback, which must not contain `null`.
+
+  Two fixes in `createMediaBuyStore`, both reachable only once rc.3 makes the nullable input types
+  real: `persistFromCreate` fell back to the request overlay verbatim when the seller's response did
+  not echo one, and the `new_packages` arm of `mergeFromUpdate` assigned the incoming overlay directly.
+  Either path could write a `null` clear command into durable state, which `backfill` would then echo
+  into a `get_media_buys` response whose schema forbids null. Both now resolve clears away, and a patch
+  that clears the last surviving dimension drops the tracked overlay instead of persisting `{}`.
+
+  The store's `CreateMediaBuyInputForStore` / `UpdateMediaBuyInputForStore` input types widen from the
+  strict overlay to the request shape, so passing a real `create_media_buy` / `update_media_buy`
+  payload typechecks. Persisted and echoed values remain strict.
+
+  Codegen fix: `TargetingOverlayInput.device_platform` and `.device_type` were emitted as the scalar
+  `DevicePlatform` / `DeviceType` enums instead of arrays. `core/targeting-input.json` reaches those
+  dimensions through a JSON-pointer `$ref` into `core/targeting.json#/properties/<dimension>`, and for
+  an array with no `title` of its own json-schema-to-typescript names the result after the items'
+  canonical `$ref`. Both types now match the wire.
+
+### Patch Changes
+
+- 8ba12c2: Preserve the canonical reporting consumer status contract when regenerating from protocol bundles that include `content_mismatch`. Derive ledger wire fields and status-specific validation from the pinned schema, and, when regenerated from those bundles, retain `mismatch_code` through ingest and readback and verify the consumed revision binding for content mismatches. Existing statuses remain supported; the protocol version pin and release process are unchanged.
+
 ## 14.0.0-rc.36
 
 ### Minor Changes
