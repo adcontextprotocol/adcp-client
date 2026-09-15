@@ -1172,6 +1172,55 @@ test('failed prerequisite rows grade required phases consistently across routing
   }
 });
 
+test('routing failures retain unavailable outputs through normal and skipped phases', async () => {
+  for (const skippedPhase of [false, true]) {
+    for (const dependency of ['implicit', 'explicit', 'independent', 'restored']) {
+      const sb = storyboard([]);
+      sb.context = { skip: true, ...(dependency === 'restored' ? { needed: 'restored' } : {}) };
+      sb.phases = [
+        {
+          id: 'producer',
+          title: 'Producer',
+          ...(skippedPhase ? { skip_if: 'context.skip' } : {}),
+          steps: [
+            {
+              id: 'unroutable',
+              title: 'Unroutable',
+              task: 'unknown_tool',
+              context_outputs: [{ key: 'needed', path: 'value' }],
+            },
+          ],
+        },
+        {
+          id: 'consumer',
+          title: 'Consumer',
+          ...(dependency === 'explicit' ? { depends_on: ['producer'] } : {}),
+          ...(dependency === 'independent' ? { depends_on: [] } : {}),
+          steps: [
+            {
+              id: 'negative',
+              title: 'Negative',
+              task: 'get_signals',
+              agent: 'a',
+              expect_error: true,
+              sample_request: { signal_spec: '$context.needed' },
+            },
+          ],
+        },
+      ];
+      const { result, calls } = await run({ a: [['get_signals'], { supported_protocols: ['signals'] }, true] }, sb);
+      const executes = dependency === 'independent' || dependency === 'restored';
+      const label = `${skippedPhase}/${dependency}`;
+      const consumer = result.phases[1].steps[0];
+      assert.equal(consumer.skip_reason, executes ? undefined : 'prerequisite_failed', label);
+      assert.equal(consumer.passed, executes, label);
+      assert.equal(calls.a.filter(task => task === 'get_signals').length, executes ? 1 : 0, label);
+      assert.equal(result.failed_count, 1, label);
+      assert.equal(result.overall_passed, false, label);
+    }
+  }
+});
+
 test('OAuth presence escalates optional failures only on the agent that served metadata', async () => {
   const present = await startAgent(
     ['get_signals'],

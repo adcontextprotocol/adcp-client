@@ -3415,8 +3415,14 @@ async function executeStoryboardPass(
     if (shouldSkipPhase(phase, options, context)) {
       // Reconciliation still emits the authored routing-error rows, but a
       // dependent mutation must see the failed setup before it can dispatch.
-      if (routingContext && phase.steps.some(step => step.stateful && routedErrors.has(step))) {
-        phaseStatefulCascades.set(phase.id, null);
+      const skippedRoutingFailures = routingContext ? phase.steps.filter(step => routedErrors.has(step)) : [];
+      if (skippedRoutingFailures.length > 0) {
+        for (const step of skippedRoutingFailures) {
+          recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
+        }
+        if (skippedRoutingFailures.some(step => step.stateful)) phaseStatefulCascades.set(phase.id, null);
+        // Non-stateful failures also expose absent outputs to implicit context
+        // dependencies without installing a stateful cascade.
         priorPhaseIds.push(phase.id);
       }
       phaseResults.push({
@@ -3645,6 +3651,7 @@ async function executeStoryboardPass(
         priorStepResults.set(step.id, failed);
         failedCount++;
         phasePassed = false;
+        recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
         if (step.stateful) phaseStatefulCascades.set(phase.id, null);
         continue;
       }
@@ -3772,7 +3779,7 @@ async function executeStoryboardPass(
             ]);
             if (missingKeys.size > 0) {
               capabilityUnavailable = false;
-              detail = `Skipped: context required from a missing-tool prerequisite is unavailable: ${[...missingKeys].join(', ')}.`;
+              detail = `Skipped: context required from a failed or unavailable prerequisite is missing: ${[...missingKeys].join(', ')}.`;
             }
           }
         }
