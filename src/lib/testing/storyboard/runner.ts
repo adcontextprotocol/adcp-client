@@ -4254,11 +4254,15 @@ async function executeStoryboardPass(
       const phaseResult = phaseResults.find(p => p.phase_id === phaseDef.id);
       return !!phaseResult && phaseResult.passed && phaseResult.steps.some(s => !s.skipped && s.passed);
     });
+  // Hard prerequisite skips fail their required phase without counting as
+  // executed failures. Check the finalized phase grades after any-of regrading
+  // so an unrelated passing read cannot conceal that missing state.
   const requiredPhasesPassed =
     !hasExecutableSteps ||
-    requiredPhaseHasExecutedPass ||
-    requiredPhasesNonFailingSkipped ||
-    (failedCount === 0 && requiredPhasesCoveredByCapabilityGates);
+    (requiredPhaseDefs.every(phaseDef => phaseResults.find(p => p.phase_id === phaseDef.id)?.passed === true) &&
+      (requiredPhaseHasExecutedPass ||
+        requiredPhasesNonFailingSkipped ||
+        (failedCount === 0 && requiredPhasesCoveredByCapabilityGates)));
   const storyboardWideFixtureUnavailable =
     (seedingUnsupported || fixtureUnsatisfied || creativeAssetFixtureGap !== undefined) && failedCount === 0;
   // Prepend the pre-flight seeding phase now that every consumer that

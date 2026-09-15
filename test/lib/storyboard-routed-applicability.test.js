@@ -1533,6 +1533,26 @@ test('hard state dependencies outrank capability-only dependencies in either dec
       assert.equal(downstream.passed, false, `${kind}: ${depends_on}`);
       assert.equal(downstream.skip_reason, 'prerequisite_failed');
       assert.equal(result.overall_passed, false);
+      if (kind === 'missing_tool') {
+        assert.deepEqual([result.passed_count, result.failed_count, result.skipped_count], [1, 0, 4]);
+        sb.phases.find(phase => phase.id === 'dependent').optional = true;
+        const { result: optionalResult } = await run(
+          {
+            a: [[], { account: { require_operator_auth: false } }],
+            b: [[], { account: { require_operator_auth: true } }],
+          },
+          sb
+        );
+        assert.equal(optionalResult.overall_passed, true, 'optional prerequisite skips do not fail required phases');
+        assert.equal(
+          optionalResult.phases.find(phase => phase.phase_id === 'dependent').steps[0].skip_reason,
+          'prerequisite_failed'
+        );
+        assert.deepEqual(
+          [optionalResult.passed_count, optionalResult.failed_count, optionalResult.skipped_count],
+          [1, 0, 4]
+        );
+      }
     }
   }
 });

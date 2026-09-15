@@ -9,7 +9,7 @@ That head is preserved in local branch `backup/pr2920-reviewed-85f95020` and a
 verified git bundle before rebasing the existing PR branch.
 
 All nine historical commits rebase patch-identically. The 136 files changed on
-main since the historical base have zero path overlap with this patch's 26 files.
+main since the historical base have zero path overlap with this patch's paths.
 In particular, main has not changed the five implementation files carrying the
 routed applicability fix, so the dispatch/gate mismatch remains applicable.
 New reporting consumer-status hardening, canonical offline validators, targeting
@@ -135,7 +135,8 @@ identical in 3.1.20 and 3.1.23.
   storyboards already satisfy all-of on the seller, so reverting the selector
   would not repair them. Seed validation and complete fixture declarations need
   protocol-side correction; this patch does not suppress those failures.
-- Routed controller seeding is already explicitly unsupported unless the caller
+- Routed legacy controller seeding (`prerequisites.controller_seeding: true`) is
+  explicitly unsupported unless the caller
   provisions fixtures externally and sets `skip_controller_seeding: true`.
   Tests retain the complete declarations and assert the existing refusal for each
   declaration that enables controller seeding. A second matrix runs every authored
@@ -143,7 +144,8 @@ identical in 3.1.20 and 3.1.23.
   routed toolsets whose deterministic endpoints reject calls. Its exact selected,
   skipped (including failed prerequisite skips), and failed sets are committed in
   `test/fixtures/routed-applicability/routed-rejections.json`; none of the failures
-  become passing/neutral results. Fixture seeding is not claimed to be implemented.
+  become passing/neutral results. Legacy routed seeding is not implemented; declared `fixture_resolution`
+  seeding is routed per operation.
 
 The independent routed matrix uses real discovery/dispatch through official SDK
 clients with deterministic test servers. It asserts selected/skipped/failed step

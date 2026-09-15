@@ -3020,6 +3020,7 @@ async function handleStoryboardRun(args) {
         not_applicable: ' [not applicable]',
         no_phases: ' [no phases]',
         prerequisite_failed: ' [prerequisite failed]',
+        capability_prerequisite_unavailable: ' [capability prerequisite unavailable]',
         unsatisfied_contract: ' [contract out of scope]',
       };
       for (const step of phase.steps) {
@@ -3027,6 +3028,7 @@ async function handleStoryboardRun(args) {
         const skipLabel = SKIP_LABELS[step.skip_reason] ?? '';
         console.log(`\n${icon} ${step.title}${skipLabel} (${step.duration_ms}ms)`);
         console.log(`   Task: ${step.task}`);
+        if (step.skipped && step.skip?.detail && !step.error) console.log(`   Skipped: ${step.skip.detail}`);
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
@@ -4439,6 +4441,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           const instTag = step.agent_index ? `[#${step.agent_index}] ` : '';
           console.log(`\n${icon} ${instTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
           console.log(`   Task: ${step.task}`);
+          if (step.skipped && step.skip?.detail && !step.error) console.log(`   Skipped: ${step.skip.detail}`);
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
@@ -4733,6 +4736,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
       not_applicable: ' [not applicable]',
       no_phases: ' [no phases]',
       prerequisite_failed: ' [prerequisite failed]',
+      capability_prerequisite_unavailable: ' [capability prerequisite unavailable]',
       unsatisfied_contract: ' [contract out of scope]',
     };
     for (const result of results) {
@@ -4753,6 +4757,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
           }
           console.log(`\n${icon} ${agentTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
           console.log(`   Task: ${step.task}`);
+          if (step.skipped && step.skip?.detail && !step.error) console.log(`   Skipped: ${step.skip.detail}`);
           if (step.error) console.log(`   Error: ${step.error}`);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
