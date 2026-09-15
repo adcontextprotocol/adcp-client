@@ -902,32 +902,402 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.deepEqual(second.failedConsumerStatuses, []);
   });
 
-  test('a malformed seller expected_at is not re-emitted as the buyer status_as_of', async () => {
+  test('an unreadable expected_at with no usable schedule suppresses and says whose field it is', async () => {
     const seller = await harness();
-    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    // No buyer SLA pin either, so nothing can derive a deadline.
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
 
-    // `Date.parse` accepts this; RFC 3339 does not. It used to flow straight
-    // through to `status_as_of` on a statement the buyer puts its name to.
+    // `Date.parse` accepts this spelling; RFC 3339 does not. It used to flow
+    // straight through to `status_as_of` on a statement the buyer signs.
     const honest = seller.client.getReportingStatus;
     seller.client.getReportingStatus = async params => {
       const page = await honest(params);
       return {
         ...page,
-        periods: page.periods.map(period => ({ ...period, expected_at: 'Mon, 02 Sep 2026 01:00:00 GMT' })),
+        periods: page.periods.map(({ schedule: _schedule, ...period }) => ({
+          ...period,
+          expected_at: 'Mon, 02 Sep 2026 01:00:00 GMT',
+        })),
       };
     };
 
     const result = await seller.reconcile(at, expected);
     const plan = result.consumerStatuses[0];
     assert.equal(plan.suppressed, 'deadline_unknown');
-    assert.match(plan.reason, /expected_at/);
+    // The field belongs to the seller's obligation, and it *was* recorded —
+    // the buyer just could not read it. The old wording said the opposite of
+    // both, and pointed at a field that does not exist on ExpectedReportingPeriod.
+    assert.match(plan.reason, /seller's obligation\.expected_at/);
+    assert.match(plan.reason, /Mon, 02 Sep 2026/, 'the offending value is quoted so it can be grepped');
+    assert.doesNotMatch(plan.reason, /was not recorded/);
     assert.equal(plan.deadline, undefined);
     assert.notEqual(plan.statusAsOf, 'Mon, 02 Sep 2026 01:00:00 GMT');
     assert.deepEqual(result.postedConsumerStatuses, []);
     assert.equal(seller.store.consumerStatements.length, 0);
+  });
+
+  /**
+   * Drive the `schedule.delivery_sla` fallback with full control of the period
+   * end. No revision is published, so the status is `revision_missing` and its
+   * `status_as_of` is exactly the derived `expected_at`.
+   */
+  async function scheduledExpectedAt({ periodStart, periodEnd, deliverySla, periodTimezone = 'UTC' }) {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    // The seller's observation boundary stays where its own ledger is coherent;
+    // only the buyer's reconcile clock moves, which is what `overdue` reads.
+    seller.observeAt(seller.anchor + DAY + 3 * HOUR);
+    const at = Date.parse(periodEnd) + 400 * DAY;
+    // This case is about the instant the buyer derives, not about posting it.
+    delete seller.client.syncReportingStatus;
+    // No buyer pin: the obligation's own schedule must be the only path.
+    const { deliverySlaSeconds: _pin, ...base } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [{ ...base, periodStart, periodEnd }];
+
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      // The summary view carries no `periods`, and it shares this client.
+      return {
+        ...page,
+        // `expected_at` is omitted, not malformed: an unreadable one derives
+        // nothing on purpose, so the schedule is the path under test here.
+        periods: (page.periods ?? []).map(({ expected_at: _absent, ...period }) => ({
+          ...period,
+          period: { ...period.period, start: periodStart, end: periodEnd },
+          schedule: { ...period.schedule, delivery_sla: deliverySla, period_timezone: periodTimezone },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    return result.consumerStatuses[0];
+  }
+
+  test('a calendar delivery_sla resolves; the schema permits P1M and P1Y', async () => {
+    // `reporting-schedule.json` allows Y and M on `delivery_sla`, and this
+    // SDK's own validator accepts them — so a parser that understood only
+    // D/H/M/S silenced a conformant seller, which is the failure this fallback
+    // exists to prevent.
+    const monthly = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P1M',
+    });
+    // The helper unwires the poster, so `posting_unavailable` is expected; what
+    // matters is that the deadline resolved rather than falling to
+    // `deadline_unknown`.
+    assert.notEqual(monthly.suppressed, 'deadline_unknown', 'P1M is resolvable, not a reason to fall silent');
+    assert.equal(monthly.statusAsOf, '2026-10-02T00:00:00.000Z');
+
+    const yearly = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P1Y',
+    });
+    assert.equal(yearly.statusAsOf, '2027-09-02T00:00:00.000Z');
+  });
+
+  test('a calendar month clamps to month end rather than overflowing', async () => {
+    // Jan 31 + P1M is the last day of February, not March 3. This is the one
+    // place ISO duration implementations genuinely differ, so it is pinned.
+    const nonLeap = await scheduledExpectedAt({
+      periodStart: '2026-01-30T00:00:00.000Z',
+      periodEnd: '2026-01-31T00:00:00.000Z',
+      deliverySla: 'P1M',
+    });
+    assert.equal(nonLeap.statusAsOf, '2026-02-28T00:00:00.000Z');
+
+    const leap = await scheduledExpectedAt({
+      periodStart: '2028-01-30T00:00:00.000Z',
+      periodEnd: '2028-01-31T00:00:00.000Z',
+      deliverySla: 'P1M',
+    });
+    assert.equal(leap.statusAsOf, '2028-02-29T00:00:00.000Z', 'a leap year has the 29th to clamp to');
+
+    const acrossLeapDay = await scheduledExpectedAt({
+      periodStart: '2028-02-28T00:00:00.000Z',
+      periodEnd: '2028-02-29T00:00:00.000Z',
+      deliverySla: 'P1Y',
+    });
+    assert.equal(acrossLeapDay.statusAsOf, '2029-02-28T00:00:00.000Z', 'Feb 29 + P1Y has no Feb 29 to land on');
+  });
+
+  test('calendar arithmetic happens in the schedule period_timezone', async () => {
+    // `period_timezone` is "Required IANA timezone for ... calendar
+    // arithmetic", and the point of requiring it is that a fixed offset cannot
+    // express a DST transition. Midnight in New York stays midnight across one.
+    const acrossDst = await scheduledExpectedAt({
+      periodStart: '2026-02-28T05:00:00.000Z',
+      periodEnd: '2026-03-01T05:00:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'America/New_York',
+    });
+    // 2026-03-01T05:00Z is midnight EST; 2026-04-01 midnight is EDT (-4).
+    assert.equal(acrossDst.statusAsOf, '2026-04-01T04:00:00.000Z');
+
+    const unknownZone = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'Mars/Olympus_Mons',
+    });
+    assert.equal(unknownZone.suppressed, 'deadline_unknown', 'an unresolvable zone derives nothing, not a guess');
+  });
+
+  test('an out-of-range delivery_sla derives nothing instead of throwing', async () => {
+    // The schema's `delivery_sla` pattern puts no bound on the digit count, so
+    // `P999999999D` is a legal value a seller can send. It lands outside the
+    // representable time range, where `toISOString` throws — and this call site
+    // has nothing to catch it, so the whole reconcile would abort on one
+    // seller-supplied string.
+    const plan = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P999999999D',
+    });
+    assert.equal(plan.suppressed, 'deadline_unknown');
+    assert.equal(plan.deadline, undefined);
+
+    // Years and months take a different path to the same place.
+    // P8000Y is the value the range guard actually exists for: it resolves
+    // fine, but `toISOString` renders a year past 9999 in expanded form
+    // (`+010026-…`), which is not a valid instant. `P999999999Y` overflows to
+    // NaN inside `Date` and is caught regardless, so it proves nothing.
+    const centuries = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P8000Y',
+    });
+    assert.equal(centuries.suppressed, 'deadline_unknown');
+    assert.doesNotMatch(String(centuries.statusAsOf ?? ''), /^\+/);
+  });
+
+  test('a seller cannot push the deadline out past the buyer own pin', async () => {
+    const seller = await harness();
+    // The buyer pinned its own clock, which is the whole point of the pin.
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // A seller that has published nothing drops `expected_at` and advertises a
+    // ten-year SLA. Consulting `schedule` ahead of the pin let it push its own
+    // deadline a decade out, so the period never went overdue and the
+    // `revision_missing` recording the non-delivery was never posted — with no
+    // diagnostic, because nothing was suppressed. `schedule` is as
+    // seller-controlled as `expected_at`; the pin is the buyer's independent
+    // answer and has to outrank it.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ expected_at: _dropped, ...period }) => ({
+          ...period,
+          schedule: { ...period.schedule, delivery_sla: 'P10Y', period_timezone: 'UTC' },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.deadline, new Date(seller.anchor + DAY + (SLA_SECONDS + RECOVERY_SECONDS) * 1_000).toISOString());
+    assert.equal(plan.overdue, true, 'the buyer pin decides, so the period is owed');
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.equal(result.postedConsumerStatuses[0].consumerStatus, 'revision_missing');
+  });
+
+  test('a deadline past the representable range suppresses instead of throwing', async () => {
+    const seller = await harness();
+    // No pin, so the seller's schedule governs and can reach the range edge.
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `expected_at` is range-checked where it is derived, but the recovery
+    // window is added afterwards — so a value just inside the range plus the
+    // advertised window lands outside it, and `toISOString` threw from a call
+    // site nothing wraps, aborting the entire reconcile.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ expected_at: _dropped, ...period }) => ({
+          ...period,
+          // Lands just inside 9999-12-31, so `expected_at` itself resolves and
+          // only the added recovery window crosses the boundary.
+          schedule: { ...period.schedule, delivery_sla: 'PT251613993599S', period_timezone: 'UTC' },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.equal(result.consumerStatuses[0].deadline, undefined);
+    // The overflow came from the window, not from a pin the adopter forgot.
+    assert.match(result.consumerStatuses[0].reason, /automatedRecoveryWindowSeconds/);
+    assert.doesNotMatch(result.consumerStatuses[0].reason, /record ExpectedReportingPeriod/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a seller rotating source_timezone does not fork the buyer own chain', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor, { periodSourceTimezone: 'UTC' })];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `source_timezone` sits in the durable statement, the status-id hash and
+    // the unchanged-comparison, so a seller varying its echo made the buyer
+    // append a fresh statement on every single reconcile. The buyer pinned the
+    // value when it accepted the generation; the seller's copy is an echo.
+    const honest = seller.client.getReportingStatus;
+    // Real IANA zones, so this tests precedence rather than validity.
+    const zones = ['America/New_York', 'Europe/Berlin', 'Asia/Tokyo'];
+    let reads = 0;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const zone = zones[reads % zones.length];
+      reads += 1;
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({
+          ...period,
+          period: { ...period.period, source_timezone: zone },
+        })),
+      };
+    };
+
+    await seller.reconcile(at, expected);
+    const second = await seller.reconcile(at + HOUR, expected);
+    assert.equal(seller.store.consumerStatements.length, 1, 'one statement, not one per reconcile');
+    assert.equal(second.consumerStatuses[0].suppressed, 'unchanged');
+    assert.equal(seller.store.consumerStatements[0].period.source_timezone, 'UTC', 'the buyer pin, not the echo');
+  });
+
+  test('a slash-free IANA link is accepted, because the spec says name or link', async () => {
+    const seller = await harness();
+    // `iana_timezone`: "a recognized IANA Time Zone Database zone name **or
+    // link**". Links have no slash — Japan, GB, EET, Zulu — and this repo's own
+    // producer accepts them, so a buyer that required one would refuse a
+    // configuration its own seller had already accepted, then be refused by
+    // that seller for echoing a substituted zone on every statement forever.
+    const { periodSourceTimezone: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // Set on the seller's own obligation, so the echo is genuine and the
+    // seller's `validateStatus` compares against the same value.
+    for (const obligation of seller.store.obligations.values()) obligation.period.sourceTimezone = 'Japan';
+    for (const configuration of seller.store.configurations.values()) configuration.sourceTimezone = 'Japan';
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(
+      result.consumerStatuses[0].period.source_timezone,
+      'Japan',
+      'adopted verbatim, not substituted with UTC'
+    );
+    // Adoption is only half of it: the seller compares this value strictly, so
+    // a substituted zone is refused on every statement forever.
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.deepEqual(result.failedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements[0].period.source_timezone, 'Japan');
+  });
+
+  test('a numeric-offset source_timezone is refused rather than substituted', async () => {
+    const seller = await harness();
+    // No buyer pin, so the seller's echo is the only candidate.
+    const { periodSourceTimezone: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `iana_timezone` is a MUST: "do not silently substitute the host timezone
+    // or a numeric offset". Node's Intl *accepts* "+05:30" as a timeZone, so a
+    // length check alone would adopt it into the durable statement and then
+    // compute against a fixed offset with no DST transitions.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({
+          ...period,
+          period: { ...period.period, source_timezone: '+05:30' },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    // Refused *and* not substituted. Falling back to 'UTC' would put a value in
+    // the chain's logical key that the seller never sent, and the seller
+    // compares it strictly — so the statement is refused on every run forever,
+    // with no diagnostic. Silence with a named cause is the honest outcome.
+    assert.equal(result.consumerStatuses[0].suppressed, 'period_identity_unknown');
+    assert.match(result.consumerStatuses[0].reason, /not a recognized IANA zone/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements.length, 0);
+  });
+
+  test('an unrecorded recovery window is reported, not mistaken for not-yet-due', async () => {
+    const seller = await harness();
+    // The commonest misconfiguration on this surface: the window is advertised
+    // on the delivery capabilities, not the obligation, so the ledger cannot
+    // supply it and an adopter who never recorded it posts nothing, forever.
+    // Narrowing `deadline_unknown` to the two missing statuses made that render
+    // exactly like a healthy period that is simply not due yet.
+    const { automatedRecoveryWindowSeconds: _window, ...withoutWindow } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutWindow];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.consumerStatus, 'received', 'a healthy seller, so the status itself is fine');
+    assert.equal(plan.suppressed, 'deadline_unknown', 'and the silence is explained');
+    assert.match(plan.reason, /automatedRecoveryWindowSeconds/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('an official generation is told to record officialAfterSeconds, not deliverySlaSeconds', async () => {
+    const seller = await harness();
+    // Naming the wrong pin is expensive: an official generation dated from
+    // delivery_sla is refused by the seller, and because the statement takes no
+    // clock input it is rebuilt identically and refused on every run.
+    const { deliverySlaSeconds: _pin, ...base } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [{ ...base, requiredFinality: 'official' }];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ expected_at: _absent, schedule: _schedule, ...period }) => ({
+          ...period,
+          required_finality: 'official',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.suppressed, 'deadline_unknown');
+    assert.match(plan.reason, /officialAfterSeconds/);
+    assert.doesNotMatch(plan.reason, /deliverySlaSeconds/);
   });
 
   test('a forked revision chain suppresses rather than blaming the seller', async () => {
@@ -938,9 +1308,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
 
-    // Two unsuperseded heads. The buyer cannot tell which revision the seller
-    // currently requires, and that is the buyer failing to read — not the
-    // seller failing to publish, which is what `revision_missing` asserts.
+    // Two unsuperseded heads: no single current revision exists.
     const honest = seller.client.getReportingStatus;
     seller.client.getReportingStatus = async params => {
       const page = await honest(params);
@@ -957,12 +1325,12 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const result = await seller.reconcile(at, expected);
     const plan = result.consumerStatuses[0];
     assert.equal(plan.suppressed, 'chain_indeterminate');
-    assert.match(plan.reason, /could not be resolved/);
+    assert.match(plan.reason, /forks/);
     assert.deepEqual(result.postedConsumerStatuses, []);
     assert.equal(seller.store.consumerStatements.length, 0, 'silence, not a statement about the seller');
   });
 
-  test('a superseded predecessor does not make a valid current revision missing', async () => {
+  test('a head naming a predecessor the buyer never saw is not attested as received', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
@@ -970,31 +1338,849 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
 
-    // A two-link chain. `REVISION_CHAIN_SCOPE_MISMATCH` is evaluated over every
-    // candidate including superseded ones, which is why it is not in
-    // REVISION_DISQUALIFYING_REASONS: a predecessor must never be able to turn
-    // a sound current revision into `revision_missing`.
+    // Exactly one head — so the chain *does* resolve — but it supersedes a
+    // revision the seller never disclosed. This is the case the earlier fork
+    // test could not reach: `AMBIGUOUS_REVISION_CHAIN` always leaves zero
+    // heads, so only `REVISION_PREDECESSOR_MISSING` exercises suppression on a
+    // resolved head. Without it the buyer confidently attests `received` for a
+    // revision it cannot prove is current.
     const honest = seller.client.getReportingStatus;
     seller.client.getReportingStatus = async params => {
       const page = await honest(params);
-      const [current] = page.revisions;
-      if (!current) return page;
-      const predecessor = {
-        ...current,
-        reporting_revision_id: `${current.reporting_revision_id}-predecessor`,
-      };
+      const [head] = page.revisions;
+      if (!head) return page;
       return {
         ...page,
-        revisions: [predecessor, { ...current, supersedes_reporting_revision_id: predecessor.reporting_revision_id }],
-        pagination: { ...page.pagination, total_count: page.pagination.total_count + 1 },
+        revisions: [{ ...head, supersedes_reporting_revision_id: `${head.reporting_revision_id}-undisclosed` }],
       };
     };
 
     const result = await seller.reconcile(at, expected);
     const plan = result.consumerStatuses[0];
-    assert.equal(plan.consumerStatus, 'received');
-    assert.equal(plan.suppressed, undefined);
+    assert.equal(plan.suppressed, 'chain_indeterminate');
+    assert.match(plan.reason, /predecessor/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements.length, 0);
+  });
+
+  test('a single seller number that cannot be canonicalized does not abort the run', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `JSON.parse('1e999')` is `Infinity`, which RFC 8785 cannot represent. One
+    // such number used to throw out of `reconcileReporting` entirely — after
+    // receipts had already been synced — so the caller lost its record of
+    // durable work. It is a read failure, not a reason to discard the run.
+    const honest = seller.client.getMediaBuyDelivery;
+    seller.client.getMediaBuyDelivery = async params => {
+      const page = await honest(params);
+      return { ...page, reporting_rows: page.reporting_rows.map(row => ({ ...row, impressions: Infinity })) };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1, 'the run completed and reported');
+    assert.equal(result.postedConsumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.postedConsumerStatuses[0].failureCode, 'reader_incompatible');
+  });
+
+  /** Replace every row on every page with `shape`, over `pages` pages. */
+  function servesRows(seller, shape, pages) {
+    const honest = seller.client.getMediaBuyDelivery;
+    let sent = 0;
+    seller.client.getMediaBuyDelivery = async params => {
+      const { pagination: _cursor, ...firstPage } = params;
+      const page = await honest(firstPage);
+      sent += 1;
+      return {
+        ...page,
+        reporting_rows: page.reporting_rows.map(row => ({ ...row, ...shape() })),
+        pagination: { has_more: sent < pages, cursor: `probe-${sent}` },
+      };
+    };
+    return () => sent;
+  }
+
+  test('an ordinary wide row is consumed, not charged into silence', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // ~500 KB of perfectly ordinary row: one array of a hundred thousand
+    // numbers. Charging a flat constant per unvisited leaf estimated this at
+    // ~393 MB against a 256 MiB ceiling, so the buyer went silent on a seller
+    // that had done nothing wrong — the same "buy silence with an alibi" hole
+    // as the nesting bomb, just wide instead of deep.
+    servesRows(seller, () => ({ samples: Array.from({ length: 100_000 }, (_unused, index) => index) }), 1);
+
+    const result = await seller.reconcile(at, expected);
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    // The rows were read and sized without tripping the ceiling, which is the
+    // property under test. The digest then fails because this stub rewrote the
+    // rows — reaching that comparison at all is the proof the read completed.
+    assert.equal(result.consumerStatuses[0].failureCode, 'integrity_mismatch');
+  });
+
+  test('a shallow nesting bomb does not buy silence either', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const pagesSent = servesRows(seller, () => ({ nested: { a: { b: { c: { d: {} } } } } }), 256);
+
+    const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 300 } });
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.equal(pagesSent(), 256, 'the read ran to completion');
+  });
+
+  test('a row nested deeper than the reader walks is the seller shape, and stays on the record', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // An 8,000-deep array overflowed the estimator's stack. The `RangeError`
+    // was caught and posted as `unreadable` / `transport_failed` — the buyer
+    // durably accusing the seller of publishing unreadable bytes because of its
+    // own call stack.
+    servesRows(
+      seller,
+      () => {
+        const root = [];
+        let tip = root;
+        for (let level = 0; level < 8_000; level += 1) {
+          const next = [];
+          tip.push(next);
+          tip = next;
+        }
+        return { deep: root };
+      },
+      1
+    );
+
+    const result = await seller.reconcile(at, expected);
+    // Depth and breadth are different claims. A 147-byte row nested seventy
+    // deep used to suppress the whole period, which let an under-delivering
+    // seller escape a `content_mismatch` permanently for the price of one
+    // strange row. No conformant tabular row nests this deep, so it stays on
+    // the record; breadth remains the buyer's own limit.
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.equal(result.consumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.consumerStatuses[0].failureCode, 'reader_incompatible');
     assert.equal(result.postedConsumerStatuses.length, 1);
+  });
+
+  test('large strings are charged for what they hold, so the ceiling still binds', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // Strings are sized in O(1) and never consume the container budget, so no
+    // amount of padding can hide them from the ceiling.
+    servesRows(seller, () => ({ blob: 'x'.repeat(1_000_000) }), 200);
+
+    const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 400 } });
+    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a seller-dated expected_at cannot precede the period it describes', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `expected_at` is "the resolved period end plus this duration", so it can
+    // never precede the period end. Unclamped, a seller could date the buyer's
+    // own durable statement in year 1.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({ ...period, expected_at: '0001-01-01T00:00:00.000Z' })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(
+      result.consumerStatuses[0].statusAsOf,
+      new Date(seller.anchor + DAY).toISOString(),
+      'clamped up to the period end, not year 1'
+    );
+    // The harness seller's own store still holds the real expected_at, so it
+    // refuses this statement — which is the honest outcome for a wire value
+    // that contradicts the ledger behind it, and is visible rather than silent.
+    assert.equal(result.failedConsumerStatuses.length, 1);
+  });
+
+  test('an unreadable expected_at is not rescued by a pin or a schedule', async () => {
+    const seller = await harness();
+    // Both fallbacks live and both able to produce an instant. The short-circuit
+    // is the only thing stopping them, and every other test that touches an
+    // unreadable `expected_at` strips them — so without this one, deleting the
+    // short-circuit silently reverts documented behaviour: the buyer would post
+    // against a deadline the seller does not hold and be refused every run.
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    let sawSchedule = false;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => {
+          sawSchedule = typeof period.schedule?.delivery_sla === 'string';
+          return { ...period, expected_at: 'not-a-date' };
+        }),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(sawSchedule, true, 'the schedule fallback was available');
+    assert.equal(expected[0].deliverySlaSeconds, SLA_SECONDS, 'and so was the buyer pin');
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.match(result.consumerStatuses[0].reason, /seller has to correct it/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a nonexistent local time advances by the gap and an ambiguous one takes the earlier offset', async () => {
+    // The two halves of `period_generation`'s DST rule, at real transitions.
+    // The existing timezone test sits four weeks from any transition, so it
+    // proves a conversion happens and nothing about the edges.
+    const gap = await scheduledExpectedAt({
+      periodStart: '2026-02-07T07:30:00.000Z',
+      periodEnd: '2026-02-08T07:30:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'America/New_York',
+    });
+    // 02:30 on 2026-03-08 does not exist; advancing by the one-hour gap gives
+    // 03:30 EDT.
+    assert.equal(gap.statusAsOf, '2026-03-08T07:30:00.000Z');
+
+    const ambiguous = await scheduledExpectedAt({
+      periodStart: '2026-09-30T05:30:00.000Z',
+      periodEnd: '2026-10-01T05:30:00.000Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'America/New_York',
+    });
+    // 01:30 on 2026-11-01 happens twice; the earlier offset is EDT.
+    assert.equal(ambiguous.statusAsOf, '2026-11-01T05:30:00.000Z');
+  });
+
+  test('a pure-time delivery_sla is exact, including across an ambiguous local hour', async () => {
+    // `PT{n}S` is the only shape this SDK's own seller emits. Routing it
+    // through wall-clock conversion shifted `PT0S` by an hour at a DST
+    // boundary and dropped sub-second precision.
+    // A pure-time SLA is elapsed time and needs no calendar at all, so it must
+    // resolve even when the zone does not. Routing it through wall-clock
+    // conversion made it depend on a timezone it has no business consulting:
+    // an unrecognized `period_timezone` then silenced a seller whose deadline
+    // was perfectly computable.
+    const exact = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'PT3600S',
+      periodTimezone: 'Mars/Olympus_Mons',
+    });
+    assert.notEqual(exact.suppressed, 'deadline_unknown');
+    assert.equal(exact.statusAsOf, '2026-09-02T01:00:00.000Z');
+
+    const subSecond = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.500Z',
+      periodEnd: '2026-09-02T00:00:00.500Z',
+      deliverySla: 'PT3600S',
+      periodTimezone: 'UTC',
+    });
+    assert.equal(subSecond.statusAsOf, '2026-09-02T01:00:00.500Z', 'sub-second precision preserved');
+  });
+
+  test('a calendar delivery_sla carries the anchor sub-second remainder', async () => {
+    const plan = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.250Z',
+      periodEnd: '2026-09-02T00:00:00.250Z',
+      deliverySla: 'P1M',
+      periodTimezone: 'UTC',
+    });
+    assert.equal(plan.statusAsOf, '2026-10-02T00:00:00.250Z');
+  });
+
+  test('a leaf status_as_of is normalized before it becomes the buyer floor', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    await seller.reconcile(at, expected);
+    assert.equal(seller.store.consumerStatements.length, 1);
+
+    // The leaf's spelling feeds the monotonicity floor, which feeds
+    // `status_as_of`, which feeds `reporting_status_id`. An equivalent
+    // spelling must not produce a different chain.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        consumer_statuses: (page.consumer_statuses ?? []).map(statement => ({
+          ...statement,
+          // Strictly later than expected_at, so the floor genuinely comes from
+          // the leaf; at equal instants `latestInstant` keeps the first and the
+          // leaf's spelling never surfaces.
+          status_as_of: '2026-09-02T03:00:00+00:00',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at + HOUR, expected);
+    assert.equal(result.consumerStatuses[0].statusAsOfFloor, '2026-09-02T03:00:00.000Z', 'normalized, not echoed');
+  });
+
+  test('a calendar-invalid expected_at is unreadable whatever offset it carries', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // February 30th. `Date.parse` rolls it forward, and checking the *parsed*
+    // result cannot tell that roll apart from a legitimate offset moving the
+    // UTC date — which is why an earlier version only caught the `Z` form and
+    // relocated this one to March 1st.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({
+          ...period,
+          expected_at: '2026-02-30T00:00:00+01:00',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.doesNotMatch(String(result.consumerStatuses[0].statusAsOf ?? ''), /2026-03-0/);
+  });
+
+  test('a leap second is accepted as the instant it names', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `ajv-formats` accepts 23:59:60, so refusing it would silence a seller the
+    // SDK itself calls conformant. `Date.parse` returns NaN for it.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({
+          ...period,
+          expected_at: '2026-09-01T23:59:60Z',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    // The leap second is the instant immediately before the next one, then
+    // clamped up to the period end.
+    assert.equal(result.consumerStatuses[0].statusAsOf, new Date(seller.anchor + DAY).toISOString());
+  });
+
+  test('a non-string expected_at is the seller defect, not a missing buyer pin', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({ ...period, expected_at: null })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.match(result.consumerStatuses[0].reason, /obligation\.expected_at/, "the seller's field, not a pin");
+  });
+
+  test('a chain with two unsuperseded leaves says so rather than naming an undisclosed one', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    await seller.reconcile(at, expected);
+    assert.equal(seller.store.consumerStatements.length, 1);
+
+    // Two leaves, neither superseding the other. The seller named nothing, so
+    // "named a current leaf it did not disclose" would be the wrong story.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const [leaf] = page.consumer_statuses ?? [];
+      if (!leaf) return page;
+      return {
+        ...page,
+        consumer_statuses: [leaf, { ...leaf, reporting_status_id: `${leaf.reporting_status_id}-fork` }],
+        periods: (page.periods ?? []).map(({ current_consumer_status_id: _leaf, ...period }) => period),
+      };
+    };
+
+    const result = await seller.reconcile(at + HOUR, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'leaf_undisclosed');
+    assert.match(result.consumerStatuses[0].reason, /more than one unsuperseded leaf/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a plan with no poster wired says so rather than reading as live and due', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // A reader but no poster: the plan used to come back overdue and
+    // unsuppressed while going nowhere, which is indistinguishable from one
+    // that was posted.
+    delete seller.client.syncReportingStatus;
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.overdue, true);
+    assert.equal(plan.suppressed, 'posting_unavailable');
+    assert.match(plan.reason, /client\.syncReportingStatus/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a leap second is judged in UTC, the way the SDK own validator judges it', async () => {
+    // `ajv-formats` resolves the offset before checking for 23:59:60, so
+    // `18:59:60-05:00` is a genuine leap second and `23:59:60+01:00` is not.
+    // Checking the local fields was wrong in both directions at once.
+    const genuine = await planWithWireExpectedAt('2026-06-30T18:59:60-05:00');
+    assert.notEqual(genuine.suppressed, 'deadline_unknown', 'a real leap second must not silence a seller');
+
+    const bogus = await planWithWireExpectedAt('2026-09-02T23:59:60+01:00');
+    assert.equal(bogus.suppressed, 'deadline_unknown', 'and a time ajv rejects must not be accepted');
+  });
+
+  test('an hour past 23 is unreadable rather than rolled into the next day', async () => {
+    const plan = await planWithWireExpectedAt('2026-09-02T24:00:00Z');
+    assert.equal(plan.suppressed, 'deadline_unknown');
+  });
+
+  test('February is sized in the proleptic calendar, not the 1900s', async () => {
+    // `Date.UTC(50, …)` means 1950, and year 0 is a leap year where 1900 is
+    // not — so a two-digit year silently relocated by nineteen centuries and
+    // year 0 lost a day.
+    const leapYearZero = await planWithWireExpectedAt('0000-02-29T00:00:00Z');
+    assert.notEqual(leapYearZero.suppressed, 'deadline_unknown', 'year 0 has a 29th');
+
+    const notLeapYear50 = await planWithWireExpectedAt('0050-02-29T00:00:00Z');
+    assert.equal(notLeapYear50.suppressed, 'deadline_unknown', 'year 50 does not, though 1950-02-29 would not either');
+  });
+
+  test('an official generation falls back to deliverySlaSeconds, the one offset the spec defines', async () => {
+    const seller = await harness();
+    // The pin for official finality is absent but the ordinary one is present.
+    // Falling back to it produces a statement the seller refuses on every run,
+    // which the code's own comment calls out as the expensive mistake.
+    const expected = [expectedPeriod(seller.request, seller.anchor, { requiredFinality: 'official' })];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ expected_at: _a, schedule: _s, ...period }) => ({
+          ...period,
+          required_finality: 'official',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    // `official_after` appears nowhere in the 3.2.0-rc.3 schemas — it is an
+    // extension this repo's producer and ingest carry — and the seller was
+    // measured to *accept* the `delivery_sla`-derived instant when it is not
+    // configured. Refusing the fallback silenced a conformant period.
+    assert.equal(result.consumerStatuses[0].suppressed, undefined);
+    assert.equal(
+      result.consumerStatuses[0].deadline,
+      new Date(seller.anchor + DAY + (SLA_SECONDS + RECOVERY_SECONDS) * 1_000).toISOString()
+    );
+    assert.equal(result.postedConsumerStatuses.length, 1);
+  });
+
+  test('a pin that overflows says so rather than telling you to record it', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor, { deliverySlaSeconds: 1e15 })];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ expected_at: _a, schedule: _s, ...period }) => period),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    // The adopter did record it. Telling them to record it again is the dead
+    // end `deadlineGapReason` exists to avoid.
+    assert.doesNotMatch(result.consumerStatuses[0].reason, /record ExpectedReportingPeriod/);
+    assert.match(result.consumerStatuses[0].reason, /representable range/);
+  });
+
+  test('a malformed issues array does not abort a run that already synced receipts', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        // A client that does not schema-validate its responses; the guide's own
+        // examples do not.
+        periods: (page.periods ?? []).map(period => ({ ...period, issues: [null, 'nope', {}] })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1, 'the run completed and reported');
+    // The null and the string are skipped; the empty object is a shape the
+    // escalation projection can read, so one entry survives. What matters is
+    // that nothing threw out of a run that had already synced receipts.
+    assert.equal(result.escalations.length, 1);
+  });
+
+  /**
+   * Plan one period against a seller whose wire `expected_at` is the given
+   * spelling, with no buyer pin and no schedule, so that value is the only
+   * path to a deadline.
+   */
+  async function planWithWireExpectedAt(expectedAtValue) {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _s, ...period }) => ({
+          ...period,
+          expected_at: expectedAtValue,
+        })),
+      };
+    };
+    const result = await seller.reconcile(at, [withoutPin]);
+    return result.consumerStatuses[0];
+  }
+
+  test('a far-future seller deadline is honoured but recorded, not silently accepted', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // One field, ~20 bytes: the period sits at `overdue: false` with
+    // `suppressed` unset — indistinguishable from "not due yet" — and every
+    // statement on the chain stops landing, permanently. The spec makes the
+    // seller's instant authoritative, so it is still honoured; what was missing
+    // was any trace an adopter could alert on.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({ ...period, expected_at: '2099-01-01T00:00:00.000Z' })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.overdue, false, 'the seller deadline is still honoured');
+    assert.ok(plan.deadlineBeyondPin, 'but it is on the plan');
+    assert.equal(plan.deadlineBeyondPin.declared, '2099-01-01T00:00:00.000Z');
+    assert.equal(plan.deadlineBeyondPin.pinned, new Date(seller.anchor + DAY + SLA_SECONDS * 1_000).toISOString());
+  });
+
+  test('a poisoned pending statement is not replayed as an attestation', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const pending = pendingConsumerStatusStore();
+
+    const honest = seller.client.syncReportingStatus;
+    seller.client.syncReportingStatus = async params => {
+      await honest(params);
+      throw new Error('socket hang up');
+    };
+    await seller.reconcile(at, expected, { pendingConsumerStatusStore: pending });
+    assert.equal(pending.entries.size, 1);
+
+    // Rewrite the remembered statement the way a compromised store would: a
+    // fabricated consumption digest, an attacker-chosen id, and a 2099 date
+    // that would poison the chain's monotonicity floor forever. The digest is
+    // the one fact the buyer must establish itself.
+    for (const [key, entry] of pending.entries) {
+      pending.entries.set(key, {
+        ...entry,
+        statement: {
+          ...entry.statement,
+          reporting_status_id: 'adcp-sdk.ATTACKER0000000000000000000',
+          status_as_of: '2099-01-01T00:00:00.000Z',
+          observed_revision_content_sha256: 'de'.repeat(32),
+        },
+      });
+    }
+
+    // Hide the chain so the retry re-plans and actually consults the store,
+    // rather than suppressing as `unchanged`.
+    const honestRead = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honestRead(params);
+      return {
+        ...page,
+        consumer_statuses: [],
+        periods: (page.periods ?? []).map(({ current_consumer_status_id: _leaf, ...period }) => ({
+          ...period,
+          consumer_status_count: 0,
+        })),
+      };
+    };
+    let sent;
+    seller.client.syncReportingStatus = async params => {
+      sent = params;
+      return honest(params);
+    };
+    const retry = await seller.reconcile(at + HOUR, expected, { pendingConsumerStatusStore: pending });
+    assert.ok(sent, 'the retry posted something');
+    assert.notEqual(sent.statuses[0].reporting_status_id, 'adcp-sdk.ATTACKER0000000000000000000');
+    assert.notEqual(sent.statuses[0].observed_revision_content_sha256, 'de'.repeat(32));
+    assert.notEqual(sent.statuses[0].status_as_of, '2099-01-01T00:00:00.000Z');
+    // The poisoned entry is discarded and the statement rebuilt from what the
+    // buyer actually established. The seller then rejects the rebuild, because
+    // the original landed before the response was lost — a visible item-local
+    // conflict, which is the honest outcome and not the fabricated attestation.
+    assert.equal(retry.postedConsumerStatuses.length + retry.failedConsumerStatuses.length, 1);
+  });
+
+  test('an obligation with no period does not abort a run that already synced receipts', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // A client that does not schema-validate its responses. This threw
+    // `Cannot read properties of undefined (reading 'start')` out of
+    // `reconcileReporting` after receipts had gone to the seller.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ period: _dropped, ...rest }) => rest),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.missingExpectedPeriods.length, 1, 'a period-less obligation matches nothing');
+    assert.ok(Array.isArray(result.consumerStatuses));
+  });
+
+  test('a non-string obligation health does not abort the run either', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return { ...page, periods: (page.periods ?? []).map(period => ({ ...period, health: 7 })) };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.ok(Array.isArray(result.consumerStatuses), 'the run completed');
+  });
+
+  test('a lowercase RFC 3339 expected_at is read, not treated as unreadable', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // RFC 3339 §5.6 permits a lowercase `t`/`z`, and this SDK's own
+    // `format: date-time` validation accepts it — so refusing it here would
+    // silence a seller the SDK just told was conformant.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        // `schedule` is stripped, and the buyer pin is stripped below, so the
+        // lowercase `expected_at` is the *only* path to this instant — without
+        // that, a rejected spelling silently re-derives the identical value
+        // from a fallback and the assertion cannot discriminate.
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({
+          ...period,
+          expected_at: '2026-09-02t01:00:00z',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.equal(result.postedConsumerStatuses[0].statusAsOf, '2026-09-02T01:00:00.000Z', 'normalized, not echoed');
+    assert.deepEqual(result.failedConsumerStatuses, []);
+  });
+
+  test('an absent expected_at falls back to the obligation schedule the spec defines', async () => {
+    const seller = await harness();
+    // No buyer pin: the obligation's own `schedule.delivery_sla` has to be the
+    // only path to a deadline, or this test passes through the pin instead and
+    // says nothing about the fallback.
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `reporting-schedule.json`: "expected_at equals the resolved period end
+    // plus this duration", and `schedule` is required on every obligation. So
+    // an unreadable `expected_at` is recoverable from the seller's own number
+    // rather than silencing the period forever.
+    const honest = seller.client.getReportingStatus;
+    let scheduledSla;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        // Absent, not malformed: an unreadable `expected_at` deliberately
+        // derives nothing, because the seller has a real deadline the buyer
+        // cannot read and guessing one is refused on every run.
+        periods: (page.periods ?? []).map(({ expected_at: _absent, ...period }) => {
+          scheduledSla = period.schedule?.delivery_sla;
+          return period;
+        }),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(scheduledSla, `PT${SLA_SECONDS}S`, 'the obligation carries the duration being resolved');
+    assert.equal(result.postedConsumerStatuses.length, 1, 'recovered rather than silenced');
+    assert.equal(
+      result.postedConsumerStatuses[0].statusAsOf,
+      new Date(seller.anchor + DAY + SLA_SECONDS * 1_000).toISOString(),
+      'period end + schedule.delivery_sla'
+    );
+    assert.deepEqual(result.failedConsumerStatuses, []);
+  });
+
+  test('an off-scope superseded predecessor does not make a valid current revision missing', async () => {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `REVISION_CHAIN_SCOPE_MISMATCH` is evaluated over every candidate in the
+    // chain, including superseded ones, which is why it is not a disqualifying
+    // reason: a predecessor's slice violation must not turn a sound current
+    // revision into `revision_missing`.
+    //
+    // Reaching it needs managed delivery. For a direct-Core obligation the
+    // ledger graph assertion refuses an off-scope revision outright, but a
+    // revision referenced by a materialization is joined through that
+    // materialization instead — so an off-scope predecessor survives the load
+    // and becomes a candidate, which is exactly the shape the exclusion exists
+    // to protect against.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const [obligation] = page.periods ?? [];
+      const [head] = page.revisions ?? [];
+      if (!obligation || !head) return page;
+      const predecessor = {
+        ...head,
+        reporting_revision_id: `${head.reporting_revision_id}-stale`,
+        // Off-scope: a period the obligation does not cover.
+        period: { ...head.period, start: '2020-01-01T00:00:00.000Z', end: '2020-01-02T00:00:00.000Z' },
+      };
+      const materialization = (revisionId, index) => ({
+        reporting_materialization_id: `rmat_${index}`,
+        reporting_revision_id: revisionId,
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        delivery_config_id: obligation.delivery_config_id,
+        delivery_config_version: obligation.delivery_config_version,
+        destination_ref: obligation.destination_ref,
+        feed_purpose: obligation.feed_purpose,
+        method: 'file_transfer',
+        attempt: index + 1,
+        status: 'pending',
+        created_at: obligation.period.end,
+      });
+      return {
+        ...page,
+        revisions: [predecessor, { ...head, supersedes_reporting_revision_id: predecessor.reporting_revision_id }],
+        materializations: [
+          materialization(predecessor.reporting_revision_id, 0),
+          materialization(head.reporting_revision_id, 1),
+        ],
+        // One extra revision plus two materializations.
+        pagination: { ...page.pagination, total_count: page.pagination.total_count + 3 },
+      };
+    };
+    const expected = [expectedPeriod(seller.request, seller.anchor, { deliveryMethod: 'file_transfer' })];
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.consumerStatus, 'received', 'the head is sound, so the buyer consumed it');
+    assert.equal(plan.suppressed, undefined);
   });
 
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {
