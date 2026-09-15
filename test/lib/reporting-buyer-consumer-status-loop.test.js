@@ -1045,6 +1045,29 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(unknownZone.suppressed, 'deadline_unknown', 'an unresolvable zone derives nothing, not a guess');
   });
 
+  test('an out-of-range delivery_sla derives nothing instead of throwing', async () => {
+    // The schema's `delivery_sla` pattern puts no bound on the digit count, so
+    // `P999999999D` is a legal value a seller can send. It lands outside the
+    // representable time range, where `toISOString` throws — and this call site
+    // has nothing to catch it, so the whole reconcile would abort on one
+    // seller-supplied string.
+    const plan = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P999999999D',
+    });
+    assert.equal(plan.suppressed, 'deadline_unknown');
+    assert.equal(plan.deadline, undefined);
+
+    // Years and months take a different path to the same place.
+    const centuries = await scheduledExpectedAt({
+      periodStart: '2026-09-01T00:00:00.000Z',
+      periodEnd: '2026-09-02T00:00:00.000Z',
+      deliverySla: 'P999999999Y',
+    });
+    assert.equal(centuries.suppressed, 'deadline_unknown');
+  });
+
   test('a forked revision chain suppresses rather than blaming the seller', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];

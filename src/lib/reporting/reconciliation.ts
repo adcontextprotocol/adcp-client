@@ -1933,7 +1933,11 @@ function reportingScheduledExpectedAt(
   if (!duration || !Number.isFinite(anchor)) return undefined;
   const timeZone = boundedSourceTimezone(schedule.period_timezone) ?? 'UTC';
   const shifted = addCalendarDuration(anchor, duration, timeZone);
-  return shifted === undefined ? undefined : new Date(shifted).toISOString();
+  // Range-checked before it becomes a string. `delivery_sla` is seller-supplied
+  // and the schema's pattern permits arbitrarily many digits, so `P999999999D`
+  // is a legal value that lands outside the representable range — and
+  // `toISOString` throws on that, from a call site with nothing to catch it.
+  return shifted === undefined || !isRepresentableInstant(shifted) ? undefined : new Date(shifted).toISOString();
 }
 
 interface Iso8601Duration {
@@ -1973,14 +1977,42 @@ function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZon
   const year = parts.year + Math.floor(totalMonths / 12);
   const month = (totalMonths % 12) + 1;
   const day = Math.min(parts.day, daysInMonth(year, month));
-  const wall = Date.UTC(year, month - 1, day, parts.hour, parts.minute, parts.second);
+  const wall = utcWallTime(year, month, day, parts.hour, parts.minute, parts.second);
+  if (wall === undefined) return undefined;
   const resolved = instantForWallTime(wall, timeZone);
   if (resolved === undefined) return undefined;
   return resolved + duration.days * 86_400_000 + duration.seconds * 1_000;
 }
 
+/** Within the ±8.64e15 ms ECMAScript time range, so `toISOString` cannot throw. */
+function isRepresentableInstant(value: number): boolean {
+  return Number.isFinite(value) && Math.abs(value) <= 8.64e15;
+}
+
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/**
+ * `Date.UTC` for a possibly small year.
+ *
+ * `Date.UTC(50, …)` means 1950, which would silently relocate a year-0050
+ * period by nineteen centuries. `setUTCFullYear` is the documented way to mean
+ * the year you wrote.
+ */
+function utcWallTime(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number
+): number | undefined {
+  const value = new Date(0);
+  value.setUTCFullYear(year, month - 1, day);
+  value.setUTCHours(hour, minute, second, 0);
+  const time = value.getTime();
+  return isRepresentableInstant(time) ? time : undefined;
 }
 
 /** Calendar fields of an instant as read in `timeZone`. */
@@ -2030,7 +2062,8 @@ function instantForWallTime(wall: number, timeZone: string): number | undefined 
   for (let pass = 0; pass < 2; pass += 1) {
     const parts = zonedParts(guess, timeZone);
     if (!parts) return undefined;
-    const readBack = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+    const readBack = utcWallTime(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second);
+    if (readBack === undefined) return undefined;
     guess += wall - readBack;
   }
   return guess;

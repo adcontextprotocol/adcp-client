@@ -26,7 +26,9 @@ sum and makes `schedule` required — instead of falling silent. That resolution
 the schema permits `Y` and `M` on `delivery_sla` and names `period_timezone` as the zone its
 "calendar arithmetic" happens in, so `P1M` is resolved as a calendar month in that zone, clamping to
 month end (Jan 31 + `P1M` is the last day of February, and a leap year has the 29th to clamp to).
-An unresolvable timezone derives nothing rather than a guess.
+An unresolvable timezone derives nothing rather than a guess, as does a duration whose result falls
+outside the representable time range — the pattern puts no bound on the digit count, so `P999999999D`
+is a legal value a seller can send, and it would otherwise have thrown out of `reconcileReporting`.
 
 **Deeply nested rows walked past the byte ceiling.** The size estimate charged an unexamined subtree
 a flat 64 bytes however large it was, so `{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes. A subtree past
