@@ -1661,6 +1661,38 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(tight.consumerStatuses[0].suppressed, 'local_budget_exhausted');
   });
 
+  test('local_budget_exhausted names the ceiling that tripped', async () => {
+    // One sentence for five producers pointed every adopter at `ledgerLimits`,
+    // including for ceilings no knob raises. Nothing asserted the string, so it
+    // reverted green while two public docblocks promised the opposite.
+    const exhaust = async (ledgerLimits, shape) => {
+      const seller = await harness({
+        rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 3, spend: '1.2500' },
+          { media_buy_id: 'fixture-media-buy', impressions: 4, spend: '1.5000' },
+        ],
+      });
+      const expected = [expectedPeriod(seller.request, seller.anchor)];
+      await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+      await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+      const at = seller.anchor + DAY + 3 * HOUR;
+      seller.observeAt(at);
+      if (shape) servesRows(seller, shape, 1);
+      return (await seller.reconcile(at, expected, { ledgerLimits })).consumerStatuses[0];
+    };
+
+    const rows = await exhaust({ maxRevisionRows: 1 });
+    assert.equal(rows.suppressed, 'local_budget_exhausted');
+    assert.match(rows.reason, /ledgerLimits\.maxRevisionRows was reached/);
+
+    const bytes = await exhaust({ maxRevisionBytes: 16_000 }, () => ({
+      blanks: Array.from({ length: 1_000 }, () => ''),
+    }));
+    assert.equal(bytes.suppressed, 'local_budget_exhausted');
+    assert.match(bytes.reason, /ledgerLimits\.maxRevisionBytes was reached/);
+    assert.doesNotMatch(bytes.reason, /maxRevisionRows/, 'the two causes must not read alike');
+  });
+
   test('a row with more containers than the estimator walks is the seller shape', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
@@ -2954,6 +2986,189 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
         assert.equal(synced.length, 1, 'the receipt really was written before the failure');
         assert.equal(error.submittedReceipts?.length, 1, 'and the caller gets it back');
         assert.equal(error.submittedReceipts[0].reporting_receipt_id, synced[0].reporting_receipt_id);
+        return true;
+      }
+    );
+  });
+
+  test('a ledger collection that is not an array is refused, not iterated', async () => {
+    // `?? []` guarded against null and undefined and nothing else, so `0` —
+    // or `true`, or an object — reached `for…of` on a non-iterable and threw a
+    // raw TypeError out of the reconcile. The same `?? []` defect this file
+    // fixes for `media_buy_ids`, left at the lines that gained the per-record
+    // guard.
+    for (const collection of ['periods', 'revisions', 'materializations', 'receipts', 'consumer_statuses']) {
+      for (const bad of [0, true, {}, -1]) {
+        const seller = await harness();
+        const expected = [expectedPeriod(seller.request, seller.anchor)];
+        await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+        await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+        const at = seller.anchor + DAY + 3 * HOUR;
+        seller.observeAt(at);
+        const honest = seller.client.getReportingStatus;
+        seller.client.getReportingStatus = async params => ({ ...(await honest(params)), [collection]: bad });
+
+        await assert.rejects(
+          () => seller.reconcile(at, expected),
+          error => {
+            assert.ok(!(error instanceof TypeError), `${collection}/${String(bad)}: TypeError escaped`);
+            assert.equal(error.code, 'LEDGER_RECORD_MALFORMED', `${collection}/${String(bad)}`);
+            return true;
+          }
+        );
+      }
+    }
+  });
+
+  test('alias comparison cost does not grow with the number of revisions', async () => {
+    // `canonicalZone` constructed a formatter on every call, measured ~62 us,
+    // on a path walked once per revision per obligation. A seller spelling its
+    // revision's zone differently from its own obligation — both conformant
+    // under `iana_timezone` — took a 150x150 ledger from 84 ms to 6,068 ms of
+    // synchronous work, starving the event loop and every AbortSignal deadline
+    // in the SDK. The fix is a memo plus a length bound, so construction count
+    // must be flat in the number of revisions rather than linear.
+    const construct = Intl.DateTimeFormat;
+    const builtFor = async revisionCount => {
+      const seller = await harness();
+      const expected = [expectedPeriod(seller.request, seller.anchor)];
+      await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+      await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+      const at = seller.anchor + DAY + 3 * HOUR;
+      seller.observeAt(at);
+      const honest = seller.client.getReportingStatus;
+      seller.client.getReportingStatus = async params => {
+        const page = await honest(params);
+        const [head] = page.revisions ?? [];
+        if (!head) return page;
+        // Every revision spells the zone as a link of the obligation's `UTC`,
+        // so each one is an alias comparison rather than a byte match.
+        const revisions = Array.from({ length: revisionCount }, (_unused, index) => ({
+          ...head,
+          reporting_revision_id: index === 0 ? head.reporting_revision_id : `${head.reporting_revision_id}-${index}`,
+          period: { ...head.period, source_timezone: 'Zulu' },
+        }));
+        return {
+          ...page,
+          revisions,
+          pagination: { ...page.pagination, total_count: page.pagination.total_count + revisionCount - 1 },
+        };
+      };
+      let built = 0;
+      Intl.DateTimeFormat = function countingDateTimeFormat(...args) {
+        built += 1;
+        return new construct(...args);
+      };
+      try {
+        await seller.reconcile(at, expected);
+      } finally {
+        Intl.DateTimeFormat = construct;
+      }
+      return built;
+    };
+
+    const few = await builtFor(1);
+    const many = await builtFor(24);
+    // Uncached, 24 revisions against one obligation build a formatter per
+    // comparison; cached, the two spellings are resolved once for the process.
+    assert.ok(
+      many - few < 8,
+      `formatter construction must not scale with revisions: ${few} for 1 revision, ${many} for 24`
+    );
+  });
+
+  test('a zone name too long for any zone never reaches Intl', async () => {
+    // Formatter construction costs time proportional to the input: a 1 MB zone
+    // name measured 8.2 ms against 32 us for a real one, and the string is
+    // seller-supplied. The outcome is `period_identity_unknown` either way —
+    // `Intl` would reject it too — so what has to be pinned is that the work is
+    // never done.
+    const construct = Intl.DateTimeFormat;
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // On the seller's own period, which reaches `canonicalZone` through the
+    // revision scope key with no `ianaTimeZone` bound in front of it.
+    const honest = seller.client.getReportingStatus;
+    const overLong = 'A/'.repeat(600);
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        // Both sides, so the revision still joins its obligation and the run
+        // completes; the scope key hashes the raw string either way.
+        periods: (page.periods ?? []).map(period => ({
+          ...period,
+          period: { ...period.period, source_timezone: overLong },
+        })),
+        revisions: (page.revisions ?? []).map(revision => ({
+          ...revision,
+          period: { ...revision.period, source_timezone: overLong },
+        })),
+      };
+    };
+
+    let longNames = 0;
+    Intl.DateTimeFormat = function countingDateTimeFormat(...args) {
+      if (typeof args[1]?.timeZone === 'string' && args[1].timeZone.length > 255) longNames += 1;
+      return new construct(...args);
+    };
+    let plan;
+    try {
+      plan = (await seller.reconcile(at, expected)).consumerStatuses[0];
+    } finally {
+      Intl.DateTimeFormat = construct;
+    }
+    assert.equal(longNames, 0, 'an over-long zone must be refused before Intl is asked');
+    assert.ok(plan, 'and the run still completes');
+  });
+
+  test('a replayed statement carrying an explicit null is refused', async () => {
+    // `?? undefined` treated a stored `null` as absent, so it matched a plan
+    // that had nothing there and reached the wire verbatim — where the seller's
+    // schema refuses it, on every run, because a failed post deliberately keeps
+    // the pending entry. An older SDK that emitted explicit nulls produces the
+    // same blob with no attacker at all.
+    const sent = await replayPoison(statement => ({ ...statement, mismatch_code: null }));
+    assert.notEqual(sent.mismatch_code, null, 'an explicit null must not reach the wire');
+    const withObligation = await replayPoison(statement => ({ ...statement, reporting_obligation_id: null }));
+    assert.equal(typeof withObligation.reporting_obligation_id, 'string');
+  });
+
+  test('a lost receipt acknowledgement is refused, and a non-typed failure is still recoverable', async () => {
+    const seller = await harness();
+    const expected = [
+      expectedPeriod(seller.request, seller.anchor, {
+        reconciliationMode: 'consumer_receipt',
+        deliveryMethod: 'file_transfer',
+      }),
+    ];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // A reload that throws something that is not a `ReportingReconciliationError`
+    // still has to hand back the receipts, under a code the caller can dispatch
+    // on, with the original preserved as `cause`.
+    const { synced } = await receiptThenReload(
+      seller,
+      () => {
+        throw new TypeError('malformed page from a client that does not validate');
+      },
+      2
+    );
+
+    await assert.rejects(
+      () => seller.reconcile(at, expected),
+      error => {
+        assert.equal(error.code, 'RECONCILE_FAILED_AFTER_RECEIPTS');
+        assert.equal(synced.length, 1);
+        assert.equal(error.submittedReceipts?.length, 1);
+        assert.ok(error.cause instanceof TypeError, 'the original failure is preserved as cause');
         return true;
       }
     );
