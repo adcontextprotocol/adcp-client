@@ -3350,6 +3350,7 @@ async function executeStoryboardPass(
     // establishes equivalent state. Phase membership alone is NOT treated
     // as substitutability — explicit declaration is required.
     let phasePendingNotApplicable: CascadeTrigger | null = null;
+    let phaseInheritedCapabilityTrigger: CascadeTrigger | undefined;
     let phaseEstablishedStatefulState = false;
     // Path (2): index of declared substitutions for this phase. Map keys
     // are target step IDs (the steps being substituted FOR); values are the
@@ -3412,6 +3413,12 @@ async function executeStoryboardPass(
     const routedOauthPresent = new Set<number>();
 
     if (shouldSkipPhase(phase, options, context)) {
+      // Reconciliation still emits the authored routing-error rows, but a
+      // dependent mutation must see the failed setup before it can dispatch.
+      if (routingContext && phase.steps.some(step => step.stateful && routedErrors.has(step))) {
+        phaseStatefulCascades.set(phase.id, null);
+        priorPhaseIds.push(phase.id);
+      }
       phaseResults.push({
         phase_id: phase.id,
         phase_title: phase.title,
@@ -3769,8 +3776,10 @@ async function executeStoryboardPass(
             }
           }
         }
-        if (capabilityUnavailable) recordUnavailableOutputs(phase.id, step);
-        else if (routingContext) {
+        if (capabilityUnavailable) {
+          recordUnavailableOutputs(phase.id, step);
+          if (routingContext) phaseInheritedCapabilityTrigger ??= trigger ?? undefined;
+        } else if (routingContext) {
           recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
           recordHardPrerequisiteFailure(step, trigger === null);
         }
@@ -4189,6 +4198,13 @@ async function executeStoryboardPass(
           };
         }
       }
+    }
+
+    // Carry inherited capability unavailability through explicit dependency
+    // hops. Resolve local hard/ordinary triggers first so this neutral evidence
+    // cannot suppress their promotion or change producer exemption rules.
+    if (phaseInheritedCapabilityTrigger && !phaseStatefulCascades.has(phase.id)) {
+      phaseStatefulCascades.set(phase.id, phaseInheritedCapabilityTrigger);
     }
 
     // Phase-end re-grading for rescued targets (adcp#3734, AdCP 3.0.3+).

@@ -1021,6 +1021,103 @@ test('a skipped phase cannot erase its failed route or confuse a repeated step I
   assert.deepEqual(calls, { a: ['get_adcp_capabilities', 'get_adcp_capabilities'] });
 });
 
+test('skipped-phase routing failures block dependent stateful dispatch before reconciliation', async () => {
+  for (const dependency of ['explicit', 'implicit', 'independent', 'non_stateful']) {
+    const sb = storyboard([]);
+    sb.context = { skip: true };
+    sb.phases = [
+      {
+        id: 'skipped',
+        title: 'Skipped',
+        skip_if: 'context.skip',
+        steps: [
+          { id: 'unroutable', title: 'Unroutable', task: 'unknown_tool', stateful: dependency !== 'non_stateful' },
+        ],
+      },
+      {
+        id: 'dependent',
+        title: 'Dependent',
+        ...(dependency === 'explicit' ? { depends_on: ['skipped'] } : {}),
+        ...(dependency === 'independent' ? { depends_on: [] } : {}),
+        steps: [{ id: 'mutation', title: 'Mutation', task: 'get_adcp_capabilities', agent: 'a', stateful: true }],
+      },
+      {
+        id: 'later',
+        title: 'Later',
+        depends_on: ['dependent'],
+        steps: [
+          { id: 'later_mutation', title: 'Later mutation', task: 'get_adcp_capabilities', agent: 'a', stateful: true },
+        ],
+      },
+    ];
+    const { result, calls } = await run({ a: [[], {}] }, sb);
+    const executes = dependency === 'independent' || dependency === 'non_stateful';
+    for (const phase of result.phases.slice(1)) {
+      const row = phase.steps[0];
+      assert.equal(row.skip_reason, executes ? undefined : 'prerequisite_failed', dependency);
+      assert.equal(row.passed, executes, dependency);
+    }
+    assert.equal(result.failed_count, 1, dependency);
+    assert.equal(result.overall_passed, false, dependency);
+    assert.equal(calls.a.length, executes ? 3 : 1, dependency);
+  }
+});
+
+test('neutral routed stateful cascades survive explicit dependency hops without hiding local hard state', async () => {
+  for (const mode of ['neutral', 'hard_peer', 'independent']) {
+    const sb = storyboard([]);
+    sb.phases = [
+      {
+        id: 'capability',
+        title: 'Capability',
+        requires_capability: { path: 'account.require_operator_auth', equals: true },
+        steps: [{ id: 'producer', title: 'Producer', task: 'get_adcp_capabilities', agent: 'a', stateful: true }],
+      },
+      ...['b', 'c', 'd'].map((id, index) => ({
+        id,
+        title: id,
+        depends_on: index === 0 ? ['capability'] : mode === 'independent' && index === 1 ? [] : [['b', 'c'][index - 1]],
+        steps: [
+          { id, title: id, task: 'get_adcp_capabilities', agent: 'b', stateful: true },
+          ...(mode === 'hard_peer' && index === 0
+            ? [
+                {
+                  id: 'missing',
+                  title: 'Missing',
+                  task: 'get_adcp_capabilities',
+                  requires_tool: 'get_signals',
+                  agent: 'b',
+                  stateful: true,
+                },
+              ]
+            : []),
+        ],
+      })),
+      {
+        id: 'read',
+        title: 'Read',
+        depends_on: ['capability'],
+        steps: [{ id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' }],
+      },
+    ];
+    const { result, calls } = await run({ a: [[], { account: { require_operator_auth: false } }], b: [[], {}] }, sb);
+    for (const id of ['b', 'c', 'd']) {
+      const row = result.phases.find(p => p.phase_id === id).steps[0];
+      const executed = mode === 'independent' && id !== 'b';
+      const hard = mode === 'hard_peer' && id !== 'b';
+      assert.equal(
+        row.skip_reason,
+        executed ? undefined : hard ? 'prerequisite_failed' : 'capability_prerequisite_unavailable',
+        `${mode}/${id}`
+      );
+      assert.equal(row.passed, !hard, `${mode}/${id}`);
+    }
+    assert.equal(result.failed_count, 0, mode);
+    assert.equal(result.overall_passed, mode !== 'hard_peer', mode);
+    assert.equal(calls.b.length, mode === 'independent' ? 4 : 2, mode);
+  }
+});
+
 test('OAuth presence escalates optional failures only on the agent that served metadata', async () => {
   const present = await startAgent(
     ['get_signals'],
