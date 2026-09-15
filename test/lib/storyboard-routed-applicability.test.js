@@ -1589,3 +1589,108 @@ test('ordinary not-applicable state outranks capability-only state in either ste
     }
   }
 });
+
+test('routed missing-tool outputs cannot satisfy dependent negative vectors', async () => {
+  for (const missingTool of ['get_signals', 'comply_test_controller']) {
+    for (const rescued of [false, true]) {
+      for (const earlyCascade of [false, true]) {
+        const consumer = id => ({
+          id,
+          title: id,
+          task: 'get_signals',
+          agent: 'b',
+          expect_error: true,
+          sample_request: { signal_spec: '$context.missing_output' },
+        });
+        const sb = storyboard([
+          ...(earlyCascade
+            ? [
+                {
+                  id: 'earlier_missing',
+                  task: 'get_adcp_capabilities',
+                  requires_tool: missingTool,
+                  agent: 'a',
+                  stateful: true,
+                },
+              ]
+            : []),
+          {
+            id: 'missing',
+            task: 'get_adcp_capabilities',
+            requires_tool: missingTool,
+            agent: 'a',
+            stateful: true,
+            context_outputs: [{ key: 'missing_output', path: 'identity.brand_json_url' }],
+          },
+          ...(rescued
+            ? [
+                {
+                  id: 'rescue',
+                  task: 'get_adcp_capabilities',
+                  agent: 'b',
+                  context_outputs: [{ key: 'missing_output', path: 'identity.brand_json_url' }],
+                },
+              ]
+            : []),
+          { id: 'read', task: 'get_adcp_capabilities', agent: 'b' },
+          consumer('same_phase'),
+        ]);
+        sb.phases.push(
+          {
+            id: 'dependent',
+            title: 'Dependent',
+            steps: [
+              { ...consumer('negative'), ...(!rescued && { context_outputs: [{ key: 'derived', path: 'value' }] }) },
+              {
+                ...consumer('explicit_input'),
+                sample_request: {},
+                context_inputs: [{ key: 'missing_output', inject_at: 'signal_spec' }],
+              },
+            ],
+          },
+          ...(!rescued
+            ? [
+                {
+                  id: 'transitive',
+                  title: 'Transitive',
+                  depends_on: ['dependent'],
+                  steps: [{ ...consumer('derived'), sample_request: { signal_spec: '$context.derived' } }],
+                },
+              ]
+            : []),
+          {
+            id: 'independent',
+            title: 'Independent',
+            depends_on: [],
+            steps: [{ ...consumer('intentional'), sample_request: { signal_spec: '$context.intentional_bad_token' } }],
+          }
+        );
+        const { result, calls } = await run(
+          {
+            a: [[], {}],
+            b: [
+              ['get_signals'],
+              {
+                supported_protocols: ['signals'],
+                identity: { brand_json_url: 'https://brand.example.test/brand.json' },
+              },
+              true,
+            ],
+          },
+          sb
+        );
+        const steps = result.phases.flatMap(phase => phase.steps);
+        for (const id of ['same_phase', 'negative', 'explicit_input', ...(!rescued ? ['derived'] : [])]) {
+          const step = steps.find(step => step.step_id === id);
+          assert.equal(step.skipped === true, !rescued, id);
+          assert.equal(step.skip_reason, rescued ? undefined : 'prerequisite_failed', id);
+          assert.equal(step.passed, rescued, id);
+        }
+        assert.equal(calls.b.filter(task => task === 'get_signals').length, rescued ? 4 : 1);
+        assert.equal(steps.find(step => step.step_id === 'intentional').passed, true);
+        assert.equal(result.overall_passed, rescued);
+        assert.equal(result.failed_count, 0);
+      }
+    }
+  }
+});

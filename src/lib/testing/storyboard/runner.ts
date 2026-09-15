@@ -2795,16 +2795,22 @@ async function executeStoryboardPass(
   const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
   const stepRequestStarts = new Map<string, string>();
   const responseDerivedNotApplicableContextKeys = new Map<string, string>();
-  // Context outputs by capability-gated phase. The per-step execution state
+  // Unavailable outputs are tracked separately for neutral capability gates
+  // and hard routed prerequisites. The per-step execution state
   // receives only keys from phases it actually depends on, preserving the
   // declared depends_on / any_of branch-set topology.
   const capabilityUnavailableContextKeysByPhase = new Map<string, Set<string>>();
-  const recordCapabilityUnavailableOutputs = (phaseId: string, step: StoryboardStep): void => {
-    const keys = capabilityUnavailableContextKeysByPhase.get(phaseId) ?? new Set<string>();
+  const missingPrerequisiteContextKeysByPhase = new Map<string, Set<string>>();
+  const recordUnavailableOutputs = (
+    phaseId: string,
+    step: StoryboardStep,
+    keysByPhase = capabilityUnavailableContextKeysByPhase
+  ): void => {
+    const keys = keysByPhase.get(phaseId) ?? new Set<string>();
     for (const output of step.context_outputs ?? []) {
       if (output.key) keys.add(output.key);
     }
-    capabilityUnavailableContextKeysByPhase.set(phaseId, keys);
+    keysByPhase.set(phaseId, keys);
   };
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
@@ -2898,16 +2904,17 @@ async function executeStoryboardPass(
     const trigger = missingStateTrigger ?? capabilityTrigger;
     return trigger ? { tripped: true, trigger } : { tripped: false };
   };
-  const capabilityUnavailableContextKeysForPhase = (
+  const unavailableContextKeysForPhase = (
     phase: { id: string; depends_on?: string[] },
-    prior: readonly string[]
+    prior: readonly string[],
+    keysByPhase = capabilityUnavailableContextKeysByPhase
   ): Set<string> => {
-    const keys = new Set(capabilityUnavailableContextKeysByPhase.get(phase.id));
+    const keys = new Set(keysByPhase.get(phase.id));
     const ownSpec = branchSetsByPhaseId.get(phase.id);
     const ownAnyOfBranchSet = ownSpec?.semantics === 'any_of' ? ownSpec.id : undefined;
     for (const depId of effectiveDependsOn(phase, prior)) {
       if (ownAnyOfBranchSet !== undefined && branchSetsByPhaseId.get(depId)?.id === ownAnyOfBranchSet) continue;
-      for (const key of capabilityUnavailableContextKeysByPhase.get(depId) ?? []) keys.add(key);
+      for (const key of keysByPhase.get(depId) ?? []) keys.add(key);
     }
     return keys;
   };
@@ -3306,7 +3313,7 @@ async function executeStoryboardPass(
       // consumers, while executeStep handles non-stateful consumers that
       // directly reference one of these keys.
       for (const step of phase.steps) {
-        recordCapabilityUnavailableOutputs(phase.id, step);
+        recordUnavailableOutputs(phase.id, step);
       }
       if (phase.steps.some(s => s.stateful)) {
         phaseStatefulCascades.set(phase.id, {
@@ -3647,6 +3654,7 @@ async function executeStoryboardPass(
           };
           stepResults.push(missingToolResult);
           priorStepResults.set(step.id, missingToolResult);
+          if (routingContext) recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
           skippedCount++;
           continue;
         }
@@ -3657,7 +3665,8 @@ async function executeStoryboardPass(
             : `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
         const capabilityUnavailable = trigger?.capabilityUnavailable === true;
-        if (capabilityUnavailable) recordCapabilityUnavailableOutputs(phase.id, step);
+        if (capabilityUnavailable) recordUnavailableOutputs(phase.id, step);
+        else if (routingContext) recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
         stepResults.push({
           storyboard_id: storyboard.id,
           step_id: step.id,
@@ -3700,10 +3709,14 @@ async function executeStoryboardPass(
         stepExecutionState.priorProbes = probes;
         stepExecutionState.allowPriorProbeFallback = false;
       }
-      stepExecutionState.capabilityUnavailableContextKeys = capabilityUnavailableContextKeysForPhase(
-        phase,
-        priorPhaseIds
-      );
+      stepExecutionState.capabilityUnavailableContextKeys = unavailableContextKeysForPhase(phase, priorPhaseIds);
+      if (routingContext) {
+        stepExecutionState.missingPrerequisiteContextKeys = unavailableContextKeysForPhase(
+          phase,
+          priorPhaseIds,
+          missingPrerequisiteContextKeysByPhase
+        );
+      }
       const rawResult =
         routedCapabilityDetail !== undefined
           ? buildPhaseCapabilitySkippedSteps(
@@ -3724,7 +3737,7 @@ async function executeStoryboardPass(
             );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
       if (routedCapabilityDetail !== undefined || result.skip_reason === 'capability_prerequisite_unavailable') {
-        recordCapabilityUnavailableOutputs(phase.id, step);
+        recordUnavailableOutputs(phase.id, step);
       }
       if (routedCapabilityDetail !== undefined && routedStepRequirements.has(step)) {
         result.skip = { ...result.skip!, requirement: routedStepRequirements.get(step)! };
@@ -3847,6 +3860,13 @@ async function executeStoryboardPass(
       if (result.skipped) {
         skippedCount++;
         context = result.context;
+        if (
+          routingContext &&
+          (isHardMissingStateSkipReason(result.skip_reason) || result.skip_reason === 'prerequisite_failed')
+        ) {
+          recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
+          if (!result.passed) phasePassed = false;
+        }
         // Cascade-skip extension: a stateful step that SKIPS because the
         // agent simply lacks the tool (`missing_tool`,
         // `missing_test_controller`) is equivalent to a failed stateful
@@ -4893,6 +4913,8 @@ interface ExecutionState {
   responseDerivedNotApplicableContextKeys?: Map<string, string>;
   /** Context keys from capability-gated phases this step depends on. */
   capabilityUnavailableContextKeys?: Set<string>;
+  /** Outputs absent because a routed producer could not satisfy its tool prerequisites. */
+  missingPrerequisiteContextKeys?: Set<string>;
   /** Shared ephemeral webhook receiver, when the run has one enabled. */
   webhookReceiver?: WebhookReceiver;
   /** Shared runner-variable bag for `{{runner.*}}` substitution. */
@@ -5174,15 +5196,23 @@ async function executeStep(
   }
 
   // applyContextInputs intentionally leaves absent keys alone. When such a
-  // key belongs to an unavailable capability-gated dependency, stop before
+  // key belongs to an unavailable declared dependency, stop before
   // dispatch rather than letting an expect_error vector accidentally test the
   // runner's missing state.
   const unavailableContextInputs = (step.context_inputs ?? []).filter(
-    input => !(input.key in context) && runState.capabilityUnavailableContextKeys?.has(input.key) === true
+    input =>
+      !(input.key in context) &&
+      (runState.capabilityUnavailableContextKeys?.has(input.key) === true ||
+        runState.missingPrerequisiteContextKeys?.has(input.key) === true)
   );
   if (unavailableContextInputs.length > 0) {
+    const hardUnavailable = unavailableContextInputs.some(
+      input => runState.missingPrerequisiteContextKeys?.has(input.key) === true
+    );
     const detail =
-      'Skipped: context required by a capability-gated phase is unavailable: ' +
+      (hardUnavailable
+        ? 'Skipped: context required from a missing-tool prerequisite is unavailable: '
+        : 'Skipped: context required by a capability-gated phase is unavailable: ') +
       unavailableContextInputs.map(input => input.key).join(', ') +
       '.';
     return {
@@ -5190,10 +5220,11 @@ async function executeStep(
       phase_id: phaseId,
       title: step.title,
       task: step.task,
-      passed: true,
+      passed: !hardUnavailable,
       skipped: true,
-      skip_reason: 'capability_prerequisite_unavailable',
-      skip: buildSkip('not_applicable', detail),
+      skip_reason: hardUnavailable ? 'prerequisite_failed' : 'capability_prerequisite_unavailable',
+      skip: buildSkip(hardUnavailable ? 'prerequisite_failed' : 'not_applicable', detail),
+      ...(hardUnavailable && { error: detail }),
       duration_ms: 0,
       validations: [],
       context,
@@ -5291,23 +5322,30 @@ async function executeStep(
   }));
   const unresolvedVars = [...unresolvedContextVars, ...unresolvedAssetDirectives];
   // Keep expect_error's intentional malformed-vector behavior, except when
-  // the unresolved token belongs to a capability-gated phase this step
+  // the unresolved token belongs to an unavailable producer this step
   // depends on. That token is runner state that cannot materialize and must
   // never cross the wire.
   const hasCapabilityUnavailableContext = unresolvedContextVars.some(
     v => runState.capabilityUnavailableContextKeys?.has(v.key) === true
   );
+  const hasMissingToolUnavailableContext = unresolvedContextVars.some(
+    v => runState.missingPrerequisiteContextKeys?.has(v.key) === true
+  );
   if (
     unresolvedAssetDirectives.length > 0 ||
-    (unresolvedContextVars.length > 0 && (!step.expect_error || hasCapabilityUnavailableContext))
+    (unresolvedContextVars.length > 0 &&
+      (!step.expect_error || hasCapabilityUnavailableContext || hasMissingToolUnavailableContext))
   ) {
     const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
     const responseDerivedDetails = unresolvedVars
       .map(v => runState.responseDerivedNotApplicableContextKeys?.get(v.key))
       .filter((d): d is string => typeof d === 'string');
     const allResponseDerived =
-      responseDerivedDetails.length === unresolvedVars.length && responseDerivedDetails.length > 0;
+      !hasMissingToolUnavailableContext &&
+      responseDerivedDetails.length === unresolvedVars.length &&
+      responseDerivedDetails.length > 0;
     const allCapabilityUnavailable =
+      !hasMissingToolUnavailableContext &&
       unresolvedContextVars.length === unresolvedVars.length &&
       unresolvedContextVars.length > 0 &&
       unresolvedContextVars.every(v => runState.capabilityUnavailableContextKeys?.has(v.key) === true);
