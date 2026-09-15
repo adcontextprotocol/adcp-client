@@ -105,3 +105,44 @@ The HTTPS reader applies the SDK's DNS-pinned SSRF controls, refuses redirects a
 Keep `inspect` as the advanced override for native snapshots. A BigQuery adapter can inspect a table version, while Snowflake or Databricks adapters can verify a shared relation. `ReportingInspectionError.retryable` distinguishes transport/readiness failures from permanent digest, schema, or integrity failures, so permanent failures are never retried. Store receipts in a durable `checkpointStore` so a process restart does not repeat destination work. Set `checkpointScope` to a stable, non-secret seller-and-authenticated-principal identifier; checkpoint keys also include account, obligation, revision, materialization, and destination. The checkpoint preserves the receipt-write idempotency key across uncertain retries.
 
 Totals are returned once per canonical reporting revision. Each entry includes its coverage status and covered/package denominators, so partial evidence cannot be mistaken for full billing totals. Delivering the same revision to a buyer, governance agent, and archive destination does not multiply its rows or financial control totals. Each consumer still authenticates independently and submits its own receipt; one consumer's acceptance never implies another's.
+
+## Consumer status and posting deadlines
+
+`reconcileReporting` also plans the rc.3 **consumer-status** loop: the statements the buyer owes the
+seller about what it did and did not receive. Every plan lands on
+`ReportingReconciliationResult.consumerStatuses`; the subset actually written appears on
+`postedConsumerStatuses`, item-local rejections on `failedConsumerStatuses`.
+
+Nothing is posted until a plan is `overdue`, and `overdue` needs a deadline. **If no deadline can be
+derived the SDK posts nothing — by design.** That is the single most common surprise here, so the
+resolution order is worth knowing:
+
+| # | Source | Notes |
+|---|---|---|
+| 1 | `obligation.expected_at` | The seller's own commitment. Normalized, never echoed verbatim. |
+| 2 | `ExpectedReportingPeriod.officialAfterSeconds` | Only when `requiredFinality` is `official`. |
+| 2 | `ExpectedReportingPeriod.deliverySlaSeconds` | Otherwise. Added to the period end. |
+| 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned neither above. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
+
+The deadline is then that instant plus `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. That
+window is advertised on the delivery **capabilities**, not on the obligation, so the ledger cannot
+supply it — **without it nothing is ever overdue and nothing is ever posted.** Record it when you
+accept the configuration generation.
+
+`received` and `content_mismatch` additionally require `client.getMediaBuyDelivery`, because both
+must carry a digest the buyer recomputed from rows it actually read.
+
+### Why a plan was not posted
+
+`plan.suppressed` says which, and `plan.reason` says what to do about it.
+
+| `suppressed` | Meaning | Your move |
+|---|---|---|
+| `unchanged` | The current leaf already says exactly this. | Nothing. Re-posting would supersede a statement with its own duplicate. |
+| `deadline_unknown` | No deadline could be derived. | Record the pin named in `reason`, or take up the malformed `expected_at` with the seller. |
+| `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. Never reported as a seller failure. |
+| `leaf_undisclosed` | The seller named a current leaf it did not return. | A seller-side defect; the buyer declines to guess. |
+| `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
+
+A plan with `suppressed` unset and `overdue: false` is simply not due yet.

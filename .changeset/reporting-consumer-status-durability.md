@@ -20,31 +20,42 @@ pattern than the `format: date-time` check this SDK uses on the seller's own pay
 and no statement, forever. The pattern now matches what the SDK itself accepts, and the instant is
 **normalized rather than echoed**: `Date.parse` silently rolls `2026-02-30T00:00:00Z` forward to
 March 2, and re-emitting the seller's bytes would put that contradiction on a statement the buyer
-signs. When `expected_at` is genuinely unreadable the buyer now recomputes it from
-`obligation.schedule.delivery_sla` — `reporting-schedule.json` defines `expected_at` as exactly that
-sum and makes `schedule` required — instead of falling silent. That resolution is **calendar-aware**:
-the schema permits `Y` and `M` on `delivery_sla` and names `period_timezone` as the zone its
-"calendar arithmetic" happens in, so `P1M` is resolved as a calendar month in that zone, clamping to
-month end (Jan 31 + `P1M` is the last day of February, and a leap year has the 29th to clamp to).
-An unresolvable timezone derives nothing rather than a guess, as does a duration whose result falls
-outside the representable time range — the pattern puts no bound on the digit count, so `P999999999D`
-is a legal value a seller can send, and it would otherwise have thrown out of `reconcileReporting`.
+signs. A `expected_at` that is present but unreadable derives nothing at all: the seller has a real deadline
+the buyer cannot read, so any derived one disagrees with it and the statement is refused on every run
+forever. When `expected_at` is **absent** the buyer falls through to its own
+`deliverySlaSeconds` / `officialAfterSeconds` pin, and only then to the seller's
+`obligation.schedule.delivery_sla`. That order matters: `schedule` is as seller-controlled as
+`expected_at`, so consulting it ahead of the pin let a seller that had published nothing omit
+`expected_at`, advertise `delivery_sla: "P10Y"`, and push its own deadline a decade out — the period
+never went overdue and the `revision_missing` recording the non-delivery was never posted. The pin is
+the buyer's independent answer and outranks it. As a last resort for a buyer with no pin, the
+schedule resolution is **calendar-aware**, because the schema permits `Y` and `M` on `delivery_sla`
+and names `period_timezone` as the zone its "calendar arithmetic" happens in: `P1M` is a calendar
+month in that zone, clamping to month end, with a nonexistent local time advancing by the DST gap and
+an ambiguous one taking the earlier offset, exactly as `period_generation` specifies. A duration with
+no calendar component stays exact elapsed time — that is the only shape this SDK's own seller emits,
+and routing it through wall-clock conversion lost sub-second precision and shifted `PT0S` by an hour
+across an ambiguous local hour. An unrecognized `period_timezone`, an unresolvable zone, or a
+duration whose result falls outside the RFC 3339 year range derives nothing rather than a guess.
 
-**Deeply nested rows walked past the byte ceiling.** The size estimate charged an unexamined subtree
-a flat 64 bytes however large it was, so `{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes. A subtree past
-the depth cap is now charged pessimistically: over-charging costs a conformant seller nothing but an
-earlier `local_budget_exhausted`, under-charging is unbounded memory.
+**Row size accounting is bounded by work, not by depth.** The estimate charged an unexamined subtree
+a flat constant, which cut both ways: too small and nesting walked past the ceiling
+(`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), too large and 24 KB of empty nested objects silenced
+the buyer with a `local_budget_exhausted` that blamed its own budget. It now walks a bounded number
+of nodes per row and charges each for what it holds, which closes the bypass without handing a seller
+a cheap way to buy silence.
 
-**`period.source_timezone` is bounded before adoption.** It reaches the buyer's durable statement, the
-`reporting_status_id` hash and the seller-side chain key, so a seller that varied it forked the
-buyer's own chain and then pinned it at `leaf_undisclosed`. The ingest path already bounds it at 255
-characters; this read path now does too.
+**`period.source_timezone` is validated, and the buyer's own pin wins.** It reaches the durable
+statement, the `reporting_status_id` hash and the unchanged-comparison, so a seller varying its echo
+could make the buyer append a fresh statement on every reconcile. `ExpectedReportingPeriod.periodSourceTimezone`
+is now preferred over the seller's copy, and both are checked for IANA identity rather than length
+alone — `iana_timezone` is a MUST and Node's `Intl` happily accepts `"+05:30"`, which is exactly the
+numeric-offset substitution the clause forbids.
 
-**Scope note.** `deadline_unknown` suppression now applies only to `obligation_missing` and
-`revision_missing` — the two statuses `expected_period` actually conditions on `expected_at`. The
-others are unaffected in practice because a plan with no deadline is never `overdue`, and the
-posting loop only attests and posts overdue plans; the narrowing just stops the label being applied
-to statuses whose validity never depended on it.
+`usableLeafInstant` normalizes the superseded leaf's `status_as_of` through the same path, so a leaf
+recorded by an older SDK with a `+00:00` or lowercase spelling now produces the same monotonicity
+floor as its canonical form — which feeds `reporting_status_id`, so a chain can see one id shift
+across this upgrade.
 
 Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
 does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been

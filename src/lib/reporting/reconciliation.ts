@@ -42,13 +42,18 @@ const CONSUMER_STATUS_BATCH_MAX = 100;
 const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
 
 /**
- * What one unexamined subtree costs against the ceiling above.
+ * Nodes the estimator inspects per row before it stops walking.
  *
- * Chosen so a row set of deeply nested containers trips the ceiling in the
- * low hundreds of rows rather than never. Rows this deep are not a normal
- * reporting shape, so the pessimism has no cost against a real profile.
+ * Row shape is profile-defined and AdCP does not constrain nesting or breadth,
+ * so the estimator must neither under-charge a deep payload nor over-charge a
+ * legitimately structured one. A node budget does both: everything inspected
+ * is charged for what it actually holds, and the walk is bounded regardless of
+ * shape.
  */
-const DEEP_SUBTREE_BYTE_CHARGE = 1024 * 1024;
+const MAX_ROW_ESTIMATE_NODES = 4_096;
+
+/** Charged for a subtree the node budget did not reach. */
+const UNVISITED_SUBTREE_BYTE_CHARGE = 4 * 1024;
 
 // Runtime guards keep these evidence-bearing fields optional at the boundary so
 // malformed or older seller payloads fail with reconciliation diagnostics rather
@@ -454,10 +459,12 @@ export interface ReportingConsumerStatusPlanV1 {
    * - `local_budget_exhausted` — the buyer's own read budget ran out before it
    *   could consume the revision. Self-inflicted, so it is silence rather than
    *   an `unreadable` claim against a seller that did nothing wrong.
-   * - `deadline_unknown` — a pin the buyer has to supply is missing, so no
-   *   posting deadline exists. Without this value a permanent misconfiguration
-   *   renders exactly like a period that is simply not due yet; `reason` names
-   *   the missing pin.
+   * - `deadline_unknown` — no posting deadline could be derived, so this period
+   *   will never post. Two causes, both named in `reason`: a pin the buyer has
+   *   to supply is missing, or the seller's own `obligation.expected_at` is
+   *   unreadable and its `schedule.delivery_sla` did not resolve one either.
+   *   Without this value a permanent misconfiguration renders exactly like a
+   *   period that is simply not due yet.
    * - `chain_indeterminate` — the seller's revision chain forked, or the buyer
    *   could not walk it. That is the buyer failing to read, not the seller
    *   failing to publish, and `revision_missing` would blame the wrong party.
@@ -1523,11 +1530,16 @@ function planReportingConsumerStatuses(
       // into the `reporting_status_id` hash, and into the seller-side chain
       // key — so a seller that varies it forks the buyer's own chain. The
       // ingest path bounds it at 255; this read path has to as well.
+      // The buyer's own pin first. This value lands in the durable statement,
+      // the `reporting_status_id` hash and `sameConsumerStatement`, so a seller
+      // that varies its echo makes the buyer append a fresh statement on every
+      // reconcile, forever. Identity is checked, not just length: `iana_timezone`
+      // is a MUST and a numeric offset is exactly what it forbids substituting.
       source_timezone:
-        boundedSourceTimezone(
+        ianaTimeZone(expected.periodSourceTimezone) ??
+        ianaTimeZone(
           (obligationForPeriod as { period?: { source_timezone?: unknown } } | undefined)?.period?.source_timezone
         ) ??
-        boundedSourceTimezone(expected.periodSourceTimezone) ??
         'UTC',
     };
     const base = {
@@ -1595,7 +1607,7 @@ function planReportingConsumerStatuses(
           reason: forked
             ? 'the revision chain forks, so no single current revision could be resolved'
             : predecessorMissing
-              ? `a revision names a predecessor the buyer never saw, so ${revision ? `the head ${revision.reporting_revision_id} ` : 'no head '}could not be proven current`
+              ? `a revision names a predecessor the buyer never saw, so ${revision ? `the head ${boundedDiagnostic(revision.reporting_revision_id)} ` : 'no head '}could not be proven current`
               : 'the obligation exists but no required revision was available',
         },
         leaf,
@@ -1697,7 +1709,9 @@ interface ConsumerStatusDraft {
    * recorded, or the seller's own `expected_at` being unreadable — different
    * parties, so they are told apart rather than sharing one sentence.
    */
-  deadlineGap?: { cause: 'missing_pin'; pin: string } | { cause: 'unreadable_expected_at'; value: string };
+  deadlineGap?:
+    | { cause: 'missing_pin'; pin: string }
+    | { cause: 'unreadable_expected_at'; value: string; localPin: string };
   /** The buyer could not resolve the chain, so it must not assert anything. */
   indeterminate?: boolean;
   /** The instant this statement became true, before the monotonicity floor. */
@@ -1740,18 +1754,20 @@ function finalizeConsumerStatusPlan(
       reason: suppressionReason('chain_indeterminate', plan.reason),
     };
   }
-  // Only the statuses that actually require `expected_at` are suppressed for
-  // the lack of it: `expected_period` puts that precondition on
-  // obligation_missing and revision_missing alone. The others simply are not
-  // overdue, which already prevents a post.
-  if (deadlineGap && (plan.consumerStatus === 'obligation_missing' || plan.consumerStatus === 'revision_missing')) {
+  // Applied to every status. `expected_period` puts the *validity* precondition
+  // on obligation_missing and revision_missing alone, but this label is not a
+  // validity claim — it is the only signal an adopter gets that a period will
+  // never post. Narrowing it made the commonest misconfiguration (an
+  // unrecorded `automatedRecoveryWindowSeconds`) render exactly like a period
+  // that is simply not due yet, which is what this value exists to prevent.
+  if (deadlineGap) {
     return {
       ...plan,
       suppressed: 'deadline_unknown',
       reason:
         deadlineGap.cause === 'missing_pin'
           ? `no posting deadline: record ExpectedReportingPeriod.${deadlineGap.pin} to derive one`
-          : `no posting deadline: the seller's obligation.expected_at (${boundedDiagnostic(deadlineGap.value)}) is not a readable instant and its schedule.delivery_sla did not resolve one either; record ExpectedReportingPeriod.deliverySlaSeconds to derive one locally`,
+          : `no posting deadline: the seller's obligation.expected_at (${boundedDiagnostic(deadlineGap.value)}) is not a readable instant and its schedule.delivery_sla did not resolve one either; record ExpectedReportingPeriod.${deadlineGap.localPin} to derive one locally`,
     };
   }
   const suppressed = consumerStatusSuppression(plan, leaf);
@@ -1894,21 +1910,37 @@ function reportingExpectedAt(
   // buyer's own `status_as_of`.
   const declared = normalizedInstant(obligation?.expected_at);
   if (declared !== undefined) return declared;
-  // `reporting-schedule.json`: "expected_at equals the resolved period end plus
-  // this duration", and `schedule` is required on every obligation. So when the
-  // seller's own `expected_at` is unreadable the buyer can still recompute the
-  // seller's number rather than falling back to its own pin — same instant, by
-  // the spec's own definition.
-  const scheduled = reportingScheduledExpectedAt(obligation, expected.periodEnd);
-  if (scheduled !== undefined) return scheduled;
+  // Present but unreadable is *not* the same as absent. The seller has a real
+  // deadline the buyer cannot read, so any derived one disagrees with it and
+  // the statement is refused — on every run, forever, because the body takes
+  // no clock input. Silence (`deadline_unknown`, naming the seller's field) is
+  // the honest outcome; a fallback here would only churn.
+  if (obligation?.expected_at !== undefined) return undefined;
+  // The buyer's own pin comes next, ahead of the seller's `schedule`.
+  //
+  // This order is a security property, not a preference. `schedule` is as
+  // seller-controlled as `expected_at`, so consulting it first let a seller
+  // that had published nothing omit `expected_at`, advertise
+  // `delivery_sla: "P10Y"`, and push its own deadline a decade out — the
+  // period never goes overdue, the `revision_missing` that would have recorded
+  // the non-delivery is never posted, and the buyer's pinned clock, which
+  // exists precisely to be independent of the seller, is overridden. The pin
+  // is the buyer's answer to "when was this due"; the seller's schedule is
+  // only a last resort for a buyer that has no answer of its own.
   const slaSeconds =
     expected.requiredFinality === 'official' && typeof expected.officialAfterSeconds === 'number'
       ? expected.officialAfterSeconds
       : expected.deliverySlaSeconds;
   const periodEnd = Date.parse(expected.periodEnd);
-  if (typeof slaSeconds !== 'number' || !Number.isFinite(slaSeconds) || slaSeconds < 0) return undefined;
-  if (!Number.isFinite(periodEnd)) return undefined;
-  return new Date(periodEnd + slaSeconds * 1_000).toISOString();
+  if (typeof slaSeconds === 'number' && Number.isFinite(slaSeconds) && slaSeconds >= 0 && Number.isFinite(periodEnd)) {
+    const pinned = periodEnd + slaSeconds * 1_000;
+    return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : undefined;
+  }
+  // `reporting-schedule.json`: "expected_at equals the resolved period end plus
+  // this duration". With no pin of its own the buyer has nothing better, and
+  // this cannot override anything — before it existed the answer was simply
+  // "no deadline".
+  return reportingScheduledExpectedAt(obligation, expected.periodEnd);
 }
 
 /**
@@ -1921,23 +1953,87 @@ function reportingExpectedAt(
  * accepts — and silence a conformant seller, which is the whole failure this
  * fallback exists to prevent.
  */
+function localExpectedAtPin(expected: ExpectedReportingPeriod): string {
+  // Naming the wrong pin is expensive: an official-finality generation dated
+  // from `delivery_sla` is refused by the seller, and because that statement
+  // takes no clock input it is rebuilt identically and refused on every run.
+  return expected.requiredFinality === 'official' ? 'officialAfterSeconds' : 'deliverySlaSeconds';
+}
+
 function reportingScheduledExpectedAt(
   obligation: ManagedReportingObligation | undefined,
   periodEnd: string
 ): string | undefined {
-  const schedule = (obligation as { schedule?: { delivery_sla?: unknown; period_timezone?: unknown } } | undefined)
-    ?.schedule;
+  const schedule = (
+    obligation as { schedule?: { delivery_sla?: unknown; period_timezone?: unknown; alignment?: unknown } } | undefined
+  )?.schedule;
   if (typeof schedule?.delivery_sla !== 'string') return undefined;
   const duration = parseIso8601Duration(schedule.delivery_sla);
   const anchor = Date.parse(periodEnd);
   if (!duration || !Number.isFinite(anchor)) return undefined;
-  const timeZone = boundedSourceTimezone(schedule.period_timezone) ?? 'UTC';
+  // A duration with no calendar component is exact elapsed time. Taking the
+  // fast path matters: it is the only shape this repo's own seller emits
+  // (`handler.ts` renders `delivery_sla` as `PT{n}S`), and routing it through
+  // wall-clock conversion was lossy — `PT0S` across an ambiguous local hour
+  // came back an hour early, and sub-second precision was dropped entirely.
+  if (duration.years === 0 && duration.months === 0 && duration.days === 0) {
+    const exact = anchor + duration.seconds * 1_000;
+    return isRepresentableInstant(exact) ? new Date(exact).toISOString() : undefined;
+  }
+  const timeZone = calendarTimeZone(obligation, schedule);
+  if (timeZone === undefined) return undefined;
   const shifted = addCalendarDuration(anchor, duration, timeZone);
   // Range-checked before it becomes a string. `delivery_sla` is seller-supplied
   // and the schema's pattern permits arbitrarily many digits, so `P999999999D`
   // is a legal value that lands outside the representable range — and
   // `toISOString` throws on that, from a call site with nothing to catch it.
   return shifted === undefined || !isRepresentableInstant(shifted) ? undefined : new Date(shifted).toISOString();
+}
+
+/**
+ * The zone a calendar `delivery_sla` is resolved in, or `undefined` to derive
+ * nothing.
+ *
+ * `period_timezone` is the explicit answer, but the schema forbids it for
+ * `utc` and `account_timezone` alignment. `utc` needs no zone. For
+ * `account_timezone` the calendar is *"the account's resolved IANA
+ * timezone"*, which is not on this payload — the obligation's echoed
+ * `period.source_timezone` is the closest thing and is required, so it is
+ * preferred over guessing UTC; with neither, nothing is derived rather than a
+ * guess, which is the same posture as an unresolvable zone.
+ */
+function calendarTimeZone(
+  obligation: ManagedReportingObligation | undefined,
+  schedule: { period_timezone?: unknown; alignment?: unknown }
+): string | undefined {
+  // Present but unrecognized is a non-conformant configuration, not an
+  // invitation to pick a different zone: "Reject unknown identifiers ... do not
+  // silently substitute the host timezone or a numeric offset."
+  if (schedule.period_timezone !== undefined) return ianaTimeZone(schedule.period_timezone);
+  if (schedule.alignment === 'utc') return 'UTC';
+  return ianaTimeZone((obligation as { period?: { source_timezone?: unknown } } | undefined)?.period?.source_timezone);
+}
+
+/**
+ * A recognized IANA zone name, or `undefined`.
+ *
+ * `iana_timezone` is a MUST: *"Reject unknown identifiers ... do not silently
+ * substitute the host timezone or a numeric offset."* A length check is not
+ * enough — Node's `Intl` accepts `"+05:30"` as a `timeZone`, which would
+ * silently compute against a fixed offset with no DST transitions, precisely
+ * the substitution the clause forbids.
+ */
+function ianaTimeZone(value: unknown): string | undefined {
+  const name = boundedSourceTimezone(value);
+  if (name === undefined || /^[+-]/.test(name) || !name.includes('/')) {
+    return name !== undefined && name.toUpperCase() === 'UTC' ? 'UTC' : undefined;
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: name });
+    return name;
+  } catch {
+    return undefined;
+  }
 }
 
 interface Iso8601Duration {
@@ -1962,13 +2058,17 @@ function parseIso8601Duration(value: string): Iso8601Duration | undefined {
 }
 
 /**
- * Add a duration to an instant, treating date components as calendar
- * arithmetic in `timeZone` and time components as exact elapsed time — the
- * ordinary ISO 8601 reading, and the one `period_timezone` exists to support.
+ * Add a duration to an instant, following `period_generation` exactly:
+ * *"Calendar durations use local civil-time arithmetic in the selected IANA
+ * timezone, including DST transitions; they are not converted to fixed
+ * seconds"*, applying *"years, months, days"* in that order, and *"clamping to
+ * the target month's final valid day when necessary"*.
  *
- * Month-end clamps: adding `P1M` to Jan 31 lands on the last day of February,
- * not March 3. Overflowing into a day the target month does not have is the
- * one place implementations differ, so it is pinned by test.
+ * Days are civil, not 86,400 seconds. Across a spring-forward boundary the two
+ * differ by an hour, and the spec is explicit about which one it means.
+ * Hours/minutes/seconds stay exact elapsed time — they are not calendar
+ * components, and treating them as civil would make `PT24H` and `P1D`
+ * synonyms, which is the distinction the rule exists to preserve.
  */
 function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZone: string): number | undefined {
   const parts = zonedParts(instant, timeZone);
@@ -1976,18 +2076,31 @@ function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZon
   const totalMonths = parts.month - 1 + duration.years * 12 + duration.months;
   const year = parts.year + Math.floor(totalMonths / 12);
   const month = (totalMonths % 12) + 1;
-  const day = Math.min(parts.day, daysInMonth(year, month));
-  const wall = utcWallTime(year, month, day, parts.hour, parts.minute, parts.second);
+  // Clamp before adding days, so "a clamped February boundary does not shift a
+  // March 31 anchor" holds and the day count starts from the clamped date.
+  const clamped = Math.min(parts.day, daysInMonth(year, month));
+  const wall = utcWallTime(year, month, clamped + duration.days, parts.hour, parts.minute, parts.second);
   if (wall === undefined) return undefined;
   const resolved = instantForWallTime(wall, timeZone);
   if (resolved === undefined) return undefined;
-  return resolved + duration.days * 86_400_000 + duration.seconds * 1_000;
+  // `zonedParts` has no millisecond field, so the anchor's sub-second remainder
+  // is carried across rather than silently truncated.
+  const subSecond = ((instant % 1_000) + 1_000) % 1_000;
+  return resolved + subSecond + duration.seconds * 1_000;
 }
 
 /** Within the ±8.64e15 ms ECMAScript time range, so `toISOString` cannot throw. */
 function isRepresentableInstant(value: number): boolean {
-  return Number.isFinite(value) && Math.abs(value) <= 8.64e15;
+  // Deliberately tighter than the ±8.64e15 ECMAScript range: `toISOString`
+  // renders a year outside 0000-9999 in expanded form (`+010026-09-02T…`),
+  // which is not a valid RFC 3339 `date-time` and would be re-emitted onto a
+  // plan an adopter may persist or forward.
+  return Number.isFinite(value) && value >= MIN_RFC3339_INSTANT && value <= MAX_RFC3339_INSTANT;
 }
+
+/** 0000-01-01T00:00:00Z and 9999-12-31T23:59:59.999Z, the RFC 3339 year range. */
+const MIN_RFC3339_INSTANT = -62_167_219_200_000;
+const MAX_RFC3339_INSTANT = 253_402_300_799_999;
 
 function daysInMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -2050,23 +2163,45 @@ function zonedParts(
 }
 
 /**
- * The instant at which `timeZone` reads the given wall-clock time.
+ * The instant at which `timeZone` reads the given wall-clock time, resolving
+ * DST edges the way `period_generation` requires: *"A nonexistent local
+ * boundary advances by the timezone gap; an ambiguous local boundary uses the
+ * earlier offset."*
  *
- * Two passes: the first offset is read at the wrong instant by up to the
- * offset itself, the second corrects it. Around a DST transition a wall time
- * can be ambiguous or absent; the earlier instant is taken, which is the
- * conventional choice and is deterministic either way.
+ * Both rules fall out of preferring the offset in effect *before* the
+ * transition. On an ambiguous wall time that offset is the larger one, so it
+ * yields the earlier instant — the spec's choice. On a nonexistent one neither
+ * candidate reads back, and applying the pre-transition offset lands exactly
+ * one gap later, which is the advance the spec asks for.
  */
 function instantForWallTime(wall: number, timeZone: string): number | undefined {
-  let guess = wall;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const parts = zonedParts(guess, timeZone);
-    if (!parts) return undefined;
-    const readBack = utcWallTime(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second);
-    if (readBack === undefined) return undefined;
-    guess += wall - readBack;
-  }
-  return guess;
+  const dayMs = 86_400_000;
+  const offsetBefore = zoneOffset(wall - dayMs, timeZone);
+  const offsetAfter = zoneOffset(wall + dayMs, timeZone);
+  if (offsetBefore === undefined || offsetAfter === undefined) return undefined;
+  const fromBefore = wall - offsetBefore;
+  const fromAfter = wall - offsetAfter;
+  if (readsBackAs(fromBefore, wall, timeZone)) return fromBefore;
+  if (readsBackAs(fromAfter, wall, timeZone)) return fromAfter;
+  // Nonexistent: advance by the gap.
+  return fromBefore;
+}
+
+/** Offset of `timeZone` at an instant, in milliseconds east of UTC. */
+function zoneOffset(instant: number, timeZone: string): number | undefined {
+  if (!isRepresentableInstant(instant)) return undefined;
+  const parts = zonedParts(instant, timeZone);
+  if (!parts) return undefined;
+  const asUtc = utcWallTime(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second);
+  return asUtc === undefined ? undefined : asUtc - instant;
+}
+
+/** Whether `timeZone` reads `instant` as exactly the given wall-clock time. */
+function readsBackAs(instant: number, wall: number, timeZone: string): boolean {
+  if (!isRepresentableInstant(instant)) return false;
+  const parts = zonedParts(instant, timeZone);
+  if (!parts) return false;
+  return utcWallTime(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second) === wall;
 }
 
 /**
@@ -2091,14 +2226,22 @@ function consumerStatusSchedule(
       overdue: false,
       deadlineGap:
         malformedExpectedAt !== undefined
-          ? { cause: 'unreadable_expected_at', value: malformedExpectedAt }
-          : { cause: 'missing_pin', pin: 'deliverySlaSeconds' },
+          ? { cause: 'unreadable_expected_at', value: malformedExpectedAt, localPin: localExpectedAtPin(expected) }
+          : { cause: 'missing_pin', pin: localExpectedAtPin(expected) },
     };
   }
   if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds < 0) {
     return { overdue: false, deadlineGap: { cause: 'missing_pin', pin: 'automatedRecoveryWindowSeconds' } };
   }
-  const deadline = new Date(Date.parse(expectedAt) + windowSeconds * 1_000).toISOString();
+  const deadlineAt = Date.parse(expectedAt) + windowSeconds * 1_000;
+  // Guarded here too: `expected_at` is range-checked where it is derived, but
+  // the window is added afterwards, so a value just inside the range plus a
+  // seller-advertised window lands outside it — and `toISOString` throws from
+  // a call site that nothing wraps, aborting the whole reconcile.
+  if (!isRepresentableInstant(deadlineAt)) {
+    return { overdue: false, deadlineGap: { cause: 'missing_pin', pin: localExpectedAtPin(expected) } };
+  }
+  const deadline = new Date(deadlineAt).toISOString();
   return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
 }
 
@@ -3172,25 +3315,29 @@ async function consumeReportingRevision(
  * unbounded accumulation, not to measure it, and a serializing measurement
  * would itself be the cost being guarded against.
  */
-function approximateRowBytes(row: unknown, depth = 0): number {
-  if (typeof row === 'string') return row.length * 2;
-  if (row === null || typeof row !== 'object') return 16;
-  // Past the depth cap the subtree is charged a deliberately *pessimistic*
-  // constant rather than a cheap one. Charging 64 bytes for an unexamined
-  // container just moved the bypass four levels down — `{a:{b:{c:{d:{blob}}}}}`
-  // measured 200 bytes against a one-megabyte row. Over-charging costs a
-  // conformant seller nothing but an earlier, silent `local_budget_exhausted`;
-  // under-charging is unbounded memory.
-  if (depth >= 4) return DEEP_SUBTREE_BYTE_CHARGE;
-  let total = 32;
-  if (Array.isArray(row)) {
-    for (const value of row) total += approximateRowBytes(value, depth + 1);
+function approximateRowBytes(row: unknown): number {
+  // Bounded by *work*, not by depth. A flat charge past a depth cap cuts both
+  // ways and neither is acceptable: too small and nesting walks past the
+  // ceiling, too large and 24 KB of empty nested objects silences the buyer
+  // while blaming its own budget. Counting nodes instead charges honestly for
+  // what it inspects, bounds the inspection, and leaves the residue modest.
+  let budget = MAX_ROW_ESTIMATE_NODES;
+  const visit = (value: unknown): number => {
+    if (budget <= 0) return UNVISITED_SUBTREE_BYTE_CHARGE;
+    budget -= 1;
+    if (typeof value === 'string') return value.length * 2;
+    if (value === null || typeof value !== 'object') return 16;
+    let total = 32;
+    if (Array.isArray(value)) {
+      for (const item of value) total += visit(item);
+      return total;
+    }
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      total += key.length * 2 + visit(child);
+    }
     return total;
-  }
-  for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
-    total += key.length * 2 + approximateRowBytes(value, depth + 1);
-  }
-  return total;
+  };
+  return visit(row);
 }
 
 /**
