@@ -1,5 +1,248 @@
 # Changelog
 
+## 14.0.0-rc.38
+
+### Minor Changes
+
+- 37afa81: Expose canonical offline tool validators and immutable schema-document lookup from `@adcp/sdk/schemas`.
+- 092dfa3: Harden the rc.3 buyer consumer-status loop against seller-supplied data that could abort a reconcile,
+  silence a conformant seller, or walk past the buyer's own memory ceiling.
+
+  **A single seller number could abort the whole run.** `JSON.parse('1e999')` is `Infinity`, which
+  RFC 8785 cannot represent, so `canonicalize` threw `TypeError` — and the digest guard rethrew
+  anything that was not a `RangeError`, out of a call site with no `catch`. The throw escaped
+  `reconcileReporting` after receipts had already been synced, losing the caller's record of durable
+  work. Canonicalization failures are now classified: a `RangeError` is a size failure and stays silent
+  as the buyer's own budget, anything else is `unreadable` / `reader_incompatible`, which is what that
+  code means — carrying the canonicalizer's own bounded message in the local `reason` so a genuine
+  defect stays visible.
+
+  **A conformant seller could be silenced permanently.** `expected_at` was validated against a stricter
+  pattern than the `format: date-time` check this SDK uses on the seller's own payloads, so a lowercase
+  `t`/`z`, a `+hhmm` offset or a space separator — all accepted by `ajv-formats` — yielded no deadline
+  and no statement, forever. The pattern now matches what the SDK itself accepts, and the instant is
+  **normalized rather than echoed**, and calendar-validated on its literal fields: `Date.parse`
+  silently rolls `2026-02-30` forward, and re-emitting the seller's bytes would put that contradiction
+  on a statement the buyer signs. Validating the literal fields rather than the parsed result matters
+  because the two are indistinguishable once an offset is involved — the check now holds for
+  `2026-02-30T00:00:00+01:00` as well as the `Z` form. A sixtieth second is accepted only where a leap
+  second can occur. A `expected_at` that is present but unreadable derives nothing at all: the seller has a real deadline
+  the buyer cannot read, so any derived one disagrees with it and the statement is refused on every run
+  forever. When `expected_at` is **absent** the buyer falls through to its own
+  `deliverySlaSeconds` / `officialAfterSeconds` pin, and only then to the seller's
+  `obligation.schedule.delivery_sla`. That order matters: `schedule` is as seller-controlled as
+  `expected_at`, so consulting it ahead of the pin let a seller that had published nothing omit
+  `expected_at`, advertise `delivery_sla: "P10Y"`, and push its own deadline a decade out — the period
+  never went overdue and the `revision_missing` recording the non-delivery was never posted. The pin is
+  the buyer's independent answer and outranks it. As a last resort for a buyer with no pin, the
+  schedule resolution is **calendar-aware**, because the schema permits `Y` and `M` on `delivery_sla`
+  and names `period_timezone` as the zone its "calendar arithmetic" happens in: `P1M` is a calendar
+  month in that zone, clamping to month end, with a nonexistent local time advancing by the DST gap and
+  an ambiguous one taking the earlier offset, exactly as `period_generation` specifies. A duration with
+  no calendar component stays exact elapsed time — that is the only shape this SDK's own seller emits,
+  and routing it through wall-clock conversion lost sub-second precision and shifted `PT0S` by an hour
+  across an ambiguous local hour. An unrecognized `period_timezone`, an unresolvable zone, or a
+  duration whose result falls outside the RFC 3339 year range derives nothing rather than a guess.
+
+  **Row size accounting is bounded by work, not by depth.** The estimate charged an unexamined subtree
+  a flat constant, which cut both ways: too small and nesting walked past the ceiling
+  (`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), and a deeply nested row could be used to suppress a
+  period that should have carried a `content_mismatch`. It now walks a bounded number
+  of nodes per row and charges each for what it holds, which closes the bypass. Values are charged against
+  retained heap rather than wire bytes — an empty string previously charged zero, which is how hundreds
+  of megabytes of them slipped past the ceiling — and the figures land within about 2x of measured heap
+  in both directions. A row too deep or too intricate for the estimator to walk is reported as the
+  buyer's own limit, not as an unreadable revision: the walk bound is the buyer's, and a durable
+  `unreadable` would pin the seller's view at `action_required` for a row — a per-SKU retail-media
+  breakdown, say — that is entirely conformant.
+
+  **An unrecognized `period.source_timezone` suppresses rather than substituting.** The value is part
+  of the consumer-status chain's logical key and the seller compares it strictly, so falling back to
+  `'UTC'` produced a statement refused on every run forever — and `iana_timezone` forbids that
+  substitution by name. The period now comes back `suppressed: 'period_identity_unknown'`, a new arm of
+  the exported union. With nothing declared at all, `'UTC'` remains the buyer's own default.
+
+  `usableLeafInstant` normalizes the superseded leaf's `status_as_of` through the same path, so a leaf
+  recorded by an older SDK with a `+00:00` or lowercase spelling now produces the same monotonicity
+  floor as its canonical form — which feeds `reporting_status_id`, so a chain can see one id shift
+  across this upgrade.
+
+  A further adopter-observable change: `ExpectedReportingPeriod.periodSourceTimezone` now outranks the seller's
+  echo — that value is inside the consumer-status chain key and the `reporting_status_id` derivation,
+  so an adopter whose pin disagreed with the seller's echo will see the chain key change once on
+  upgrade. And a `expected_at` that is present but not a string (rather than merely malformed) now
+  suppresses instead of falling through to the pin.
+
+  `suppressed` gains `posting_unavailable`, widening that exported union — an adopter switching
+  exhaustively on it will see a new arm. Concretely: with no `client.syncReportingStatus` wired, a plan used to
+  come back live, due and unsuppressed while silently going nowhere.
+
+  **A deadline that overflows the representable range names the field that overflowed**, rather than
+  being reported as a pin the adopter forgot to record. `officialAfterSeconds` is preferred for
+  official-finality generations and falls back to `deliverySlaSeconds`, because
+  `reporting-schedule.json` defines only `delivery_sla` and `official_after` is an SDK-local extension.
+
+  **A seller deadline far past the buyer's pinned expectation is recorded on `plan.deadlineBeyondPin`.**
+  It is still honoured, but previously it left the period at `overdue: false` with nothing set —
+  indistinguishable from "not yet due", and usable by a seller as a silent opt-out of the whole loop.
+
+  **A row nested deeper than the reader walks is `unreadable` / `reader_incompatible`, not silence.**
+  No conformant tabular reporting row has that shape, and suppressing let an under-delivering seller
+  escape a `content_mismatch` for the price of one small row. Breadth remains the buyer's own limit.
+
+  **A replayed pending statement is verified before it is posted** — the recomputed digest, the
+  recomputed `reporting_status_id`, a non-future `status_as_of` and no unexpected keys — and the result
+  reports the values actually sent. Without those checks a compromised store could make the buyer
+  attest a consumption it never performed.
+
+  **Malformed ledger payloads no longer abort a reconcile that already synced receipts.** A non-array
+  `issues`, a null entry in it, or a missing `period` from a client that does not schema-validate its
+  responses used to throw out of `reconcileReporting` after receipts had gone to the seller, losing the
+  caller's record of durable work.
+
+  Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
+  does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been
+  recorded and merely could not be read. `chain_indeterminate` now distinguishes a forked chain from a
+  head naming an undisclosed predecessor, rather than claiming no head resolved in both cases.
+
+- 35fae2b: Add the AdCP 3.2.0-rc.3 buyer-side consumer-status loop to `reconcileReporting`.
+
+  **`content_mismatch` detection.** `detectReportingContentMismatch` decides the closed
+  `mismatch_code` — `scope_media_buy_missing`, `coverage_short`, `metric_missing`,
+  `schema_nonconformant`, `currency_mismatch`, `period_mismatch`.
+
+  Four of the six are **row-level** predicates that obligation and revision _metadata_ cannot decide,
+  and they stay silent unless the caller passes `ReportingRowEvidenceV1` describing what it actually
+  read. `scope_media_buy_missing` in particular cannot be decided from `media_buy_ids`, which
+  `reporting-revision.json` defines as the denominator "inherited from the obligation, including buys
+  with zero rows" — comparing those sets is a tautology against a conformant seller, and the real
+  condition is a buy with no rows and no explicit zero row. `metric_missing` likewise compares against
+  metrics observed in rows, not against `control_totals`, which are profile-defined aggregates scoped
+  to the covered packages. Only `coverage_short` and `currency_mismatch` are decidable from metadata.
+  A false `content_mismatch` forces the caller's view to `action_required` and the seller may not
+  clear it while the statement is the current leaf, so not accusing is the safe default. It is deliberately incapable of firing on a delivered value
+  the buyer merely disagrees with: that is a measurement dispute for `measurement_terms` /
+  `makegood_policy`, and routing one through this operational channel would put a commercial argument
+  somewhere the seller can neither resolve nor ignore. Precedence follows the spec on the one pair it
+  pins (`metric_missing` before `schema_nonconformant`) and is otherwise most-structural-first and
+  stable, so the code does not flap between reads of the same bytes.
+
+  **`received` is earned, not echoed.** `observed_revision_content_sha256` is defined as the binding
+  digest _"independently recomputed from the exact consumed Core revision binding"_. The reconciler
+  now pages `reporting_rows` for the exact revision through a new optional
+  `ReportingReconciliationClient.getMediaBuyDelivery`, concatenates them in cursor order, and
+  recomputes SHA-256 of RFC 8785 JCS over `{reporting_revision_id,row_count,control_totals,reporting_rows}`
+  itself. A read that fails, returns no exact-revision binding, or does not hash to the digest the
+  seller published becomes `unreadable` with the matching `failure_code` rather than a `received`
+  — and a digest that did not verify is never attached to anything. `content_mismatch` requires the
+  same recomputed binding, so it too only fires on bytes the buyer actually read. Without the client
+  method nothing is attested and nothing is posted for those two statuses
+  (`suppressed: 'consumption_unavailable'`): attesting a consumption that did not happen is the one
+  outcome worse than silence. `status_as_of` is the buyer's own consumption instant, floored by the
+  superseded leaf's `status_as_of` so a chain never moves backwards.
+
+  **Posting against the deadline.** `ReportingReconciliationResult.consumerStatuses` plans a status for
+  every expected period with its `expected_at` + `automated_recovery_window_seconds` deadline and an
+  `overdue` flag. `expected_at` comes from the obligation when there is one, and otherwise from
+  `period.end` plus a new optional `ExpectedReportingPeriod.deliverySlaSeconds` pin — `obligation_missing`
+  exists precisely when no obligation is there to read it from, and `expected_period` makes that
+  statement valid only at or after `expected_at`, so dating it from the period end has a conformant
+  seller reject every one. The recovery window is advertised on the delivery **capabilities**, not on
+  the obligation, so it comes from `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. Missing
+  either pin marks nothing overdue and posts nothing, because posting on a guessed clock would churn
+  the status chain.
+
+  **Identity that survives a retry.** `reporting_status_id` is derived from the whole wire statement,
+  `status_as_of` included, so an ID can never come back identical with a different body — which the
+  spec reads as an idempotency conflict, not a replay. Retry stability comes from the new optional
+  `pendingConsumerStatusStore` instead: it remembers a statement that has been built but not confirmed
+  and replays it verbatim. `status_as_of` for `received` is buyer-attributed arrival evidence the spec
+  refuses to let a seller substitute publication time for, so it is irreducibly stateful — a stateless
+  reconciler cannot reproduce it. Without the store a re-plan is simply a new, valid statement, and
+  the chain still ends with exactly one.
+
+  `idempotency_key` is likewise derived from the batch body rather than minted per attempt: it is
+  documented as _"Exact retries reuse the key and body"_, and a fresh key made the seller's batch
+  replay unreachable by construction. Both hashes use RFC 8785 JCS rather than the module's local
+  canonical-form helper, whose `localeCompare` key ordering is ICU-dependent and so would not
+  reproduce byte-identically in another process. The leaf stays in the ID derivation on purpose — it
+  is stable across attempts at the same claim, and it keeps a claim that genuinely recurs later in a
+  chain (`received`, then `unreadable` after a flaky read, then `received` again) from colliding with
+  the earlier identical one.
+
+  **Row-level mismatch codes are reachable.** Detection runs a second time once the rows are in hand,
+  so `metric_missing` and the other row-gated codes can fire through the reconciler at all. Only
+  `observedMetricNames` is derived, only when the buyer pinned `committedMetrics`, and a metric counts
+  as present if any row carries it at top level or under `totals` or the revision declares a control
+  total for it — the remaining row predicates would need the profile's own row shape, and guessing at
+  them risks exactly the false accusation the row gating exists to prevent.
+
+  **Saying nothing when there is nothing to say.** Each plan names the caller's current leaf in
+  `supersedes_reporting_status_id` — resolved from the caller's own append-only history, now loaded
+  onto `ReportingLedger.consumerStatuses`, so the chain is named even before any obligation exists.
+  When that leaf already carries the same claim, the plan comes back `suppressed: 'unchanged'` and is
+  not posted: `immutability` allows a new ID only for changed status, and re-posting would supersede a
+  statement with its own duplicate on every reconcile, which `retention_and_limits` calls pathological
+  churn. A leaf the seller names but does not disclose suppresses the post too, rather than guessing.
+
+  When the client supplies the new optional `syncReportingStatus`, overdue, unsuppressed, attested
+  statuses are posted — the rc.3 duty is that clock, not scope close. `postedConsumerStatuses` reports
+  what the seller actually recorded, and the new `failedConsumerStatuses` carries item-local
+  rejections with the errors the seller returned, so a partial-success batch never loses one silently.
+  Without the client method the reconciler still plans everything and reports it, so existing adopters
+  are unaffected.
+
+  **Wiring order.** Four optional pieces each independently decide whether anything is posted:
+  1. `ExpectedReportingPeriod.automatedRecoveryWindowSeconds` — without it nothing is ever `overdue`.
+  2. `ExpectedReportingPeriod.deliverySlaSeconds` — needed to date `obligation_missing`, where there is
+     no obligation to read `expected_at` from. Add `officialAfterSeconds` for official-finality
+     generations against a seller that advertises one.
+  3. `client.getMediaBuyDelivery` — without it `received` / `content_mismatch` come back
+     `suppressed: 'consumption_unavailable'`.
+  4. `client.syncReportingStatus` — without it nothing posts.
+
+  Anything planned but not posted says why in `suppressed` and `reason`, so a misconfiguration reads
+  as a misconfiguration rather than as a quiet steady state.
+
+  **Failures stay data, not exceptions.** A batch write that fails records every statement in it on
+  `failedConsumerStatuses` and stops posting, rather than throwing: a throw from the second batch
+  discarded the record of everything the first had already appended, and those statements are durably
+  the caller's current leaves whether or not the call returns. And when the buyer's own read budget
+  runs out mid-run, the remaining revisions come back `suppressed: 'local_budget_exhausted'` instead of
+  `unreadable` / `transport_failed` — a limit the buyer set is not evidence that the seller published
+  bytes it could not consume, and a self-inflicted negative claim pins the caller's own view at
+  `action_required`.
+
+  **Compile-visible changes.** Behaviour is additive for existing callers, but `ReportingLedger` gains
+  an optional `consumerStatuses` and `ReportingConsumerStatusPlanV1.statusAsOf` is now optional —
+  anyone reading that field off a plan they did not attest needs a narrowing check.
+
+  **Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
+  deadline with no current status; a failed read leaves it `undefined` rather than failing
+  reconciliation, because it is visibility rather than evidence. `escalations` flattens seller issues
+  with `openedAt` / `issueState` / `externalRef` and the advertised `operationsContact`, plus
+  `requiresHumanContact` for the `contact_*` family, so an SDK user can page someone without
+  re-reading the capability document. `operationsContact` is inert display metadata — never
+  dereference it.
+
+  `ExpectedReportingPeriod` gains optional `committedMetrics` and `metricUnits`. Omitting either
+  disables its check rather than guessing: a buyer that never recorded the metric list must not claim
+  a promised metric is absent.
+
+### Patch Changes
+
+- 06c685f: Document the AdCP 3.2 request-only Targeting Input three-state semantics for seller adopters.
+
+  `docs/guides/MEDIA-BUY-3.2-COMPATIBILITY.md` gains a section with the omitted / `null` / value table for
+  both create and update, worked `resolveTargetingInput` / `applyTargetingInput` / `hasTargetingClears`
+  snippets, and the two silent failure modes — persisting a request overlay verbatim writes a clear
+  command into durable state, and echoing it back emits `null` on a response shape whose schema forbids
+  it. `skills/build-seller-agent/` gets the short form under its shape-gotchas section, since a seller
+  agent generated from that skill is exactly the code that gets this wrong.
+
+  The helpers shipped without a doc or skill entry, so the only worked example was in a starter that is
+  being reworked to reject supplied overlays outright.
+
 ## 14.0.0-rc.37
 
 ### Major Changes
