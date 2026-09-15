@@ -786,13 +786,37 @@ async function callBeforeDeadline<T>(
   }
 }
 
-function canonical(value: unknown): string {
+/**
+ * Depth-bounded on purpose.
+ *
+ * This recursed without a limit, and `same()` calls it on seller-supplied
+ * objects, so a well-formed ~3,000-deep value threw `RangeError` out of
+ * `reconcileReporting` — including from the ledger re-read that follows a
+ * durable receipt write, where it cost the caller its record of that work.
+ * Nothing in the reporting schemas nests anywhere near this, so exceeding it is
+ * a malformed payload and is reported as one rather than as a stack overflow.
+ *
+ * Defence in depth as of this change: the scope key that was the reachable
+ * trigger is now built from rendered scalars and does not recurse, so no test
+ * pins this bound and it is not claimed as tested. It stays because `same()` is
+ * called on seller objects elsewhere and the next such path should not have to
+ * rediscover this.
+ */
+const MAX_CANONICAL_DEPTH = 64;
+
+function canonical(value: unknown, depth = 0): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (depth >= MAX_CANONICAL_DEPTH) {
+    throw new ReportingReconciliationError(
+      'LEDGER_RECORD_MALFORMED',
+      `a reporting record nests deeper than ${MAX_CANONICAL_DEPTH} levels`
+    );
+  }
+  if (Array.isArray(value)) return `[${value.map(item => canonical(item, depth + 1)).join(',')}]`;
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, child]) => child !== undefined)
     .sort(([left], [right]) => left.localeCompare(right));
-  return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonical(child)}`).join(',')}}`;
+  return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonical(child, depth + 1)}`).join(',')}}`;
 }
 
 function same(left: unknown, right: unknown): boolean {
@@ -978,10 +1002,23 @@ function scopeMatchesRequest(
   scope: ReportingLedger['scope'],
   request: Omit<GetReportingStatusRequest, 'view' | 'pagination'>
 ): boolean {
+  const malformedScope = (field: string): never => {
+    throw new ReportingReconciliationError(
+      'LEDGER_RECORD_MALFORMED',
+      `reporting ledger scope.${field} is required and must be an array`
+    );
+  };
+
   if (request.period && (scope.period_start !== request.period.start || scope.period_end !== request.period.end)) {
     return false;
   }
   if (request.media_buy_ids) {
+    // Array-checked like its three siblings below: `?? []` caught null and
+    // undefined and nothing else, so a scalar reached `sameStringSet`'s spread
+    // and threw `TypeError` where the others return a typed answer.
+    if (scope.media_buy_ids !== undefined && scope.media_buy_ids !== null && !Array.isArray(scope.media_buy_ids)) {
+      malformedScope('media_buy_ids');
+    }
     if (scope.all_accessible_media_buys || !sameStringSet(scope.media_buy_ids ?? [], request.media_buy_ids))
       return false;
   } else if (!scope.all_accessible_media_buys) {
@@ -990,17 +1027,24 @@ function scopeMatchesRequest(
   // Array-ness checked, not assumed. `scope` is whatever the seller returned and
   // only its presence is verified upstream, so an omitted array here threw a raw
   // `TypeError` out of `reconcileReporting` — including from the reload that
-  // follows a durable receipt write. A mismatch is the same answer either way.
+  // follows a durable receipt write.
+  //
+  // Reported as a malformed record rather than a scope mismatch: all three are
+  // `required` in `get-reporting-status-response.json`, and `empty_scope` says
+  // they MUST be *empty arrays* even in the vacuous case, so absence is always
+  // a malformed payload and never a genuine denominator disagreement.
   if (request.delivery_config_ids) {
-    if (!Array.isArray(scope.delivery_config_generations)) return false;
+    if (!Array.isArray(scope.delivery_config_generations)) malformedScope('delivery_config_generations');
     const resolved = [...new Set(scope.delivery_config_generations.map(item => item?.delivery_config_id))];
     if (!sameStringSet(resolved, request.delivery_config_ids)) return false;
   }
   if (request.feed_purposes) {
-    if (!Array.isArray(scope.feed_purposes) || !sameStringSet(scope.feed_purposes, request.feed_purposes)) return false;
+    if (!Array.isArray(scope.feed_purposes)) malformedScope('feed_purposes');
+    if (!sameStringSet(scope.feed_purposes, request.feed_purposes)) return false;
   }
   if (request.finality) {
-    if (!Array.isArray(scope.finality) || !sameStringSet(scope.finality, request.finality)) return false;
+    if (!Array.isArray(scope.finality)) malformedScope('finality');
+    if (!sameStringSet(scope.finality, request.finality)) return false;
   }
   return true;
 }
@@ -1471,41 +1515,82 @@ function revisionMatchesObligationScope(
  * SDK works hard to avoid.
  */
 function sameReportingPeriod(left: unknown, right: unknown): boolean {
-  // The non-shape fallback and the non-string zone compare below are both
-  // pre-empted by the graph assertion, which refuses a malformed period on load
-  // — neither is claimed as tested.
+  // The graph assertion shape-checks *revision* periods only, so the non-shape
+  // fallback is still reachable through a malformed *obligation* period. The
+  // non-string zone compare is reachable too — the schema types the field as a
+  // string, but nothing validates it — which is why it compares structurally:
+  // the scope-key index that has to agree with this predicate does.
   if (!isReportingPeriodShape(left) || !isReportingPeriodShape(right)) return same(left, right);
   const leftZone = (left as { source_timezone?: unknown }).source_timezone;
   const rightZone = (right as { source_timezone?: unknown }).source_timezone;
   if (left.start !== right.start || left.end !== right.end) return false;
-  if (typeof leftZone !== 'string' || typeof rightZone !== 'string') return leftZone === rightZone;
+  // Structurally, not by reference: two equal non-string zones are equal, and
+  // comparing by reference made this predicate narrower than the scope-key
+  // index that has to agree with it. Non-conformant either way — the schema
+  // types the field as a string — but the two must not diverge.
+  if (typeof leftZone !== 'string' || typeof rightZone !== 'string') return same(leftZone, rightZone);
   return sameZone(leftZone, rightZone);
 }
 
-function reportingRevisionScopeKey(value: ManagedReportingRevision | ManagedReportingObligation): string {
-  const period = value.period as { start?: unknown; end?: unknown; source_timezone?: unknown } | undefined;
-  const zone = period?.source_timezone;
-  return canonical({
-    account_id: value.account_id,
-    report_definition_id: value.report_definition_id,
-    reporting_profile: value.reporting_profile,
-    media_buy_ids: [...value.media_buy_ids].sort(),
-    // Exactly the three fields the schema defines, and zone *identity* rather
-    // than spelling. Hashing the raw period object put an obligation saying
-    // `UTC` and a revision saying `Zulu` in different scopes — and one extra
-    // key from a client that does not schema-validate did the same — with the
-    // mismatch aborting the whole ledger rather than the one record.
-    //
-    // `?? zone` so an unrecognized zone keeps its own identity: bare
-    // `canonicalZone` yields `undefined` for anything `Intl` refuses, and
-    // `canonical` drops `undefined`, which collapsed every unreadable zone and
-    // every absent one into a single key.
-    period:
-      period === undefined
-        ? period
-        : { start: period.start, end: period.end, source_timezone: canonicalZone(zone) ?? zone },
-  });
+/**
+ * A scalar rendered for the scope key, or a distinct marker for anything that
+ * is not one.
+ *
+ * `canonical` recurses without a depth bound, so a well-formed but ~3,000-deep
+ * seller value in any scope field threw `RangeError` out of `reconcileReporting`
+ * — including from the reload that follows a durable receipt write. Every field
+ * the scope key hashes is a string in the schema, so a non-scalar is already
+ * non-conformant and cannot match a conformant counterpart: it is marked rather
+ * than walked, and rather than failing the whole ledger, which would hand a
+ * seller a one-record denial primitive.
+ */
+function scopeScalar(value: unknown): string {
+  if (typeof value === 'string') return `s:${value}`;
+  if (typeof value === 'number' || typeof value === 'boolean') return `p:${String(value)}`;
+  if (value === undefined) return 'u:';
+  if (value === null) return 'n:';
+  // One marker per shape, not per value: two different non-conformant objects
+  // are both unusable, and neither can equal a conformant string.
+  return Array.isArray(value) ? 'x:array' : `x:${typeof value}`;
 }
+
+function reportingRevisionScopeKey(value: ManagedReportingRevision | ManagedReportingObligation): string {
+  const period = isReportingPeriodShape(value.period)
+    ? (value.period as { start?: unknown; end?: unknown; source_timezone?: unknown })
+    : undefined;
+  const zone = period?.source_timezone;
+  const mediaBuyIds = Array.isArray(value.media_buy_ids) ? value.media_buy_ids.map(scopeScalar).sort() : ['x:absent'];
+  // Built from rendered scalars, so it is O(1) in depth and cannot recurse.
+  // Exactly the three period fields the schema defines, with zone *identity*
+  // rather than spelling: hashing the raw period object put an obligation
+  // saying `UTC` and a revision saying `Zulu` in different scopes — and one
+  // extra key from a client that does not schema-validate did the same — with
+  // the mismatch aborting the whole ledger rather than the one record.
+  //
+  // `?? zone` so an unrecognized zone keeps its own identity, since
+  // `canonicalZone` yields `undefined` for anything `Intl` refuses and that
+  // collapsed every unreadable and absent zone into one key. A period that is
+  // not a readable shape gets its own marker for the same reason.
+  return [
+    scopeScalar(value.account_id),
+    scopeScalar(value.report_definition_id),
+    scopeScalar(value.reporting_profile),
+    JSON.stringify(mediaBuyIds),
+    period === undefined ? 'x:period' : scopeScalar(period.start),
+    period === undefined ? 'x:period' : scopeScalar(period.end),
+    period === undefined ? 'x:period' : scopeScalar(canonicalZone(zone) ?? zone),
+  ].join('\u0000');
+}
+
+/**
+ * Internals exposed for one equivalence test, not part of the public surface.
+ *
+ * `revisionMatchesObligationScope` is the reference the scope-key index claims
+ * to restate. Nothing linked the two, so an edit to either could silently make
+ * the join wider — putting a revision under an obligation it does not belong to
+ * — and the predicate itself had no callers left once the index replaced it.
+ */
+export const __testing = { revisionMatchesObligationScope, reportingRevisionScopeKey };
 
 function assertDirectReportingLedgerGraph(ledger: ReportingLedger): void {
   const obligations = new Map(ledger.obligations.map(item => [item.reporting_obligation_id, item]));
@@ -1532,39 +1617,38 @@ function assertDirectReportingLedgerGraph(ledger: ReportingLedger): void {
  * The linear alternative was O(obligations x revisions) — `maxRecords` bounds
  * only the sum, so a 50k/50k ledger is 2.5e9 comparisons, synchronous, with no
  * budget over it. `reportingRevisionScopeKey` hashes exactly the fields
- * `revisionMatchesObligationScope` compares, including zone *identity*, so the
- * index is an equivalent test rather than an approximation of one.
+ * `revisionMatchesObligationScope` compares, including zone *identity*, so a
+ * bucket lookup is the same test rather than an approximation of one.
  *
- * Keyed on the ledger object, which is replaced wholesale by the post-receipt
- * reload, so the index cannot outlive the snapshot it describes.
+ * Built per calling loop and passed down, never memoized on the ledger object.
+ * An earlier version cached it in a `WeakMap` keyed on the ledger, which made
+ * the exported `evaluateReportingLedger` return stale results for a caller that
+ * appended a revision to a ledger it already held — a false `revision_missing`
+ * on the buyer's own durable record, which is the harm this whole loop exists
+ * to prevent.
  *
- * Verified equivalent by running the suite against both implementations, which
- * is the only claim made for it: the benefit is asymptotic, so no test pins it.
+ * Note this lowers the constant, not the order, when obligations share one
+ * scope key: that is the normal shape for a logical reporting slice, and every
+ * obligation still walks its own bucket.
  */
-const DIRECT_CORE_REVISION_INDEX = new WeakMap<ReportingLedger, Map<string, ManagedReportingRevision[]>>();
+type DirectCoreRevisionIndex = Map<string, ManagedReportingRevision[]>;
 
-function directCoreRevisionsFor(
-  ledger: ReportingLedger,
-  obligation: ManagedReportingObligation
-): ManagedReportingRevision[] {
-  let index = DIRECT_CORE_REVISION_INDEX.get(ledger);
-  if (!index) {
-    index = new Map<string, ManagedReportingRevision[]>();
-    for (const revision of ledger.revisions) {
-      const key = reportingRevisionScopeKey(revision);
-      const bucket = index.get(key);
-      if (bucket) bucket.push(revision);
-      else index.set(key, [revision]);
-    }
-    DIRECT_CORE_REVISION_INDEX.set(ledger, index);
+function buildDirectCoreRevisionIndex(ledger: ReportingLedger): DirectCoreRevisionIndex {
+  const index: DirectCoreRevisionIndex = new Map();
+  for (const revision of ledger.revisions) {
+    const key = reportingRevisionScopeKey(revision);
+    const bucket = index.get(key);
+    if (bucket) bucket.push(revision);
+    else index.set(key, [revision]);
   }
-  return index.get(reportingRevisionScopeKey(obligation)) ?? [];
+  return index;
 }
 
 function selectCurrent(
   obligation: ManagedReportingObligation,
   ledger: ReportingLedger,
-  expected?: ExpectedReportingPeriod
+  expected?: ExpectedReportingPeriod,
+  directCoreIndex?: DirectCoreRevisionIndex
 ): { revision?: ManagedReportingRevision; materialization?: ReportingMaterialization; reasons: string[] } {
   const reasons: string[] = [];
   const attempts = ledger.materializations.filter(
@@ -1579,7 +1663,7 @@ function selectCurrent(
     attempts.length > 0
       ? ledger.revisions.filter(item => revisionIds.has(item.reporting_revision_id))
       : isDirectCoreObligation(obligation)
-        ? directCoreRevisionsFor(ledger, obligation)
+        ? ((directCoreIndex ?? buildDirectCoreRevisionIndex(ledger)).get(reportingRevisionScopeKey(obligation)) ?? [])
         : [];
   const receipts = ledger.receipts.filter(item => item.reporting_obligation_id === obligation.reporting_obligation_id);
   const successfulAttempts = attempts.filter(item => item.status === 'available' || item.status === 'delivered');
@@ -1864,6 +1948,9 @@ function planReportingConsumerStatuses(
   now: Date
 ): ReportingConsumerStatusPlanV1[] {
   const missing = new Set(missingExpectedPeriods);
+  // One index for this whole pass, so the join is built once rather than per
+  // obligation and never outlives the call.
+  const directCoreIndex = buildDirectCoreRevisionIndex(ledger);
   return expectedPeriods.map(expected => {
     const obligationForPeriod = ledger.obligations.find(candidate =>
       expectedPeriodMatches(expected, candidate, ledger)
@@ -1977,9 +2064,9 @@ function planReportingConsumerStatuses(
     const declaredExpectedAt = obligationForPeriod?.expected_at;
     const malformedExpectedAt =
       expectedAt === undefined && overflowedField === undefined && declaredExpectedAt !== undefined
-        ? typeof declaredExpectedAt === 'string'
-          ? declaredExpectedAt
-          : `<${typeof declaredExpectedAt}>`
+        ? // Through the shared renderer, which distinguishes `null` from an
+          // object; a bare `typeof` called both `<object>`.
+          boundedDiagnostic(declaredExpectedAt)
         : undefined;
     const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt, overflowedField);
     // A seller deadline far past the buyer's own pinned expectation is honoured
@@ -2051,7 +2138,7 @@ function planReportingConsumerStatuses(
     }
 
     const obligation = obligationForPeriod;
-    const selected = selectCurrent(obligation, ledger, expected);
+    const selected = selectCurrent(obligation, ledger, expected, directCoreIndex);
     const revision = selected.revision;
     // A chain the buyer could not resolve is not the same claim as a period the
     // seller never published for, and it is not a claim about the head either:
@@ -3022,7 +3109,7 @@ function canonicalZone(name: unknown): unknown {
   if (typeof name !== 'string') return name;
   // Bounded before `Intl`, because the input is a raw seller string and
   // constructing a formatter costs time proportional to its length: a 1 MB zone
-  // name measured 8.2 ms against 32 µs for a real one. `ianaTimeZone` already
+  // name measured 8.2 ms against ~62 µs for a real one. `ianaTimeZone` already
   // applies this bound; these two did not, and they are on the hot path.
   if (name.length === 0 || name.length > MAX_SOURCE_TIMEZONE_LENGTH) return undefined;
   const cached = CANONICAL_ZONE_CACHE.get(name);
@@ -3034,10 +3121,14 @@ function canonicalZone(name: unknown): unknown {
     resolved = CANONICAL_ZONE_UNRESOLVED;
   }
   // Bounded so a seller cycling distinct garbage strings cannot grow it without
-  // limit. The real zone-name space is a few hundred entries, so the cap is
-  // only ever reached under attack, and dropping the cache then is correct —
-  // the length bound above already makes each miss cheap.
-  if (CANONICAL_ZONE_CACHE.size >= MAX_CANONICAL_ZONE_CACHE) CANONICAL_ZONE_CACHE.clear();
+  // limit. Evicting the oldest single entry rather than clearing: dropping the
+  // whole working set turned the memo off for everything once the cap was
+  // crossed, measured as a ~6x amplification, which handed the attacker back
+  // most of what the cache was added to remove.
+  if (CANONICAL_ZONE_CACHE.size >= MAX_CANONICAL_ZONE_CACHE) {
+    const oldest = CANONICAL_ZONE_CACHE.keys().next();
+    if (!oldest.done) CANONICAL_ZONE_CACHE.delete(oldest.value);
+  }
   CANONICAL_ZONE_CACHE.set(name, resolved);
   return resolved === CANONICAL_ZONE_UNRESOLVED ? undefined : resolved;
 }
@@ -3125,7 +3216,16 @@ function contractFactsFor(
 ): ReportingContractFactsV1 {
   return {
     ...(Array.isArray(obligation.media_buy_ids) ? { mediaBuyIds: obligation.media_buy_ids } : {}),
-    ...(obligation.coverage?.covered_package_ids ? { coveredPackageIds: obligation.coverage.covered_package_ids } : {}),
+    // `Array.isArray`, not truthy: a non-array object is truthy and would reach
+    // `.find` in the content-mismatch check, which throws from a call site that
+    // runs after receipts sync. Pre-empted today by `isReportingCoverageEvidence`
+    // in `expectedPeriodMatches` — a non-array coverage stops the obligation
+    // matching at all — so this arm is not independently reachable and is not
+    // claimed as tested. Its revision-side twin in `content-mismatch.ts` is
+    // reachable, because `COVERAGE_SCOPE_MISMATCH` is not disqualifying.
+    ...(Array.isArray(obligation.coverage?.covered_package_ids)
+      ? { coveredPackageIds: obligation.coverage.covered_package_ids }
+      : {}),
     period: { start: expected.periodStart, end: expected.periodEnd },
     ...(expected.committedMetrics ? { committedMetrics: expected.committedMetrics } : {}),
     ...(expected.metricUnits ? { metricUnits: expected.metricUnits } : {}),
@@ -3287,6 +3387,10 @@ export function evaluateReportingLedger(
   operationsContact?: { url?: string; email?: string }
 ): Omit<ReportingReconciliationResult, 'submittedReceipts'> {
   assertDirectReportingLedgerGraph(ledger);
+  // One index per call, never cached on the ledger: this export takes a
+  // caller-owned ledger, and memoizing on its identity made a second call
+  // return results that ignored a revision the caller had appended.
+  const directCoreIndex = buildDirectCoreRevisionIndex(ledger);
   const obligationResults: ObligationReconciliation[] = [];
   const uniqueRevisions = new Map<string, ManagedReportingRevision>();
   const { expectedByIdentity, obligationCounts } = buildExpectedIdentityIndex(
@@ -3299,7 +3403,7 @@ export function evaluateReportingLedger(
     const matchingExpected = expectedByIdentity.get(identity) ?? [];
     const bijective = matchingExpected.length === 1 && obligationCounts.get(identity) === 1;
     const expected = bijective ? matchingExpected[0] : undefined;
-    const selected = selectCurrent(obligation, ledger, expected);
+    const selected = selectCurrent(obligation, ledger, expected, directCoreIndex);
     const reasons = [...selected.reasons];
     if (matchingExpected.length > 0 && !bijective) reasons.push('EXPECTED_PERIOD_NOT_BIJECTIVE');
     // Guarded and bounded: `health` is seller-supplied, so a non-string threw
@@ -3358,7 +3462,7 @@ export function evaluateReportingLedger(
       rowCount: item.row_count,
       controlTotals: item.control_totals,
       coverageStatus: item.coverage?.status ?? 'unknown',
-      coveredPackageIds: item.coverage?.covered_package_ids ?? [],
+      coveredPackageIds: Array.isArray(item.coverage?.covered_package_ids) ? item.coverage.covered_package_ids : [],
       packageIds: item.coverage?.package_ids ?? [],
     })),
   };
@@ -3551,13 +3655,14 @@ async function runReconcileReporting<TCredential = unknown>(
     options.expectedPeriods
   );
 
+  const directCoreIndex = buildDirectCoreRevisionIndex(ledger);
   for (const obligation of ledger.obligations) {
     if (obligation.reconciliation_mode !== 'consumer_receipt') continue;
     const identity = expectedIdentityKey(obligation);
     const matches = expectedByIdentity.get(identity) ?? [];
     if (matches.length !== 1 || obligationCounts.get(identity) !== 1) continue;
     const expected = matches[0]!;
-    const selected = selectCurrent(obligation, ledger, expected);
+    const selected = selectCurrent(obligation, ledger, expected, directCoreIndex);
     if (!selected.revision || !selected.materialization || selected.reasons.length) continue;
     if (ledger.receipts.some(receipt => receiptMatches(receipt, selected.revision!, selected.materialization!)))
       continue;
@@ -3679,7 +3784,16 @@ async function runReconcileReporting<TCredential = unknown>(
           ? {
               ...plan,
               suppressed: 'local_budget_exhausted' as const,
-              reason: suppressionReason('local_budget_exhausted', plan.reason),
+              // Both entry conditions are the same ceiling — the latch is only
+              // ever set by a `run`-scoped exhaustion, whose sole producer is
+              // `maxLoadMs`. Passing the draft's own reason here rendered
+              // "not posted: the named revision is ready to consume and honors
+              // every frozen contract fact", which describes a healthy plan
+              // under a suppression and names no ceiling at all.
+              reason: suppressionReason(
+                'local_budget_exhausted',
+                'ledgerLimits.maxLoadMs was reached before the revision could be consumed'
+              ),
             }
           : plan
       );
@@ -4257,7 +4371,16 @@ async function consumeReportingRevision(
 /** Hard bound on rows accumulated from one revision read. */
 const MAX_CONSUMED_REVISION_ROWS = 10_000_000;
 
-/** The caller's row ceiling, never above the SDK's own — see the byte twin. */
+/**
+ * The caller's row ceiling, never above the SDK's own — see the byte twin.
+ *
+ * `ledgerLimits` is read once by `loadReportingLedger`'s validation and again
+ * here, so a caller-supplied getter can return different values to each. What
+ * these clamps guarantee is only that the *SDK's* ceiling holds on the second
+ * read; the caller's own validated number is not re-imposed, and memory stays
+ * bounded by the byte ceiling regardless. Not claimed as tested: observing the
+ * difference needs more rows than a unit test can build.
+ */
 function revisionRowCeiling(limits: ReportingLedgerLimits | undefined): number {
   const requested = limits?.maxRevisionRows;
   return typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0
@@ -4269,15 +4392,18 @@ function revisionRowCeiling(limits: ReportingLedgerLimits | undefined): number {
  * The caller's byte ceiling, never above the SDK's own.
  *
  * `loadReportingLedger` refuses a value above `MAX_CONSUMED_REVISION_BYTES`
- * outright, and `reconcileReporting` always calls it before any read, so this
- * clamp has no reachable path today and is deliberately not claimed as tested.
- * It is kept because the ceiling bounds this process's memory, which is not the
- * caller's to spend, and this is the only place that decision is enforced if a
- * future caller reaches the read without the validation.
+ * outright, but it reads `ledgerLimits` a second time here, so a getter that
+ * returns a small value to the validation and a large one to this call is a
+ * reachable path — the row twin says the same. This clamp re-imposes the SDK's
+ * ceiling, not the caller's validated number. The effect is not cheaply
+ * observable, since exceeding it needs more than 256 MiB of rows, so it is not
+ * claimed as tested; the ceiling bounds this process's memory, which is not the
+ * caller's to spend.
  */
 function revisionByteCeiling(limits: ReportingLedgerLimits | undefined): number {
   const requested = limits?.maxRevisionBytes;
-  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+  // `isSafeInteger` to read like the validation it backs up.
+  return typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0
     ? Math.min(requested, MAX_CONSUMED_REVISION_BYTES)
     : MAX_CONSUMED_REVISION_BYTES;
 }

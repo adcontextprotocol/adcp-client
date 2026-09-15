@@ -3,7 +3,7 @@
 ---
 
 Harden and correct the rc.3 buyer consumer-status loop that shipped in `14.0.0-rc.38`. Most items
-below are defects in that release; the two additive ones are called out as such.
+below are defects in that release; the additive ones are called out as such at the end.
 
 **A buyer that pinned `periodSourceTimezone` could never post for a seller that spelled the zone
 differently.** rc.38 put the buyer's pin on the wire, and the seller's ingest compares that field
@@ -83,8 +83,10 @@ synchronous work. Nothing bounded it: `maxLoadMs` covers only the ledger read, a
 synchronous, so every `AbortSignal` deadline in the SDK is unreachable while it runs. Canonical zones
 are now memoized in a bounded cache and a zone name is length-checked before `Intl` sees it (a 1 MB
 name measured 8.2 ms). The revision-to-obligation scope match is also indexed by scope key rather
-than rescanned per obligation, which removes the underlying O(obligations × revisions) product —
-`maxRecords` bounds only the sum, so a 50k/50k ledger was 2.5e9 comparisons.
+than rescanned per obligation. That lowers the constant sharply but not the order: obligations
+sharing one scope key — the normal shape for a logical reporting slice — still walk their bucket, so
+a large ledger remains an expensive synchronous pass that no deadline covers. `maxRecords` bounds
+only the sum, not the product.
 
 **Seller-supplied collections and scope fields are array-checked.** `periods: 0` — or `true`, or an
 object — reached `for…of` on a non-iterable and threw a raw `TypeError`; so did an omitted
@@ -116,6 +118,11 @@ SDK process's memory rather than the caller's. It exists mainly so the ceiling i
 test. `plan.deadlineSource`, `plan.periodZoneBeyondPin` and
 `ReportingReconciliationError.submittedReceipts` are also new optional public fields, which is what
 makes this a `minor`. The `suppressed` union itself is unchanged from rc.38.
+
+**One source-compatibility change.** `plan.deadlineBeyondPin.pinned` is now optional — it is absent
+in the no-pin case this release added — so a reader that typed it as `string` under
+`strictNullChecks` will need to handle `undefined`. That is the alerting code the guide asks you to
+write, so it is worth checking before you upgrade.
 
 Thirty-one regressions, each verified to fail with its fix reverted from a clean build. That set also
 closes gaps the review found in existing coverage: the row estimator's breadth cap, its 64-level

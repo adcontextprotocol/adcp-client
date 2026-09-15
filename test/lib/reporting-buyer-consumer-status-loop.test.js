@@ -2991,6 +2991,274 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     );
   });
 
+  test('a malformed covered_package_ids does not silence every period forever', async () => {
+    const seller = await harness();
+    // The buyer's own record has to carry the same frozen package denominator,
+    // or the obligation stops matching and the comparison is never reached.
+    const basePeriod = expectedPeriod(seller.request, seller.anchor);
+    const expected = [
+      {
+        ...basePeriod,
+        coverage: { ...basePeriod.coverage, package_ids: ['pkg-1'], covered_package_ids: ['pkg-1'] },
+      },
+    ];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `?? []` again: a scalar reached `.includes` and threw `TypeError` from
+    // inside the content-mismatch check, which runs after receipts sync and
+    // before the posting loop — so one field on one revision suppressed every
+    // period in scope on every run, and the seller escaped the very
+    // `coverage_short` accusation this check exists to produce.
+    // `COVERAGE_SCOPE_MISMATCH` is deliberately not disqualifying, so a
+    // revision with malformed coverage does reach here.
+    for (const bad of [0, {}, true]) {
+      const honest = seller.client.getReportingStatus;
+      seller.client.getReportingStatus = async params => {
+        const page = await honest(params);
+        return {
+          ...page,
+          // The obligation freezes a real package denominator, so the
+          // comparison actually iterates; the revision's copy is the poison.
+          // Both sides matter: a non-array on the obligation is truthy and
+          // reached `.find`, and one on the revision reached `.includes`.
+          periods: (page.periods ?? []).map(period => ({
+            ...period,
+            coverage: { ...period.coverage, package_ids: ['pkg-1'], covered_package_ids: ['pkg-1'] },
+          })),
+          revisions: (page.revisions ?? []).map(revision => ({
+            ...revision,
+            coverage: { ...revision.coverage, package_ids: ['pkg-1'], covered_package_ids: bad },
+          })),
+        };
+      };
+      const outcome = await seller.reconcile(at, expected).then(
+        result => ({ result }),
+        error => ({ error })
+      );
+      assert.ok(!(outcome.error instanceof TypeError), `covered_package_ids=${JSON.stringify(bad)}: TypeError escaped`);
+      if (outcome.error) assert.ok(typeof outcome.error.code === 'string');
+      // And the accusation still lands: the whole point is that the seller
+      // cannot trade a `coverage_short` for an unreadable field.
+      assert.equal(
+        outcome.result?.consumerStatuses?.[0]?.consumerStatus,
+        'content_mismatch',
+        `covered_package_ids=${JSON.stringify(bad)} must still be reported`
+      );
+      seller.client.getReportingStatus = honest;
+    }
+  });
+
+  test('an unacknowledged receipt is not reported as durably synced', async () => {
+    const seller = await harness();
+    const expected = [
+      expectedPeriod(seller.request, seller.anchor, {
+        reconciliationMode: 'consumer_receipt',
+        deliveryMethod: 'file_transfer',
+      }),
+    ];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // The receipt is recorded only once the acknowledgement verifies. Recording
+    // it before would put an unacknowledged receipt on
+    // `error.submittedReceipts`, which the TSDoc promises are confirmed writes.
+    await receiptThenReload(seller, page => page, 99);
+    seller.client.syncReportingReceipts = async () => ({ status: 'completed', results: [] });
+
+    await assert.rejects(
+      () => seller.reconcile(at, expected),
+      error => {
+        assert.equal(error.code, 'RECEIPT_WRITE_FAILED');
+        assert.equal(error.submittedReceipts, undefined, 'an unverified write is not a confirmed one');
+        return true;
+      }
+    );
+  });
+
+  test('a scope collection that is not an array is typed, all four of them', async () => {
+    // Three of the four reads gained an `Array.isArray` guard; `media_buy_ids`
+    // kept its `?? []` and threw `TypeError` from `sameStringSet`'s spread
+    // where its siblings returned a typed answer. Reachable on the reload that
+    // follows a durable receipt write.
+    for (const field of ['media_buy_ids', 'delivery_config_generations', 'feed_purposes', 'finality']) {
+      for (const bad of [0, {}, true]) {
+        const seller = await harness();
+        const expected = [expectedPeriod(seller.request, seller.anchor)];
+        await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+        const at = seller.anchor + DAY + 3 * HOUR;
+        seller.observeAt(at);
+        const honest = seller.client.getReportingStatus;
+        seller.client.getReportingStatus = async params => {
+          const page = await honest(params);
+          return { ...page, scope: { ...page.scope, [field]: bad } };
+        };
+        // Each read is only consulted when the *request* filters on it, so the
+        // request has to carry all four.
+        const request = {
+          account: seller.request.account,
+          media_buy_ids: [...seller.request.coverage.mediaBuyIds],
+          delivery_config_ids: [seller.request.delivery_config_id],
+          feed_purposes: ['analytics'],
+          finality: ['snapshot'],
+        };
+
+        const outcome = await seller.reconcile(at, expected, { request }).then(
+          result => ({ result }),
+          error => ({ error })
+        );
+        assert.ok(!(outcome.error instanceof TypeError), `scope.${field}=${String(bad)}: TypeError escaped`);
+        if (outcome.error) {
+          assert.ok(typeof outcome.error.code === 'string', `scope.${field}: untyped failure`);
+        }
+      }
+    }
+  });
+
+  test('the scope-key index agrees with the predicate it replaced', async () => {
+    // The index is only sound if a bucket lookup is the same test as
+    // `revisionMatchesObligationScope`. Nothing linked the two, so an edit to
+    // the key could silently make the join wider or narrower — and a wider join
+    // puts a revision under an obligation it does not belong to.
+    const { __testing } = require('../../dist/lib/reporting/reconciliation.js');
+    assert.ok(__testing, 'the equivalence hooks are exported for this test');
+    const { revisionMatchesObligationScope, reportingRevisionScopeKey } = __testing;
+    const periods = [
+      { start: 'a', end: 'b', source_timezone: 'UTC' },
+      { start: 'a', end: 'b', source_timezone: 'Zulu' },
+      { start: 'a', end: 'b', source_timezone: 'Asia/Tokyo' },
+      { start: 'a', end: 'b', source_timezone: 'Japan' },
+      { start: 'a', end: 'b', source_timezone: 'Bogus/One' },
+      { start: 'a', end: 'b', source_timezone: 'Bogus/Two' },
+      { start: 'a', end: 'c', source_timezone: 'UTC' },
+      { start: 'z', end: 'b', source_timezone: 'UTC' },
+      null,
+      { start: 'a', end: 'b' },
+    ];
+    const bases = [
+      { account_id: 'acct', report_definition_id: 'rd', reporting_profile: 'rp', media_buy_ids: ['m1'] },
+      { account_id: 'other', report_definition_id: 'rd', reporting_profile: 'rp', media_buy_ids: ['m1'] },
+      { account_id: 'acct', report_definition_id: 'rd2', reporting_profile: 'rp', media_buy_ids: ['m1'] },
+      { account_id: 'acct', report_definition_id: 'rd', reporting_profile: 'rp', media_buy_ids: ['m1', 'm2'] },
+      { account_id: 'acct', report_definition_id: 'rd', reporting_profile: 'rp', media_buy_ids: ['m2', 'm1'] },
+    ];
+    const records = [];
+    for (const base of bases) for (const period of periods) records.push({ ...base, period });
+
+    let compared = 0;
+    for (const left of records) {
+      for (const right of records) {
+        const predicate = revisionMatchesObligationScope(left, right);
+        const indexed = reportingRevisionScopeKey(left) === reportingRevisionScopeKey(right);
+        assert.equal(
+          indexed,
+          predicate,
+          `index and predicate disagree for ${JSON.stringify(left.period)} vs ${JSON.stringify(right.period)}`
+        );
+        compared += 1;
+      }
+    }
+    assert.ok(compared >= 2_500, `compared ${compared} pairs`);
+  });
+
+  test('an obligation with no readable period does not throw out of the scope key', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `reportingRevisionScopeKey` read `period.start` after only checking for
+    // `undefined`, so a `null` period dereferenced to a raw `TypeError`. The
+    // revisions loop had the shape guard; the obligation path did not.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return { ...page, periods: (page.periods ?? []).map(period => ({ ...period, period: null })) };
+    };
+
+    const result = await seller.reconcile(at, expected).catch(error => {
+      assert.ok(!(error instanceof TypeError), 'TypeError escaped the reconcile');
+      assert.ok(error.code, 'and any failure is typed');
+      return undefined;
+    });
+    // Either outcome is acceptable; a raw TypeError is not.
+    if (result) assert.equal(result.consumerStatuses[0].consumerStatus, 'obligation_missing');
+  });
+
+  test('a deeply nested seller value is a malformed record, not a stack overflow', async () => {
+    const nest = depth => {
+      let value = {};
+      for (let level = 0; level < depth; level += 1) value = { level: value };
+      return value;
+    };
+    const probe = async mutate => {
+      const seller = await harness();
+      const expected = [expectedPeriod(seller.request, seller.anchor)];
+      await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+      await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+      const at = seller.anchor + DAY + 3 * HOUR;
+      seller.observeAt(at);
+      const honest = seller.client.getReportingStatus;
+      seller.client.getReportingStatus = async params => mutate(await honest(params));
+      return seller.reconcile(at, expected).then(
+        result => ({ result }),
+        error => ({ error })
+      );
+    };
+
+    // `canonical` recursed without a bound, and `same()` walks seller objects,
+    // so a well-formed ~3,000-deep value threw `RangeError` out of the
+    // reconcile — from the post-receipt reload too, where it cost the caller
+    // its record of durable work.
+    const deep = nest(3_000);
+    for (const [field, mutate] of [
+      [
+        'obligation.coverage',
+        page => ({ ...page, periods: (page.periods ?? []).map(p => ({ ...p, coverage: deep })) }),
+      ],
+      [
+        'revision.period.source_timezone',
+        page => ({
+          ...page,
+          revisions: (page.revisions ?? []).map(r => ({ ...r, period: { ...r.period, source_timezone: deep } })),
+        }),
+      ],
+      [
+        'obligation.report_definition_id',
+        page => ({ ...page, periods: (page.periods ?? []).map(p => ({ ...p, report_definition_id: deep })) }),
+      ],
+    ]) {
+      const { error } = await probe(mutate);
+      // Not every field reaches a canonicalizer — a deep `coverage` is refused
+      // by its shape guard first, and the scope key is built from rendered
+      // scalars rather than walked. What must hold everywhere is that nothing
+      // escapes untyped.
+      if (error) {
+        assert.ok(!(error instanceof RangeError), `${field}: RangeError escaped`);
+        assert.ok(!(error instanceof TypeError), `${field}: TypeError escaped`);
+        assert.ok(typeof error.code === 'string', `${field}: the failure must be typed, saw ${error}`);
+      }
+    }
+
+    // And the depth bound itself, reached through the one comparison that does
+    // walk seller objects.
+    const { canonicalJsonV1: _unused } = require('../../dist/lib/reporting/source/index.js');
+    const { error: deepReceipt } = await probe(page => ({
+      ...page,
+      receipts: (page.receipts ?? []).map(receipt => ({ ...receipt, observed_control_totals: deep })),
+    }));
+    if (deepReceipt) {
+      assert.ok(!(deepReceipt instanceof RangeError), 'RangeError escaped from a receipt comparison');
+      assert.ok(typeof deepReceipt.code === 'string');
+    }
+  });
+
   test('a ledger collection that is not an array is refused, not iterated', async () => {
     // `?? []` guarded against null and undefined and nothing else, so `0` —
     // or `true`, or an object — reached `for…of` on a non-iterable and threw a

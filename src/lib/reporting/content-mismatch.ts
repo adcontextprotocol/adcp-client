@@ -145,9 +145,18 @@ export function detectReportingContentMismatch(
   // Unconditional. Under `allow_partial` the obligation already froze the
   // reduced denominator, so a revision narrower than that frozen set is still
   // short of what the generation promised.
-  const missingPackage = (facts.coveredPackageIds ?? []).find(
-    id => !(revision.coverage?.covered_package_ids ?? []).includes(id)
-  );
+  // `Array.isArray`, not `?? []`: the latter caught null and undefined and
+  // nothing else, so a scalar `covered_package_ids` reached `.includes` and
+  // threw `TypeError`. `COVERAGE_SCOPE_MISMATCH` is deliberately not
+  // disqualifying, so a revision with malformed coverage reaches here — after
+  // receipts have synced — and the throw suppressed every period in scope on
+  // every run, which is exactly the `package_missing` accusation this check
+  // exists to produce.
+  const frozenPackageIds = Array.isArray(facts.coveredPackageIds) ? facts.coveredPackageIds : [];
+  const revisionPackageIds = Array.isArray(revision.coverage?.covered_package_ids)
+    ? revision.coverage.covered_package_ids
+    : [];
+  const missingPackage = frozenPackageIds.find(id => !revisionPackageIds.includes(id));
   if (missingPackage !== undefined) {
     return {
       mismatchCode: 'coverage_short',
