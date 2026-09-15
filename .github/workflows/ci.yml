@@ -278,13 +278,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -406,13 +406,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -460,13 +460,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -549,13 +549,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -602,13 +602,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -677,13 +677,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -753,13 +753,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then
@@ -963,13 +963,13 @@ jobs:
           LIBRARY_SHA256: ${{ needs.library-build.outputs.sha256 }}
           LIBRARY_COMMIT: ${{ needs.library-build.outputs.commit }}
         run: |
-          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" ]]; then
+          if [[ ! "$LIBRARY_SHA256" =~ ^[0-9a-f]{64}$ || "$LIBRARY_COMMIT" != "$GITHUB_SHA" || "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
             echo "::error::Missing library-build digest or checkout identity mismatch."
             exit 1
           fi
           archive="$RUNNER_TEMP/library-artifact/library-dist.tar.gz"
           if [[ ! -f "$archive" ]]; then
-            echo "::error::Missing library-build artifact. Rerun Library Build and its consumers."
+            echo "::error::Missing library-build artifact (expires after 1 day). Use Re-run all jobs."
             exit 1
           fi
           if ! echo "$LIBRARY_SHA256  $archive" | sha256sum --check --status; then

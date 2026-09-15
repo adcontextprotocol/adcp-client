@@ -107,6 +107,25 @@ test('all consumers verify before use, without rebuilding or waiting for package
   assert.ok(jobs.test.needs.includes('node-undici-network-matrix'));
 });
 
+test('all package validation gates remain required after leaving the producer', () => {
+  const steps = jobs['library-checks'].steps;
+  for (const command of [
+    'npm run test:zod-openapi-portability',
+    'npm run check:package-size',
+    'npm run check:package',
+  ]) {
+    const step = steps.find(step => step.run === command);
+    assert.ok(step, command);
+    assert.equal(step.if, undefined, command);
+    assert.equal(step['continue-on-error'], undefined, command);
+  }
+  const exports = steps.find(step => step.name === 'Validate package exports');
+  assert.match(exports.run, /fs\.existsSync\(pkg\.main\)/);
+  assert.match(exports.run, /fs\.existsSync\(pkg\.types\)/);
+  assert.equal(exports.if, undefined);
+  assert.equal(exports['continue-on-error'], undefined);
+});
+
 test('Node floor rebuilds and external runtime compatibility retain every matrix cell', () => {
   const packageJob = jobs['node-undici-runtime-matrix'];
   const networkJob = jobs['node-undici-network-matrix'];
@@ -198,6 +217,26 @@ test('the actual archive/verification scripts round-trip output and reject stale
   const wrongCheckout = shell(archive.run, cwd, { ...env, GITHUB_SHA: '0'.repeat(40) });
   assert.notEqual(wrongCheckout.status, 0);
   assert.match(wrongCheckout.stdout, /::error::Library Build checkout does not match this workflow run/);
+  succeeds(
+    run(
+      'git',
+      [
+        '-c',
+        'user.name=CI Test',
+        '-c',
+        'user.email=ci@example.test',
+        'commit',
+        '--allow-empty',
+        '-qm',
+        'test: different checkout',
+      ],
+      cwd
+    )
+  );
+  fs.writeFileSync(artifactPath, bytes);
+  const wrongConsumer = shell(verify.run, cwd, consumerEnv);
+  assert.notEqual(wrongConsumer.status, 0);
+  assert.match(wrongConsumer.stdout, /checkout identity mismatch/);
 });
 
 test('package smoke still skips doc-only changes and rebuilds for workflow changes or an unavailable base', t => {
