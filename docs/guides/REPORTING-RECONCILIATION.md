@@ -121,8 +121,7 @@ resolution order is worth knowing:
 |---|---|---|
 | 1 | `obligation.expected_at` | The seller's own commitment. Normalized, never echoed verbatim. |
 | 1a | — *(present but unreadable)* | **Nothing is derived and rows 2–3 are not consulted.** A present `expected_at` is the seller's real deadline; a locally derived one would disagree with it and the statement would be refused on every run. Only the seller can fix the value. |
-| 2 | `ExpectedReportingPeriod.officialAfterSeconds` | Only when `requiredFinality` is `official`. |
-| 2 | `ExpectedReportingPeriod.deliverySlaSeconds` | Otherwise. Added to the period end. |
+| 2 | `ExpectedReportingPeriod.officialAfterSeconds` when `requiredFinality` is `official`, `deliverySlaSeconds` otherwise | Added to the period end. There is **no cross-fallback**: an official generation is never dated from `deliverySlaSeconds`, because the seller refuses such a statement on every run. |
 | 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned neither above **and an obligation exists** — so it is never available for `obligation_missing`, which is what the pins are for. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
 
 The deadline is then that instant plus `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. That
@@ -140,11 +139,12 @@ must carry a digest the buyer recomputed from rows it actually read.
 | `suppressed` | Meaning | Your move |
 |---|---|---|
 | `unchanged` | The current leaf already says exactly this. | Nothing. Re-posting would supersede a statement with its own duplicate. |
-| `deadline_unknown` | No deadline could be derived. | Record the pin named in `reason`, or take up the malformed `expected_at` with the seller. |
+| `deadline_unknown` | No deadline could be derived: a pin is missing, the seller's `expected_at` is unreadable, or the deadline overflowed the representable range. | `reason` names which. Record the pin it names; for an unreadable `expected_at` only the seller can fix it; for an overflow, lower `automatedRecoveryWindowSeconds` or have the seller correct `expected_at`. |
 | `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
 | `posting_unavailable` | No poster is wired, so there is nothing to append to. | Supply `client.syncReportingStatus`. |
-| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, or the revision exceeded the SDK's size ceiling. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. The byte ceiling is not tunable. Never reported as a seller failure — a row the SDK cannot *size* is reported as `unreadable` / `reader_incompatible` instead, because the shape is the seller's choice. |
+| `period_identity_unknown` | The seller's `period.source_timezone` is not a recognized IANA zone, and that value is part of the chain's logical key. | Record `ExpectedReportingPeriod.periodSourceTimezone`, or have the seller correct it. Substituting a zone would produce a statement it refuses on every run. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read; the revision exceeded the SDK's size ceiling; or a row was too deep or too intricate for the SDK to size. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. The size, depth and structure ceilings are not tunable. Never reported as a seller failure. |
 | `leaf_undisclosed` | Your chain has more than one unsuperseded leaf, or the seller named a current leaf it did not return. | A seller-side defect either way; the buyer declines to guess which leaf to supersede. |
 | `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
 
-A plan with `suppressed` unset and `overdue: false` is simply not due yet.
+A plan with `suppressed` unset and `overdue: false` is simply not due yet. **Treat `suppressed !== undefined` as alertable** — every value above means this period will never post until something changes. And if a plan is `overdue: true`, unsuppressed, and still absent from `postedConsumerStatuses`, look in `failedConsumerStatuses`.

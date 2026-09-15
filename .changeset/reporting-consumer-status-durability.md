@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Harden the rc.3 buyer consumer-status loop against seller-supplied data that could abort a reconcile,
@@ -45,13 +45,19 @@ duration whose result falls outside the RFC 3339 year range derives nothing rath
 a flat constant, which cut both ways: too small and nesting walked past the ceiling
 (`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), too large and a structurally deep row silenced the
 buyer with a `local_budget_exhausted` that blamed its own budget. It now walks a bounded number
-of nodes per row and charges each for what it holds, which closes the bypass. A row the estimator cannot
-size is reported as `unreadable` / `reader_incompatible` rather than suppressed: silence is reserved
-for limits the adopter configured, so a seller cannot buy immunity from `revision_missing` by
-publishing an awkward shape. Strings and primitives are sized in O(1) and never consume that budget,
-so neither a very wide row nor a very large string can be hidden from the ceiling or used to trip it
-early; a structure too deep to size is reported as the buyer's own limit rather than as an unreadable
-revision.
+of nodes per row and charges each for what it holds, which closes the bypass. Values are charged against
+retained heap rather than wire bytes — an empty string previously charged zero, which is how hundreds
+of megabytes of them slipped past the ceiling — and the figures land within about 2x of measured heap
+in both directions. A row too deep or too intricate for the estimator to walk is reported as the
+buyer's own limit, not as an unreadable revision: the walk bound is the buyer's, and a durable
+`unreadable` would pin the seller's view at `action_required` for a row — a per-SKU retail-media
+breakdown, say — that is entirely conformant.
+
+**An unrecognized `period.source_timezone` suppresses rather than substituting.** The value is part
+of the consumer-status chain's logical key and the seller compares it strictly, so falling back to
+`'UTC'` produced a statement refused on every run forever — and `iana_timezone` forbids that
+substitution by name. The period now comes back `suppressed: 'period_identity_unknown'`, a new arm of
+the exported union. With nothing declared at all, `'UTC'` remains the buyer's own default.
 
 **`period.source_timezone` is validated, and the buyer's own pin wins.** It reaches the durable
 statement, the `reporting_status_id` hash and the unchanged-comparison, so a seller varying its echo
@@ -75,6 +81,17 @@ suppresses instead of falling through to the pin.
 `suppressed` gains `posting_unavailable`, widening that exported union — an adopter switching
 exhaustively on it will see a new arm. Concretely: with no `client.syncReportingStatus` wired, a plan used to
 come back live, due and unsuppressed while silently going nowhere.
+
+**Official finality no longer falls back to `deliverySlaSeconds`.** An official generation dated from
+`delivery_sla` is refused by the seller, and because the statement takes no clock input it is rebuilt
+identically and refused on every run. Without `officialAfterSeconds` the period is now
+`deadline_unknown`, naming that pin. A deadline that overflows the representable range gets its own
+cause too, rather than being reported as a pin the adopter forgot to record.
+
+**Malformed ledger payloads no longer abort a reconcile that already synced receipts.** A non-array
+`issues`, a null entry in it, or a missing `period` from a client that does not schema-validate its
+responses used to throw out of `reconcileReporting` after receipts had gone to the seller, losing the
+caller's record of durable work.
 
 Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
 does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been

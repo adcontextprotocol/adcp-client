@@ -48,7 +48,16 @@ const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
  * numbers — is one container, so it is sized exactly; a structure that needs
  * more than this to describe is one the estimator declines to size.
  */
-const MAX_ROW_ESTIMATE_CONTAINERS = 4_096;
+const MAX_ROW_ESTIMATE_CONTAINERS = 262_144;
+
+/**
+ * Marker for a deadline that resolved but fell outside the representable
+ * range. Distinct from `undefined`, which means "nothing derived at all" and is
+ * reported as a missing pin — a value the adopter did record and which
+ * overflowed needs its own diagnosis, or they are sent to fix a field that is
+ * not wrong.
+ */
+const OVERFLOWED_INSTANT = '\u0000overflow';
 
 /**
  * How deep the walk goes before declining.
@@ -467,6 +476,10 @@ export interface ReportingConsumerStatusPlanV1 {
    * - `posting_unavailable` — no `syncReportingStatus` is wired, so there is
    *   nothing to append to. Without this the plan reads as live, due and
    *   unsuppressed while silently going nowhere.
+   * - `period_identity_unknown` — the seller supplied a `period.source_timezone`
+   *   that is not a recognized IANA zone. That value is part of the chain's
+   *   logical key, so substituting one produces a statement the seller refuses
+   *   on every run; `iana_timezone` forbids the substitution by name.
    * - `local_budget_exhausted` — the buyer's own read budget ran out before it
    *   could consume the revision. Self-inflicted, so it is silence rather than
    *   an `unreadable` claim against a seller that did nothing wrong.
@@ -487,7 +500,8 @@ export interface ReportingConsumerStatusPlanV1 {
     | 'local_budget_exhausted'
     | 'deadline_unknown'
     | 'chain_indeterminate'
-    | 'posting_unavailable';
+    | 'posting_unavailable'
+    | 'period_identity_unknown';
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -1532,25 +1546,25 @@ function planReportingConsumerStatuses(
       expectedPeriodMatches(expected, candidate, ledger)
     );
     // `source_timezone` is part of the consumer-status chain's logical key, so
-    // a wrong value forks the chain rather than failing loudly.
+    // a wrong value forks the chain rather than failing loudly. The buyer's own
+    // pin comes first: the value lands in the durable statement, the
+    // `reporting_status_id` hash and `sameConsumerStatement`, so a seller that
+    // varies its echo would otherwise make the buyer append a fresh statement
+    // on every reconcile. Identity is checked, not length — `iana_timezone` is
+    // a MUST and a numeric offset is exactly what it forbids substituting.
+    const declaredSourceTimezone = (obligationForPeriod as { period?: { source_timezone?: unknown } } | undefined)
+      ?.period?.source_timezone;
+    const resolvedSourceTimezone = ianaTimeZone(expected.periodSourceTimezone) ?? ianaTimeZone(declaredSourceTimezone);
+    // Substituting `'UTC'` for a zone the seller actually sent is what
+    // `iana_timezone` forbids by name, and because the value is in the chain's
+    // logical key the substituted statement is refused on every run, forever.
+    // With nothing declared at all, `'UTC'` is the buyer's own documented
+    // default rather than a substitution of someone else's value.
+    const periodIdentityUnknown = resolvedSourceTimezone === undefined && declaredSourceTimezone !== undefined;
     const period = {
       start: expected.periodStart,
       end: expected.periodEnd,
-      // Bounded before adoption: it goes into the buyer's durable statement,
-      // into the `reporting_status_id` hash, and into the seller-side chain
-      // key — so a seller that varies it forks the buyer's own chain. The
-      // ingest path bounds it at 255; this read path has to as well.
-      // The buyer's own pin first. This value lands in the durable statement,
-      // the `reporting_status_id` hash and `sameConsumerStatement`, so a seller
-      // that varies its echo makes the buyer append a fresh statement on every
-      // reconcile, forever. Identity is checked, not just length: `iana_timezone`
-      // is a MUST and a numeric offset is exactly what it forbids substituting.
-      source_timezone:
-        ianaTimeZone(expected.periodSourceTimezone) ??
-        ianaTimeZone(
-          (obligationForPeriod as { period?: { source_timezone?: unknown } } | undefined)?.period?.source_timezone
-        ) ??
-        'UTC',
+      source_timezone: resolvedSourceTimezone ?? 'UTC',
     };
     const base = {
       deliveryConfigId: expected.deliveryConfigId,
@@ -1558,19 +1572,33 @@ function planReportingConsumerStatuses(
       reportDefinitionId: expected.reportDefinitionId,
       period,
     };
-    const expectedAt = reportingExpectedAt(obligationForPeriod, expected);
+    // Clamped once, here, so the deadline and the statement's own instant come
+    // from the same value: `expected_at` is "the resolved period end plus this
+    // duration" and cannot precede the period end, and feeding the raw value to
+    // `overdue` made a past-dated one force a statement the seller refuses on
+    // every run.
+    const derivedExpectedAt = reportingExpectedAt(obligationForPeriod, expected);
+    const expectedAtOverflowed = derivedExpectedAt === OVERFLOWED_INSTANT;
+    // Clamp only a value that was actually derived: turning "nothing derived"
+    // into the period end would manufacture a deadline out of the absence of
+    // one, and every present-but-unreadable diagnostic depends on that
+    // distinction surviving.
+    const expectedAt =
+      expectedAtOverflowed || derivedExpectedAt === undefined
+        ? undefined
+        : latestInstant([derivedExpectedAt, expected.periodEnd]);
     // The seller sent something we could not read *and* could not recompute
     // from its own schedule — carried so the diagnostic can name the value.
     // Present in any form the buyer could not read — including a non-string —
     // is the seller's defect, not a pin the adopter forgot to record.
     const declaredExpectedAt = obligationForPeriod?.expected_at;
     const malformedExpectedAt =
-      expectedAt === undefined && declaredExpectedAt !== undefined
+      expectedAt === undefined && !expectedAtOverflowed && declaredExpectedAt !== undefined
         ? typeof declaredExpectedAt === 'string'
           ? declaredExpectedAt
           : `<${typeof declaredExpectedAt}>`
         : undefined;
-    const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt);
+    const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt, expectedAtOverflowed);
     const leaf = currentConsumerLeaf(
       ledger,
       base,
@@ -1591,6 +1619,7 @@ function planReportingConsumerStatuses(
         {
           ...base,
           ...schedule,
+          ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
           consumerStatus: 'obligation_missing',
           establishedAt,
           reason: missing.has(expected)
@@ -1621,6 +1650,7 @@ function planReportingConsumerStatuses(
         {
           ...base,
           ...schedule,
+          ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           ...(indeterminate ? { indeterminate: true } : {}),
@@ -1647,6 +1677,7 @@ function planReportingConsumerStatuses(
         {
           ...base,
           ...schedule,
+          ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           establishedAt,
@@ -1662,6 +1693,7 @@ function planReportingConsumerStatuses(
       {
         ...base,
         ...schedule,
+        ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
         reportingObligationId: obligation.reporting_obligation_id,
         reportingRevisionId: revision.reporting_revision_id,
         consumerStatus: mismatch ? ('content_mismatch' as const) : ('received' as const),
@@ -1735,6 +1767,8 @@ interface ConsumerStatusDraft {
     | { cause: 'deadline_overflow'; window: number };
   /** The buyer could not resolve the chain, so it must not assert anything. */
   indeterminate?: boolean;
+  /** The seller's `period.source_timezone` is not a zone the buyer can adopt. */
+  periodIdentityUnknown?: boolean;
   /** The instant this statement became true, before the monotonicity floor. */
   establishedAt: string;
   reason: string;
@@ -1759,7 +1793,7 @@ function finalizeConsumerStatusPlan(
 ): ReportingConsumerStatusPlanV1 {
   const statusAsOfFloor =
     latestInstant([draft.establishedAt, usableLeafInstant(leaf.statement, now)]) ?? draft.establishedAt;
-  const { establishedAt: _establishedAt, deadlineGap, indeterminate, ...carried } = draft;
+  const { establishedAt: _establishedAt, deadlineGap, indeterminate, periodIdentityUnknown, ...carried } = draft;
   const plan: ReportingConsumerStatusPlanV1 = {
     ...carried,
     ...(leaf.statusId ? { supersedesReportingStatusId: leaf.statusId } : {}),
@@ -1768,6 +1802,13 @@ function finalizeConsumerStatusPlan(
     // a read is left open for `attestConsumerStatusPlan`.
     ...(draft.requiresConsumption ? {} : { statusAsOf: statusAsOfFloor }),
   };
+  if (periodIdentityUnknown) {
+    return {
+      ...plan,
+      suppressed: 'period_identity_unknown',
+      reason: suppressionReason('period_identity_unknown', plan.reason),
+    };
+  }
   if (indeterminate) {
     return {
       ...plan,
@@ -1831,6 +1872,8 @@ function suppressionReason(
       return 'not posted: no client.getMediaBuyDelivery is wired, so consumption cannot be attested';
     case 'posting_unavailable':
       return 'not posted: no client.syncReportingStatus is wired, so the buyer cannot append to the status chain';
+    case 'period_identity_unknown':
+      return "not posted: the seller's period.source_timezone is not a recognized IANA zone, and that value is part of the chain's logical key — record ExpectedReportingPeriod.periodSourceTimezone, or have the seller correct it";
     case 'local_budget_exhausted':
       return "not posted: the buyer's own ledgerLimits read budget ran out before the revision could be consumed";
     case 'chain_indeterminate':
@@ -1970,14 +2013,18 @@ function reportingExpectedAt(
   // exists precisely to be independent of the seller, is overridden. The pin
   // is the buyer's answer to "when was this due"; the seller's schedule is
   // only a last resort for a buyer that has no answer of its own.
+  // No cross-pin fallback. An official generation dated from `delivery_sla` is
+  // refused by the seller, and because the statement takes no clock input it is
+  // rebuilt identically and refused on every run — `localExpectedAtPin`'s own
+  // comment says so, and falling back here was doing exactly that silently.
   const slaSeconds =
-    expected.requiredFinality === 'official' && typeof expected.officialAfterSeconds === 'number'
-      ? expected.officialAfterSeconds
-      : expected.deliverySlaSeconds;
+    expected.requiredFinality === 'official' ? expected.officialAfterSeconds : expected.deliverySlaSeconds;
   const periodEnd = Date.parse(expected.periodEnd);
   if (typeof slaSeconds === 'number' && Number.isFinite(slaSeconds) && slaSeconds >= 0 && Number.isFinite(periodEnd)) {
     const pinned = periodEnd + slaSeconds * 1_000;
-    return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : undefined;
+    // `undefined` here would be classified as a missing pin, which is the one
+    // thing it is not — the adopter recorded it and it overflowed.
+    return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : OVERFLOWED_INSTANT;
   }
   // `reporting-schedule.json`: "expected_at equals the resolved period end plus
   // this duration". With no pin of its own the buyer has nothing better, and
@@ -2030,7 +2077,8 @@ function reportingScheduledExpectedAt(
   // and the schema's pattern permits arbitrarily many digits, so `P999999999D`
   // is a legal value that lands outside the representable range — and
   // `toISOString` throws on that, from a call site with nothing to catch it.
-  return shifted === undefined || !isRepresentableInstant(shifted) ? undefined : new Date(shifted).toISOString();
+  if (shifted === undefined) return undefined;
+  return isRepresentableInstant(shifted) ? new Date(shifted).toISOString() : OVERFLOWED_INSTANT;
 }
 
 /**
@@ -2278,9 +2326,16 @@ function consumerStatusSchedule(
   expectedAt: string | undefined,
   expected: ExpectedReportingPeriod,
   now: Date,
-  malformedExpectedAt?: string
+  malformedExpectedAt?: string,
+  expectedAtOverflowed = false
 ): { deadline?: string; overdue: boolean; deadlineGap?: ConsumerStatusDraft['deadlineGap'] } {
   const windowSeconds = expected.automatedRecoveryWindowSeconds;
+  if (expectedAtOverflowed) {
+    return {
+      overdue: false,
+      deadlineGap: { cause: 'deadline_overflow', window: expected.automatedRecoveryWindowSeconds ?? 0 },
+    };
+  }
   if (expectedAt === undefined) {
     // Distinguish the two causes: a pin the buyer never recorded, versus an
     // obligation whose own `expected_at` the buyer could not read.
@@ -2339,11 +2394,14 @@ function normalizedInstant(value: unknown): string | undefined {
   // instead cannot distinguish that roll from a legitimate offset moving the
   // UTC date, which is why an earlier version of this only caught the `Z` case.
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return undefined;
+  if (Number(isoHour) > 23 || Number(isoMinute) > 59) return undefined;
   if (offsetMinute !== undefined && Number(offsetMinute) > 59) return undefined;
-  // A leap second is only ever inserted at 23:59:60; anything else claiming a
-  // sixtieth second is not a time `ajv-formats` would accept either.
+  // A leap second is inserted at 23:59:60 **UTC**, which is what `ajv-formats`
+  // checks — it converts the local time through the offset first. Testing the
+  // local fields instead rejected a genuine `18:59:60-05:00` and accepted a
+  // bogus `23:59:60+01:00`, i.e. wrong in both directions at once.
   const leapSecond = isoSecond === '60';
-  if (leapSecond && !(isoHour === '23' && isoMinute === '59')) return undefined;
+  if (leapSecond && utcMinuteOfDay(value, Number(isoHour), Number(isoMinute)) !== 23 * 60 + 59) return undefined;
   // `Date.parse` is narrower than the format the SDK validates seller payloads
   // with: it returns NaN for a bare `+hh` offset and for a leap second, both of
   // which `ajv-formats` accepts. Widening the pattern without handling these
@@ -2372,6 +2430,16 @@ function normalizedInstant(value: unknown): string | undefined {
 /** A usable, bounded source timezone, or `undefined` to fall through. */
 function boundedSourceTimezone(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 255 ? value : undefined;
+}
+
+/**
+ * Minute-of-day in UTC for a local wall time plus the value's own offset, the
+ * way `ajv-formats` resolves a leap second.
+ */
+function utcMinuteOfDay(value: string, hour: number, minute: number): number {
+  const offset = /([+-])(\d{2}):?(\d{2})?$/.exec(value);
+  const offsetMinutes = offset ? (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3] ?? 0)) : 0;
+  return (((hour * 60 + minute - offsetMinutes) % 1_440) + 1_440) % 1_440;
 }
 
 /** Strip control characters and bound any string headed for an adopter's log. */
@@ -2437,7 +2505,14 @@ function collectReportingEscalations(
   const operationsContact = options?.operationsContact;
   const escalations: ReportingEscalationV1[] = [];
   for (const obligation of ledger.obligations) {
-    for (const issue of (obligation as { issues?: Array<Record<string, unknown>> }).issues ?? []) {
+    const declaredIssues = (obligation as { issues?: unknown }).issues;
+    // Guarded: this runs *after* receipts have been synced, so a non-array or a
+    // null entry from an adopter client that does not schema-validate would
+    // abort the whole reconcile and lose the record of durable work — the exact
+    // hazard the canonicalizer guard exists for, two functions upstream.
+    for (const candidate of Array.isArray(declaredIssues) ? declaredIssues : []) {
+      if (typeof candidate !== 'object' || candidate === null || Array.isArray(candidate)) continue;
+      const issue = candidate as Record<string, unknown>;
       const recommendedAction = boundedDiagnostic(String(issue.recommended_action ?? ''));
       escalations.push({
         reportingObligationId: obligation.reporting_obligation_id,
@@ -2514,8 +2589,10 @@ function expectedIdentityKey(value: ExpectedReportingPeriod | ManagedReportingOb
     value.feed_purpose,
     value.reporting_profile,
     value.destination_ref,
-    value.period.start,
-    value.period.end,
+    // Optional-chained: a malformed `period` from a client that does not
+    // schema-validate would otherwise throw here, after receipts have synced.
+    value.period?.start,
+    value.period?.end,
   ]);
 }
 
@@ -3329,10 +3406,10 @@ async function consumeReportingRevision(
         rows.push(row);
         const sized = approximateRowBytes(row);
         if (sized === undefined) {
-          return {
-            failureCode: 'reader_incompatible',
-            detail: 'a revision row is structured too deeply or too intricately for this reader to size',
-          };
+          // The buyer's own walk bound, not a seller defect: a retail-media row
+          // carrying a per-SKU breakdown is entirely conformant and used to be
+          // *accused* here, durably, which is worse than falling silent.
+          return { budgetExhausted: 'revision' };
         }
         bytes += sized;
         if (rows.length > maxRows || bytes > MAX_CONSUMED_REVISION_BYTES) {
@@ -3453,13 +3530,19 @@ function approximateRowBytes(row: unknown): number | undefined {
   // names.
   let containers = MAX_ROW_ESTIMATE_CONTAINERS;
   const visit = (value: unknown, depth: number): number | undefined => {
-    if (typeof value === 'string') return value.length * 2;
-    if (value === null || typeof value !== 'object') return 16;
+    // Per-value floors, sized against *retained heap* rather than wire bytes —
+    // the ceiling exists to bound memory, and a two-byte `0,` on the wire is
+    // eight bytes in an array slot. The previous shape charged an empty string
+    // zero, so hundreds of megabytes of them slipped past the ceiling
+    // entirely; that was the real hole. These figures land within about 2x of
+    // measured retained heap in both directions.
+    if (typeof value === 'string') return 16 + value.length * 2;
+    if (value === null || typeof value !== 'object') return 8;
     if (depth >= MAX_ROW_ESTIMATE_DEPTH) return undefined;
     containers -= 1;
     if (containers < 0) return undefined;
-    let total = 32;
     if (Array.isArray(value)) {
+      let total = 40 + 8 * value.length;
       for (const item of value) {
         const child = visit(item, depth + 1);
         if (child === undefined) return undefined;
@@ -3467,7 +3550,9 @@ function approximateRowBytes(row: unknown): number | undefined {
       }
       return total;
     }
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const entries = Object.entries(value as Record<string, unknown>);
+    let total = 40 + 8 * entries.length;
+    for (const [key, child] of entries) {
       const sized = visit(child, depth + 1);
       if (sized === undefined) return undefined;
       total += key.length * 2 + sized;
