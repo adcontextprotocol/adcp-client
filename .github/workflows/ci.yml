@@ -226,6 +226,12 @@ jobs:
             echo "::error::Library Build checkout does not match this workflow run."
             exit 1
           fi
+          # Consumers read these tracked sources without rerunning generators.
+          # Fail before publication if the build would leave source/dist skew.
+          if ! git diff --exit-code -- src/lib/version.ts src/lib/server/wire-spec-fields.generated.ts; then
+            echo "::error::Commit regenerated library sources before sharing this build."
+            exit 1
+          fi
           tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist schemas/cache compliance/cache
           digest=$(sha256sum "$RUNNER_TEMP/library-dist.tar.gz" | cut -d ' ' -f 1)
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"

@@ -28,6 +28,8 @@ const verify = jobs['library-checks'].steps.find(step => step.name === 'Verify a
 const archive = jobs['library-build'].steps.find(step => step.id === 'archive');
 
 function run(command, args, cwd, env = {}) {
+  // Fixture commits must not invoke a contributor's signing setup or hooks.
+  if (command === 'git') args = ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args];
   return spawnSync(command, args, { cwd, env: { ...process.env, ...env }, encoding: 'utf8' });
 }
 function succeeds(result) {
@@ -43,6 +45,8 @@ function fixture(t) {
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   succeeds(run('git', ['init', '-q'], cwd));
   fs.copyFileSync(path.join(root, 'README.md'), path.join(cwd, 'README.md'));
+  fs.mkdirSync(path.join(cwd, 'src/lib'), { recursive: true });
+  fs.copyFileSync(path.join(root, 'src/lib/version.ts'), path.join(cwd, 'src/lib/version.ts'));
   succeeds(run('git', ['add', '.'], cwd));
   succeeds(
     run('git', ['-c', 'user.name=CI Test', '-c', 'user.email=ci@example.test', 'commit', '-qm', 'test: fixture'], cwd)
@@ -74,6 +78,10 @@ test('artifact identity and digest are bound to the producing job and this workf
     LIBRARY_COMMIT: '${{ needs.library-build.outputs.commit }}',
   });
   assert.ok(jobs['library-build'].steps.indexOf(archive) < jobs['library-build'].steps.indexOf(upload));
+  assert.match(
+    archive.run,
+    /git diff --exit-code -- src\/lib\/version\.ts src\/lib\/server\/wire-spec-fields\.generated\.ts/
+  );
 });
 
 test('all consumers verify before use, without rebuilding or waiting for package checks', () => {
@@ -173,6 +181,12 @@ test(
       fs.copyFileSync(path.join(root, 'ADCP_VERSION'), path.join(cwd, cache, 'current/ADCP_VERSION'));
       fs.symlinkSync('current', path.join(cwd, cache, 'latest'));
     }
+    fs.appendFileSync(path.join(cwd, 'src/lib/version.ts'), '\n// Uncommitted generated change.\n');
+    const sourceDrift = shell(archive.run, cwd, env);
+    assert.notEqual(sourceDrift.status, 0);
+    assert.match(sourceDrift.stdout, /::error::Commit regenerated library sources/);
+    assert.equal(fs.existsSync(env.GITHUB_OUTPUT), false);
+    succeeds(run('git', ['checkout', '--', 'src/lib/version.ts'], cwd));
     succeeds(shell(archive.run, cwd, env));
     const outputs = Object.fromEntries(
       fs
