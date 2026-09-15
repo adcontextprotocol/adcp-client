@@ -1265,6 +1265,84 @@ test('selected capability skips retain output protection before OAuth absence ha
   }
 });
 
+test('mixed skipped phases retain only known routed capability output gaps', async () => {
+  for (const origin of ['capability', 'eligible', 'mixed_hard']) {
+    const eligible = origin === 'eligible';
+    const hard = origin === 'mixed_hard';
+    for (const dependency of ['implicit', 'explicit', 'independent', 'restored']) {
+      const sb = storyboard([]);
+      sb.context = { skip: true, ...(dependency === 'restored' ? { needed: 'restored' } : {}) };
+      sb.phases = [
+        {
+          id: 'producer',
+          title: 'Producer',
+          skip_if: 'context.skip',
+          requires_capability: { path: 'account.require_operator_auth', equals: true },
+          steps: [
+            {
+              id: 'producer',
+              title: 'Producer',
+              task: 'get_adcp_capabilities',
+              agent: 'a',
+              context_outputs: [{ key: 'needed', path: 'identity.brand_json_url' }],
+            },
+            { id: 'eligible_peer', title: 'Eligible peer', task: 'get_adcp_capabilities', agent: 'b' },
+            ...(hard
+              ? [
+                  {
+                    id: 'failed_route',
+                    title: 'Failed route',
+                    task: 'unknown_tool',
+                    context_outputs: [{ key: 'needed', path: 'value' }],
+                  },
+                ]
+              : []),
+          ],
+        },
+        {
+          id: 'consumer',
+          title: 'Consumer',
+          ...(dependency === 'explicit' ? { depends_on: ['producer'] } : {}),
+          ...(dependency === 'independent' ? { depends_on: [] } : {}),
+          steps: [
+            {
+              id: 'negative',
+              title: 'Negative',
+              task: 'get_signals',
+              agent: 'b',
+              expect_error: true,
+              sample_request: { signal_spec: '$context.needed' },
+            },
+            { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' },
+          ],
+        },
+      ];
+      const { result, calls } = await run(
+        {
+          a: [[], { account: { require_operator_auth: eligible } }],
+          b: [['get_signals'], { account: { require_operator_auth: true }, supported_protocols: ['signals'] }, true],
+        },
+        sb
+      );
+      const executes = eligible || dependency === 'independent' || dependency === 'restored';
+      const label = `${origin}/${dependency}`;
+      assert.deepEqual(
+        result.phases[0].steps.map(step => step.step_id),
+        hard ? ['failed_route'] : [],
+        label
+      );
+      assert.equal(
+        result.phases[1].steps[0].skip_reason,
+        executes ? undefined : hard ? 'prerequisite_failed' : 'capability_prerequisite_unavailable',
+        label
+      );
+      assert.equal(calls.b.filter(task => task === 'get_signals').length, executes ? 1 : 0, label);
+      assert.equal(result.overall_passed, !hard, label);
+      assert.equal(result.failed_count, hard ? 1 : 0, label);
+    }
+  }
+});
+
 test('failed discovery retains route identity when credentials share a URL', async () => {
   const agent = await startAgent([], {}, false, [], 404, {}, 'Bearer failed-route');
   try {

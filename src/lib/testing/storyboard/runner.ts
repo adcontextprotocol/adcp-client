@@ -3418,13 +3418,19 @@ async function executeStoryboardPass(
       // Reconciliation still emits the authored routing-error rows, but a
       // dependent mutation must see the failed setup before it can dispatch.
       const skippedRoutingFailures = routingContext ? phase.steps.filter(step => routedErrors.has(step)) : [];
+      const skippedCapabilitySteps = routingContext
+        ? phase.steps.filter(step => routedStepCapabilitySkips.has(step))
+        : [];
+      for (const step of skippedCapabilitySteps) recordUnavailableOutputs(phase.id, step);
       if (skippedRoutingFailures.length > 0) {
         for (const step of skippedRoutingFailures) {
           recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
         }
         if (skippedRoutingFailures.some(step => step.stateful)) phaseStatefulCascades.set(phase.id, null);
-        // Non-stateful failures also expose absent outputs to implicit context
-        // dependencies without installing a stateful cascade.
+      }
+      if (skippedRoutingFailures.length > 0 || skippedCapabilitySteps.length > 0) {
+        // Known routed gaps expose absent outputs to implicit dependencies;
+        // an authored phase skip alone introduces no output or state policy.
         priorPhaseIds.push(phase.id);
       }
       phaseResults.push({
