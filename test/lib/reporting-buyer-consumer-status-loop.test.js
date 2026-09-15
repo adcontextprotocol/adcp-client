@@ -1441,7 +1441,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(pagesSent(), 256, 'the read ran to completion');
   });
 
-  test('a row too deep to size is the buyer own limit, not a seller accusation', async () => {
+  test('a row nested deeper than the reader walks is the seller shape, and stays on the record', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
@@ -1469,13 +1469,15 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     );
 
     const result = await seller.reconcile(at, expected);
-    // The walk bound is the buyer's, so this is suppression rather than an
-    // accusation. A posted `unreadable` is durable and pins the seller's view
-    // at `action_required`, and a deeply nested row — a per-SKU retail-media
-    // breakdown, say — is entirely conformant.
-    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
-    assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
-    assert.deepEqual(result.postedConsumerStatuses, []);
+    // Depth and breadth are different claims. A 147-byte row nested seventy
+    // deep used to suppress the whole period, which let an under-delivering
+    // seller escape a `content_mismatch` permanently for the price of one
+    // strange row. No conformant tabular row nests this deep, so it stays on
+    // the record; breadth remains the buyer's own limit.
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.equal(result.consumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(result.consumerStatuses[0].failureCode, 'reader_incompatible');
+    assert.equal(result.postedConsumerStatuses.length, 1);
   });
 
   test('large strings are charged for what they hold, so the ceiling still binds', async () => {
@@ -1803,7 +1805,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(notLeapYear50.suppressed, 'deadline_unknown', 'year 50 does not, though 1950-02-29 would not either');
   });
 
-  test('an official generation is never dated from deliverySlaSeconds', async () => {
+  test('an official generation falls back to deliverySlaSeconds, the one offset the spec defines', async () => {
     const seller = await harness();
     // The pin for official finality is absent but the ordinary one is present.
     // Falling back to it produces a statement the seller refuses on every run,
@@ -1825,9 +1827,16 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     };
 
     const result = await seller.reconcile(at, expected);
-    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
-    assert.match(result.consumerStatuses[0].reason, /officialAfterSeconds/);
-    assert.deepEqual(result.postedConsumerStatuses, []);
+    // `official_after` appears nowhere in the 3.2.0-rc.3 schemas — it is an
+    // extension this repo's producer and ingest carry — and the seller was
+    // measured to *accept* the `delivery_sla`-derived instant when it is not
+    // configured. Refusing the fallback silenced a conformant period.
+    assert.equal(result.consumerStatuses[0].suppressed, undefined);
+    assert.equal(
+      result.consumerStatuses[0].deadline,
+      new Date(seller.anchor + DAY + (SLA_SECONDS + RECOVERY_SECONDS) * 1_000).toISOString()
+    );
+    assert.equal(result.postedConsumerStatuses.length, 1);
   });
 
   test('a pin that overflows says so rather than telling you to record it', async () => {
@@ -1903,6 +1912,139 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const result = await seller.reconcile(at, [withoutPin]);
     return result.consumerStatuses[0];
   }
+
+  test('a far-future seller deadline is honoured but recorded, not silently accepted', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // One field, ~20 bytes: the period sits at `overdue: false` with
+    // `suppressed` unset — indistinguishable from "not due yet" — and every
+    // statement on the chain stops landing, permanently. The spec makes the
+    // seller's instant authoritative, so it is still honoured; what was missing
+    // was any trace an adopter could alert on.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({ ...period, expected_at: '2099-01-01T00:00:00.000Z' })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.overdue, false, 'the seller deadline is still honoured');
+    assert.ok(plan.deadlineBeyondPin, 'but it is on the plan');
+    assert.equal(plan.deadlineBeyondPin.declared, '2099-01-01T00:00:00.000Z');
+    assert.equal(plan.deadlineBeyondPin.pinned, new Date(seller.anchor + DAY + SLA_SECONDS * 1_000).toISOString());
+  });
+
+  test('a poisoned pending statement is not replayed as an attestation', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const pending = pendingConsumerStatusStore();
+
+    const honest = seller.client.syncReportingStatus;
+    seller.client.syncReportingStatus = async params => {
+      await honest(params);
+      throw new Error('socket hang up');
+    };
+    await seller.reconcile(at, expected, { pendingConsumerStatusStore: pending });
+    assert.equal(pending.entries.size, 1);
+
+    // Rewrite the remembered statement the way a compromised store would: a
+    // fabricated consumption digest, an attacker-chosen id, and a 2099 date
+    // that would poison the chain's monotonicity floor forever. The digest is
+    // the one fact the buyer must establish itself.
+    for (const [key, entry] of pending.entries) {
+      pending.entries.set(key, {
+        ...entry,
+        statement: {
+          ...entry.statement,
+          reporting_status_id: 'adcp-sdk.ATTACKER0000000000000000000',
+          status_as_of: '2099-01-01T00:00:00.000Z',
+          observed_revision_content_sha256: 'de'.repeat(32),
+        },
+      });
+    }
+
+    // Hide the chain so the retry re-plans and actually consults the store,
+    // rather than suppressing as `unchanged`.
+    const honestRead = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honestRead(params);
+      return {
+        ...page,
+        consumer_statuses: [],
+        periods: (page.periods ?? []).map(({ current_consumer_status_id: _leaf, ...period }) => ({
+          ...period,
+          consumer_status_count: 0,
+        })),
+      };
+    };
+    let sent;
+    seller.client.syncReportingStatus = async params => {
+      sent = params;
+      return honest(params);
+    };
+    const retry = await seller.reconcile(at + HOUR, expected, { pendingConsumerStatusStore: pending });
+    assert.ok(sent, 'the retry posted something');
+    assert.notEqual(sent.statuses[0].reporting_status_id, 'adcp-sdk.ATTACKER0000000000000000000');
+    assert.notEqual(sent.statuses[0].observed_revision_content_sha256, 'de'.repeat(32));
+    assert.notEqual(sent.statuses[0].status_as_of, '2099-01-01T00:00:00.000Z');
+    // The poisoned entry is discarded and the statement rebuilt from what the
+    // buyer actually established. The seller then rejects the rebuild, because
+    // the original landed before the response was lost — a visible item-local
+    // conflict, which is the honest outcome and not the fabricated attestation.
+    assert.equal(retry.postedConsumerStatuses.length + retry.failedConsumerStatuses.length, 1);
+  });
+
+  test('an obligation with no period does not abort a run that already synced receipts', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // A client that does not schema-validate its responses. This threw
+    // `Cannot read properties of undefined (reading 'start')` out of
+    // `reconcileReporting` after receipts had gone to the seller.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ period: _dropped, ...rest }) => rest),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.missingExpectedPeriods.length, 1, 'a period-less obligation matches nothing');
+    assert.ok(Array.isArray(result.consumerStatuses));
+  });
+
+  test('a non-string obligation health does not abort the run either', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return { ...page, periods: (page.periods ?? []).map(period => ({ ...period, health: 7 })) };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.ok(Array.isArray(result.consumerStatuses), 'the run completed');
+  });
 
   test('a lowercase RFC 3339 expected_at is read, not treated as unreadable', async () => {
     const seller = await harness();

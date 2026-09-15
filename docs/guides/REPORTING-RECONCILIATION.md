@@ -121,8 +121,8 @@ resolution order is worth knowing:
 |---|---|---|
 | 1 | `obligation.expected_at` | The seller's own commitment. Normalized, never echoed verbatim. |
 | 1a | — *(present but unreadable)* | **Nothing is derived and rows 2–3 are not consulted.** A present `expected_at` is the seller's real deadline; a locally derived one would disagree with it and the statement would be refused on every run. Only the seller can fix the value. |
-| 2 | `ExpectedReportingPeriod.officialAfterSeconds` when `requiredFinality` is `official`, `deliverySlaSeconds` otherwise | Added to the period end. There is **no cross-fallback**: an official generation is never dated from `deliverySlaSeconds`, because the seller refuses such a statement on every run. |
-| 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned neither above **and an obligation exists** — so it is never available for `obligation_missing`, which is what the pins are for. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
+| 2 | `ExpectedReportingPeriod.officialAfterSeconds` when `requiredFinality` is `official`, falling back to `deliverySlaSeconds`; `deliverySlaSeconds` otherwise | Added to the period end. `reporting-schedule.json` defines only `delivery_sla`, with no finality qualifier — `official_after` is an SDK-local extension — so `deliverySlaSeconds` is the spec-defined answer for a seller that does not carry it. |
+| 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned nothing above **and an obligation exists** — so it is never available for `obligation_missing`, which is what the pins are for. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
 
 The deadline is then that instant plus `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. That
 window is advertised on the delivery **capabilities**, not on the obligation, so the ledger cannot
@@ -143,8 +143,15 @@ must carry a digest the buyer recomputed from rows it actually read.
 | `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
 | `posting_unavailable` | No poster is wired, so there is nothing to append to. | Supply `client.syncReportingStatus`. |
 | `period_identity_unknown` | The seller's `period.source_timezone` is not a recognized IANA zone, and that value is part of the chain's logical key. | Record `ExpectedReportingPeriod.periodSourceTimezone`, or have the seller correct it. Substituting a zone would produce a statement it refuses on every run. |
-| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read; the revision exceeded the SDK's size ceiling; or a row was too deep or too intricate for the SDK to size. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. The size, depth and structure ceilings are not tunable. Never reported as a seller failure. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, the revision exceeded the SDK's size ceiling, or a row was too *wide* for the SDK to walk. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`; the size and breadth ceilings are not tunable. Never reported as a seller failure — a row nested deeper than the reader walks is `unreadable` / `reader_incompatible` instead, because no conformant tabular row has that shape. |
 | `leaf_undisclosed` | Your chain has more than one unsuperseded leaf, or the seller named a current leaf it did not return. | A seller-side defect either way; the buyer declines to guess which leaf to supersede. |
 | `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
 
-A plan with `suppressed` unset and `overdue: false` is simply not due yet. **Treat `suppressed !== undefined` as alertable** — every value above means this period will never post until something changes. And if a plan is `overdue: true`, unsuppressed, and still absent from `postedConsumerStatuses`, look in `failedConsumerStatuses`.
+**Alert on any `suppressed` value other than `unchanged`.** `unchanged` is the healthy steady state — every posted period comes back `unchanged` on the next reconcile — but the other seven mean this period will never post until something changes.
+
+Two more conditions deserve an alert, because neither sets `suppressed`:
+
+- **`plan.deadlineBeyondPin` is set.** The seller's own `expected_at` is later than your pinned expectation by more than your recovery window. It is still honoured — the spec makes the seller's instant authoritative — but left unwatched it is indistinguishable from "not due yet", and a seller can use it to opt out of the loop entirely.
+- **`overdue: true`, unsuppressed, and absent from `postedConsumerStatuses`.** Look in `failedConsumerStatuses`.
+
+Some suppressions are the seller's doing and you cannot configure your way out of them — `leaf_undisclosed` and `chain_indeterminate` in particular. Those are worth escalating out of band rather than retrying.

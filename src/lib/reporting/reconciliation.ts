@@ -502,6 +502,17 @@ export interface ReportingConsumerStatusPlanV1 {
     | 'chain_indeterminate'
     | 'posting_unavailable'
     | 'period_identity_unknown';
+  /**
+   * Set when the seller's own `expected_at` is later than the buyer's pinned
+   * expectation by more than its recovery window.
+   *
+   * The statement is still not posted — `expected_period` makes the seller's
+   * instant authoritative, and a locally derived one would be refused. But
+   * without this the period sits at `overdue: false` with `suppressed` unset,
+   * indistinguishable from one that is simply not due yet, which is a silent
+   * kill switch for the whole loop. **Alert on it.**
+   */
+  deadlineBeyondPin?: { declared: string; pinned: string };
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -1346,7 +1357,7 @@ function selectCurrent(
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
-  if (obligation.scope_resolved_at !== obligation.period.end) reasons.push('SCOPE_CUTOFF_MISMATCH');
+  if (obligation.scope_resolved_at !== obligation.period?.end) reasons.push('SCOPE_CUTOFF_MISMATCH');
   if (
     !isReportingCoverageEvidence(obligation.coverage) ||
     obligation.coverage.evaluated_at !== obligation.scope_resolved_at ||
@@ -1599,6 +1610,16 @@ function planReportingConsumerStatuses(
           : `<${typeof declaredExpectedAt}>`
         : undefined;
     const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt, expectedAtOverflowed);
+    // A seller deadline far past the buyer's own pinned expectation is honoured
+    // — the spec makes it authoritative — but recorded, because otherwise it is
+    // a silent, permanent opt-out of the entire accountability loop.
+    const pinnedExpectation = pinnedExpectedAt(expected);
+    const deadlineBeyondPin =
+      expectedAt !== undefined &&
+      pinnedExpectation !== undefined &&
+      Date.parse(expectedAt) > Date.parse(pinnedExpectation) + (expected.automatedRecoveryWindowSeconds ?? 0) * 1_000
+        ? { declared: expectedAt, pinned: pinnedExpectation }
+        : undefined;
     const leaf = currentConsumerLeaf(
       ledger,
       base,
@@ -1620,6 +1641,8 @@ function planReportingConsumerStatuses(
           ...base,
           ...schedule,
           ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
           consumerStatus: 'obligation_missing',
           establishedAt,
           reason: missing.has(expected)
@@ -1651,6 +1674,8 @@ function planReportingConsumerStatuses(
           ...base,
           ...schedule,
           ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           ...(indeterminate ? { indeterminate: true } : {}),
@@ -1678,6 +1703,8 @@ function planReportingConsumerStatuses(
           ...base,
           ...schedule,
           ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           establishedAt,
@@ -1694,6 +1721,7 @@ function planReportingConsumerStatuses(
         ...base,
         ...schedule,
         ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+        ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
         reportingObligationId: obligation.reporting_obligation_id,
         reportingRevisionId: revision.reporting_revision_id,
         consumerStatus: mismatch ? ('content_mismatch' as const) : ('received' as const),
@@ -1764,11 +1792,13 @@ interface ConsumerStatusDraft {
   deadlineGap?:
     | { cause: 'missing_pin'; pin: string }
     | { cause: 'unreadable_expected_at'; value: string }
-    | { cause: 'deadline_overflow'; window: number };
+    | { cause: 'deadline_overflow'; field: string };
   /** The buyer could not resolve the chain, so it must not assert anything. */
   indeterminate?: boolean;
   /** The seller's `period.source_timezone` is not a zone the buyer can adopt. */
   periodIdentityUnknown?: boolean;
+  /** The seller's deadline is far past the buyer's own pinned expectation. */
+  deadlineBeyondPin?: { declared: string; pinned: string };
   /** The instant this statement became true, before the monotonicity floor. */
   establishedAt: string;
   reason: string;
@@ -1847,7 +1877,7 @@ function deadlineGapReason(gap: NonNullable<ConsumerStatusDraft['deadlineGap']>)
     case 'missing_pin':
       return `no posting deadline: record ExpectedReportingPeriod.${gap.pin} to derive one`;
     case 'deadline_overflow':
-      return `no posting deadline: expected_at plus ExpectedReportingPeriod.automatedRecoveryWindowSeconds (${gap.window}) falls outside the representable range`;
+      return `no posting deadline: ${gap.field} puts it outside the representable range`;
     default:
       // Deliberately offers no local remedy. A present `expected_at` is the
       // seller's real deadline, and a locally derived one would disagree with
@@ -2013,12 +2043,22 @@ function reportingExpectedAt(
   // exists precisely to be independent of the seller, is overridden. The pin
   // is the buyer's answer to "when was this due"; the seller's schedule is
   // only a last resort for a buyer that has no answer of its own.
-  // No cross-pin fallback. An official generation dated from `delivery_sla` is
-  // refused by the seller, and because the statement takes no clock input it is
-  // rebuilt identically and refused on every run — `localExpectedAtPin`'s own
-  // comment says so, and falling back here was doing exactly that silently.
+  // `reporting-schedule.json` defines exactly one offset — `delivery_sla`,
+  // "expected_at equals the resolved period end plus this duration" — with no
+  // finality qualifier, and `official_after` appears nowhere in the 3.2.0-rc.3
+  // schemas. It is an extension this repo's own producer and ingest carry, so
+  // `officialAfterSeconds` is a courtesy for sellers that use it and
+  // `deliverySlaSeconds` stays the spec-defined answer when they do not.
+  //
+  // An earlier revision refused that fallback, on the theory that the seller
+  // would reject the result. Measured false: with no `officialAfterMilliseconds`
+  // configured the seller accepts the `delivery_sla`-derived instant, so
+  // refusing silenced a conformant period. A wrong deadline is at least visible
+  // as an item-local rejection in `failedConsumerStatuses`; silence is not.
   const slaSeconds =
-    expected.requiredFinality === 'official' ? expected.officialAfterSeconds : expected.deliverySlaSeconds;
+    expected.requiredFinality === 'official'
+      ? (expected.officialAfterSeconds ?? expected.deliverySlaSeconds)
+      : expected.deliverySlaSeconds;
   const periodEnd = Date.parse(expected.periodEnd);
   if (typeof slaSeconds === 'number' && Number.isFinite(slaSeconds) && slaSeconds >= 0 && Number.isFinite(periodEnd)) {
     const pinned = periodEnd + slaSeconds * 1_000;
@@ -2043,6 +2083,19 @@ function reportingExpectedAt(
  * accepts — and silence a conformant seller, which is the whole failure this
  * fallback exists to prevent.
  */
+/** `period.end` plus whichever offset the buyer recorded, or `undefined`. */
+function pinnedExpectedAt(expected: ExpectedReportingPeriod): string | undefined {
+  const slaSeconds =
+    expected.requiredFinality === 'official'
+      ? (expected.officialAfterSeconds ?? expected.deliverySlaSeconds)
+      : expected.deliverySlaSeconds;
+  const periodEnd = Date.parse(expected.periodEnd);
+  if (typeof slaSeconds !== 'number' || !Number.isFinite(slaSeconds) || slaSeconds < 0) return undefined;
+  if (!Number.isFinite(periodEnd)) return undefined;
+  const pinned = periodEnd + slaSeconds * 1_000;
+  return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : undefined;
+}
+
 function localExpectedAtPin(expected: ExpectedReportingPeriod): string {
   // Naming the wrong pin is expensive: an official-finality generation dated
   // from `delivery_sla` is refused by the seller, and because that statement
@@ -2068,7 +2121,8 @@ function reportingScheduledExpectedAt(
   // came back an hour early, and sub-second precision was dropped entirely.
   if (duration.years === 0 && duration.months === 0 && duration.days === 0) {
     const exact = anchor + duration.seconds * 1_000;
-    return isRepresentableInstant(exact) ? new Date(exact).toISOString() : undefined;
+    // Sentinel, not `undefined`: an overflow here is not "no schedule to read".
+    return isRepresentableInstant(exact) ? new Date(exact).toISOString() : OVERFLOWED_INSTANT;
   }
   const timeZone = calendarTimeZone(obligation, schedule);
   if (timeZone === undefined) return undefined;
@@ -2327,13 +2381,14 @@ function consumerStatusSchedule(
   expected: ExpectedReportingPeriod,
   now: Date,
   malformedExpectedAt?: string,
-  expectedAtOverflowed = false
+  expectedAtOverflowed = false,
+  overflowField = 'the derived expected_at'
 ): { deadline?: string; overdue: boolean; deadlineGap?: ConsumerStatusDraft['deadlineGap'] } {
   const windowSeconds = expected.automatedRecoveryWindowSeconds;
   if (expectedAtOverflowed) {
     return {
       overdue: false,
-      deadlineGap: { cause: 'deadline_overflow', window: expected.automatedRecoveryWindowSeconds ?? 0 },
+      deadlineGap: { cause: 'deadline_overflow', field: overflowField },
     };
   }
   if (expectedAt === undefined) {
@@ -2356,7 +2411,10 @@ function consumerStatusSchedule(
   // seller-advertised window lands outside it — and `toISOString` throws from
   // a call site that nothing wraps, aborting the whole reconcile.
   if (!isRepresentableInstant(deadlineAt)) {
-    return { overdue: false, deadlineGap: { cause: 'deadline_overflow', window: windowSeconds } };
+    return {
+      overdue: false,
+      deadlineGap: { cause: 'deadline_overflow', field: 'ExpectedReportingPeriod.automatedRecoveryWindowSeconds' },
+    };
   }
   const deadline = new Date(deadlineAt).toISOString();
   return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
@@ -2443,18 +2501,25 @@ function utcMinuteOfDay(value: string, hour: number, minute: number): number {
 }
 
 /** Strip control characters and bound any string headed for an adopter's log. */
-function boundedDiagnostic(value: string): string {
-  return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 256);
+function boundedDiagnostic(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  // Sliced before the replace: the input can be seller-supplied and arbitrarily
+  // long, and bounding after the copy pays for the whole thing first.
+  return value.slice(0, 256).replace(/[\u0000-\u001f\u007f]+/g, ' ');
 }
 
 /** Latest of a set of possibly-absent RFC 3339 instants. */
 function latestInstant(values: ReadonlyArray<string | undefined>): string | undefined {
   let latest: string | undefined;
   for (const value of values) {
-    if (typeof value !== 'string' || !RFC3339_INSTANT.test(value)) continue;
-    const parsed = Date.parse(value);
-    if (!Number.isFinite(parsed)) continue;
-    if (latest === undefined || parsed > Date.parse(latest)) latest = value;
+    // Normalized, not echoed. `RFC3339_INSTANT` was widened to accept a space
+    // separator, a lowercase `t`/`z` and a bare `+hh`; echoing one of those
+    // would put it on a statement the buyer signs, which is the thing
+    // `normalizedInstant` exists to prevent.
+    const normalized = normalizedInstant(value);
+    if (normalized === undefined) continue;
+    const parsed = Date.parse(normalized);
+    if (latest === undefined || parsed > Date.parse(latest)) latest = normalized;
   }
   return latest;
 }
@@ -2533,11 +2598,23 @@ function collectReportingEscalations(
   return escalations;
 }
 
+/** A `period` the buyer can compare — both half-open bounds present as strings. */
+function isReportingPeriodShape(value: unknown): value is { start: string; end: string } {
+  if (typeof value !== 'object' || value === null) return false;
+  const period = value as { start?: unknown; end?: unknown };
+  return typeof period.start === 'string' && typeof period.end === 'string';
+}
+
 function expectedPeriodMatches(
   expected: ExpectedReportingPeriod,
   obligation: ManagedReportingObligation,
   ledger: ReportingLedger
 ): boolean {
+  // A period-less obligation cannot match any expected period, and reaching
+  // this after receipts have synced used to throw out of `reconcileReporting`
+  // and lose the record of durable work. Classified like the other malformed
+  // ledger payloads instead.
+  if (!isReportingPeriodShape(obligation.period)) return false;
   if (
     obligation.delivery_config_id !== expected.deliveryConfigId ||
     obligation.delivery_config_version !== expected.deliveryConfigVersion ||
@@ -2589,8 +2666,6 @@ function expectedIdentityKey(value: ExpectedReportingPeriod | ManagedReportingOb
     value.feed_purpose,
     value.reporting_profile,
     value.destination_ref,
-    // Optional-chained: a malformed `period` from a client that does not
-    // schema-validate would otherwise throw here, after receipts have synced.
     value.period?.start,
     value.period?.end,
   ]);
@@ -2643,7 +2718,13 @@ export function evaluateReportingLedger(
     const selected = selectCurrent(obligation, ledger, expected);
     const reasons = [...selected.reasons];
     if (matchingExpected.length > 0 && !bijective) reasons.push('EXPECTED_PERIOD_NOT_BIJECTIVE');
-    if (obligation.health !== 'complete') reasons.push(`OBLIGATION_${obligation.health.toUpperCase()}`);
+    // Guarded and bounded: `health` is seller-supplied, so a non-string threw
+    // here after receipts had synced, and an arbitrary string was interpolated
+    // straight into a reason code.
+    if (obligation.health !== 'complete') {
+      const health = typeof obligation.health === 'string' ? boundedDiagnostic(obligation.health) : 'UNKNOWN';
+      reasons.push(`OBLIGATION_${health.toUpperCase()}`);
+    }
     if (selected.materialization?.resource && new Date(selected.materialization.resource.expires_at) <= now)
       reasons.push('RESOURCE_EXPIRED');
     if (
@@ -3077,9 +3158,18 @@ export async function reconcileReporting<TCredential = unknown>(
         // plan it stands in for. The posted record also takes the replayed
         // body's `status_as_of`, so the result reports what went on the wire
         // rather than the instant this run happened to re-derive.
-        if (pending && pending.claimFingerprint === fingerprint && replayMatchesPlan(pending.statement, plan)) {
+        if (pending && pending.claimFingerprint === fingerprint && replayMatchesPlan(pending.statement, plan, now)) {
           wireStatuses.push(pending.statement);
-          posted.push({ ...plan, statusAsOf: String(pending.statement.status_as_of) });
+          // The replayed values, not the freshly re-planned ones: reporting the
+          // recomputed digest while the wire carried the stored one made the
+          // result lie about what it posted.
+          posted.push({
+            ...plan,
+            statusAsOf: String(pending.statement.status_as_of),
+            ...(typeof pending.statement.observed_revision_content_sha256 === 'string'
+              ? { observedRevisionContentSha256: pending.statement.observed_revision_content_sha256 }
+              : {}),
+          });
           continue;
         }
         const statement = wireConsumerStatus(plan);
@@ -3405,10 +3495,18 @@ async function consumeReportingRevision(
       for (const row of response.reporting_rows ?? []) {
         rows.push(row);
         const sized = approximateRowBytes(row);
+        if (sized === TOO_DEEP_TO_SIZE) {
+          // A 147-byte row nested seventy deep used to suppress the whole
+          // period, which let an under-delivering seller escape a
+          // `content_mismatch` permanently for the price of one strange row.
+          return {
+            failureCode: 'reader_incompatible',
+            detail: 'a revision row nests deeper than this reader will walk',
+          };
+        }
         if (sized === undefined) {
-          // The buyer's own walk bound, not a seller defect: a retail-media row
-          // carrying a per-SKU breakdown is entirely conformant and used to be
-          // *accused* here, durably, which is worse than falling silent.
+          // Breadth, by contrast, is the buyer's own walk bound: a retail-media
+          // row carrying a per-SKU breakdown is entirely conformant.
           return { budgetExhausted: 'revision' };
         }
         bytes += sized;
@@ -3513,21 +3611,16 @@ async function consumeReportingRevision(
  * unbounded accumulation, not to measure it, and a serializing measurement
  * would itself be the cost being guarded against.
  */
+const TOO_DEEP_TO_SIZE = -1;
+
 function approximateRowBytes(row: unknown): number | undefined {
   // Strings and primitives are sized in O(1) and never consume budget: they
   // carry the bytes, and charging them a flat constant is what created both
   // failure directions. Only *containers* are budgeted, because they are what
   // makes the walk expensive.
   //
-  // Exceeding either bound returns `undefined`, and the caller turns that into
-  // `unreadable` / `reader_incompatible` — a claim against the seller, not
-  // silence. That direction matters: `local_budget_exhausted` suppresses the
-  // statement entirely, so if an unsizeable shape landed there a seller could
-  // buy permanent immunity from `revision_missing` by publishing one. Silence
-  // is reserved for limits the *adopter* configured (`maxPages`,
-  // `maxRevisionRows`, `maxLoadMs`); the shape of a row is the seller's choice,
-  // and a reader that cannot consume it is exactly what `reader_incompatible`
-  // names.
+  // Exceeding either bound returns `undefined`; the caller decides what that
+  // means, and states the trade-off where the decision is made.
   let containers = MAX_ROW_ESTIMATE_CONTAINERS;
   const visit = (value: unknown, depth: number): number | undefined => {
     // Per-value floors, sized against *retained heap* rather than wire bytes —
@@ -3538,14 +3631,18 @@ function approximateRowBytes(row: unknown): number | undefined {
     // measured retained heap in both directions.
     if (typeof value === 'string') return 16 + value.length * 2;
     if (value === null || typeof value !== 'object') return 8;
-    if (depth >= MAX_ROW_ESTIMATE_DEPTH) return undefined;
+    // Depth and breadth are different claims. No conformant tabular reporting
+    // row nests 64 deep, so that is the seller's shape and stays accountable;
+    // a per-SKU-by-day retail row genuinely can exceed the container budget,
+    // and that is the buyer's own walk limit.
+    if (depth >= MAX_ROW_ESTIMATE_DEPTH) return TOO_DEEP_TO_SIZE;
     containers -= 1;
     if (containers < 0) return undefined;
     if (Array.isArray(value)) {
       let total = 40 + 8 * value.length;
       for (const item of value) {
         const child = visit(item, depth + 1);
-        if (child === undefined) return undefined;
+        if (child === undefined || child === TOO_DEEP_TO_SIZE) return child;
         total += child;
       }
       return total;
@@ -3554,7 +3651,7 @@ function approximateRowBytes(row: unknown): number | undefined {
     let total = 40 + 8 * entries.length;
     for (const [key, child] of entries) {
       const sized = visit(child, depth + 1);
-      if (sized === undefined) return undefined;
+      if (sized === undefined || sized === TOO_DEEP_TO_SIZE) return sized;
       total += key.length * 2 + sized;
     }
     return total;
@@ -3607,8 +3704,49 @@ function rowEvidenceFor(
  * crossed between tenants, or written by a different version cannot be posted
  * as this buyer's durable claim.
  */
-function replayMatchesPlan(statement: Record<string, unknown>, plan: ReportingConsumerStatusPlanV1): boolean {
+const REPLAYABLE_STATEMENT_KEYS = new Set([
+  'reporting_status_id',
+  'supersedes_reporting_status_id',
+  'delivery_config_id',
+  'delivery_config_version',
+  'report_definition_id',
+  'period',
+  'consumer_status',
+  'status_as_of',
+  'reporting_obligation_id',
+  'reporting_revision_id',
+  'observed_revision_content_sha256',
+  'mismatch_code',
+  'failure_code',
+]);
+
+function replayMatchesPlan(
+  statement: Record<string, unknown>,
+  plan: ReportingConsumerStatusPlanV1,
+  now: Date
+): boolean {
   const period = statement.period as { start?: unknown; end?: unknown; source_timezone?: unknown } | undefined;
+  // The digest is the one fact the buyer establishes itself, so a replay that
+  // does not carry the same one is not this statement — omitting it let a
+  // poisoned store post a consumption the buyer never performed. The id is
+  // recomputed rather than trusted, `status_as_of` may not be in the future,
+  // and an unknown key means the blob is not a statement this SDK wrote.
+  if (typeof statement.status_as_of !== 'string') return false;
+  if (usableLeafInstant({ status_as_of: statement.status_as_of } as ReportingConsumerStatus, now) === undefined) {
+    return false;
+  }
+  if (Object.keys(statement).some(key => !REPLAYABLE_STATEMENT_KEYS.has(key))) return false;
+  if (
+    !sameOptionalSha256(
+      statement.observed_revision_content_sha256 as string | undefined,
+      plan.observedRevisionContentSha256
+    )
+  ) {
+    return false;
+  }
+  if (statement.reporting_status_id !== consumerStatusId({ ...plan, statusAsOf: statement.status_as_of })) {
+    return false;
+  }
   return (
     statement.delivery_config_id === plan.deliveryConfigId &&
     statement.delivery_config_version === plan.deliveryConfigVersion &&

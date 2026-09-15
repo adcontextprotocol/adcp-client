@@ -43,8 +43,8 @@ duration whose result falls outside the RFC 3339 year range derives nothing rath
 
 **Row size accounting is bounded by work, not by depth.** The estimate charged an unexamined subtree
 a flat constant, which cut both ways: too small and nesting walked past the ceiling
-(`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), too large and a structurally deep row silenced the
-buyer with a `local_budget_exhausted` that blamed its own budget. It now walks a bounded number
+(`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), and a deeply nested row could be used to suppress a
+period that should have carried a `content_mismatch`. It now walks a bounded number
 of nodes per row and charges each for what it holds, which closes the bypass. Values are charged against
 retained heap rather than wire bytes — an empty string previously charged zero, which is how hundreds
 of megabytes of them slipped past the ceiling — and the figures land within about 2x of measured heap
@@ -59,20 +59,12 @@ of the consumer-status chain's logical key and the seller compares it strictly, 
 substitution by name. The period now comes back `suppressed: 'period_identity_unknown'`, a new arm of
 the exported union. With nothing declared at all, `'UTC'` remains the buyer's own default.
 
-**`period.source_timezone` is validated, and the buyer's own pin wins.** It reaches the durable
-statement, the `reporting_status_id` hash and the unchanged-comparison, so a seller varying its echo
-could make the buyer append a fresh statement on every reconcile. `ExpectedReportingPeriod.periodSourceTimezone`
-is now preferred over the seller's copy, and both are checked for IANA identity rather than length
-alone — `iana_timezone` is a MUST and Node's `Intl` happily accepts `"+05:30"`, which is exactly the
-numeric-offset substitution the clause forbids.
-
 `usableLeafInstant` normalizes the superseded leaf's `status_as_of` through the same path, so a leaf
 recorded by an older SDK with a `+00:00` or lowercase spelling now produces the same monotonicity
 floor as its canonical form — which feeds `reporting_status_id`, so a chain can see one id shift
 across this upgrade.
 
-Two further adopter-observable changes. A `period.source_timezone` that is not a recognized IANA zone
-is no longer adopted, and `ExpectedReportingPeriod.periodSourceTimezone` now outranks the seller's
+A further adopter-observable change: `ExpectedReportingPeriod.periodSourceTimezone` now outranks the seller's
 echo — that value is inside the consumer-status chain key and the `reporting_status_id` derivation,
 so an adopter whose pin disagreed with the seller's echo will see the chain key change once on
 upgrade. And a `expected_at` that is present but not a string (rather than merely malformed) now
@@ -82,11 +74,23 @@ suppresses instead of falling through to the pin.
 exhaustively on it will see a new arm. Concretely: with no `client.syncReportingStatus` wired, a plan used to
 come back live, due and unsuppressed while silently going nowhere.
 
-**Official finality no longer falls back to `deliverySlaSeconds`.** An official generation dated from
-`delivery_sla` is refused by the seller, and because the statement takes no clock input it is rebuilt
-identically and refused on every run. Without `officialAfterSeconds` the period is now
-`deadline_unknown`, naming that pin. A deadline that overflows the representable range gets its own
-cause too, rather than being reported as a pin the adopter forgot to record.
+**A deadline that overflows the representable range names the field that overflowed**, rather than
+being reported as a pin the adopter forgot to record. `officialAfterSeconds` is preferred for
+official-finality generations and falls back to `deliverySlaSeconds`, because
+`reporting-schedule.json` defines only `delivery_sla` and `official_after` is an SDK-local extension.
+
+**A seller deadline far past the buyer's pinned expectation is recorded on `plan.deadlineBeyondPin`.**
+It is still honoured, but previously it left the period at `overdue: false` with nothing set —
+indistinguishable from "not yet due", and usable by a seller as a silent opt-out of the whole loop.
+
+**A row nested deeper than the reader walks is `unreadable` / `reader_incompatible`, not silence.**
+No conformant tabular reporting row has that shape, and suppressing let an under-delivering seller
+escape a `content_mismatch` for the price of one small row. Breadth remains the buyer's own limit.
+
+**A replayed pending statement is verified before it is posted** — the recomputed digest, the
+recomputed `reporting_status_id`, a non-future `status_as_of` and no unexpected keys — and the result
+reports the values actually sent. Without those checks a compromised store could make the buyer
+attest a consumption it never performed.
 
 **Malformed ledger payloads no longer abort a reconcile that already synced receipts.** A non-array
 `issues`, a null entry in it, or a missing `period` from a client that does not schema-validate its
