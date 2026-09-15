@@ -3537,6 +3537,19 @@ async function executeStoryboardPass(
       continue;
     }
 
+    // A failed stateful prerequisite must remain visible to a later phase
+    // that depends on this phase alone, without explicit context references.
+    const recordHardPrerequisiteFailure = (step: StoryboardStep, realFailure = false): void => {
+      if (realFailure) {
+        phaseStatefulCascades.set(phase.id, null);
+      } else if (
+        !phaseStatefulCascades.has(phase.id) ||
+        phaseStatefulCascades.get(phase.id)?.capabilityUnavailable === true
+      ) {
+        phaseStatefulCascades.set(phase.id, { stepId: step.id, reason: 'prerequisite_failed' });
+      }
+    };
+
     const recordHardMissingState = (step: StoryboardStep, result: StoryboardStepResult): void => {
       // Hard-missing skip on a stateful step. Defer the cascade only
       // when a peer in this phase has declared
@@ -3757,7 +3770,10 @@ async function executeStoryboardPass(
           }
         }
         if (capabilityUnavailable) recordUnavailableOutputs(phase.id, step);
-        else if (routingContext) recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
+        else if (routingContext) {
+          recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
+          recordHardPrerequisiteFailure(step, trigger === null);
+        }
         stepResults.push({
           storyboard_id: storyboard.id,
           step_id: step.id,
@@ -3956,7 +3972,10 @@ async function executeStoryboardPass(
           (isHardMissingStateSkipReason(result.skip_reason) || result.skip_reason === 'prerequisite_failed')
         ) {
           recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
-          if (!result.passed) phasePassed = false;
+          if (!result.passed) {
+            phasePassed = false;
+            if (step.stateful) recordHardPrerequisiteFailure(step);
+          }
         }
         // Cascade-skip extension: a stateful step that SKIPS because the
         // agent simply lacks the tool (`missing_tool`,

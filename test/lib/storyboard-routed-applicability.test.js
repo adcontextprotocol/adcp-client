@@ -1893,6 +1893,40 @@ test('neutral stateful cascades cannot conceal hard declared input dependencies'
             ],
           },
         ];
+        if (mode === 'missing') {
+          sb.phases.push({
+            id: 'transitive',
+            title: 'Transitive',
+            depends_on: ['dependent'],
+            steps: [
+              {
+                id: 'later',
+                title: 'Later',
+                task: 'get_signals',
+                agent: 'b',
+                stateful: true,
+                sample_request: { signal_spec: 'later' },
+              },
+            ],
+          });
+        }
+        if (mode === 'missing') {
+          sb.phases.push({
+            id: 'further',
+            title: 'Further',
+            depends_on: ['transitive'],
+            steps: [
+              {
+                id: 'last',
+                title: 'Last',
+                task: 'get_signals',
+                agent: 'b',
+                stateful: true,
+                sample_request: { signal_spec: 'last' },
+              },
+            ],
+          });
+        }
         if (mode === 'unreferenced') {
           sb.phases[2].steps[0].sample_request = { signal_spec: 'unrelated' };
           sb.phases[2].steps[0].context_inputs = [];
@@ -1917,6 +1951,10 @@ test('neutral stateful cascades cannot conceal hard declared input dependencies'
         assert.equal(row.skip_reason, shouldFail ? 'prerequisite_failed' : 'capability_prerequisite_unavailable');
         assert.equal(result.overall_passed, !shouldFail);
         assert.equal(result.failed_count, 0);
+        if (mode === 'missing') {
+          assert.equal(result.phases[3].steps[0].skip_reason, 'prerequisite_failed');
+          assert.equal(result.phases[4].steps[0].skip_reason, 'prerequisite_failed');
+        }
         assert.equal(calls.b.filter(task => task === 'get_signals').length, 0);
       }
     }
@@ -1971,4 +2009,70 @@ test('intrinsic missing tools under a capability cascade retain local hard-state
       assert.equal(result.failed_count, 0);
     }
   }
+});
+
+test('stateful hard-context skips carry failure to phases depending only on that consumer', async () => {
+  const sb = storyboard([
+    {
+      id: 'missing',
+      task: 'get_adcp_capabilities',
+      requires_tool: 'get_signals',
+      agent: 'a',
+      context_outputs: [{ key: 'hard_output', path: 'value' }],
+    },
+  ]);
+  sb.phases.push(
+    {
+      id: 'consumer',
+      title: 'Consumer',
+      steps: [
+        {
+          id: 'blocked',
+          title: 'Blocked',
+          task: 'get_signals',
+          agent: 'b',
+          stateful: true,
+          sample_request: { signal_spec: '$context.hard_output' },
+        },
+        { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' },
+      ],
+    },
+    {
+      id: 'transitive',
+      title: 'Transitive',
+      depends_on: ['consumer'],
+      steps: [
+        {
+          id: 'later',
+          title: 'Later',
+          task: 'get_signals',
+          agent: 'b',
+          stateful: true,
+          sample_request: { signal_spec: 'later' },
+        },
+      ],
+    }
+  );
+  sb.phases.push({
+    id: 'further',
+    title: 'Further',
+    depends_on: ['transitive'],
+    steps: [
+      {
+        id: 'last',
+        title: 'Last',
+        task: 'get_signals',
+        agent: 'b',
+        stateful: true,
+        sample_request: { signal_spec: 'last' },
+      },
+    ],
+  });
+  const { result, calls } = await run({ a: [[], {}], b: [['get_signals'], { supported_protocols: ['signals'] }] }, sb);
+  assert.equal(result.phases[1].steps[0].skip_reason, 'prerequisite_failed');
+  assert.equal(result.phases[2].steps[0].skip_reason, 'prerequisite_failed');
+  assert.equal(result.phases[3].steps[0].skip_reason, 'prerequisite_failed');
+  assert.equal(result.overall_passed, false);
+  assert.equal(result.failed_count, 0);
+  assert.equal(calls.b.filter(task => task === 'get_signals').length, 0);
 });
