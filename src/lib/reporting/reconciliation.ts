@@ -42,18 +42,22 @@ const CONSUMER_STATUS_BATCH_MAX = 100;
 const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
 
 /**
- * Nodes the estimator inspects per row before it stops walking.
+ * Containers the estimator will walk into for one row.
  *
- * Row shape is profile-defined and AdCP does not constrain nesting or breadth,
- * so the estimator must neither under-charge a deep payload nor over-charge a
- * legitimately structured one. A node budget does both: everything inspected
- * is charged for what it actually holds, and the walk is bounded regardless of
- * shape.
+ * Only containers count. An ordinary wide row — an array of a hundred thousand
+ * numbers — is one container, so it is sized exactly; a structure that needs
+ * more than this to describe is one the estimator declines to size.
  */
-const MAX_ROW_ESTIMATE_NODES = 4_096;
+const MAX_ROW_ESTIMATE_CONTAINERS = 4_096;
 
-/** Charged for a subtree the node budget did not reach. */
-const UNVISITED_SUBTREE_BYTE_CHARGE = 4 * 1024;
+/**
+ * How deep the walk goes before declining.
+ *
+ * Without it a deeply nested row overflows the stack, and the resulting
+ * `RangeError` was being reported as `unreadable` / `transport_failed` — the
+ * buyer accusing the seller for its own call stack.
+ */
+const MAX_ROW_ESTIMATE_DEPTH = 64;
 
 // Runtime guards keep these evidence-bearing fields optional at the boundary so
 // malformed or older seller payloads fail with reconciliation diagnostics rather
@@ -275,9 +279,13 @@ interface ExpectedReportingPeriodBase {
    */
   officialAfterSeconds?: number;
   /**
-   * `period.source_timezone` for the accepted generation. Used only when the
-   * seller omitted the obligation, since the chain's logical key needs it and
-   * there is then no obligation to read it from.
+   * `period.source_timezone` for the accepted generation.
+   *
+   * Preferred over the obligation's echo. The value is part of the
+   * consumer-status chain's logical key, so a seller that varies its echo would
+   * otherwise make the buyer append a fresh statement on every reconcile; the
+   * buyer pinned this when it accepted the generation, and the seller's copy is
+   * an echo of that.
    */
   periodSourceTimezone?: string;
   /** Consumer-pinned finality rule, required whenever an official revision is accepted. */
@@ -456,6 +464,9 @@ export interface ReportingConsumerStatusPlanV1 {
    *   guess.
    * - `consumption_unavailable` — no exact-revision reader is wired, so the
    *   buyer cannot honestly attest consumption.
+   * - `posting_unavailable` — no `syncReportingStatus` is wired, so there is
+   *   nothing to append to. Without this the plan reads as live, due and
+   *   unsuppressed while silently going nowhere.
    * - `local_budget_exhausted` — the buyer's own read budget ran out before it
    *   could consume the revision. Self-inflicted, so it is silence rather than
    *   an `unreadable` claim against a seller that did nothing wrong.
@@ -475,7 +486,8 @@ export interface ReportingConsumerStatusPlanV1 {
     | 'consumption_unavailable'
     | 'local_budget_exhausted'
     | 'deadline_unknown'
-    | 'chain_indeterminate';
+    | 'chain_indeterminate'
+    | 'posting_unavailable';
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -1520,9 +1532,7 @@ function planReportingConsumerStatuses(
       expectedPeriodMatches(expected, candidate, ledger)
     );
     // `source_timezone` is part of the consumer-status chain's logical key, so
-    // a wrong value forks the chain rather than failing loudly. Prefer the
-    // seller's own obligation, fall back to the buyer's pin, and only then to
-    // UTC.
+    // a wrong value forks the chain rather than failing loudly.
     const period = {
       start: expected.periodStart,
       end: expected.periodEnd,
@@ -1551,9 +1561,15 @@ function planReportingConsumerStatuses(
     const expectedAt = reportingExpectedAt(obligationForPeriod, expected);
     // The seller sent something we could not read *and* could not recompute
     // from its own schedule — carried so the diagnostic can name the value.
+    // Present in any form the buyer could not read — including a non-string —
+    // is the seller's defect, not a pin the adopter forgot to record.
     const declaredExpectedAt = obligationForPeriod?.expected_at;
     const malformedExpectedAt =
-      expectedAt === undefined && typeof declaredExpectedAt === 'string' ? declaredExpectedAt : undefined;
+      expectedAt === undefined && declaredExpectedAt !== undefined
+        ? typeof declaredExpectedAt === 'string'
+          ? declaredExpectedAt
+          : `<${typeof declaredExpectedAt}>`
+        : undefined;
     const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt);
     const leaf = currentConsumerLeaf(
       ledger,
@@ -1710,7 +1726,8 @@ interface ConsumerStatusDraft {
    */
   deadlineGap?:
     | { cause: 'missing_pin'; pin: string }
-    | { cause: 'unreadable_expected_at'; value: string; localPin: string };
+    | { cause: 'unreadable_expected_at'; value: string }
+    | { cause: 'deadline_overflow'; window: number };
   /** The buyer could not resolve the chain, so it must not assert anything. */
   indeterminate?: boolean;
   /** The instant this statement became true, before the monotonicity floor. */
@@ -1763,16 +1780,36 @@ function finalizeConsumerStatusPlan(
     return {
       ...plan,
       suppressed: 'deadline_unknown',
-      reason:
-        deadlineGap.cause === 'missing_pin'
-          ? `no posting deadline: record ExpectedReportingPeriod.${deadlineGap.pin} to derive one`
-          : `no posting deadline: the seller's obligation.expected_at (${boundedDiagnostic(deadlineGap.value)}) is not a readable instant and its schedule.delivery_sla did not resolve one either; record ExpectedReportingPeriod.${deadlineGap.localPin} to derive one locally`,
+      reason: deadlineGapReason(deadlineGap),
     };
   }
   const suppressed = consumerStatusSuppression(plan, leaf);
   // `reason` explains the status; once a plan is suppressed it also has to
   // explain the silence, or a log line built from it reads as a success.
   return suppressed ? { ...plan, suppressed, reason: suppressionReason(suppressed, plan.reason) } : plan;
+}
+
+/**
+ * Say why no deadline could be derived, truthfully.
+ *
+ * Each cause has a different remedy and a different owner, and naming the wrong
+ * one is worse than naming none: an adopter told to record a pin that cannot
+ * help does it, re-runs, and gets the identical sentence forever.
+ */
+function deadlineGapReason(gap: NonNullable<ConsumerStatusDraft['deadlineGap']>): string {
+  switch (gap.cause) {
+    case 'missing_pin':
+      return `no posting deadline: record ExpectedReportingPeriod.${gap.pin} to derive one`;
+    case 'deadline_overflow':
+      return `no posting deadline: expected_at plus ExpectedReportingPeriod.automatedRecoveryWindowSeconds (${gap.window}) falls outside the representable range`;
+    default:
+      // Deliberately offers no local remedy. A present `expected_at` is the
+      // seller's real deadline, and a locally derived one would disagree with
+      // it — the statement would be refused on every run. Only the seller can
+      // fix the value, so saying "record a pin" would send the adopter down a
+      // road that cannot work.
+      return `no posting deadline: the seller's obligation.expected_at (${boundedDiagnostic(gap.value)}) is not a readable instant, and a present expected_at is never overridden locally — the seller has to correct it`;
+  }
 }
 
 /** Say why nothing was posted, without losing why the status was planned. */
@@ -1784,9 +1821,11 @@ function suppressionReason(
     case 'unchanged':
       return `not posted: the current leaf already says this (${reason})`;
     case 'leaf_undisclosed':
-      return 'not posted: the seller named a current status leaf it did not disclose, so the buyer cannot tell whether it has anything new to say';
+      return "not posted: the buyer's status chain has more than one unsuperseded leaf, or the seller named a current leaf it did not disclose — either way the buyer cannot tell whether it has anything new to say";
     case 'consumption_unavailable':
-      return 'not posted: no exact-revision reader is wired, so consumption cannot be attested';
+      return 'not posted: no client.getMediaBuyDelivery is wired, so consumption cannot be attested';
+    case 'posting_unavailable':
+      return 'not posted: no client.syncReportingStatus is wired, so the buyer cannot append to the status chain';
     case 'local_budget_exhausted':
       return "not posted: the buyer's own ledgerLimits read budget ran out before the revision could be consumed";
     case 'chain_indeterminate':
@@ -2024,11 +2063,19 @@ function calendarTimeZone(
  */
 function ianaTimeZone(value: unknown): string | undefined {
   const name = boundedSourceTimezone(value);
-  if (name === undefined || /^[+-]/.test(name) || !name.includes('/')) {
-    return name !== undefined && name.toUpperCase() === 'UTC' ? 'UTC' : undefined;
-  }
+  if (name === undefined) return undefined;
+  // Numeric offsets only. `Intl` accepts `+05:30` and `+0530` as a `timeZone`,
+  // and adopting one would compute against a fixed offset with no DST
+  // transitions — the substitution `iana_timezone` forbids by name. A
+  // slash-free *link* like `Japan`, `GB` or `Zulu` is explicitly permitted
+  // ("zone name or link") and this repo's own producer accepts them, so
+  // requiring a slash would refuse a configuration the seller already took.
+  if (/^[+-]/.test(name)) return undefined;
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: name });
+    // The caller's own spelling, never a canonicalized one: this value is part
+    // of the chain's logical key and the seller compares it byte-for-byte
+    // against the obligation it echoed.
     return name;
   } catch {
     return undefined;
@@ -2225,7 +2272,7 @@ function consumerStatusSchedule(
       overdue: false,
       deadlineGap:
         malformedExpectedAt !== undefined
-          ? { cause: 'unreadable_expected_at', value: malformedExpectedAt, localPin: localExpectedAtPin(expected) }
+          ? { cause: 'unreadable_expected_at', value: malformedExpectedAt }
           : { cause: 'missing_pin', pin: localExpectedAtPin(expected) },
     };
   }
@@ -2238,7 +2285,7 @@ function consumerStatusSchedule(
   // seller-advertised window lands outside it — and `toISOString` throws from
   // a call site that nothing wraps, aborting the whole reconcile.
   if (!isRepresentableInstant(deadlineAt)) {
-    return { overdue: false, deadlineGap: { cause: 'missing_pin', pin: localExpectedAtPin(expected) } };
+    return { overdue: false, deadlineGap: { cause: 'deadline_overflow', window: windowSeconds } };
   }
   const deadline = new Date(deadlineAt).toISOString();
   return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
@@ -2262,9 +2309,34 @@ const RFC3339_INSTANT = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Z
  * validator doing real calendar checking rejects it forever.
  */
 function normalizedInstant(value: unknown): string | undefined {
-  if (typeof value !== 'string' || !RFC3339_INSTANT.test(value)) return undefined;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+  if (typeof value !== 'string') return undefined;
+  const match = RFC3339_INSTANT.exec(value);
+  if (!match) return undefined;
+  // `Date.parse` is narrower than the format the SDK validates seller payloads
+  // with: it returns NaN for a bare `+hh` offset and for a leap second, both of
+  // which `ajv-formats` accepts. Widening the pattern without handling these
+  // would have left the conformant seller silenced anyway.
+  let candidate = value.replace(/([+-]\d{2})$/, '$1:00');
+  let leapSecond = false;
+  if (/:60(?=(\.|Z|z|[+-]|$))/.test(candidate)) {
+    candidate = candidate.replace(/:60(?=(\.|Z|z|[+-]|$))/, ':59');
+    leapSecond = true;
+  }
+  const parsed = Date.parse(candidate);
+  if (!Number.isFinite(parsed)) return undefined;
+  // ...and wider in one place: it rolls an out-of-range day forward, so
+  // `2026-02-30` silently means March 2. `ajv-formats` calendar-validates the
+  // date, so a value it would reject is treated as unreadable here rather than
+  // quietly relocated.
+  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
+  const rolled = new Date(parsed);
+  if (rolled.getUTCFullYear() !== year || rolled.getUTCMonth() + 1 !== month || rolled.getUTCDate() !== day) {
+    // Only an offset can legitimately move the UTC date, so re-check against
+    // the value's own zone rather than assuming a roll-forward.
+    if (/(?:Z|z)$/.test(value) && !leapSecond) return undefined;
+  }
+  // A leap second is the instant immediately before the next one.
+  return new Date(parsed + (leapSecond ? 1_000 : 0)).toISOString();
 }
 
 /** A usable, bounded source timezone, or `undefined` to fall through. */
@@ -2838,6 +2910,19 @@ export async function reconcileReporting<TCredential = unknown>(
   // differ on fields the chain key does not carry (destination, feed purpose,
   // coverage) and still collapse onto one chain, so posting both guarantees
   // that neither lands — every run, forever.
+  // A missing poster is a reason for silence exactly as a missing reader is.
+  // Without this the plan comes back live, due and unsuppressed while going
+  // nowhere — the one no-op an adopter has no way to see.
+  if (!options.client.syncReportingStatus) {
+    for (const [index, plan] of consumerStatuses.entries()) {
+      if (!plan.overdue || plan.suppressed !== undefined) continue;
+      consumerStatuses[index] = {
+        ...plan,
+        suppressed: 'posting_unavailable',
+        reason: suppressionReason('posting_unavailable', plan.reason),
+      };
+    }
+  }
   const owed: ReportingConsumerStatusPlanV1[] = [];
   const claimedChains = new Set<string>();
   for (const plan of consumerStatuses) {
@@ -3315,28 +3400,33 @@ async function consumeReportingRevision(
  * would itself be the cost being guarded against.
  */
 function approximateRowBytes(row: unknown): number {
-  // Bounded by *work*, not by depth. A flat charge past a depth cap cuts both
-  // ways and neither is acceptable: too small and nesting walks past the
-  // ceiling, too large and 24 KB of empty nested objects silences the buyer
-  // while blaming its own budget. Counting nodes instead charges honestly for
-  // what it inspects, bounds the inspection, and leaves the residue modest.
-  let budget = MAX_ROW_ESTIMATE_NODES;
-  const visit = (value: unknown): number => {
-    if (budget <= 0) return UNVISITED_SUBTREE_BYTE_CHARGE;
-    budget -= 1;
+  // Strings and primitives are sized in O(1) and never consume budget: they
+  // carry the bytes, and charging them a flat constant is what created both
+  // failure directions. Only *containers* are budgeted, because they are what
+  // makes the walk expensive.
+  //
+  // Exceeding either bound returns `Infinity`, which the caller reads as the
+  // buyer's own budget running out. That is deliberate: a structure this SDK
+  // cannot size is a limitation of the buyer's estimator, not evidence that the
+  // seller published something unreadable.
+  let containers = MAX_ROW_ESTIMATE_CONTAINERS;
+  const visit = (value: unknown, depth: number): number => {
     if (typeof value === 'string') return value.length * 2;
     if (value === null || typeof value !== 'object') return 16;
+    if (depth >= MAX_ROW_ESTIMATE_DEPTH) return Number.POSITIVE_INFINITY;
+    containers -= 1;
+    if (containers < 0) return Number.POSITIVE_INFINITY;
     let total = 32;
     if (Array.isArray(value)) {
-      for (const item of value) total += visit(item);
+      for (const item of value) total += visit(item, depth + 1);
       return total;
     }
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      total += key.length * 2 + visit(child);
+      total += key.length * 2 + visit(child, depth + 1);
     }
     return total;
   };
-  return visit(row);
+  return visit(row, 0);
 }
 
 /**

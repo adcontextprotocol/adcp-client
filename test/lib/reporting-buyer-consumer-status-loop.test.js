@@ -988,7 +988,10 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
       periodEnd: '2026-09-02T00:00:00.000Z',
       deliverySla: 'P1M',
     });
-    assert.equal(monthly.suppressed, undefined, 'P1M is resolvable, not a reason to fall silent');
+    // The helper unwires the poster, so `posting_unavailable` is expected; what
+    // matters is that the deadline resolved rather than falling to
+    // `deadline_unknown`.
+    assert.notEqual(monthly.suppressed, 'deadline_unknown', 'P1M is resolvable, not a reason to fall silent');
     assert.equal(monthly.statusAsOf, '2026-10-02T00:00:00.000Z');
 
     const yearly = await scheduledExpectedAt({
@@ -1172,6 +1175,38 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(seller.store.consumerStatements[0].period.source_timezone, 'UTC', 'the buyer pin, not the echo');
   });
 
+  test('a slash-free IANA link is accepted, because the spec says name or link', async () => {
+    const seller = await harness();
+    // `iana_timezone`: "a recognized IANA Time Zone Database zone name **or
+    // link**". Links have no slash — Japan, GB, EET, Zulu — and this repo's own
+    // producer accepts them, so a buyer that required one would refuse a
+    // configuration its own seller had already accepted, then be refused by
+    // that seller for echoing a substituted zone on every statement forever.
+    const { periodSourceTimezone: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(period => ({
+          ...period,
+          period: { ...period.period, source_timezone: 'Japan' },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(
+      result.consumerStatuses[0].period.source_timezone,
+      'Japan',
+      'adopted verbatim, not substituted with UTC'
+    );
+  });
+
   test('a numeric-offset source_timezone is refused rather than substituted', async () => {
     const seller = await harness();
     // No buyer pin, so the seller's echo is the only candidate.
@@ -1340,7 +1375,24 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(result.postedConsumerStatuses[0].failureCode, 'reader_incompatible');
   });
 
-  test('nested rows are charged honestly, neither waved through nor used to silence the buyer', async () => {
+  /** Replace every row on every page with `shape`, over `pages` pages. */
+  function servesRows(seller, shape, pages) {
+    const honest = seller.client.getMediaBuyDelivery;
+    let sent = 0;
+    seller.client.getMediaBuyDelivery = async params => {
+      const { pagination: _cursor, ...firstPage } = params;
+      const page = await honest(firstPage);
+      sent += 1;
+      return {
+        ...page,
+        reporting_rows: page.reporting_rows.map(row => ({ ...row, ...shape() })),
+        pagination: { has_more: sent < pages, cursor: `probe-${sent}` },
+      };
+    };
+    return () => sent;
+  }
+
+  test('an ordinary wide row is consumed, not charged into silence', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
@@ -1348,31 +1400,82 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
 
-    // A nesting bomb: structurally deep, almost no bytes. Charging a flat
-    // constant for every unexamined subtree turned 24 KB of this into
-    // `local_budget_exhausted` — the buyer stops, posts nothing, and records a
-    // reason blaming its own budget. A seller gets evidence suppression with a
-    // built-in alibi for the price of a few kilobytes.
-    const honest = seller.client.getMediaBuyDelivery;
-    let pages = 0;
-    seller.client.getMediaBuyDelivery = async params => {
-      const { pagination: _cursor, ...firstPage } = params;
-      const page = await honest(firstPage);
-      pages += 1;
-      return {
-        ...page,
-        reporting_rows: page.reporting_rows.map(row => ({ ...row, nested: { a: { b: { c: { d: {} } } } } })),
-        pagination: { has_more: pages < 256, cursor: `deep-${pages}` },
-      };
-    };
+    // ~500 KB of perfectly ordinary row: one array of a hundred thousand
+    // numbers. Charging a flat constant per unvisited leaf estimated this at
+    // ~393 MB against a 256 MiB ceiling, so the buyer went silent on a seller
+    // that had done nothing wrong — the same "buy silence with an alibi" hole
+    // as the nesting bomb, just wide instead of deep.
+    servesRows(seller, () => ({ samples: Array.from({ length: 100_000 }, (_unused, index) => index) }), 1);
+
+    const result = await seller.reconcile(at, expected);
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    // The rows were read and sized without tripping the ceiling, which is the
+    // property under test. The digest then fails because this stub rewrote the
+    // rows — reaching that comparison at all is the proof the read completed.
+    assert.equal(result.consumerStatuses[0].failureCode, 'integrity_mismatch');
+  });
+
+  test('a shallow nesting bomb does not buy silence either', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const pagesSent = servesRows(seller, () => ({ nested: { a: { b: { c: { d: {} } } } } }), 256);
 
     const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 300 } });
-    assert.notEqual(
-      result.consumerStatuses[0].suppressed,
-      'local_budget_exhausted',
-      'a few kilobytes of nesting must not buy silence'
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.equal(pagesSent(), 256, 'the read ran to completion');
+  });
+
+  test('a row too deep to size is the buyer own limit, not a seller failure', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // An 8,000-deep array overflowed the estimator's stack. The `RangeError`
+    // was caught and posted as `unreadable` / `transport_failed` — the buyer
+    // durably accusing the seller of publishing unreadable bytes because of its
+    // own call stack.
+    servesRows(
+      seller,
+      () => {
+        const root = [];
+        let tip = root;
+        for (let level = 0; level < 8_000; level += 1) {
+          const next = [];
+          tip.push(next);
+          tip = next;
+        }
+        return { deep: root };
+      },
+      1
     );
-    assert.equal(pages, 256, 'the read ran to completion');
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('large strings are charged for what they hold, so the ceiling still binds', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // Strings are sized in O(1) and never consume the container budget, so no
+    // amount of padding can hide them from the ceiling.
+    servesRows(seller, () => ({ blob: 'x'.repeat(1_000_000) }), 200);
+
+    const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 400 } });
+    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.deepEqual(result.postedConsumerStatuses, []);
   });
 
   test('a lowercase RFC 3339 expected_at is read, not treated as unreadable', async () => {
@@ -1408,7 +1511,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.deepEqual(result.failedConsumerStatuses, []);
   });
 
-  test('an unreadable expected_at falls back to the obligation schedule the spec defines', async () => {
+  test('an absent expected_at falls back to the obligation schedule the spec defines', async () => {
     const seller = await harness();
     // No buyer pin: the obligation's own `schedule.delivery_sla` has to be the
     // only path to a deadline, or this test passes through the pin instead and

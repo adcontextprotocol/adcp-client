@@ -43,7 +43,10 @@ a flat constant, which cut both ways: too small and nesting walked past the ceil
 (`{a:{b:{c:{d:{…1 MB…}}}}}` measured 200 bytes), too large and 24 KB of empty nested objects silenced
 the buyer with a `local_budget_exhausted` that blamed its own budget. It now walks a bounded number
 of nodes per row and charges each for what it holds, which closes the bypass without handing a seller
-a cheap way to buy silence.
+a cheap way to buy silence. Strings and primitives are sized in O(1) and never consume that budget,
+so neither a very wide row nor a very large string can be hidden from the ceiling or used to trip it
+early; a structure too deep to size is reported as the buyer's own limit rather than as an unreadable
+revision.
 
 **`period.source_timezone` is validated, and the buyer's own pin wins.** It reaches the durable
 statement, the `reporting_status_id` hash and the unchanged-comparison, so a seller varying its echo
@@ -56,6 +59,16 @@ numeric-offset substitution the clause forbids.
 recorded by an older SDK with a `+00:00` or lowercase spelling now produces the same monotonicity
 floor as its canonical form — which feeds `reporting_status_id`, so a chain can see one id shift
 across this upgrade.
+
+Two further adopter-observable changes. A `period.source_timezone` that is not a recognized IANA zone
+is no longer adopted, and `ExpectedReportingPeriod.periodSourceTimezone` now outranks the seller's
+echo — that value is inside the consumer-status chain key and the `reporting_status_id` derivation,
+so an adopter whose pin disagreed with the seller's echo will see the chain key change once on
+upgrade. And a `expected_at` that is present but not a string (rather than merely malformed) now
+suppresses instead of falling through to the pin.
+
+`suppressed` gains `posting_unavailable`: with no `client.syncReportingStatus` wired, a plan used to
+come back live, due and unsuppressed while silently going nowhere.
 
 Diagnostics are honest about whose field failed: the `deadline_unknown` reason named a field that
 does not exist on `ExpectedReportingPeriod` and said a value "was not recorded" when it had been

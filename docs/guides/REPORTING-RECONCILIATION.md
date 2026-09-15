@@ -120,9 +120,10 @@ resolution order is worth knowing:
 | # | Source | Notes |
 |---|---|---|
 | 1 | `obligation.expected_at` | The seller's own commitment. Normalized, never echoed verbatim. |
+| 1a | — *(present but unreadable)* | **Nothing is derived and rows 2–3 are not consulted.** A present `expected_at` is the seller's real deadline; a locally derived one would disagree with it and the statement would be refused on every run. Only the seller can fix the value. |
 | 2 | `ExpectedReportingPeriod.officialAfterSeconds` | Only when `requiredFinality` is `official`. |
 | 2 | `ExpectedReportingPeriod.deliverySlaSeconds` | Otherwise. Added to the period end. |
-| 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned neither above. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
+| 3 | `obligation.schedule.delivery_sla` | Last resort, only when you pinned neither above **and an obligation exists** — so it is never available for `obligation_missing`, which is what the pins are for. Deliberately last: it is as seller-controlled as `expected_at`, and preferring it would let a seller move its own deadline. |
 
 The deadline is then that instant plus `ExpectedReportingPeriod.automatedRecoveryWindowSeconds`. That
 window is advertised on the delivery **capabilities**, not on the obligation, so the ledger cannot
@@ -141,8 +142,9 @@ must carry a digest the buyer recomputed from rows it actually read.
 | `unchanged` | The current leaf already says exactly this. | Nothing. Re-posting would supersede a statement with its own duplicate. |
 | `deadline_unknown` | No deadline could be derived. | Record the pin named in `reason`, or take up the malformed `expected_at` with the seller. |
 | `consumption_unavailable` | No exact-revision reader is wired. | Supply `client.getMediaBuyDelivery`. |
-| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. Never reported as a seller failure. |
-| `leaf_undisclosed` | The seller named a current leaf it did not return. | A seller-side defect; the buyer declines to guess. |
+| `posting_unavailable` | No poster is wired, so there is nothing to append to. | Supply `client.syncReportingStatus`. |
+| `local_budget_exhausted` | Your own `ledgerLimits` ran out mid-read, or the revision was too large or too deeply structured for the SDK to size. | Raise `maxRevisionRows`, `maxPages` or `maxLoadMs`. The size and depth ceilings are not tunable. Never reported as a seller failure. |
+| `leaf_undisclosed` | Your chain has more than one unsuperseded leaf, or the seller named a current leaf it did not return. | A seller-side defect either way; the buyer declines to guess which leaf to supersede. |
 | `chain_indeterminate` | The revision chain forked, or a head names a predecessor you never saw. | A seller-side defect. The buyer stays silent rather than blaming the seller for what it could not read. |
 
 A plan with `suppressed` unset and `overdue: false` is simply not due yet.
