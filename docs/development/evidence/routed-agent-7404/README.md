@@ -1,24 +1,28 @@
 # Routed-agent applicability audit
 
 Reproduction/initial base: `39b07141d3bdf6ba650f3625db471ab017b89a33` (2026-09-14).
-Integration base: `ecf1c74535fb184a91c5b4279b40e8f38f4558e9` (#2907, AdCP rc.3 adoption).
-Previous integration base: `55829081dae2673f73615af2a4f6f029cddff813` (#2913, 17:59:28Z).
-The routed patch was rebased by an exact fetched-main lease. This includes landed
-#2911 (`8ba12c2ace85a88533ce1d56efd35badea51a97c`, 17:23:15Z), whose tree
-`1771a8ef743b4ddcd89c836cee39563096dac82e` exactly matches its frozen review head.
-Historical Draft #2911 composition target: `a6834d67870253674178d099447af36dd6640b11`,
-tree `1771a8ef743b4ddcd89c836cee39563096dac82e`. Its owner confirmed that no reporting edits followed review. The final candidate
-is rebased onto the landed main commit; no composition overlay is retained. The account and negotiation
-workspaces were notified of the runner-only scope. No sibling branch was edited.
+Current integration base: `a4a269cc48f38a7d7ca9da2998b0b36cac2dfb0c` (2026-09-15,
+#2917 media-buy action assessment). Reviewed historical head:
+`85f95020967ddedc0ece03e5de43e728e1d7e284`, based on
+`ecf1c74535fb184a91c5b4279b40e8f38f4558e9` (#2907, AdCP rc.3 adoption).
+That head is preserved in local branch `backup/pr2920-reviewed-85f95020` and a
+verified git bundle before rebasing the existing PR branch.
 
-All eight commits from the previous integration base rebase patch-identically.
-The 73 files changed by #2907 have no path overlap with this patch, but include
-the protocol pin, generator, schemas, and package budgets; qualification must run
-again on this integration base. Earlier 558-based composition and test results
-are historical evidence, not exact-current qualification. The pinned `fc488660`
-rc.4 workflow replay is also historical: protocol main `70a91fe9` diverges from
-that source and includes reporting/controller schema changes. Neither replay nor
-SDK tests establish hosted adoption.
+All nine historical commits rebase patch-identically. The 136 files changed on
+main since the historical base have zero path overlap with this patch's 26 files.
+In particular, main has not changed the five implementation files carrying the
+routed applicability fix, so the dispatch/gate mismatch remains applicable.
+New reporting consumer-status hardening, canonical offline validators, targeting
+migration adapter, and negotiated media-buy action assessment remain inherited
+unchanged from current main. No composition overlay or sibling branch edits are
+included.
+
+Qualification and independent review must run again at the final rebased head.
+Exact base/head/tree, binary-diff SHA-256, local results, review adjudications, and
+terminal CI are recorded in PR #2920's current evidence. Earlier ecf1c745- and
+55829081-based results are historical evidence, not current-head qualification.
+The pinned `fc488660` rc.4 workflow replay is historical too: protocol main had
+diverged from that source. Neither replay nor SDK tests establish hosted adoption.
 
 ## Reproduction before SDK edits
 
@@ -150,5 +154,6 @@ are now conformant or that all historical failures share an SDK root cause.
 This work does **not** close AdCP #7404. Hosted adoption separately requires
 #7507's publication-manifest fix, #7506, deployment, and a complete heartbeat for
 both reported agents. A green SDK build or a local reproduction is not hosted
-adoption evidence. Draft only, auto-merge off, human review after green exact-head
-CI. No merge, npm publication, or release is authorized.
+adoption evidence. Auto-merge remains off. Mark Ready and request normal human
+maintainer review only after clean exact-head qualification, independent review,
+and terminal CI. No merge, npm publication, tag, or release is authorized.
