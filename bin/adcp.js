@@ -2762,6 +2762,18 @@ async function resolveFileComplianceRunOptions(args, opts) {
   return { adcpVersion, complianceDir, schemaRoot };
 }
 
+// Only render runner-authored capability dependency details here. Other skip
+// details can contain raw seller diagnostics and retain their existing surface.
+function printCapabilityPrerequisiteSkip(step) {
+  if (!step.skipped || step.skip_reason !== 'capability_prerequisite_unavailable' || !step.skip?.detail || step.error)
+    return;
+  const detail = String(step.skip.detail).replace(
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+  console.log(`   Skipped: ${detail}`);
+}
+
 async function handleStoryboardRun(args) {
   let opts = parseAgentOptions(args);
   let {
@@ -3020,6 +3032,7 @@ async function handleStoryboardRun(args) {
         not_applicable: ' [not applicable]',
         no_phases: ' [no phases]',
         prerequisite_failed: ' [prerequisite failed]',
+        capability_prerequisite_unavailable: ' [capability prerequisite unavailable]',
         unsatisfied_contract: ' [contract out of scope]',
       };
       for (const step of phase.steps) {
@@ -3027,6 +3040,7 @@ async function handleStoryboardRun(args) {
         const skipLabel = SKIP_LABELS[step.skip_reason] ?? '';
         console.log(`\n${icon} ${step.title}${skipLabel} (${step.duration_ms}ms)`);
         console.log(`   Task: ${step.task}`);
+        printCapabilityPrerequisiteSkip(step);
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
@@ -4439,6 +4453,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           const instTag = step.agent_index ? `[#${step.agent_index}] ` : '';
           console.log(`\n${icon} ${instTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
           console.log(`   Task: ${step.task}`);
+          printCapabilityPrerequisiteSkip(step);
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
@@ -4733,6 +4748,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
       not_applicable: ' [not applicable]',
       no_phases: ' [no phases]',
       prerequisite_failed: ' [prerequisite failed]',
+      capability_prerequisite_unavailable: ' [capability prerequisite unavailable]',
       unsatisfied_contract: ' [contract out of scope]',
     };
     for (const result of results) {
@@ -4748,11 +4764,13 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
           // routing decisions are visible in the human-readable output.
           let agentTag = '';
           if (step.agent_url && result.agent_map) {
-            const key = Object.entries(result.agent_map).find(([, url]) => url === step.agent_url)?.[0];
+            const entries = Object.entries(result.agent_map);
+            const key = entries[step.agent_index - 1]?.[0] ?? entries.find(([, url]) => url === step.agent_url)?.[0];
             if (key) agentTag = `[${key}] `;
           }
           console.log(`\n${icon} ${agentTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
           console.log(`   Task: ${step.task}`);
+          printCapabilityPrerequisiteSkip(step);
           if (step.error) console.log(`   Error: ${step.error}`);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';

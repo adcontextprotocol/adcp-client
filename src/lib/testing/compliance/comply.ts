@@ -21,6 +21,7 @@ import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-co
 // `resolveAssertions` throws and every comply() call against an up-to-date
 // compliance cache fails at startup.
 import { registerDefaultInvariants } from '../storyboard/default-invariants';
+import { hasAnyRequiredTool } from '../storyboard/agent-routing';
 
 registerDefaultInvariants();
 import {
@@ -1059,12 +1060,11 @@ export function partitionStoryboardsByRequiredTools(
   storyboards: Storyboard[],
   discoveredTools: readonly string[]
 ): { runnable: Storyboard[]; missing: NotApplicableStoryboard[] } {
-  const discoveredToolNames = new Set(discoveredTools);
   const runnable: Storyboard[] = [];
   const missing: NotApplicableStoryboard[] = [];
   for (const sb of storyboards) {
     const required = sb.required_tools ?? [];
-    const hasApplicableTool = required.length === 0 || required.some(tool => discoveredToolNames.has(tool));
+    const hasApplicableTool = hasAnyRequiredTool(required, discoveredTools);
     if (!hasApplicableTool) {
       missing.push({
         storyboard_id: sb.id,

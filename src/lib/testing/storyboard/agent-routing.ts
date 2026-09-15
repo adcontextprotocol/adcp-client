@@ -40,11 +40,52 @@
  * See `StoryboardRunOptions.webhook_receiver` JSDoc and `webhook-receiver.ts`
  * for implementation details.
  */
+import { redactOAuthUrlForOutput, redactOAuthUrlsInText } from './oauth-metadata-graph';
+import { selectProbeTask } from './test-kit';
 import type { TestClient } from '../client';
 import { getOrCreateClient, getOrDiscoverProfile } from '../client';
 import type { AgentProfile } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
+
+/** Storyboard applicability is any-of; it does not authorize individual steps. */
+export function hasAnyRequiredTool(required: readonly string[] | undefined, tools: readonly string[]): boolean {
+  return !required?.length || required.some(tool => tools.includes(tool));
+}
+
+/** Normalize legacy discovery entries, retaining the single-agent empty-list fallback. */
+export function normalizeAgentToolNames(tools: unknown): string[] | undefined {
+  if (!Array.isArray(tools)) return undefined;
+  const names = tools.flatMap(tool => {
+    if (typeof tool === 'string') return [tool];
+    if (tool && typeof tool === 'object' && typeof tool.name === 'string') return [tool.name];
+    return [];
+  });
+  return names.length > 0 ? names : undefined;
+}
+
+/**
+ * Resolve a `$test_kit.<path>` task reference against the runtime options.
+ * Falls back to `step.task_default`. Returns undefined when neither yields a string.
+ */
+export function resolveTaskName(step: StoryboardStep, options: StoryboardRunOptions): string | undefined {
+  if (!step.task.startsWith('$test_kit.')) return step.task;
+  const path = step.task.slice('$test_kit.'.length).split('.');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- dynamic test-kit shape
+  let value: any = options.test_kit;
+  for (const segment of path) {
+    if (value == null || typeof value !== 'object') {
+      value = undefined;
+      break;
+    }
+    value = (value as Record<string, unknown>)[segment];
+  }
+  const configured = typeof value === 'string' && value.length > 0 ? value : step.task_default;
+  if (step.task === '$test_kit.auth.probe_task') {
+    return selectProbeTask(configured, options.agentTools);
+  }
+  return configured;
+}
 
 // `compliance_testing` is on the wire as a top-level capability block, NOT
 // in `supported_protocols`. `parseCapabilitiesResponse`
@@ -89,7 +130,7 @@ function scrubAuthSecrets(text: string): string {
   // content to entropy-based secret scanners (GitGuardian/gitleaks). It
   // is the redaction pattern itself — no secret is encoded here.
   // ggignore
-  return text
+  return redactOAuthUrlsInText(text)
     .replace(/(authorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]') // ggignore
     .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [REDACTED]') // ggignore
     .replace(/([?&]token=)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]'); // ggignore
@@ -111,8 +152,42 @@ function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): St
     // depends on.
     _client: undefined,
     _profile: undefined,
+    profile: undefined,
+    _controllerCapabilities: undefined,
     agents: undefined,
     agentTools: undefined,
+  };
+}
+
+/** Bind execution gates and transport observations to the same agent as dispatch. */
+export function routedAgentOptions(
+  entry: AgentEntry,
+  options: StoryboardRunOptions,
+  profile: AgentProfile
+): StoryboardRunOptions {
+  // An empty discovered list is authoritative in routed mode.
+  const tools = normalizeAgentToolNames(profile.tools) ?? [];
+  const raw = profile.raw_capabilities;
+  const compliance = raw && typeof raw === 'object' && 'compliance_testing' in raw ? raw.compliance_testing : undefined;
+  const scenarios =
+    compliance && typeof compliance === 'object' && 'scenarios' in compliance ? compliance.scenarios : undefined;
+  return {
+    ...buildAgentOptions(entry, options),
+    // Scenario opt-in must be the selected agent's declaration too; a
+    // comply() caller's controller cache belongs to its single agent.
+    _controllerCapabilities:
+      Array.isArray(scenarios) &&
+      scenarios.length > 0 &&
+      scenarios.every(s => typeof s === 'string') &&
+      tools.includes('comply_test_controller')
+        ? {
+            detected: true,
+            scenarios,
+          }
+        : { detected: false },
+    profile,
+    _profile: profile,
+    agentTools: tools,
   };
 }
 
@@ -228,7 +303,7 @@ export async function buildRoutingContext(
       // discover the resilient flag without grep'ing the JSDoc. Suppressed
       // in resilient mode (the operator already opted in) so the hint
       // doesn't appear in every per-agent failure attached to the result.
-      const baseMessage = `Discovery failed for agent "${r.key}" (${agents[r.key]!.url}): ${detail}`;
+      const baseMessage = `Discovery failed for agent "${r.key}" (${redactOAuthUrlForOutput(agents[r.key]!.url)}): ${detail}`;
       const message = resilient
         ? baseMessage
         : `${baseMessage}\n\nIf this is hello-cluster / exploratory CI and you want unrelated storyboards to complete despite this failure, ` +
@@ -243,7 +318,7 @@ export async function buildRoutingContext(
   }
 
   const protocolIndex = buildProtocolIndex(profiles);
-  detectMultiClaimConflicts(storyboard, protocolIndex);
+  detectMultiClaimConflicts(storyboard, protocolIndex, options);
 
   return { clients, profiles, protocolIndex, agentMap, discoveryFailures };
 }
@@ -266,7 +341,7 @@ export function buildRoutingContextFromProfiles(
     agentMap[key] = entry.url;
   }
   const protocolIndex = buildProtocolIndex(profiles);
-  detectMultiClaimConflicts(storyboard, protocolIndex);
+  detectMultiClaimConflicts(storyboard, protocolIndex, options);
   // Empty client map — callers that only test routing shouldn't dispatch.
   return { clients: new Map(), profiles, protocolIndex, agentMap, discoveryFailures: [] };
 }
@@ -303,21 +378,26 @@ function buildProtocolIndex(profiles: Map<string, AgentProfile>): Map<AdcpProtoc
  * same protocol) — surfacing it before the first non-discovery network
  * call gives a much better error than a half-run storyboard.
  */
-function detectMultiClaimConflicts(storyboard: Storyboard, protocolIndex: Map<AdcpProtocol, string[]>): void {
+function detectMultiClaimConflicts(
+  storyboard: Storyboard,
+  protocolIndex: Map<AdcpProtocol, string[]>,
+  options: StoryboardRunOptions
+): void {
   const conflicts: Array<{ task: string; protocol: AdcpProtocol; agents: string[]; stepIds: string[] }> = [];
   for (const phase of storyboard.phases ?? []) {
     for (const step of phase.steps ?? []) {
       if (step.agent !== undefined) continue;
-      const protocol = primaryProtocolFor(step.task);
+      const task = resolveTaskName(step, { ...options, agentTools: undefined }) ?? step.task;
+      const protocol = primaryProtocolFor(task);
       if (!protocol) continue;
       const candidates = protocolIndex.get(protocol);
       if (!candidates || candidates.length < 2) continue;
-      const existing = conflicts.find(c => c.task === step.task && c.protocol === protocol);
+      const existing = conflicts.find(c => c.task === task && c.protocol === protocol);
       if (existing) {
         existing.stepIds.push(step.id);
       } else {
         conflicts.push({
-          task: step.task,
+          task,
           protocol,
           agents: candidates,
           stepIds: [step.id],
@@ -380,7 +460,7 @@ export function resolveAgentForStep(
       throw new RoutingError(
         `Step "${step.id}" targets agent "${step.agent}" via \`step.agent\` override, ` +
           `but that agent's discovery failed: ${failed.underlying} ` +
-          `(${failed.url}). Either remove the override, fix the agent, or ` +
+          `(${redactOAuthUrlForOutput(failed.url)}). Either remove the override, fix the agent, or ` +
           `route the step to a healthy agent.`,
         step.task,
         `agent "${step.agent}" failed discovery`
@@ -411,7 +491,7 @@ export function resolveAgentForStep(
     // error so the operator sees the connection without correlating logs.
     const failedHint =
       ctx.discoveryFailures.length > 0
-        ? ` Discovery failed for: ${ctx.discoveryFailures.map(f => `${f.agentKey} (${f.url})`).join(', ')}.`
+        ? ` Discovery failed for: ${ctx.discoveryFailures.map(f => `${f.agentKey} (${redactOAuthUrlForOutput(f.url)})`).join(', ')}.`
         : '';
     throw new RoutingError(
       `No agent in the map claims protocol "${protocol}" required by tool ` +
@@ -422,7 +502,7 @@ export function resolveAgentForStep(
       `protocol ${protocol} unclaimed`
     );
   }
-  // Tool not in TASK_FEATURE_MAP (e.g., sync_creatives, comply_test_controller,
+  // Tool not in TASK_FEATURE_MAP (e.g., sync_creatives, list_authorized_properties,
   // get_adcp_capabilities post-discovery, future tasks).
   if (options.default_agent) return options.default_agent;
   throw new RoutingError(

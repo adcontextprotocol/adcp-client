@@ -314,7 +314,11 @@ export async function runControllerSeeding(
   storyboard: Storyboard,
   options: StoryboardRunOptions,
   context: StoryboardContext,
-  discoveryClient: TestClient = client
+  discoveryClient: TestClient = client,
+  resolveFixtureAgent?: (task: 'comply_test_controller' | 'get_products') => {
+    client: TestClient;
+    options: StoryboardRunOptions;
+  }
 ): Promise<ControllerSeedingResult | null> {
   if (options.skip_controller_seeding === true) return null;
   const calls = buildSeedCalls(storyboard.fixtures);
@@ -325,7 +329,15 @@ export async function runControllerSeeding(
         ? calls
         : calls.filter(call => call.scenario === 'seed_product' || call.scenario === 'seed_pricing_option');
     if (resolutionCalls.length === 0) return null;
-    return runDeclaredFixtureResolution(client, discoveryClient, storyboard, options, context, resolutionCalls);
+    return runDeclaredFixtureResolution(
+      client,
+      discoveryClient,
+      storyboard,
+      options,
+      context,
+      resolutionCalls,
+      resolveFixtureAgent
+    );
   }
   if (storyboard.prerequisites?.controller_seeding !== true) return null;
 
@@ -438,7 +450,11 @@ async function runDeclaredFixtureResolution(
   storyboard: Storyboard,
   options: StoryboardRunOptions,
   context: StoryboardContext,
-  calls: SeedCall[]
+  calls: SeedCall[],
+  resolveFixtureAgent?: (task: 'comply_test_controller' | 'get_products') => {
+    client: TestClient;
+    options: StoryboardRunOptions;
+  }
 ): Promise<ControllerSeedingResult> {
   const start = Date.now();
   const authoringErrorResult = buildAuthoringErrorResult(storyboard, calls, context, start);
@@ -474,18 +490,40 @@ async function runDeclaredFixtureResolution(
   const claimedPricingOptions = new Map<string, boolean>();
   const productStatuses = new Map<string, FixtureResolutionRecord['status']>();
   const seedContext = { correlation_id: `${storyboardCorrelationPrefix(storyboard)}--__seeding__` };
-  const controllerMissing = options.agentTools?.includes('comply_test_controller') === false;
-  let advertisedScenarios = controllerMissing ? new Set<string>() : controllerScenarioSetFromOptions(options);
-  let scenarioLookupAttempted = advertisedScenarios !== null;
+  let seedOptions = options;
+  let discoveryOptions = options;
+  let seedPrepared = false;
+  let discoveryPrepared = false;
+  const controller: { missing: boolean; scenarios: Set<string> | null } = { missing: false, scenarios: null };
+  const prepareSeedAgent = async () => {
+    if (seedPrepared) return;
+    const selected = resolveFixtureAgent?.('comply_test_controller');
+    if (selected) {
+      seedClient = selected.client;
+      seedOptions = selected.options;
+    }
+    controller.missing = seedOptions.agentTools?.includes('comply_test_controller') === false;
+    controller.scenarios = controller.missing ? new Set<string>() : controllerScenarioSetFromOptions(seedOptions);
+    if (!controller.missing && !controller.scenarios) {
+      controller.scenarios = await fetchControllerScenarioSet(seedClient, seedOptions, seedContext);
+    }
+    seedPrepared = true;
+  };
+  const prepareDiscoveryAgent = () => {
+    if (discoveryPrepared) return;
+    const selected = resolveFixtureAgent?.('get_products');
+    if (selected) {
+      discoveryClient = selected.client;
+      discoveryOptions = selected.options;
+    }
+    discoveryPrepared = true;
+  };
   const legacyCalls = calls.filter(call => resolutionSpecForCall(call, specByKey) === undefined);
   if (legacyCalls.length > 0) {
-    if (controllerMissing) return buildMissingControllerResult(storyboard, legacyCalls, context);
-    if (!advertisedScenarios) {
-      advertisedScenarios = await fetchControllerScenarioSet(seedClient, options, seedContext);
-      scenarioLookupAttempted = true;
-    }
-    if (advertisedScenarios) {
-      const unsupported = legacyCalls.find(call => !call.authoring_error && !advertisedScenarios!.has(call.scenario));
+    await prepareSeedAgent();
+    if (controller.missing) return buildMissingControllerResult(storyboard, legacyCalls, context);
+    if (controller.scenarios) {
+      const unsupported = legacyCalls.find(call => !call.authoring_error && !controller.scenarios!.has(call.scenario));
       if (unsupported) {
         return buildUnsupportedSeedResult(
           storyboard,
@@ -501,11 +539,12 @@ async function runDeclaredFixtureResolution(
     const spec = resolutionSpecForCall(call, specByKey);
     return !spec || spec.strategies.includes('seed');
   });
-  if (needsSeedStrategy && !controllerMissing && !advertisedScenarios && !scenarioLookupAttempted) {
-    advertisedScenarios = await fetchControllerScenarioSet(seedClient, options, seedContext);
-  }
+  // Preserve standalone preparation order. Routed fallback operations are
+  // resolved only if their strategy is reached, so unrelated routes cannot
+  // prevent a valid earlier strategy from satisfying the fixture.
+  if (!resolveFixtureAgent && needsSeedStrategy && !seedPrepared) await prepareSeedAgent();
   let catalogPromise: Promise<DiscoveryCatalogResult> | undefined;
-  const catalog = () => (catalogPromise ??= discoverProductCatalog(discoveryClient, options, context));
+  const catalog = () => (catalogPromise ??= discoverProductCatalog(discoveryClient, discoveryOptions, context));
 
   let passedCount = 0;
   let failedCount = 0;
@@ -516,7 +555,7 @@ async function runDeclaredFixtureResolution(
     // The first production slice only changes product and product-pricing
     // handles. Every other entity keeps the legacy seed-only behavior.
     if (!spec) {
-      const legacy = await executeLegacySeedCall(seedClient, storyboard, call, options, context, seedContext);
+      const legacy = await executeLegacySeedCall(seedClient, storyboard, call, seedOptions, context, seedContext);
       if (legacy.step.skip_reason === 'fixture_unsatisfied') {
         return buildUnsupportedSeedResult(storyboard, legacyCalls, context, call.scenario, legacy.step.skip?.detail);
       }
@@ -545,12 +584,13 @@ async function runDeclaredFixtureResolution(
 
     for (const strategy of parentUnavailable ? [] : spec.strategies) {
       if (strategy === 'seed') {
-        const advertised = advertisedScenarios?.has(call.scenario);
-        if (controllerMissing || advertised === false) {
+        await prepareSeedAgent();
+        const advertised = controller.scenarios?.has(call.scenario);
+        if (controller.missing || advertised === false) {
           attempts.push({
             strategy,
             disposition: 'unavailable',
-            detail: controllerMissing
+            detail: controller.missing
               ? 'comply_test_controller is not advertised'
               : `list_scenarios did not advertise ${call.scenario}`,
           });
@@ -570,7 +610,7 @@ async function runDeclaredFixtureResolution(
               params: isPlainRecord(controllerRequest.params) ? controllerRequest.params : call.params,
               context: seedContext,
             },
-            options
+            seedOptions
           );
           const data = raw.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
           if (raw.success && data?.success === true) {
@@ -611,7 +651,8 @@ async function runDeclaredFixtureResolution(
       }
 
       if (strategy === 'discover') {
-        if (options.agentTools && !options.agentTools.includes('get_products')) {
+        prepareDiscoveryAgent();
+        if (discoveryOptions.agentTools && !discoveryOptions.agentTools.includes('get_products')) {
           attempts.push({
             strategy,
             disposition: 'unavailable',
