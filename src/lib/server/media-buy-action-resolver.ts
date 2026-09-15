@@ -17,6 +17,7 @@ import {
   findProductAction,
   legacyActionSupported,
   supportsRc3Actions,
+  supportsChangeTermIdentity,
   packageActionStatus,
 } from '../media-buy/action-contracts';
 import { assessActionAvailability, type ActionAvailability } from '../media-buy/action-assessment';
@@ -159,6 +160,7 @@ export const mediaBuyActionResolver = {
         if (
           !template ||
           !template.modes.includes(term.service_mode) ||
+          !slaWithin(template.sla, decision.sla ?? term.processing_sla) ||
           (template.allowed_statuses && !template.allowed_statuses.includes(input.buy.status as never))
         ) {
           productBlocked = true;
@@ -174,6 +176,10 @@ export const mediaBuyActionResolver = {
           certainty: 'blocked',
           message: 'Not every affected product currently admits this accepted action.',
         });
+        continue;
+      }
+      if (input.wireVersion !== '3.1' && !supportsChangeTermIdentity(input.adcpVersion ?? ADCP_VERSION)) {
+        blocked('Accepted change-term links require a beta.9-or-newer served schema.', true);
         continue;
       }
       if (

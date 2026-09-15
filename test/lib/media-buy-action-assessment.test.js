@@ -1710,3 +1710,142 @@ test('local active and paused package controls remain executable on active and p
     }
   }
 });
+
+test('legacy package controls cannot override explicit lifecycle state or missing current evidence', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const action of ['pause', 'resume']) {
+    for (const grant of [
+      { valid_actions: [action] },
+      { available_actions: [{ action, mode: 'self_serve', terms_ref: `right_${action}` }] },
+    ]) {
+      const request = { packages: [{ package_id: 'p1', paused: action === 'pause' }] };
+      for (const status of ['pending_start', 'pending_creatives', 'completed', 'canceled', 'failed', 'rejected']) {
+        for (const paused of [true, false, undefined]) {
+          const state = { status: 'active', packages: [{ package_id: 'p1', status, paused }], ...grant };
+          const result = preflightUpdateMediaBuy(state, request, { adcpVersion: '3.1.19' });
+          assert.equal(result.ok, false, `${action}/${status}/${paused}`);
+          assert.equal(result.denials[0].reason, 'wrong_status');
+          assert.throws(
+            () => assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.1.19' }),
+            error => error.code === 'ACTION_NOT_ALLOWED' && error.details.reason === 'wrong_status'
+          );
+        }
+      }
+      for (const packages of [undefined, [], [{ package_id: 'p1', status: 'unknown', paused: true }]]) {
+        const state = { status: 'active', packages, ...grant };
+        const result = preflightUpdateMediaBuy(state, request);
+        assert.equal(result.ok, false);
+        assert.equal(result.denials[0].reason, 'condition_unresolved');
+        assert.throws(
+          () => assertUpdateMediaBuyAllowed(state, request),
+          error => error.code === 'ACTION_NOT_ALLOWED'
+        );
+      }
+      for (const status of ['pending_start', 'pending_creatives']) {
+        const state = { status, packages: [{ package_id: 'p1', paused: action === 'resume' }], ...grant };
+        assert.equal(preflightUpdateMediaBuy(state, request).denials[0].reason, 'wrong_status');
+      }
+      for (const status of ['active', 'paused']) {
+        const state = { status, packages: [{ package_id: 'p1', paused: action === 'resume' }], ...grant };
+        assert.equal(preflightUpdateMediaBuy(state, request, { adcpVersion: '3.1.19' }).ok, true);
+        assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion: '3.1.19' }).ok, true);
+      }
+    }
+  }
+  const state = { status: 'active', packages: [{ package_id: 'p1' }], valid_actions: ['pause'] };
+  assert.equal(preflightUpdateMediaBuy(state, { packages: [{ package_id: 'p1', paused: true }] }).ok, true);
+  // Existing buy-level legacy compatibility does not require snapshot hydration.
+  assert.equal(preflightUpdateMediaBuy({ valid_actions: ['pause'] }, { paused: true }).ok, true);
+});
+
+test('unlinked structured grants must name a canonical task for their action', () => {
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const task of ['sync_creatives', 'refine_proposals', 'unknown_task']) {
+    const state = { status: 'active', available_actions: [{ action: 'pause', mode: 'self_serve', task }] };
+    for (const attempted of ['update_media_buy', task]) {
+      const result = preflightUpdateMediaBuy(state, { paused: true }, { task: attempted });
+      assert.equal(result.ok, false);
+      assert.equal(result.denials[0].reason, 'mode_mismatch');
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, { paused: true }, { task: attempted }),
+        error => error.code === 'ACTION_NOT_ALLOWED'
+      );
+    }
+  }
+  for (const task of [undefined, 'control_media_buy']) {
+    const state = { status: 'active', available_actions: [{ action: 'pause', mode: 'self_serve', task }] };
+    assert.equal(preflightUpdateMediaBuy(state, { paused: true }).ok, true);
+    assert.equal(assertUpdateMediaBuyAllowed(state, { paused: true }).ok, true);
+  }
+});
+
+test('served early-beta versions cannot emit or execute later term identities and seller-managed modes', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const service_mode of ['self_serve', 'seller_managed']) {
+    const state = buy([term('pause', { service_mode })]);
+    const request = { paused: true };
+    for (const adcpVersion of ['3.1.19', '3.2.0-beta.3', '3.2.0-beta.8', 'unknown']) {
+      const projection = mediaBuyActionResolver.resolve({ buy: state, decide: accept, adcpVersion });
+      assert.deepEqual(projection.available_actions, []);
+      assert.equal(projection.unavailable[0].certainty, 'unknown');
+      assert.equal(assessActionAvailability(state, 'pause', { request, adcpVersion }).certainty, 'unknown');
+      assert.equal(preflightMediaBuyActions(state, request, { adcpVersion }).ok, false);
+      assert.equal(preflightUpdateMediaBuy(state, request, { adcpVersion }).ok, false);
+      assert.throws(
+        () => assertUpdateMediaBuyAllowed(state, request, { adcpVersion }),
+        error => error.code === 'ACTION_NOT_ALLOWED'
+      );
+    }
+    for (const adcpVersion of ['3.2.0-beta.9', '3.2.0-beta.10', '3.2.0-rc.1', '3.2.0-rc.2', '3.2.0-rc.3', '3.2.0']) {
+      const projection = mediaBuyActionResolver.resolve({ buy: state, decide: accept, adcpVersion });
+      assert.equal(projection.available_actions.length, 1);
+      assert.equal(projection.available_actions[0].change_term_id, 'right_pause');
+      assert.equal(preflightUpdateMediaBuy(state, request, { adcpVersion }).ok, true);
+      assert.equal(assertUpdateMediaBuyAllowed(state, request, { adcpVersion }).ok, true);
+    }
+    const legacy = mediaBuyActionResolver.resolve({
+      buy: state,
+      decide: accept,
+      wireVersion: '3.1',
+      adcpVersion: '3.1.19',
+    });
+    assert.equal(legacy.available_actions.length, 1);
+    assert.equal(legacy.available_actions[0].change_term_id, undefined);
+  }
+  const state = { available_actions: [{ action: 'pause', mode: 'seller_managed' }] };
+  assert.equal(preflightUpdateMediaBuy(state, { paused: true }, { adcpVersion: '3.2.0-beta.8' }).ok, false);
+  assert.equal(preflightUpdateMediaBuy(state, { paused: true }, { adcpVersion: '3.2.0-beta.9' }).ok, true);
+});
+
+test('commercial seller projection applies every current product SLA to the final emitted commitment', () => {
+  const state = buy([term('pause', { processing_sla: { completion_max: 'PT2H' } })]);
+  const product = sla => ({ allowed_actions: [{ action: 'pause', modes: ['self_serve'], sla }] });
+  for (const productPolicy of [
+    [product({ completion_max: 'PT1H' })],
+    [product({ completion_max: 'PT3H' }), product({ completion_max: 'PT1H' })],
+  ]) {
+    const denied = mediaBuyActionResolver.resolve({ buy: state, decide: accept, productPolicy });
+    assert.deepEqual(denied.available_actions, []);
+    assert.equal(denied.unavailable[0].reason, 'not_supported_on_product');
+    const allowed = mediaBuyActionResolver.resolve({
+      buy: state,
+      productPolicy,
+      decide: () => ({ ...accept(), sla: { completion_max: 'PT30M' } }),
+    });
+    assert.equal(allowed.available_actions.length, 1);
+    assert.deepEqual(allowed.available_actions[0].sla, { completion_max: 'PT30M' });
+  }
+  const missing = mediaBuyActionResolver.resolve({
+    buy: buy([term('pause')]),
+    decide: accept,
+    productPolicy: [product({ completion_max: 'PT1H' })],
+  });
+  assert.deepEqual(missing.available_actions, []);
+  assert.equal(
+    mediaBuyActionResolver.resolve({ buy: state, decide: accept, productPolicy: [product({ completion_max: 'PT2H' })] })
+      .available_actions.length,
+    1
+  );
+  assert.deepEqual(state.accepted_proposal.commercial_terms.change_terms[0].processing_sla, { completion_max: 'PT2H' });
+});

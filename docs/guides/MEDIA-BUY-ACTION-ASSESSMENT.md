@@ -137,11 +137,19 @@ readable through `getAvailableActions`; it is a hint without a known mode or ter
 An explicitly empty structured `available_actions` array takes precedence over a
 stale flat array.
 
+The compatibility preflight retains legacy buy-level grants. Package pause/resume
+also requires current operational buy and package state; missing, pending,
+terminal, or unknown package state cannot be overridden by a legacy grant.
+An explicitly named task must be canonical for the advertised action.
+
 Modern actions join through `change_term_id`. Set `termsRefIsAlias: true` only
 when the 3.2 producer deliberately emits both fields as aliases; equality then
 becomes mandatory. Without that declaration, an independent opaque `terms_ref`
 remains opaque. A proposal term's own `terms_ref` is a contract-document reference
 and may always differ from its `term_id`. No helper fetches that reference.
+Change-term identities and `seller_managed` were introduced in `3.2.0-beta.9`.
+Earlier served versions cannot emit or execute those fields through these helpers;
+the explicit `wireVersion: '3.1'` seller projection remains available.
 The rc.3 shared-frequency-cap action comes from the pinned canonical metadata;
 `applicable_package_ids` provides an exact live package scope. Seller emission
 defaults to the SDK pin. Set `adcpVersion` to the version actually served at both
@@ -222,6 +230,8 @@ are not treated as current policy by default. These policy declarations intersec
 a right on one package cannot authorize sibling packages. Seller decisions may
 omit actions, select compatible tasks, or shorten SLA maxima. They cannot replace
 mode, drop committed maxima, expand status scope, or broaden typed bounds.
+The final selected SLA must satisfy every supplied product policy as well as the
+accepted term; a tighter seller decision can satisfy a newly tightened policy.
 Materialization validates term/action uniqueness, status/mode/SLA shape, compatible
 constraint kinds and currencies, consistent bounds, and every product template.
 The original accepted data is preserved; callback inputs and output terms are

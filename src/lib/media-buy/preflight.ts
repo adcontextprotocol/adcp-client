@@ -12,7 +12,15 @@ import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-typ
 //      resolver + gate checks into a single ok/not-ok decision.
 
 import { ValidationError } from '../errors';
-import { withActionProposal, liveActionIssues, supportsRc3Actions } from './action-contracts';
+import {
+  withActionProposal,
+  liveActionIssues,
+  supportsRc3Actions,
+  supportsChangeTermIdentity,
+  mediaBuyActionTasks,
+  packageActionStatus,
+  actionAllowedStatuses,
+} from './action-contracts';
 import { assessActionAvailability, type ActionAssessmentOptions } from './action-assessment';
 import { findAvailableAction, getAvailableActions, type AvailableActionsResult } from './available-actions';
 import type {
@@ -169,6 +177,30 @@ export function preflightUpdateMediaBuy(
   const denials: PreflightDenial[] = [];
 
   for (const resolvedAction of resolved) {
+    // Package controls are new to this facade. Legacy grants cannot override
+    // known package state or supply the missing negotiated pending-buy scope.
+    if (!strict && (resolvedAction.action === 'pause' || resolvedAction.action === 'resume')) {
+      const controls = decomposition.mutations.filter(
+        mutation => mutation.action === resolvedAction.action && mutation.field === 'packages[].paused'
+      );
+      if (controls.length) {
+        const statuses = controls.map(mutation =>
+          packageActionStatus(currentBuy.packages?.find(pkg => pkg.package_id === mutation.package_id))
+        );
+        const allowed = actionAllowedStatuses({ action: resolvedAction.action });
+        if (currentBuy.status === undefined || statuses.some(status => status === undefined)) {
+          denials.push({ action: resolvedAction.action, reason: 'condition_unresolved' });
+          continue;
+        }
+        if (
+          !['active', 'paused'].includes(currentBuy.status) ||
+          statuses.some(status => !allowed.includes(status as (typeof allowed)[number]))
+        ) {
+          denials.push({ action: resolvedAction.action, reason: 'wrong_status' });
+          continue;
+        }
+      }
+    }
     if (strict || options.proposal !== undefined || resolvedAction.action === 'update_name') {
       const assessment = assessActionAvailability(assessmentBuy, resolvedAction.action, { ...options, request });
       if (assessment.status === 'currently_unavailable') {
@@ -189,8 +221,10 @@ export function preflightUpdateMediaBuy(
     // Native field bindings must not grant newer wire features to a legacy snapshot.
     if (
       options.adcpVersion &&
-      !supportsRc3Actions(options.adcpVersion) &&
-      (resolvedAction.action === 'update_media_buy_frequency_cap' || lookup.entry.applicable_package_ids !== undefined)
+      ((!supportsRc3Actions(options.adcpVersion) &&
+        (resolvedAction.action === 'update_media_buy_frequency_cap' ||
+          lookup.entry.applicable_package_ids !== undefined)) ||
+        (!supportsChangeTermIdentity(options.adcpVersion) && lookup.entry.mode === 'seller_managed'))
     ) {
       denials.push({
         action: resolvedAction.action,
@@ -203,6 +237,14 @@ export function preflightUpdateMediaBuy(
           message: 'The action uses metadata introduced after the supplied seller version.',
         },
       });
+      continue;
+    }
+    if (
+      !strict &&
+      lookup.entry.task !== undefined &&
+      !mediaBuyActionTasks(lookup.entry.action).includes(lookup.entry.task)
+    ) {
+      denials.push({ action: resolvedAction.action, reason: 'mode_mismatch' });
       continue;
     }
     // Legacy compatibility must still honor explicit current scope and route restrictions.

@@ -17,9 +17,12 @@ Explicit negotiated status scope can admit pause/resume while pending, including
 Direct and unified availability stay unknown for unmapped request fields, including opaque new-package extensions. Both preflight paths enforce the served-version ceiling for rc.3 shared caps and package scope, including legacy snapshots without embedded terms.
 
 Known action IDs use closed canonical metadata. Readable live entries preserve unknown wire IDs as strings without granting them authority.
+Accordingly, `getAvailableActions().actions` and preflight echoes expose readable string IDs, and action-context snapshots accept readonly arrays. Exhaustive consumers should handle unknown wire IDs and copy snapshots before mutating them.
 
 Modern term-linked live entries require the accepted snapshot for preflight/assertion; missing terms cannot silently downgrade to legacy compatibility. Legacy opaque references retain the existing compatibility path.
 
 Package holds operate independently on active or paused buys; pending buy states require explicit negotiated status scope.
 
 Explicit local pending package status takes precedence over both pause-flag values. A live resume grant cannot override it in buyer assessment, either preflight, seller assertion, or seller projection; negotiated MediaBuy-level pending scope remains separate.
+
+Legacy package controls also require current operational package and buy state, and unlinked structured grants must use a compatible canonical task. Served versions before 3.2.0-beta.9 cannot emit or execute modern term identities or seller-managed modes. Explicit current product policies constrain the final emitted processing SLA, including tighter seller-selected commitments.

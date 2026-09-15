@@ -22,6 +22,7 @@ import {
   NON_TERMINAL_ACTION_STATUSES,
   liveActionIssues,
   supportsRc3Actions,
+  supportsChangeTermIdentity,
   withActionProposal,
   packageActionStatus,
 } from './action-contracts';
@@ -251,10 +252,10 @@ export function assessActionAvailability(
     );
   if (!entry)
     return deny('not_supported_on_buy', 'The seller has not made this negotiated action available now.', 'unknown');
-  if (!metadataOnly && options.adcpVersion && /^3\.[01](?:\.|-|$)/.test(options.adcpVersion))
+  if (!metadataOnly && options.adcpVersion && !supportsChangeTermIdentity(options.adcpVersion))
     return deny(
       'condition_unresolved',
-      'Legacy terms_ref is opaque and cannot establish the current term link.',
+      'The supplied seller version cannot link accepted change terms; legacy terms_ref remains opaque.',
       'unknown'
     );
   if (!metadataOnly && (entry.change_term_id === undefined || entry.change_term_id !== term!.term_id))

@@ -332,6 +332,15 @@ export function liveActionIssues(entries: unknown): string[] {
   return [];
 }
 
+/** beta.9 introduced change_term_id and the seller_managed service mode. */
+export function supportsChangeTermIdentity(version: string): boolean {
+  const match = /^(\d+)\.(\d+)(?:\.(\d+))?(?:-(.*))?$/.exec(version);
+  if (!match) return false;
+  if (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) > 2)) return true;
+  if (Number(match[1]) !== 3 || Number(match[2]) !== 2) return false;
+  return !match[4] || /^rc\.\d+$/.test(match[4]) || (/^beta\.(\d+)$/.test(match[4]) && Number(match[4].slice(5)) >= 9);
+}
+
 /** rc.3 added shared-cap rights and exact live package scope. */
 export function supportsRc3Actions(version: string): boolean {
   const match = /^(\d+)\.(\d+)(?:\.(\d+))?(?:-(.*))?$/.exec(version);
