@@ -18,9 +18,12 @@ defect stays visible.
 pattern than the `format: date-time` check this SDK uses on the seller's own payloads, so a lowercase
 `t`/`z`, a `+hhmm` offset or a space separator — all accepted by `ajv-formats` — yielded no deadline
 and no statement, forever. The pattern now matches what the SDK itself accepts, and the instant is
-**normalized rather than echoed**: `Date.parse` silently rolls `2026-02-30T00:00:00Z` forward to
-March 2, and re-emitting the seller's bytes would put that contradiction on a statement the buyer
-signs. A `expected_at` that is present but unreadable derives nothing at all: the seller has a real deadline
+**normalized rather than echoed**, and calendar-validated on its literal fields: `Date.parse`
+silently rolls `2026-02-30` forward, and re-emitting the seller's bytes would put that contradiction
+on a statement the buyer signs. Validating the literal fields rather than the parsed result matters
+because the two are indistinguishable once an offset is involved — the check now holds for
+`2026-02-30T00:00:00+01:00` as well as the `Z` form. A sixtieth second is accepted only where a leap
+second can occur. A `expected_at` that is present but unreadable derives nothing at all: the seller has a real deadline
 the buyer cannot read, so any derived one disagrees with it and the statement is refused on every run
 forever. When `expected_at` is **absent** the buyer falls through to its own
 `deliverySlaSeconds` / `officialAfterSeconds` pin, and only then to the seller's

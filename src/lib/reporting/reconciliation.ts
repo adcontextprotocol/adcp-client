@@ -2313,7 +2313,8 @@ function consumerStatusSchedule(
  * space separator, and `+hhmm` or `+hh` offsets. A stricter reader here would
  * silence a seller the SDK itself just told was conformant.
  */
-const RFC3339_INSTANT = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$/;
+const RFC3339_INSTANT =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt\s](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-]\d{2}(?::?(\d{2}))?)$/;
 
 /**
  * One canonical spelling of a seller-supplied instant, or `undefined`.
@@ -2328,29 +2329,29 @@ function normalizedInstant(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const match = RFC3339_INSTANT.exec(value);
   if (!match) return undefined;
+  const [, isoYear, isoMonth, isoDay, isoHour, isoMinute, isoSecond, offsetMinute] = match;
+  const year = Number(isoYear);
+  const month = Number(isoMonth);
+  const day = Number(isoDay);
+  // Calendar-validated on the literal fields, before any parsing and
+  // regardless of offset. `Date.parse` rolls an out-of-range day forward, so
+  // `2026-02-30` silently means March 2 — and checking the parsed result
+  // instead cannot distinguish that roll from a legitimate offset moving the
+  // UTC date, which is why an earlier version of this only caught the `Z` case.
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return undefined;
+  if (offsetMinute !== undefined && Number(offsetMinute) > 59) return undefined;
+  // A leap second is only ever inserted at 23:59:60; anything else claiming a
+  // sixtieth second is not a time `ajv-formats` would accept either.
+  const leapSecond = isoSecond === '60';
+  if (leapSecond && !(isoHour === '23' && isoMinute === '59')) return undefined;
   // `Date.parse` is narrower than the format the SDK validates seller payloads
   // with: it returns NaN for a bare `+hh` offset and for a leap second, both of
   // which `ajv-formats` accepts. Widening the pattern without handling these
   // would have left the conformant seller silenced anyway.
   let candidate = value.replace(/([+-]\d{2})$/, '$1:00');
-  let leapSecond = false;
-  if (/:60(?=(\.|Z|z|[+-]|$))/.test(candidate)) {
-    candidate = candidate.replace(/:60(?=(\.|Z|z|[+-]|$))/, ':59');
-    leapSecond = true;
-  }
+  if (leapSecond) candidate = candidate.replace(/:60/, ':59');
   const parsed = Date.parse(candidate);
   if (!Number.isFinite(parsed)) return undefined;
-  // ...and wider in one place: it rolls an out-of-range day forward, so
-  // `2026-02-30` silently means March 2. `ajv-formats` calendar-validates the
-  // date, so a value it would reject is treated as unreadable here rather than
-  // quietly relocated.
-  const [year, month, day] = value.slice(0, 10).split('-').map(Number);
-  const rolled = new Date(parsed);
-  if (rolled.getUTCFullYear() !== year || rolled.getUTCMonth() + 1 !== month || rolled.getUTCDate() !== day) {
-    // Only an offset can legitimately move the UTC date, so re-check against
-    // the value's own zone rather than assuming a roll-forward.
-    if (/(?:Z|z)$/.test(value) && !leapSecond) return undefined;
-  }
   // A leap second is the instant immediately before the next one.
   const instant = parsed + (leapSecond ? 1_000 : 0);
   // Range-checked like every sibling derivation. `RFC3339_INSTANT` allows

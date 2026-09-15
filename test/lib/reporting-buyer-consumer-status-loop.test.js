@@ -1142,6 +1142,9 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const result = await seller.reconcile(at, expected);
     assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
     assert.equal(result.consumerStatuses[0].deadline, undefined);
+    // The overflow came from the window, not from a pin the adopter forgot.
+    assert.match(result.consumerStatuses[0].reason, /automatedRecoveryWindowSeconds/);
+    assert.doesNotMatch(result.consumerStatuses[0].reason, /record ExpectedReportingPeriod/);
     assert.deepEqual(result.postedConsumerStatuses, []);
   });
 
@@ -1192,17 +1195,10 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
     const at = seller.anchor + DAY + 3 * HOUR;
     seller.observeAt(at);
-    const honest = seller.client.getReportingStatus;
-    seller.client.getReportingStatus = async params => {
-      const page = await honest(params);
-      return {
-        ...page,
-        periods: (page.periods ?? []).map(period => ({
-          ...period,
-          period: { ...period.period, source_timezone: 'Japan' },
-        })),
-      };
-    };
+    // Set on the seller's own obligation, so the echo is genuine and the
+    // seller's `validateStatus` compares against the same value.
+    for (const obligation of seller.store.obligations.values()) obligation.period.sourceTimezone = 'Japan';
+    for (const configuration of seller.store.configurations.values()) configuration.sourceTimezone = 'Japan';
 
     const result = await seller.reconcile(at, expected);
     assert.equal(
@@ -1210,6 +1206,11 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
       'Japan',
       'adopted verbatim, not substituted with UTC'
     );
+    // Adoption is only half of it: the seller compares this value strictly, so
+    // a substituted zone is refused on every statement forever.
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.deepEqual(result.failedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements[0].period.source_timezone, 'Japan');
   });
 
   test('a numeric-offset source_timezone is refused rather than substituted', async () => {
@@ -1641,6 +1642,133 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
 
     const result = await seller.reconcile(at + HOUR, expected);
     assert.equal(result.consumerStatuses[0].statusAsOfFloor, '2026-09-02T03:00:00.000Z', 'normalized, not echoed');
+  });
+
+  test('a calendar-invalid expected_at is unreadable whatever offset it carries', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // February 30th. `Date.parse` rolls it forward, and checking the *parsed*
+    // result cannot tell that roll apart from a legitimate offset moving the
+    // UTC date — which is why an earlier version only caught the `Z` form and
+    // relocated this one to March 1st.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({
+          ...period,
+          expected_at: '2026-02-30T00:00:00+01:00',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.doesNotMatch(String(result.consumerStatuses[0].statusAsOf ?? ''), /2026-03-0/);
+  });
+
+  test('a leap second is accepted as the instant it names', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `ajv-formats` accepts 23:59:60, so refusing it would silence a seller the
+    // SDK itself calls conformant. `Date.parse` returns NaN for it.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({
+          ...period,
+          expected_at: '2026-09-01T23:59:60Z',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.notEqual(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    // The leap second is the instant immediately before the next one, then
+    // clamped up to the period end.
+    assert.equal(result.consumerStatuses[0].statusAsOf, new Date(seller.anchor + DAY).toISOString());
+  });
+
+  test('a non-string expected_at is the seller defect, not a missing buyer pin', async () => {
+    const seller = await harness();
+    const { deliverySlaSeconds: _pin, ...withoutPin } = expectedPeriod(seller.request, seller.anchor);
+    const expected = [withoutPin];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: (page.periods ?? []).map(({ schedule: _schedule, ...period }) => ({ ...period, expected_at: null })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'deadline_unknown');
+    assert.match(result.consumerStatuses[0].reason, /obligation\.expected_at/, "the seller's field, not a pin");
+  });
+
+  test('a chain with two unsuperseded leaves says so rather than naming an undisclosed one', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    await seller.reconcile(at, expected);
+    assert.equal(seller.store.consumerStatements.length, 1);
+
+    // Two leaves, neither superseding the other. The seller named nothing, so
+    // "named a current leaf it did not disclose" would be the wrong story.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const [leaf] = page.consumer_statuses ?? [];
+      if (!leaf) return page;
+      return {
+        ...page,
+        consumer_statuses: [leaf, { ...leaf, reporting_status_id: `${leaf.reporting_status_id}-fork` }],
+        periods: (page.periods ?? []).map(({ current_consumer_status_id: _leaf, ...period }) => period),
+      };
+    };
+
+    const result = await seller.reconcile(at + HOUR, expected);
+    assert.equal(result.consumerStatuses[0].suppressed, 'leaf_undisclosed');
+    assert.match(result.consumerStatuses[0].reason, /more than one unsuperseded leaf/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+  });
+
+  test('a plan with no poster wired says so rather than reading as live and due', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // A reader but no poster: the plan used to come back overdue and
+    // unsuppressed while going nowhere, which is indistinguishable from one
+    // that was posted.
+    delete seller.client.syncReportingStatus;
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.overdue, true);
+    assert.equal(plan.suppressed, 'posting_unavailable');
+    assert.match(plan.reason, /client\.syncReportingStatus/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
   });
 
   test('a lowercase RFC 3339 expected_at is read, not treated as unreadable', async () => {
