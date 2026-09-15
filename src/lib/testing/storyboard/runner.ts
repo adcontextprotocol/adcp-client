@@ -2790,6 +2790,7 @@ async function executeStoryboardPass(
   const contributionSources = new Map<string, { phaseId: string; stepId: string }>();
   const priorStepResults = new Map<string, StoryboardStepResult>();
   const priorProbes = new Map<string, HttpProbeResult>();
+  const routedPriorProbes = new Map<number, Map<string, HttpProbeResult>>();
   const contextProvenance = new Map<string, ContextProvenanceEntry>();
   const priorA2aEnvelopes = new Map<string, A2ATaskEnvelope>();
   const stepRequestStarts = new Map<string, string>();
@@ -2798,6 +2799,13 @@ async function executeStoryboardPass(
   // receives only keys from phases it actually depends on, preserving the
   // declared depends_on / any_of branch-set topology.
   const capabilityUnavailableContextKeysByPhase = new Map<string, Set<string>>();
+  const recordCapabilityUnavailableOutputs = (phaseId: string, step: StoryboardStep): void => {
+    const keys = capabilityUnavailableContextKeysByPhase.get(phaseId) ?? new Set<string>();
+    for (const output of step.context_outputs ?? []) {
+      if (output.key) keys.add(output.key);
+    }
+    capabilityUnavailableContextKeysByPhase.set(phaseId, keys);
+  };
   const phaseResults: StoryboardPhaseResult[] = [];
   let passedCount = 0;
   let failedCount = 0;
@@ -2887,7 +2895,7 @@ async function executeStoryboardPass(
     phase: { id: string; depends_on?: string[] },
     prior: readonly string[]
   ): Set<string> => {
-    const keys = new Set<string>();
+    const keys = new Set(capabilityUnavailableContextKeysByPhase.get(phase.id));
     const ownSpec = branchSetsByPhaseId.get(phase.id);
     const ownAnyOfBranchSet = ownSpec?.semantics === 'any_of' ? ownSpec.id : undefined;
     for (const depId of effectiveDependsOn(phase, prior)) {
@@ -3092,6 +3100,7 @@ async function executeStoryboardPass(
                   : undefined
               );
     } catch (error) {
+      if (webhookReceiver) await webhookReceiver.close();
       if (!(error instanceof RoutingError)) throw error;
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
       return buildDiscoveryFailedResult(agentUrls, storyboard, {
@@ -3289,13 +3298,9 @@ async function executeStoryboardPass(
       // depends_on / any_of branch-set cascade semantics for stateful
       // consumers, while executeStep handles non-stateful consumers that
       // directly reference one of these keys.
-      const unavailableKeys = new Set<string>();
       for (const step of phase.steps) {
-        for (const output of step.context_outputs ?? []) {
-          if (output.key) unavailableKeys.add(output.key);
-        }
+        recordCapabilityUnavailableOutputs(phase.id, step);
       }
-      capabilityUnavailableContextKeysByPhase.set(phase.id, unavailableKeys);
       if (phase.steps.some(s => s.stateful)) {
         phaseStatefulCascades.set(phase.id, {
           stepId: phase.steps.find(s => s.stateful)!.id,
@@ -3646,6 +3651,7 @@ async function executeStoryboardPass(
             : `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
         const capabilityUnavailable = trigger?.capabilityUnavailable === true;
+        if (capabilityUnavailable) recordCapabilityUnavailableOutputs(phase.id, step);
         stepResults.push({
           storyboard_id: storyboard.id,
           step_id: step.id,
@@ -3677,6 +3683,17 @@ async function executeStoryboardPass(
 
       assignment ??= dispatch.nextFor(step);
       const stepExecutionState = buildExecutionState(assignment.agentUrl, assignment.profile);
+      if (routingContext) {
+        // Route identity includes the selected credential even when two entries
+        // share a URL. Cross-agent step/context dependencies remain run-scoped.
+        let probes = routedPriorProbes.get(assignment.instanceIndex);
+        if (!probes) {
+          probes = new Map();
+          routedPriorProbes.set(assignment.instanceIndex, probes);
+        }
+        stepExecutionState.priorProbes = probes;
+        stepExecutionState.allowPriorProbeFallback = false;
+      }
       stepExecutionState.capabilityUnavailableContextKeys = capabilityUnavailableContextKeysForPhase(
         phase,
         priorPhaseIds
@@ -3700,6 +3717,9 @@ async function executeStoryboardPass(
               stepExecutionState
             );
       const result: StoryboardStepResult = { ...rawResult, storyboard_id: storyboard.id };
+      if (routedCapabilityDetail !== undefined || result.skip_reason === 'capability_prerequisite_unavailable') {
+        recordCapabilityUnavailableOutputs(phase.id, step);
+      }
       if (routedCapabilityDetail !== undefined && routedStepRequirements.has(step)) {
         result.skip = { ...result.skip!, requirement: routedStepRequirements.get(step)! };
       }
@@ -4827,6 +4847,8 @@ interface ExecutionState {
   contributions: Set<string>;
   priorStepResults: Map<string, StoryboardStepResult>;
   priorProbes: Map<string, HttpProbeResult>;
+  /** Routed probes cannot borrow evidence from the run-wide step-result fallback. */
+  allowPriorProbeFallback?: boolean;
   agentUrl: string;
   /** Run-scoped seller ids selected for authored fixture handles. */
   fixtureBindings?: FixtureBindingRegistry;
@@ -6637,7 +6659,9 @@ async function executeProbeStep(
       httpResult.skip_reason = 'oauth_not_advertised';
     }
   } else if (step.task === 'oauth_auth_server_metadata') {
-    const prior = runState.priorProbes.get('protected_resource_metadata') ?? findPriorProbe(runState.priorStepResults);
+    const prior =
+      runState.priorProbes.get('protected_resource_metadata') ??
+      (runState.allowPriorProbeFallback !== false ? findPriorProbe(runState.priorStepResults) : undefined);
     httpResult = await probeOauthAuthServerMetadata(prior, probeOpts);
   } else if (step.task === 'assert_contribution') {
     // Synthetic: evaluate only through validations (any_of). No network call.

@@ -13,7 +13,14 @@ const { routedAgentOptions } = require('../../dist/lib/testing/storyboard/agent-
 
 // Real routed discovery and MCP dispatch, with deterministic protocol fixtures.
 // No union/profile injection stands in for options.agents.
-async function startAgent(tools, capabilities = {}, rejectTools = false, products = [], metadataStatus = 404) {
+async function startAgent(
+  tools,
+  capabilities = {},
+  rejectTools = false,
+  products = [],
+  metadataStatus = 404,
+  metadataResponse = {}
+) {
   const calls = [];
   const authorization = [];
   const connections = [];
@@ -22,7 +29,7 @@ async function startAgent(tools, capabilities = {}, rejectTools = false, product
     if (req.url.includes('/.well-known/')) {
       metadataRequests.push(req.url);
       res.writeHead(metadataStatus, { 'content-type': 'application/json' });
-      res.end('{}');
+      res.end(JSON.stringify(typeof metadataResponse === 'function' ? metadataResponse(req) : metadataResponse));
       return;
     }
     const mcp = new McpServer({ name: 'routing-contract-test', version: '1.0.0' });
@@ -1096,4 +1103,247 @@ test('unavailable seed resolution retains its coverage gap and a known routing f
   );
   assert.equal(result.fixture_resolutions[0].strategies_attempted[0].disposition, 'unavailable');
   assert.deepEqual(calls, { controller: ['get_adcp_capabilities'] });
+});
+
+test('interleaved routed OAuth probes retain each agent issuer and reject foreign fallback evidence', async () => {
+  const metadata = req => ({
+    authorization_servers: [`http://${req.headers.host}`],
+    issuer: `http://${req.headers.host}`,
+  });
+  const a = await startAgent([], { oauth: { supported: true } }, false, [], 200, metadata);
+  const b = await startAgent([], { oauth: { supported: true } }, false, [], 200, metadata);
+  try {
+    for (const includeA of [true, false]) {
+      a.metadataRequests.length = 0;
+      b.metadataRequests.length = 0;
+      const steps = [
+        ...(includeA ? [{ id: 'prm_a', task: 'protected_resource_metadata', agent: 'a' }] : []),
+        { id: 'prm_b', task: 'protected_resource_metadata', agent: 'b' },
+        { id: 'issuer_a', task: 'oauth_auth_server_metadata', agent: 'a' },
+      ].map(step => ({ ...step, validations: [{ check: 'http_status', value: 200 }] }));
+      const result = await runStoryboard('', storyboard(steps), {
+        allow_http: true,
+        invariants: [],
+        agents: { a: { url: a.url }, b: { url: b.url } },
+      });
+      const issuer = result.phases[0].steps.find(step => step.step_id === 'issuer_a');
+      assert.equal(issuer.agent_url, a.url);
+      assert.equal(issuer.passed, includeA);
+      assert.equal(b.metadataRequests.filter(path => path.includes('oauth-authorization-server')).length, 0);
+      assert.equal(
+        a.metadataRequests.filter(path => path.includes('oauth-authorization-server')).length,
+        includeA ? 1 : 0
+      );
+      if (includeA) assert.equal(issuer.response.body.issuer, new URL(a.url).origin);
+      else assert.match(issuer.error, /protected_resource_metadata step missing/);
+    }
+  } finally {
+    await closeConnections();
+    await a.close();
+    await b.close();
+  }
+});
+
+test('mixed routed capability skips propagate unavailable outputs to dependent negative vectors', async () => {
+  const consumer = id => ({
+    id,
+    title: id,
+    task: 'get_signals',
+    agent: 'b',
+    expect_error: true,
+    sample_request: { signal_spec: '$context.absent' },
+  });
+  const sb = storyboard([
+    { id: 'producer', task: 'get_adcp_capabilities', agent: 'a', context_outputs: [{ key: 'absent', path: 'value' }] },
+    consumer('same_phase'),
+  ]);
+  sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
+  sb.phases.push(
+    {
+      id: 'dependent',
+      title: 'Dependent',
+      steps: [
+        { ...consumer('next_phase'), context_outputs: [{ key: 'derived', path: 'value' }] },
+        {
+          ...consumer('explicit_input'),
+          sample_request: {},
+          context_inputs: [{ key: 'absent', inject_at: 'signal_spec' }],
+        },
+      ],
+    },
+    {
+      id: 'transitive',
+      title: 'Transitive',
+      depends_on: ['dependent'],
+      steps: [{ ...consumer('derived_consumer'), sample_request: { signal_spec: '$context.derived' } }],
+    },
+    { id: 'independent', title: 'Independent', depends_on: [], steps: [consumer('intentional_malformed')] }
+  );
+  const { result, calls } = await run(
+    {
+      a: [[], { account: { require_operator_auth: false } }],
+      b: [['get_signals'], { account: { require_operator_auth: true }, supported_protocols: ['signals'] }, true],
+    },
+    sb
+  );
+  assert.deepEqual(sets(result), {
+    selected: ['intentional_malformed'],
+    skipped: [
+      ['producer', 'not_applicable'],
+      ['same_phase', 'capability_prerequisite_unavailable'],
+      ['next_phase', 'capability_prerequisite_unavailable'],
+      ['explicit_input', 'capability_prerequisite_unavailable'],
+      ['derived_consumer', 'capability_prerequisite_unavailable'],
+    ],
+    failed: [],
+  });
+  assert.equal(calls.b.filter(task => task === 'get_signals').length, 1);
+});
+
+test('a reached fixture routing failure closes its runner-owned webhook listener', async () => {
+  const reserve = http.createServer();
+  await new Promise(resolve => reserve.listen(0, '127.0.0.1', resolve));
+  const port = reserve.address().port;
+  await new Promise(resolve => reserve.close(resolve));
+  const sb = storyboard([{ id: 'later', task: 'get_adcp_capabilities', agent: 'a' }]);
+  sb.fixtures = { products: [{ product_id: 'fixture-product' }] };
+  sb.fixture_resolution = { products: [{ handle: 'fixture-product', strategies: ['seed'] }] };
+  const { result } = await run(
+    {
+      a: [['comply_test_controller'], { compliance_testing: { scenarios: ['seed_product'] } }],
+      b: [['comply_test_controller'], { compliance_testing: { scenarios: ['seed_product'] } }],
+    },
+    sb,
+    { allow_http: true, webhook_receiver: { host: '127.0.0.1', port } }
+  );
+  assert.equal(result.failed_count, 1);
+  assert.match(result.phases[0].steps[0].error, /claimed by \[a, b\]/);
+  const reused = http.createServer();
+  try {
+    await new Promise((resolve, reject) => {
+      reused.once('error', reject);
+      reused.listen(port, '127.0.0.1', resolve);
+    });
+  } finally {
+    if (reused.listening) await new Promise(resolve => reused.close(resolve));
+  }
+});
+
+test('routed probe isolation distinguishes credentials sharing the same URL', async () => {
+  const agent = await startAgent([], { oauth: { supported: true } }, false, [], 200, req => ({
+    authorization_servers: [`http://${req.headers.host}`],
+  }));
+  try {
+    const result = await runStoryboard(
+      '',
+      storyboard([
+        { id: 'prm_b', task: 'protected_resource_metadata', agent: 'b' },
+        { id: 'issuer_a', task: 'oauth_auth_server_metadata', agent: 'a' },
+      ]),
+      {
+        allow_http: true,
+        invariants: [],
+        agents: {
+          a: { url: agent.url, auth: { type: 'bearer', token: 'test-route-a' } },
+          b: { url: agent.url, auth: { type: 'bearer', token: 'test-route-b' } },
+        },
+      }
+    );
+    const issuer = result.phases[0].steps.find(step => step.step_id === 'issuer_a');
+    assert.equal(issuer.passed, false);
+    assert.match(issuer.error, /protected_resource_metadata step missing/);
+    assert.equal(agent.metadataRequests.filter(path => path.includes('oauth-authorization-server')).length, 0);
+    assert.ok(agent.authorization.includes('Bearer test-route-a'));
+    assert.ok(agent.authorization.includes('Bearer test-route-b'));
+  } finally {
+    await closeConnections();
+    await agent.close();
+  }
+});
+
+test('routed JWKS purpose assertions use only their selected agent keys', async () => {
+  async function agentWithKeys(purpose) {
+    const caps = { identity: {}, request_signing: { supported: true } };
+    const agent = await startAgent([], caps, false, [], 200, req => {
+      const origin = `http://${req.headers.host}`;
+      return req.url.includes('brand.json')
+        ? { agents: [{ url: `${origin}/mcp`, jwks_uri: `${origin}/.well-known/jwks.json` }] }
+        : { keys: [{ kty: 'RSA', kid: 'test-key', adcp_use: purpose }] };
+    });
+    caps.identity.brand_json_url = `${new URL(agent.url).origin}/.well-known/brand.json`;
+    return agent;
+  }
+  const a = await agentWithKeys('request-signing');
+  const b = await agentWithKeys('unsupported-purpose');
+  try {
+    const result = await runStoryboard(
+      '',
+      storyboard([
+        { id: 'keys_a', task: 'fetch_brand_jwks', agent: 'a' },
+        { id: 'keys_b', task: 'fetch_brand_jwks', agent: 'b' },
+        { id: 'purpose_a', task: 'assert_jwks_purpose', agent: 'a' },
+        { id: 'purpose_b', task: 'assert_jwks_purpose', agent: 'b' },
+      ]),
+      { allow_http: true, invariants: [], agents: { a: { url: a.url }, b: { url: b.url } } }
+    );
+    assert.deepEqual(sets(result), {
+      selected: ['keys_a', 'keys_b', 'purpose_a', 'purpose_b'],
+      skipped: [],
+      failed: ['purpose_b'],
+    });
+    assert.equal(
+      result.phases[0].steps.find(step => step.step_id === 'purpose_a').response.url,
+      `${new URL(a.url).origin}/.well-known/jwks.json`
+    );
+  } finally {
+    await closeConnections();
+    await a.close();
+    await b.close();
+  }
+});
+
+test('a successful alternate producer rescues a capability-skipped context output', async () => {
+  const sb = storyboard([
+    {
+      id: 'missing',
+      task: 'get_adcp_capabilities',
+      agent: 'a',
+      context_outputs: [{ key: 'restored', path: 'identity.brand_json_url' }],
+    },
+    {
+      id: 'rescue',
+      task: 'get_adcp_capabilities',
+      agent: 'b',
+      context_outputs: [{ key: 'restored', path: 'identity.brand_json_url' }],
+    },
+    {
+      id: 'consumer',
+      task: 'get_signals',
+      agent: 'b',
+      expect_error: true,
+      sample_request: { signal_spec: '$context.restored' },
+    },
+  ]);
+  sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
+  const { result, calls } = await run(
+    {
+      a: [[], { account: { require_operator_auth: false } }],
+      b: [
+        ['get_signals'],
+        {
+          account: { require_operator_auth: true },
+          supported_protocols: ['signals'],
+          identity: { brand_json_url: 'https://brand.example.test/brand.json' },
+        },
+        true,
+      ],
+    },
+    sb
+  );
+  assert.deepEqual(sets(result), {
+    selected: ['rescue', 'consumer'],
+    skipped: [['missing', 'not_applicable']],
+    failed: [],
+  });
+  assert.equal(calls.b.filter(task => task === 'get_signals').length, 1);
 });

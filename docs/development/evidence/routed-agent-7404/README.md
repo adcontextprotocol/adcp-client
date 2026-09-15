@@ -98,6 +98,17 @@ conflicting dynamic step cannot be discovered only after earlier calls have run.
 unresolved route or failed discovery. Missing runtime adapters remain explicit requirement skips before wire execution;
 known routing failures are retained alongside those skips. Phase skips cannot
 erase a previously established routing failure.
+The current-main review additionally exposed shared probe history and mixed-phase
+context gaps. Routed OAuth and JWKS probe history is now keyed by route identity
+(including distinct credentials at the same URL), without changing run-wide
+cross-agent context/assertion dependencies or single-agent/replica probe history.
+Capability-skipped producers mark their outputs unavailable for same-phase and
+dependent consumers; successful alternate producers still rescue resolved keys.
+Fixture-routing errors close the runner-owned webhook listener before returning.
+Regression controls cover interleaved issuers, absent local probe evidence, JWKS
+purposes, same-URL credentials, dependent negative vectors, recovered context,
+and fixed-port listener reuse.
+
 Runtime tool-family/controller availability remains a topology-level prerequisite;
 it cannot authorize a step that its selected agent does not advertise.
 
