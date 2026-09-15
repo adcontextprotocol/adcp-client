@@ -51,20 +51,25 @@ const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
 const MAX_ROW_ESTIMATE_CONTAINERS = 262_144;
 
 /**
- * Marker for a deadline that resolved but fell outside the representable
- * range. Distinct from `undefined`, which means "nothing derived at all" and is
- * reported as a missing pin — a value the adopter did record and which
- * overflowed needs its own diagnosis, or they are sent to fix a field that is
- * not wrong.
+ * A deadline that resolved, one that resolved outside the representable range,
+ * or `undefined` for "nothing derived at all".
+ *
+ * The overflow arm carries the *field that overflowed*, because the whole
+ * reason it is not folded into `undefined` is diagnostic: `undefined` is
+ * reported as a missing pin, and telling an adopter to record a value they did
+ * record — or to lower a window that was innocent — sends them to fix the
+ * wrong field.
  */
-const OVERFLOWED_INSTANT = '\u0000overflow';
+type DerivedDeadline = { instant: string } | { overflowedField: string } | undefined;
 
 /**
  * How deep the walk goes before declining.
  *
- * Without it a deeply nested row overflows the stack, and the resulting
- * `RangeError` was being reported as `unreadable` / `transport_failed` — the
- * buyer accusing the seller for its own call stack.
+ * A row nested past this is the seller's shape, not the buyer's budget, so it
+ * is reported rather than suppressed. The bound also keeps the walk off the
+ * call stack: without one, a deep enough row overflows it, and the resulting
+ * `RangeError` would be classified by the canonicalization guard as the buyer's
+ * own ceiling — silence bought with an alibi.
  */
 const MAX_ROW_ESTIMATE_DEPTH = 64;
 
@@ -216,6 +221,15 @@ export interface ReportingLedgerLimits {
    * rather than accusing the seller.
    */
   maxRevisionRows?: number;
+  /**
+   * Approximate accumulated bytes from one exact-revision read. May only
+   * tighten the SDK's own 256 MiB ceiling: a larger value is **refused** with
+   * `INVALID_LEDGER_LIMITS`, because that ceiling bounds this process's memory,
+   * which is not the caller's to spend. Mainly here so the ceiling is reachable
+   * in a test; exceeding it suppresses the statement rather than accusing the
+   * seller.
+   */
+  maxRevisionBytes?: number;
 }
 
 interface ExpectedReportingPeriodBase {
@@ -476,17 +490,24 @@ export interface ReportingConsumerStatusPlanV1 {
    * - `posting_unavailable` — no `syncReportingStatus` is wired, so there is
    *   nothing to append to. Without this the plan reads as live, due and
    *   unsuppressed while silently going nowhere.
-   * - `period_identity_unknown` — the seller supplied a `period.source_timezone`
-   *   that is not a recognized IANA zone. That value is part of the chain's
-   *   logical key, so substituting one produces a statement the seller refuses
-   *   on every run; `iana_timezone` forbids the substitution by name.
-   * - `local_budget_exhausted` — the buyer's own read budget ran out before it
-   *   could consume the revision. Self-inflicted, so it is silence rather than
-   *   an `unreadable` claim against a seller that did nothing wrong.
+   * - `period_identity_unknown` — `period.source_timezone` is part of the
+   *   chain's logical key and its identity could not be established. Three
+   *   causes, each named in `reason`: the seller's value is not a recognized
+   *   IANA zone; the buyer's own `periodSourceTimezone` pin is not; or neither
+   *   is. Substituting a value produces a statement the seller refuses on every
+   *   run, and `iana_timezone` forbids the substitution by name. A pin naming a
+   *   *different but valid* zone does **not** suppress — it posts under the
+   *   seller's value and sets `periodZoneBeyondPin`.
+   * - `local_budget_exhausted` — a read ceiling was reached before the revision
+   *   could be consumed. `reason` names which; not all of them are tunable, so
+   *   do not assume raising a `ledgerLimits` knob will clear it. Never an
+   *   `unreadable` claim against a seller that did nothing wrong.
    * - `deadline_unknown` — no posting deadline could be derived, so this period
-   *   will never post. Two causes, both named in `reason`: a pin the buyer has
-   *   to supply is missing, or the seller's own `obligation.expected_at` is
-   *   unreadable and its `schedule.delivery_sla` did not resolve one either.
+   *   will never post. Three causes, each named in `reason`: a pin the buyer has
+   *   to supply is missing; the seller's own `obligation.expected_at` is
+   *   unreadable and its `schedule.delivery_sla` did not resolve one either; or
+   *   the deadline overflowed the representable range, in which case `reason`
+   *   names the field that overflowed.
    *   Without this value a permanent misconfiguration renders exactly like a
    *   period that is simply not due yet.
    * - `chain_indeterminate` — the seller's revision chain forked, or the buyer
@@ -503,16 +524,43 @@ export interface ReportingConsumerStatusPlanV1 {
     | 'posting_unavailable'
     | 'period_identity_unknown';
   /**
-   * Set when the seller's own `expected_at` is later than the buyer's pinned
-   * expectation by more than its recovery window.
+   * Set when a seller-derived deadline cannot be vouched for locally: either
+   * it is later than the buyer's pinned expectation by more than the recovery
+   * window (`pinned` carries what the buyer expected), or the buyer recorded no
+   * pin at all and so has nothing to check it against (`pinned` is absent).
    *
-   * The statement is still not posted — `expected_period` makes the seller's
+   * The deadline is still honoured — `expected_period` makes the seller's
    * instant authoritative, and a locally derived one would be refused. But
    * without this the period sits at `overdue: false` with `suppressed` unset,
    * indistinguishable from one that is simply not due yet, which is a silent
    * kill switch for the whole loop. **Alert on it.**
    */
-  deadlineBeyondPin?: { declared: string; pinned: string };
+  deadlineBeyondPin?: { declared: string; pinned?: string };
+  /**
+   * Which input the deadline came from.
+   *
+   * `buyer_pin` is the only one the buyer can vouch for by itself. Both seller
+   * sources always set `deadlineBeyondPin` as well, so alerting on either field
+   * is sufficient.
+   */
+  deadlineSource?: 'buyer_pin' | 'seller_expected_at' | 'seller_schedule';
+  /**
+   * Set when the buyer's `periodSourceTimezone` pin and the seller's echoed
+   * `period.source_timezone` are both recognized IANA zones naming *different*
+   * zones.
+   *
+   * The statement is still posted, under the seller's value — that is the only
+   * spelling its ingest accepts, and staying silent would leave the period
+   * unrecorded for exactly the adopters careful enough to have pinned one.
+   * But the buyer's independent expectation of the period's identity did not
+   * hold, so the period's boundaries may have been generated from a different
+   * calendar than the seller used. **Alert on it**, and reconcile the two
+   * values with the seller.
+   *
+   * A link and its canonical name — `Japan` and `Asia/Tokyo` — are the same
+   * zone and never set this.
+   */
+  periodZoneBeyondPin?: { declared: string; pinned: string };
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -638,13 +686,56 @@ export type ReconcileReportingOptions<TCredential = unknown> = ReconcileReportin
   );
 
 export class ReportingReconciliationError extends Error {
+  /**
+   * Receipts this run durably synced to the seller before the failure.
+   *
+   * Set only when the failure happened *after* `sync_reporting_receipts`
+   * accepted them — the ledger is re-read afterwards, and a malformed record in
+   * that second read used to leave the caller unable to tell whether the write
+   * had happened. Retrying is safe (the seller answers an already-recorded
+   * receipt with `unchanged`), but the caller needs to know it is retrying
+   * rather than starting, and these are the receipts a successful run would
+   * have returned on `submittedReceipts`.
+   *
+   * Absent means nothing durable had been written, so there is nothing to
+   * reconcile against.
+   */
+  readonly submittedReceipts?: readonly ReportingReceipt[];
+
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    options?: { submittedReceipts?: readonly ReportingReceipt[]; cause?: unknown }
   ) {
     super(message);
     this.name = 'ReportingReconciliationError';
+    if (options?.cause !== undefined) (this as { cause?: unknown }).cause = options.cause;
+    if (options?.submittedReceipts?.length) this.submittedReceipts = options.submittedReceipts;
   }
+}
+
+/**
+ * Re-throw carrying the durable receipt writes this run had already made.
+ *
+ * Without this the caller of a failed reconcile cannot distinguish "nothing was
+ * written" from "receipts are at the seller and the ledger re-read failed",
+ * which is the difference between starting over and retrying.
+ */
+function withSubmittedReceipts(error: unknown, submittedReceipts: readonly ReportingReceipt[]): unknown {
+  if (submittedReceipts.length === 0) return error;
+  if (error instanceof ReportingReconciliationError) {
+    // Already carrying them, or needs the same code and message with them
+    // attached. The code is what agents dispatch on, so it is preserved.
+    if (error.submittedReceipts) return error;
+    return new ReportingReconciliationError(error.code, error.message, { submittedReceipts, cause: error });
+  }
+  return new ReportingReconciliationError(
+    'RECONCILE_FAILED_AFTER_RECEIPTS',
+    `the reconcile failed after ${submittedReceipts.length} receipt(s) were durably synced${
+      error instanceof Error ? `: ${boundedDiagnostic(error.message)}` : ''
+    }`,
+    { submittedReceipts, cause: error }
+  );
 }
 
 async function callBeforeDeadline<T>(
@@ -925,6 +1016,34 @@ function receiptMatches(
   );
 }
 
+/**
+ * One ledger record, keyed by the id it carries, or a typed failure.
+ *
+ * `null` inside any of the five collections used to dereference straight to
+ * `TypeError` — and because the ledger is re-read *after* receipts are synced,
+ * that escaped `reconcileReporting` and destroyed the caller's record of
+ * durable work. The payload is malformed, so this fails closed; it is
+ * deliberately a local error rather than a durable `unreadable` statement,
+ * which would put an accusation against the seller on the buyer's permanent
+ * record for what is a transport-shaped defect.
+ */
+function collectRecord<T>(map: Map<string, T>, item: unknown, idKey: string, kind: string): void {
+  if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+    throw new ReportingReconciliationError(
+      'LEDGER_RECORD_MALFORMED',
+      `reporting ledger returned a ${kind} that is not an object (${boundedDiagnostic(item)})`
+    );
+  }
+  const id = (item as Record<string, unknown>)[idKey];
+  if (typeof id !== 'string' || id.length === 0) {
+    throw new ReportingReconciliationError(
+      'LEDGER_RECORD_MALFORMED',
+      `reporting ledger returned a ${kind} with no ${idKey} (${boundedDiagnostic(id)})`
+    );
+  }
+  addImmutable(map, id, item as T, kind);
+}
+
 function addImmutable<T>(map: Map<string, T>, id: string, value: T, kind: string): void {
   const previous = map.get(id);
   if (previous && !same(previous, value)) {
@@ -965,6 +1084,29 @@ export async function loadReportingLedger(
     throw new ReportingReconciliationError(
       'INVALID_LEDGER_LIMITS',
       'maxLoadMs must be an integer from 1 through 3600000'
+    );
+  }
+  // Symmetry with the three above. `maxRevisionRows: -5` silently muted every
+  // period in scope and `NaN` silently disabled the row bound, where a bad
+  // `maxPages` throws.
+  const maxRevisionRows = limits.maxRevisionRows;
+  if (
+    maxRevisionRows !== undefined &&
+    (!Number.isSafeInteger(maxRevisionRows) || maxRevisionRows < 1 || maxRevisionRows > 10_000_000)
+  ) {
+    throw new ReportingReconciliationError(
+      'INVALID_LEDGER_LIMITS',
+      `maxRevisionRows must be an integer from 1 through ${MAX_CONSUMED_REVISION_ROWS}`
+    );
+  }
+  const maxRevisionBytes = limits.maxRevisionBytes;
+  if (
+    maxRevisionBytes !== undefined &&
+    (!Number.isSafeInteger(maxRevisionBytes) || maxRevisionBytes < 1 || maxRevisionBytes > MAX_CONSUMED_REVISION_BYTES)
+  ) {
+    throw new ReportingReconciliationError(
+      'INVALID_LEDGER_LIMITS',
+      `maxRevisionBytes must be an integer from 1 through ${MAX_CONSUMED_REVISION_BYTES}`
     );
   }
   const deadline = Date.now() + maxLoadMs;
@@ -1071,18 +1213,18 @@ export async function loadReportingLedger(
           throw new ReportingReconciliationError('LEDGER_LIMIT_EXCEEDED', 'reporting ledger exceeds record limit');
         }
         for (const item of response.periods ?? [])
-          addImmutable(obligations, item.reporting_obligation_id, item, 'obligation');
+          collectRecord(obligations, item, 'reporting_obligation_id', 'obligation');
         for (const item of response.revisions ?? [])
-          addImmutable(revisions, item.reporting_revision_id, item as ManagedReportingRevision, 'revision');
+          collectRecord<ManagedReportingRevision>(revisions, item, 'reporting_revision_id', 'revision');
         for (const item of response.materializations ?? [])
-          addImmutable(materializations, item.reporting_materialization_id, item, 'materialization');
-        for (const item of response.receipts ?? []) addImmutable(receipts, item.reporting_receipt_id, item, 'receipt');
+          collectRecord(materializations, item, 'reporting_materialization_id', 'materialization');
+        for (const item of response.receipts ?? []) collectRecord(receipts, item, 'reporting_receipt_id', 'receipt');
         // Counted separately: `total_count` is the obligation/revision/adjustment
         // denominator, and consumer statements are the caller's own append-only
         // history rather than ledger records, so folding them into the record
         // reconciliation below would make every page appear to overrun.
         for (const item of response.consumer_statuses ?? [])
-          addImmutable(consumerStatuses, item.reporting_status_id, item, 'consumer status');
+          collectRecord(consumerStatuses, item, 'reporting_status_id', 'consumer status');
         if (consumerStatuses.size > maxRecords) {
           throw new ReportingReconciliationError(
             'LEDGER_LIMIT_EXCEEDED',
@@ -1154,6 +1296,21 @@ function assertReportingLedgerGraph(
   };
   for (const obligation of obligations.values()) {
     if (obligation.account_id !== accountId) fail();
+    // Checked here, upstream of the receipt loop, so a malformed payload fails
+    // before anything durable is written rather than throwing during the
+    // consumer-status pass that runs after receipts have gone to the seller.
+    if (!Array.isArray(obligation.media_buy_ids)) fail();
+  }
+  for (const revision of revisions.values()) {
+    // Same reason: `selectCurrent` reads `revision.period.end`, and it is
+    // reached for every obligation after receipts are synced.
+    //
+    // This one does fail the load rather than disqualifying the single
+    // revision, because a revision with no readable period cannot be matched to
+    // *any* obligation, so there is no period whose diagnostic could carry it.
+    // The scope-key comparison, by contrast, now resolves zone aliases rather
+    // than failing — see `sameReportingPeriod`.
+    if (!isReportingPeriodShape(revision.period)) fail();
   }
   const referencedRevisions = new Set<string>();
   for (const materialization of materializations.values()) {
@@ -1239,17 +1396,42 @@ function revisionMatchesObligationScope(
     Array.isArray(revision.media_buy_ids) &&
     Array.isArray(obligation.media_buy_ids) &&
     sameStringSet(revision.media_buy_ids, obligation.media_buy_ids) &&
-    same(revision.period, obligation.period)
+    sameReportingPeriod(revision.period, obligation.period)
   );
 }
 
+/**
+ * Two period descriptors naming the same period.
+ *
+ * The zone is compared by zone identity rather than spelling, for the same
+ * reason `sameZone` exists one layer up: `iana_timezone` blesses a name *or a
+ * link*, so an obligation saying `UTC` and a revision saying `Zulu` describe
+ * one period. Byte-comparing them made one seller-controlled string abort the
+ * entire reconcile — every period in scope, not just the affected one — which
+ * is a cheaper and more complete silence primitive than the suppression this
+ * SDK works hard to avoid.
+ */
+function sameReportingPeriod(left: unknown, right: unknown): boolean {
+  if (!isReportingPeriodShape(left) || !isReportingPeriodShape(right)) return same(left, right);
+  const leftZone = (left as { source_timezone?: unknown }).source_timezone;
+  const rightZone = (right as { source_timezone?: unknown }).source_timezone;
+  if (left.start !== right.start || left.end !== right.end) return false;
+  if (typeof leftZone !== 'string' || typeof rightZone !== 'string') return leftZone === rightZone;
+  return sameZone(leftZone, rightZone);
+}
+
 function reportingRevisionScopeKey(value: ManagedReportingRevision | ManagedReportingObligation): string {
+  const period = value.period as { start?: unknown; end?: unknown; source_timezone?: unknown } | undefined;
+  const zone = period?.source_timezone;
   return canonical({
     account_id: value.account_id,
     report_definition_id: value.report_definition_id,
     reporting_profile: value.reporting_profile,
     media_buy_ids: [...value.media_buy_ids].sort(),
-    period: value.period,
+    // Zone identity, not spelling. Hashing the raw string put an obligation
+    // saying `UTC` and a revision saying `Zulu` in different scopes, and the
+    // mismatch aborted the whole ledger.
+    period: period === undefined ? period : { ...period, source_timezone: canonicalZone(zone) },
   });
 }
 
@@ -1330,7 +1512,7 @@ function selectCurrent(
         !Array.isArray(item.media_buy_ids) ||
         !Array.isArray(obligation.media_buy_ids) ||
         !same([...item.media_buy_ids].sort(), [...obligation.media_buy_ids].sort()) ||
-        !same(item.period, obligation.period)
+        !sameReportingPeriod(item.period, obligation.period)
     )
   ) {
     reasons.push('REVISION_CHAIN_SCOPE_MISMATCH');
@@ -1353,7 +1535,10 @@ function selectCurrent(
     !Array.isArray(revision.media_buy_ids) ||
     !Array.isArray(obligation.media_buy_ids) ||
     !same([...revision.media_buy_ids].sort(), [...obligation.media_buy_ids].sort()) ||
-    !same(revision.period, obligation.period)
+    // Zone identity, not spelling — an obligation saying `UTC` and a revision
+    // saying `Zulu` describe one period, and calling that a scope mismatch
+    // turned a conformant seller's revision into `revision_missing`.
+    !sameReportingPeriod(revision.period, obligation.period)
   ) {
     reasons.push('REVISION_SCOPE_MISMATCH');
   }
@@ -1361,7 +1546,12 @@ function selectCurrent(
   if (
     !isReportingCoverageEvidence(obligation.coverage) ||
     obligation.coverage.evaluated_at !== obligation.scope_resolved_at ||
-    !sameStringSet(obligation.coverage.media_buy_ids, obligation.media_buy_ids ?? []) ||
+    // `?? []` caught absent and null and nothing else: a scalar reached
+    // `[...0]`, a `TypeError` from a call site that runs after receipts sync.
+    !sameStringSet(
+      obligation.coverage.media_buy_ids,
+      Array.isArray(obligation.media_buy_ids) ? obligation.media_buy_ids : []
+    ) ||
     !isReportingCoverageEvidence(revision.coverage) ||
     !same(revision.coverage, obligation.coverage)
   ) {
@@ -1402,7 +1592,16 @@ function selectCurrent(
     }
   }
   const finalizedAt = revision.finalized_at ? Date.parse(revision.finalized_at) : Number.NaN;
-  const periodEnd = Date.parse(revision.period.end);
+  // Defence in depth behind `assertReportingLedgerGraph`, which now refuses a
+  // malformed `revision.period` before any durable write, so this arm is not
+  // independently reachable today and is deliberately not claimed as tested.
+  // Kept because this line is what actually dereferenced: a missing or
+  // non-object `period` threw `TypeError` out of `reconcileReporting` after
+  // receipts had gone to the seller, destroying the caller's record of durable
+  // work. A revision whose own period the buyer cannot read cannot be shown to
+  // cover the expected one, so it is disqualified rather than dereferenced.
+  if (!isReportingPeriodShape(revision.period)) reasons.push('MALFORMED_REVISION_PERIOD');
+  const periodEnd = isReportingPeriodShape(revision.period) ? Date.parse(revision.period.end) : Number.NaN;
   const createdAt = Date.parse(revision.created_at);
   if (
     (obligation.required_finality === 'official' && revision.finality !== 'official') ||
@@ -1565,13 +1764,74 @@ function planReportingConsumerStatuses(
     // a MUST and a numeric offset is exactly what it forbids substituting.
     const declaredSourceTimezone = (obligationForPeriod as { period?: { source_timezone?: unknown } } | undefined)
       ?.period?.source_timezone;
-    const resolvedSourceTimezone = ianaTimeZone(expected.periodSourceTimezone) ?? ianaTimeZone(declaredSourceTimezone);
-    // Substituting `'UTC'` for a zone the seller actually sent is what
-    // `iana_timezone` forbids by name, and because the value is in the chain's
-    // logical key the substituted statement is refused on every run, forever.
-    // With nothing declared at all, `'UTC'` is the buyer's own documented
-    // default rather than a substitution of someone else's value.
-    const periodIdentityUnknown = resolvedSourceTimezone === undefined && declaredSourceTimezone !== undefined;
+    const pinnedSourceTimezone = ianaTimeZone(expected.periodSourceTimezone);
+    const echoedSourceTimezone = ianaTimeZone(declaredSourceTimezone);
+    // The seller's spelling goes on the wire whenever it has one, because
+    // `status-ingest.ts` compares this field to the obligation's by string
+    // identity — the buyer's own spelling of the same zone is refused. The pin
+    // is used only when the seller declared nothing, and the *canonical* name
+    // is never wired: `Intl` canonicalization is ICU-version-dependent and on
+    // some runtimes moves away from the tzdb canonical name (`Asia/Kolkata` →
+    // `Asia/Calcutta`), so emitting it would be its own source of churn.
+    const resolvedSourceTimezone = echoedSourceTimezone ?? pinnedSourceTimezone;
+    // Three distinct ways the period's identity is not established, all of
+    // which have to suppress rather than post:
+    //
+    // 1. The seller declared a zone this buyer cannot read. Substituting
+    //    `'UTC'` for it is what `iana_timezone` forbids by name, and because
+    //    the value is in the chain's logical key the substituted statement is
+    //    refused on every run, forever.
+    // 2. The *buyer's own* pin is unreadable. Falling through to the seller's
+    //    echo would silently post under a chain key the adopter did not choose
+    //    — the pin exists so the adopter decides the key, and a typo in it is
+    //    something to report, not something to route around.
+    // 3. Both are readable and they disagree. `status-ingest.ts` compares
+    //    `period.source_timezone` to the obligation's by string identity, so
+    //    the buyer's pin cannot be posted against a seller echoing anything
+    //    else — measured as a permanent item-local rejection. Nor can the echo
+    //    simply be adopted: it is in the chain key, so a seller rotating its
+    //    spelling would fork the buyer's own history. Neither value is usable,
+    //    which is exactly what `period_identity_unknown` says.
+    //
+    // With nothing declared and nothing pinned, `'UTC'` is the buyer's own
+    // documented default rather than a substitution of someone else's value.
+    // Which of the three, not merely whether. One shared sentence for all of
+    // them asserted the seller's zone was unrecognised even when the seller was
+    // blameless, and sent the adopter to record a pin that was either already
+    // recorded or was itself the defect — the exact failure `deadlineGapReason`
+    // exists to avoid.
+    const pinUnreadable = expected.periodSourceTimezone !== undefined && pinnedSourceTimezone === undefined;
+    const echoUnreadable = declaredSourceTimezone !== undefined && echoedSourceTimezone === undefined;
+    const periodIdentityGap: PeriodIdentityGap | undefined =
+      pinUnreadable && echoUnreadable
+        ? // Reporting only one of them would have the adopter fix it, re-run,
+          // and meet the other — so both are named at once.
+          { cause: 'both_unreadable', pin: expected.periodSourceTimezone, declared: declaredSourceTimezone }
+        : echoUnreadable
+          ? { cause: 'unreadable_seller_zone', value: declaredSourceTimezone }
+          : pinUnreadable
+            ? { cause: 'unreadable_pin', value: expected.periodSourceTimezone }
+            : undefined;
+    // A pin that names a *different but valid* zone from the seller's echo is
+    // reported, not suppressed.
+    //
+    // Suppressing it was a net loss. Measured: the buyer that recorded a pin
+    // went permanently silent while the buyer that recorded none posted the
+    // `content_mismatch`, so one seller config change silenced exactly the
+    // careful adopters — a cheap, permanent, seller-triggerable hole in the
+    // accountability record, and `buyer_duty` requires a statement either way.
+    //
+    // The justification for suppressing was also false: it claimed adopting the
+    // echo would fork the buyer's own chain. It cannot. `period.source_timezone`
+    // is in neither `currentConsumerLeaf`'s key nor `sameConsumerStatement`'s
+    // comparison, so a seller rotating its spelling leaves one statement and
+    // reports `unchanged` — measured over seven spellings.
+    const periodZoneBeyondPin =
+      pinnedSourceTimezone !== undefined &&
+      echoedSourceTimezone !== undefined &&
+      !sameZone(pinnedSourceTimezone, echoedSourceTimezone)
+        ? { declared: echoedSourceTimezone, pinned: pinnedSourceTimezone }
+        : undefined;
     const period = {
       start: expected.periodStart,
       end: expected.periodEnd,
@@ -1588,38 +1848,60 @@ function planReportingConsumerStatuses(
     // duration" and cannot precede the period end, and feeding the raw value to
     // `overdue` made a past-dated one force a statement the seller refuses on
     // every run.
-    const derivedExpectedAt = reportingExpectedAt(obligationForPeriod, expected);
-    const expectedAtOverflowed = derivedExpectedAt === OVERFLOWED_INSTANT;
+    const derived = reportingExpectedAt(obligationForPeriod, expected);
+    // The field that overflowed, carried all the way to the diagnostic. It used
+    // to stop here, so every overflow — a buyer pin's, a seller duration's —
+    // was reported against a generic "the derived expected_at".
+    const overflowedField = derived !== undefined && 'overflowedField' in derived ? derived.overflowedField : undefined;
     // Clamp only a value that was actually derived: turning "nothing derived"
     // into the period end would manufacture a deadline out of the absence of
     // one, and every present-but-unreadable diagnostic depends on that
     // distinction surviving.
     const expectedAt =
-      expectedAtOverflowed || derivedExpectedAt === undefined
+      derived === undefined || !('instant' in derived)
         ? undefined
-        : latestInstant([derivedExpectedAt, expected.periodEnd]);
+        : latestInstant([derived.instant, expected.periodEnd]);
     // The seller sent something we could not read *and* could not recompute
     // from its own schedule — carried so the diagnostic can name the value.
     // Present in any form the buyer could not read — including a non-string —
     // is the seller's defect, not a pin the adopter forgot to record.
     const declaredExpectedAt = obligationForPeriod?.expected_at;
     const malformedExpectedAt =
-      expectedAt === undefined && !expectedAtOverflowed && declaredExpectedAt !== undefined
+      expectedAt === undefined && overflowedField === undefined && declaredExpectedAt !== undefined
         ? typeof declaredExpectedAt === 'string'
           ? declaredExpectedAt
           : `<${typeof declaredExpectedAt}>`
         : undefined;
-    const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt, expectedAtOverflowed);
+    const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt, overflowedField);
     // A seller deadline far past the buyer's own pinned expectation is honoured
     // — the spec makes it authoritative — but recorded, because otherwise it is
     // a silent, permanent opt-out of the entire accountability loop.
     const pinnedExpectation = pinnedExpectedAt(expected);
+    // Where the deadline came from, always. The alarm below can only compare
+    // against a pin the buyer recorded, so a buyer with *no* pin got a
+    // seller-chosen deadline with `suppressed` unset and no marker — a silent,
+    // permanent opt-out, and a regression against the behaviour before the
+    // schedule fallback existed, which was a loud `deadline_unknown`.
+    const deadlineSource: 'buyer_pin' | 'seller_expected_at' | 'seller_schedule' | undefined =
+      expectedAt === undefined
+        ? undefined
+        : normalizedInstant(obligationForPeriod?.expected_at) !== undefined
+          ? 'seller_expected_at'
+          : pinnedExpectation !== undefined
+            ? 'buyer_pin'
+            : 'seller_schedule';
     const deadlineBeyondPin =
-      expectedAt !== undefined &&
-      pinnedExpectation !== undefined &&
-      Date.parse(expectedAt) > Date.parse(pinnedExpectation) + (expected.automatedRecoveryWindowSeconds ?? 0) * 1_000
-        ? { declared: expectedAt, pinned: pinnedExpectation }
-        : undefined;
+      expectedAt === undefined || deadlineSource === 'buyer_pin'
+        ? undefined
+        : pinnedExpectation === undefined
+          ? // Nothing of the buyer's own to check it against, so the seller set
+            // the buyer's clock unverifiably. Recorded without a `pinned`
+            // value rather than left silent.
+            { declared: expectedAt }
+          : Date.parse(expectedAt) >
+              Date.parse(pinnedExpectation) + (expected.automatedRecoveryWindowSeconds ?? 0) * 1_000
+            ? { declared: expectedAt, pinned: pinnedExpectation }
+            : undefined;
     const leaf = currentConsumerLeaf(
       ledger,
       base,
@@ -1633,16 +1915,22 @@ function planReportingConsumerStatuses(
     // seller dating the buyer's own durable statement in, say, year 1; a
     // far-*future* `expected_at` is deliberately left alone, because that is
     // the seller declaring a long SLA, which the spec makes its prerogative.
-    const establishedAt = latestInstant([expectedAt, expected.periodEnd]) ?? expected.periodEnd;
+    // `expectedAt` is already clamped to at or after the period end above, so
+    // there is nothing left to compare — only the absent case to fall back
+    // for, and the fallback is normalized because it goes on a statement the
+    // buyer signs.
+    const establishedAt = expectedAt ?? normalizedInstant(expected.periodEnd) ?? expected.periodEnd;
 
     if (missing.has(expected) || !obligationForPeriod) {
       return finalizeConsumerStatusPlan(
         {
           ...base,
           ...schedule,
-          ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+          ...(periodIdentityGap ? { periodIdentityGap } : {}),
           ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
-          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+          ...(deadlineSource ? { deadlineSource } : {}),
+          ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
+          ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
           consumerStatus: 'obligation_missing',
           establishedAt,
           reason: missing.has(expected)
@@ -1673,9 +1961,11 @@ function planReportingConsumerStatuses(
         {
           ...base,
           ...schedule,
-          ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+          ...(periodIdentityGap ? { periodIdentityGap } : {}),
           ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
-          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+          ...(deadlineSource ? { deadlineSource } : {}),
+          ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
+          ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           ...(indeterminate ? { indeterminate: true } : {}),
@@ -1683,7 +1973,7 @@ function planReportingConsumerStatuses(
           reason: forked
             ? 'the revision chain forks, so no single current revision could be resolved'
             : predecessorMissing
-              ? `a revision names a predecessor the buyer never saw, so ${revision ? `the head ${boundedDiagnostic(revision.reporting_revision_id)} ` : 'no head '}could not be proven current`
+              ? `a revision names a predecessor the buyer never saw, so ${revision ? `the head ${boundedDiagnostic(revision.reporting_revision_id)}` : 'no head'} could not be proven current`
               : 'the obligation exists but no required revision was available',
         },
         leaf,
@@ -1702,9 +1992,11 @@ function planReportingConsumerStatuses(
         {
           ...base,
           ...schedule,
-          ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+          ...(periodIdentityGap ? { periodIdentityGap } : {}),
           ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
-          ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+          ...(deadlineSource ? { deadlineSource } : {}),
+          ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
+          ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           establishedAt,
@@ -1720,8 +2012,10 @@ function planReportingConsumerStatuses(
       {
         ...base,
         ...schedule,
-        ...(periodIdentityUnknown ? { periodIdentityUnknown: true } : {}),
+        ...(periodIdentityGap ? { periodIdentityGap } : {}),
         ...(deadlineBeyondPin ? { deadlineBeyondPin } : {}),
+        ...(deadlineSource ? { deadlineSource } : {}),
+        ...(periodZoneBeyondPin ? { periodZoneBeyondPin } : {}),
         reportingObligationId: obligation.reporting_obligation_id,
         reportingRevisionId: revision.reporting_revision_id,
         consumerStatus: mismatch ? ('content_mismatch' as const) : ('received' as const),
@@ -1796,9 +2090,11 @@ interface ConsumerStatusDraft {
   /** The buyer could not resolve the chain, so it must not assert anything. */
   indeterminate?: boolean;
   /** The seller's `period.source_timezone` is not a zone the buyer can adopt. */
-  periodIdentityUnknown?: boolean;
+  periodIdentityGap?: PeriodIdentityGap;
   /** The seller's deadline is far past the buyer's own pinned expectation. */
-  deadlineBeyondPin?: { declared: string; pinned: string };
+  deadlineBeyondPin?: { declared: string; pinned?: string };
+  deadlineSource?: 'buyer_pin' | 'seller_expected_at' | 'seller_schedule';
+  periodZoneBeyondPin?: { declared: string; pinned: string };
   /** The instant this statement became true, before the monotonicity floor. */
   establishedAt: string;
   reason: string;
@@ -1823,7 +2119,7 @@ function finalizeConsumerStatusPlan(
 ): ReportingConsumerStatusPlanV1 {
   const statusAsOfFloor =
     latestInstant([draft.establishedAt, usableLeafInstant(leaf.statement, now)]) ?? draft.establishedAt;
-  const { establishedAt: _establishedAt, deadlineGap, indeterminate, periodIdentityUnknown, ...carried } = draft;
+  const { establishedAt: _establishedAt, deadlineGap, indeterminate, periodIdentityGap, ...carried } = draft;
   const plan: ReportingConsumerStatusPlanV1 = {
     ...carried,
     ...(leaf.statusId ? { supersedesReportingStatusId: leaf.statusId } : {}),
@@ -1832,11 +2128,11 @@ function finalizeConsumerStatusPlan(
     // a read is left open for `attestConsumerStatusPlan`.
     ...(draft.requiresConsumption ? {} : { statusAsOf: statusAsOfFloor }),
   };
-  if (periodIdentityUnknown) {
+  if (periodIdentityGap) {
     return {
       ...plan,
       suppressed: 'period_identity_unknown',
-      reason: suppressionReason('period_identity_unknown', plan.reason),
+      reason: periodIdentityReason(periodIdentityGap),
     };
   }
   if (indeterminate) {
@@ -1872,6 +2168,35 @@ function finalizeConsumerStatusPlan(
  * one is worse than naming none: an adopter told to record a pin that cannot
  * help does it, re-runs, and gets the identical sentence forever.
  */
+/**
+ * Why `period.source_timezone` could not be established.
+ *
+ * Carried rather than collapsed to a boolean, because the remedy differs: one
+ * is the seller's to fix, one is the adopter's, and one is a disagreement
+ * neither side can resolve unilaterally.
+ */
+type PeriodIdentityGap =
+  | { cause: 'unreadable_seller_zone'; value: unknown }
+  | { cause: 'unreadable_pin'; value: unknown }
+  | { cause: 'both_unreadable'; pin: unknown; declared: unknown };
+
+function periodIdentityReason(gap: PeriodIdentityGap): string {
+  // `period.source_timezone` is in the chain's logical key, so none of these
+  // can be resolved by substituting a value — `iana_timezone` forbids it and
+  // `status-ingest.ts` compares the field by string identity.
+  switch (gap.cause) {
+    case 'unreadable_seller_zone':
+      // Deliberately offers no local remedy. This gap is decided without
+      // consulting the pin, so "record periodSourceTimezone" is an instruction
+      // the adopter can follow, re-run, and see fail identically forever.
+      return `not posted: the seller's period.source_timezone (${boundedDiagnostic(gap.value)}) is not a recognized IANA zone, and that value is part of the chain's logical key. The buyer cannot substitute for it — iana_timezone forbids that, and the seller compares the field by string identity — so only the seller can correct the value`;
+    case 'unreadable_pin':
+      return `not posted: ExpectedReportingPeriod.periodSourceTimezone (${boundedDiagnostic(gap.value)}) is not a recognized IANA zone. The seller's echo is not substituted for a pin the adopter chose, because that would post under a chain key they did not pick — correct the pin`;
+    default:
+      return `not posted: neither ExpectedReportingPeriod.periodSourceTimezone (${boundedDiagnostic(gap.pin)}) nor the seller's period.source_timezone (${boundedDiagnostic(gap.declared)}) is a recognized IANA zone. Correct the pin *and* have the seller correct its value — fixing either one alone leaves the period's identity unestablished`;
+  }
+}
+
 function deadlineGapReason(gap: NonNullable<ConsumerStatusDraft['deadlineGap']>): string {
   switch (gap.cause) {
     case 'missing_pin':
@@ -1902,8 +2227,6 @@ function suppressionReason(
       return 'not posted: no client.getMediaBuyDelivery is wired, so consumption cannot be attested';
     case 'posting_unavailable':
       return 'not posted: no client.syncReportingStatus is wired, so the buyer cannot append to the status chain';
-    case 'period_identity_unknown':
-      return "not posted: the seller's period.source_timezone is not a recognized IANA zone, and that value is part of the chain's logical key — record ExpectedReportingPeriod.periodSourceTimezone, or have the seller correct it";
     case 'local_budget_exhausted':
       return "not posted: the buyer's own ledgerLimits read budget ran out before the revision could be consumed";
     case 'chain_indeterminate':
@@ -2021,11 +2344,11 @@ function currentConsumerLeaf(
 function reportingExpectedAt(
   obligation: ManagedReportingObligation | undefined,
   expected: ExpectedReportingPeriod
-): string | undefined {
+): DerivedDeadline {
   // Normalised, never echoed: whatever comes back here is re-emitted as the
   // buyer's own `status_as_of`.
   const declared = normalizedInstant(obligation?.expected_at);
-  if (declared !== undefined) return declared;
+  if (declared !== undefined) return { instant: declared };
   // Present but unreadable is *not* the same as absent. The seller has a real
   // deadline the buyer cannot read, so any derived one disagrees with it and
   // the statement is refused — on every run, forever, because the body takes
@@ -2055,22 +2378,71 @@ function reportingExpectedAt(
   // configured the seller accepts the `delivery_sla`-derived instant, so
   // refusing silenced a conformant period. A wrong deadline is at least visible
   // as an item-local rejection in `failedConsumerStatuses`; silence is not.
-  const slaSeconds =
-    expected.requiredFinality === 'official'
-      ? (expected.officialAfterSeconds ?? expected.deliverySlaSeconds)
-      : expected.deliverySlaSeconds;
+  const offset = expectedOffset(expected);
   const periodEnd = Date.parse(expected.periodEnd);
-  if (typeof slaSeconds === 'number' && Number.isFinite(slaSeconds) && slaSeconds >= 0 && Number.isFinite(periodEnd)) {
-    const pinned = periodEnd + slaSeconds * 1_000;
+  if (offset !== undefined && Number.isFinite(periodEnd)) {
+    const pinned = periodEnd + offset.seconds * 1_000;
     // `undefined` here would be classified as a missing pin, which is the one
-    // thing it is not — the adopter recorded it and it overflowed.
-    return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : OVERFLOWED_INSTANT;
+    // thing it is not — the adopter recorded it and it overflowed. Named by the
+    // field the value actually came from, so the adopter is sent to a pin they
+    // can fix rather than to an empty one.
+    return isRepresentableInstant(pinned)
+      ? { instant: new Date(pinned).toISOString() }
+      : { overflowedField: `ExpectedReportingPeriod.${offset.field}` };
   }
   // `reporting-schedule.json`: "expected_at equals the resolved period end plus
   // this duration". With no pin of its own the buyer has nothing better, and
   // this cannot override anything — before it existed the answer was simply
   // "no deadline".
   return reportingScheduledExpectedAt(obligation, expected.periodEnd);
+}
+
+/**
+ * The offset the buyer itself recorded for this period, with the field it came
+ * from.
+ *
+ * One definition, used both to derive the deadline and to name the pin in a
+ * diagnostic, so the two cannot disagree about which field was consulted.
+ * Returning the *name* alongside the value is the point: dispatching on
+ * `requiredFinality` alone named `officialAfterSeconds` for an official
+ * generation that had only `deliverySlaSeconds` set, i.e. reported an overflow
+ * against a field the adopter had left empty.
+ */
+function expectedOffset(
+  expected: ExpectedReportingPeriod
+): { seconds: number; field: 'officialAfterSeconds' | 'deliverySlaSeconds' } | undefined {
+  const usable = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+  // `officialAfterSeconds` is consulted only for official finality, and only
+  // when it is actually usable; otherwise the spec-defined `delivery_sla`
+  // answer applies to both finalities.
+  if (expected.requiredFinality === 'official') {
+    const official = usable(expected.officialAfterSeconds);
+    if (official !== undefined) return { seconds: official, field: 'officialAfterSeconds' };
+  }
+  const sla = usable(expected.deliverySlaSeconds);
+  return sla === undefined ? undefined : { seconds: sla, field: 'deliverySlaSeconds' };
+}
+
+/** `period.end` plus whichever offset the buyer recorded, or `undefined`. */
+function pinnedExpectedAt(expected: ExpectedReportingPeriod): string | undefined {
+  const offset = expectedOffset(expected);
+  const periodEnd = Date.parse(expected.periodEnd);
+  if (offset === undefined || !Number.isFinite(periodEnd)) return undefined;
+  const pinned = periodEnd + offset.seconds * 1_000;
+  return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : undefined;
+}
+
+function localExpectedAtPin(expected: ExpectedReportingPeriod): string {
+  // Reached only when *neither* offset is recorded, so there is no consumed
+  // field to name. `reporting-schedule.json` defines `delivery_sla` and nothing
+  // else, so that is the field to record; `official_after` appears nowhere in
+  // the 3.2.0-rc.3 schemas and is an SDK-local extension, offered second rather
+  // than first. Naming only the extension sent adopters to a field the spec
+  // does not have.
+  return expected.requiredFinality === 'official'
+    ? 'deliverySlaSeconds (or the SDK-local officialAfterSeconds)'
+    : 'deliverySlaSeconds';
 }
 
 /**
@@ -2082,31 +2454,15 @@ function reportingExpectedAt(
  * reject `P1M` — a value the schema allows and this SDK's own validator
  * accepts — and silence a conformant seller, which is the whole failure this
  * fallback exists to prevent.
+ *
+ * The overflow arm names `schedule.delivery_sla`, because that is the field an
+ * adopter would have to take up with the seller; `undefined` means there was
+ * nothing to resolve at all.
  */
-/** `period.end` plus whichever offset the buyer recorded, or `undefined`. */
-function pinnedExpectedAt(expected: ExpectedReportingPeriod): string | undefined {
-  const slaSeconds =
-    expected.requiredFinality === 'official'
-      ? (expected.officialAfterSeconds ?? expected.deliverySlaSeconds)
-      : expected.deliverySlaSeconds;
-  const periodEnd = Date.parse(expected.periodEnd);
-  if (typeof slaSeconds !== 'number' || !Number.isFinite(slaSeconds) || slaSeconds < 0) return undefined;
-  if (!Number.isFinite(periodEnd)) return undefined;
-  const pinned = periodEnd + slaSeconds * 1_000;
-  return isRepresentableInstant(pinned) ? new Date(pinned).toISOString() : undefined;
-}
-
-function localExpectedAtPin(expected: ExpectedReportingPeriod): string {
-  // Naming the wrong pin is expensive: an official-finality generation dated
-  // from `delivery_sla` is refused by the seller, and because that statement
-  // takes no clock input it is rebuilt identically and refused on every run.
-  return expected.requiredFinality === 'official' ? 'officialAfterSeconds' : 'deliverySlaSeconds';
-}
-
 function reportingScheduledExpectedAt(
   obligation: ManagedReportingObligation | undefined,
   periodEnd: string
-): string | undefined {
+): DerivedDeadline {
   const schedule = (
     obligation as { schedule?: { delivery_sla?: unknown; period_timezone?: unknown; alignment?: unknown } } | undefined
   )?.schedule;
@@ -2121,8 +2477,9 @@ function reportingScheduledExpectedAt(
   // came back an hour early, and sub-second precision was dropped entirely.
   if (duration.years === 0 && duration.months === 0 && duration.days === 0) {
     const exact = anchor + duration.seconds * 1_000;
-    // Sentinel, not `undefined`: an overflow here is not "no schedule to read".
-    return isRepresentableInstant(exact) ? new Date(exact).toISOString() : OVERFLOWED_INSTANT;
+    // An overflow here is not "no schedule to read", and it is the seller's
+    // duration that overflowed, not anything the buyer recorded.
+    return isRepresentableInstant(exact) ? { instant: new Date(exact).toISOString() } : OVERFLOWED_SCHEDULE;
   }
   const timeZone = calendarTimeZone(obligation, schedule);
   if (timeZone === undefined) return undefined;
@@ -2132,8 +2489,16 @@ function reportingScheduledExpectedAt(
   // is a legal value that lands outside the representable range — and
   // `toISOString` throws on that, from a call site with nothing to catch it.
   if (shifted === undefined) return undefined;
-  return isRepresentableInstant(shifted) ? new Date(shifted).toISOString() : OVERFLOWED_INSTANT;
+  if (shifted === 'overflow') return OVERFLOWED_SCHEDULE;
+  return isRepresentableInstant(shifted) ? { instant: new Date(shifted).toISOString() } : OVERFLOWED_SCHEDULE;
 }
+
+/** The seller's own duration overflowed — the field the adopter would raise. */
+const OVERFLOWED_SCHEDULE = {
+  // The wire path, not the internal type name: `ManagedReportingObligation` is
+  // not exported, so an adopter grepping their .d.ts for it finds nothing.
+  overflowedField: "the seller's obligation.schedule.delivery_sla",
+} as const;
 
 /**
  * The zone a calendar `delivery_sla` is resolved in, or `undefined` to derive
@@ -2223,7 +2588,7 @@ function parseIso8601Duration(value: string): Iso8601Duration | undefined {
  * components, and treating them as civil would make `PT24H` and `P1D`
  * synonyms, which is the distinction the rule exists to preserve.
  */
-function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZone: string): number | undefined {
+function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZone: string): CalendarShift {
   const parts = zonedParts(instant, timeZone);
   if (!parts) return undefined;
   const totalMonths = parts.month - 1 + duration.years * 12 + duration.months;
@@ -2232,15 +2597,26 @@ function addCalendarDuration(instant: number, duration: Iso8601Duration, timeZon
   // Clamp before adding days, so "a clamped February boundary does not shift a
   // March 31 anchor" holds and the day count starts from the clamped date.
   const clamped = Math.min(parts.day, daysInMonth(year, month));
+  // Both guards below are range failures, not "no zone to resolve in", and the
+  // two are reported differently: an overflow names the field that overflowed,
+  // an unresolvable zone names the pin the adopter never recorded. Collapsing
+  // them sent adopters to fix `deliverySlaSeconds` for a `P999999999Y` they had
+  // in fact recorded.
   const wall = utcWallTime(year, month, clamped + duration.days, parts.hour, parts.minute, parts.second);
-  if (wall === undefined) return undefined;
+  if (wall === undefined) return 'overflow';
   const resolved = instantForWallTime(wall, timeZone);
-  if (resolved === undefined) return undefined;
+  if (resolved === undefined) return 'overflow';
   // `zonedParts` has no millisecond field, so the anchor's sub-second remainder
   // is carried across rather than silently truncated.
   const subSecond = ((instant % 1_000) + 1_000) % 1_000;
   return resolved + subSecond + duration.seconds * 1_000;
 }
+
+/**
+ * A calendar shift that landed, one that fell outside the representable range,
+ * or `undefined` for a zone that could not be resolved at all.
+ */
+type CalendarShift = number | 'overflow' | undefined;
 
 /** Within the ±8.64e15 ms ECMAScript time range, so `toISOString` cannot throw. */
 function isRepresentableInstant(value: number): boolean {
@@ -2313,7 +2689,10 @@ function zonedParts(
       year: field('year'),
       month: field('month'),
       day: field('day'),
-      // Intl renders midnight as hour 24 in some locales' hourCycle.
+      // The locale here is hardcoded `en-US` with `hour12: false`, which ICU
+      // renders as `"00"`, so this cannot fire today — the hourCycle that
+      // renders midnight as 24 is not reachable from a fixed locale. Kept as a
+      // statement of the field's range, not claimed as tested.
       hour: field('hour') % 24,
       minute: field('minute'),
       second: field('second'),
@@ -2381,19 +2760,19 @@ function consumerStatusSchedule(
   expected: ExpectedReportingPeriod,
   now: Date,
   malformedExpectedAt?: string,
-  expectedAtOverflowed = false,
-  overflowField = 'the derived expected_at'
+  overflowedField?: string
 ): { deadline?: string; overdue: boolean; deadlineGap?: ConsumerStatusDraft['deadlineGap'] } {
   const windowSeconds = expected.automatedRecoveryWindowSeconds;
-  if (expectedAtOverflowed) {
+  if (overflowedField !== undefined) {
     return {
       overdue: false,
-      deadlineGap: { cause: 'deadline_overflow', field: overflowField },
+      deadlineGap: { cause: 'deadline_overflow', field: overflowedField },
     };
   }
   if (expectedAt === undefined) {
-    // Distinguish the two causes: a pin the buyer never recorded, versus an
-    // obligation whose own `expected_at` the buyer could not read.
+    // Distinguish the causes: a pin the buyer never recorded, versus an
+    // obligation whose own `expected_at` the buyer could not read. Overflow is
+    // handled above, with the field that overflowed.
     return {
       overdue: false,
       deadlineGap:
@@ -2425,9 +2804,14 @@ function consumerStatusSchedule(
  * seller payloads with (`ajv-formats`), which accepts a lowercase `t`/`z`, a
  * space separator, and `+hhmm` or `+hh` offsets. A stricter reader here would
  * silence a seller the SDK itself just told was conformant.
+ *
+ * Not *looser* either: RFC 3339 bounds the offset hour at 23 and `ajv-formats`
+ * enforces it. An unbounded `\d{2}` let `+30:00` through — V8's ISO parser
+ * refuses it, but the legacy parser reached via the space separator does not,
+ * so widening the separator quietly opened it.
  */
 const RFC3339_INSTANT =
-  /^(\d{4})-(\d{2})-(\d{2})[Tt\s](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-]\d{2}(?::?(\d{2}))?)$/;
+  /^(\d{4})-(\d{2})-(\d{2})[Tt\s](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3])(?::?(\d{2}))?)$/;
 
 /**
  * One canonical spelling of a seller-supplied instant, or `undefined`.
@@ -2452,6 +2836,10 @@ function normalizedInstant(value: unknown): string | undefined {
   // instead cannot distinguish that roll from a legitimate offset moving the
   // UTC date, which is why an earlier version of this only caught the `Z` case.
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return undefined;
+  // The hour bound is load-bearing; the two minute bounds are not — `Date.parse`
+  // already returns `NaN` for `00:99` and for a `+00:99` offset, and the
+  // `Number.isFinite` check below refuses it. Kept as an explicit statement of
+  // the format, deliberately not claimed as tested.
   if (Number(isoHour) > 23 || Number(isoMinute) > 59) return undefined;
   if (offsetMinute !== undefined && Number(offsetMinute) > 59) return undefined;
   // A leap second is inserted at 23:59:60 **UTC**, which is what `ajv-formats`
@@ -2475,14 +2863,50 @@ function normalizedInstant(value: unknown): string | undefined {
   // validator calls conformant and which parses past the RFC 3339 year range,
   // and `toISOString` would render it expanded (`+010000-…`).
   //
-  // Defence in depth, deliberately untested: `latestInstant` already refuses a
-  // string that does not match `RFC3339_INSTANT`, and `establishedAt` is
-  // clamped to the period end, so today there is no reachable path by which an
-  // expanded-year instant lands on a plan. Rather than write a test that would
-  // pass with this line removed, the reason it cannot be observed is recorded
-  // here — if either of those two guards is ever relaxed, this is what keeps
-  // the invariant.
+  // Reachable from the wire, not defence in depth: the seller's own
+  // `obligation.expected_at` is read through here, so that exact string is all
+  // it takes. Without the guard the buyer derives a live deadline from a value
+  // it cannot re-emit; with it, the period says `deadline_unknown` and names
+  // the seller's field.
   return isRepresentableInstant(instant) ? new Date(instant).toISOString() : undefined;
+}
+
+/**
+ * Whether two zone names name the same zone.
+ *
+ * `iana_timezone` accepts "a recognized IANA Time Zone Database zone name **or
+ * link**", so `Japan` and `Asia/Tokyo` — and `US/Eastern` and
+ * `America/New_York` — are the same zone differently spelled. Comparing the
+ * strings made a *correct* pin break a configuration that worked with no pin
+ * at all, and silenced the period permanently, which `buyer_duty` forbids.
+ * Every serious tzdb consumer resolves links rather than string-comparing
+ * them; `Temporal`'s `equals()` is the published precedent.
+ */
+function sameZone(left: string, right: string): boolean {
+  if (left === right) return true;
+  const canonicalLeft = canonicalZone(left);
+  const canonicalRight = canonicalZone(right);
+  // Two zones neither of which resolves are not thereby "the same": an
+  // unresolvable name yields `undefined`, which never compares equal here.
+  return canonicalLeft !== undefined && canonicalLeft === canonicalRight;
+}
+
+/**
+ * The runtime's canonical spelling of a zone, for comparison only.
+ *
+ * Never put on the wire. ICU canonicalization is version-dependent and does not
+ * always agree with the tzdb canonical name — this runtime resolves
+ * `Asia/Kolkata` to `Asia/Calcutta`, i.e. toward the link — so emitting it
+ * would be its own source of churn. A non-string or unrecognized value keeps
+ * its own identity rather than collapsing with every other bad value.
+ */
+function canonicalZone(name: unknown): unknown {
+  if (typeof name !== 'string') return name;
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: name }).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
 }
 
 /** A usable, bounded source timezone, or `undefined` to fall through. */
@@ -2502,7 +2926,11 @@ function utcMinuteOfDay(value: string, hour: number, minute: number): number {
 
 /** Strip control characters and bound any string headed for an adopter's log. */
 function boundedDiagnostic(value: unknown): string {
-  if (typeof value !== 'string') return '';
+  // A non-string still has to render as *something*: `''` produced diagnostics
+  // reading "period.source_timezone () is not a recognized IANA zone", which
+  // names neither the value nor the fault.
+  if (value === undefined) return '';
+  if (typeof value !== 'string') return `<${value === null ? 'null' : typeof value}>`;
   // Sliced before the replace: the input can be seller-supplied and arbitrarily
   // long, and bounding after the copy pays for the whole thing first.
   return value.slice(0, 256).replace(/[\u0000-\u001f\u007f]+/g, ' ');
@@ -2894,6 +3322,24 @@ function checkpointContextFingerprint(context: ReportingInspectionContext): stri
 export async function reconcileReporting<TCredential = unknown>(
   options: ReconcileReportingOptions<TCredential>
 ): Promise<ReportingReconciliationResult> {
+  // Receipts accepted by the seller are recorded here as they land, so a later
+  // failure — most importantly the ledger re-read that happens *after* the
+  // writes — can hand them back on the error instead of losing them. Without
+  // this the caller could not tell "nothing was written" from "receipts are at
+  // the seller and the reload failed", which is the difference between starting
+  // over and retrying.
+  const synced: ReportingReceipt[] = [];
+  try {
+    return await runReconcileReporting(options, synced);
+  } catch (error) {
+    throw withSubmittedReceipts(error, synced);
+  }
+}
+
+async function runReconcileReporting<TCredential = unknown>(
+  options: ReconcileReportingOptions<TCredential>,
+  synced: ReportingReceipt[]
+): Promise<ReportingReconciliationResult> {
   if (
     !options.inspect &&
     (!options.resourceReader || !options.manifestInspectorOptions?.referenceAllowedOrigins?.length)
@@ -3029,6 +3475,8 @@ export async function reconcileReporting<TCredential = unknown>(
         'RECEIPT_WRITE_FAILED',
         'seller did not return one matching successful receipt acknowledgement'
       );
+    // Acknowledged `recorded` or `unchanged`, so it is durably at the seller.
+    synced.push(submission.receipt);
   }
   if (pendingSubmissions.length) {
     ledger = await loadReportingLedger(
@@ -3085,7 +3533,7 @@ export async function reconcileReporting<TCredential = unknown>(
     // Only the shared wall-clock budget stops the loop; a per-revision page or
     // record limit is that revision's problem alone.
     if (next.suppressed === 'local_budget_exhausted' && next.budgetScope === 'run') budgetExhausted = true;
-    const { budgetScope: _scope, ...carried } = next;
+    const { budgetScope: _scope, budgetLimit: _limit, ...carried } = next;
     attested.push(carried);
   }
   const consumerStatuses = attested;
@@ -3283,6 +3731,15 @@ interface UnconsumableReportingRevisionV1 {
  */
 interface ExhaustedReportingReadBudgetV1 {
   budgetExhausted: 'run' | 'revision';
+  /**
+   * The ceiling that was actually reached, as an adopter-facing phrase.
+   *
+   * One sentence for five producers told adopters their `ledgerLimits` had run
+   * out even for the two ceilings that are not theirs to raise — the per-row
+   * container bound, which is not tunable at all, and `maxRevisionBytes`, which
+   * can only be tightened.
+   */
+  budgetLimit: string;
 }
 
 /**
@@ -3321,6 +3778,7 @@ async function attestConsumerStatusPlan(
       suppressed: 'local_budget_exhausted',
       reason: suppressionReason('local_budget_exhausted', plan.reason),
       budgetScope: outcome.budgetExhausted,
+      budgetLimit: outcome.budgetLimit,
     };
   }
 
@@ -3409,7 +3867,10 @@ async function attestConsumerStatusPlan(
  * tell a shared wall-clock budget from a per-revision page limit. Stripped
  * before the plan reaches the result: it is loop bookkeeping, not a claim.
  */
-type AttestedConsumerStatusPlan = ReportingConsumerStatusPlanV1 & { budgetScope?: 'run' | 'revision' };
+type AttestedConsumerStatusPlan = ReportingConsumerStatusPlanV1 & {
+  budgetScope?: 'run' | 'revision';
+  budgetLimit?: string;
+};
 
 /** Re-apply the unchanged/undisclosed test after a plan's meaning has changed. */
 function withSuppression(plan: ReportingConsumerStatusPlanV1, leaf: ConsumerStatusLeaf): ReportingConsumerStatusPlanV1 {
@@ -3434,7 +3895,10 @@ async function consumeReportingRevision(
 ): Promise<ConsumedReportingRevisionV1 | UnconsumableReportingRevisionV1 | ExhaustedReportingReadBudgetV1> {
   const read = options.client.getMediaBuyDelivery!;
   const maxPages = options.ledgerLimits?.maxPages ?? 1_000;
-  const maxRows = options.ledgerLimits?.maxRevisionRows ?? 100_000;
+  // Clamped on re-read, not merely validated on entry: a side-effecting getter
+  // can pass validation with a small value and return `MAX_SAFE_INTEGER` here.
+  const maxRows = revisionRowCeiling(options.ledgerLimits);
+  const maxBytes = revisionByteCeiling(options.ledgerLimits);
   const rows: unknown[] = [];
   let bytes = 0;
   let totalCount: number | undefined;
@@ -3453,7 +3917,7 @@ async function consumeReportingRevision(
   try {
     do {
       pages += 1;
-      if (pages > maxPages) return { budgetExhausted: 'revision' };
+      if (pages > maxPages) return { budgetExhausted: 'revision', budgetLimit: 'ledgerLimits.maxPages' };
       const response = await callBeforeDeadline(
         signal =>
           read(
@@ -3496,22 +3960,41 @@ async function consumeReportingRevision(
         rows.push(row);
         const sized = approximateRowBytes(row);
         if (sized === TOO_DEEP_TO_SIZE) {
-          // A 147-byte row nested seventy deep used to suppress the whole
-          // period, which let an under-delivering seller escape a
-          // `content_mismatch` permanently for the price of one strange row.
+          // Depth is the seller's shape. Charging it to the buyer's budget
+          // would suppress the whole period, letting an under-delivering seller
+          // escape a `content_mismatch` permanently for the price of one small
+          // strange row — so this side of the split accuses instead.
           return {
             failureCode: 'reader_incompatible',
             detail: 'a revision row nests deeper than this reader will walk',
           };
         }
         if (sized === undefined) {
-          // Breadth, by contrast, is the buyer's own walk bound: a retail-media
-          // row carrying a per-SKU breakdown is entirely conformant.
-          return { budgetExhausted: 'revision' };
+          // Accused, not suppressed — the same side as depth, and for the same
+          // reason. An earlier version called this "the buyer's own walk bound"
+          // and pointed the adopter at `ledgerLimits`, but the bound is a
+          // hardcoded constant no knob raises, and a *quarter of a million
+          // containers in one row* is not a shape any conformant tabular report
+          // has: an array of a hundred thousand numbers is one container. On
+          // the silent side it was a measured 786 KB purchase of permanent
+          // immunity from `content_mismatch`.
+          return {
+            failureCode: 'reader_incompatible',
+            detail: `a revision row describes more than ${MAX_ROW_ESTIMATE_CONTAINERS} containers, which this reader will not walk`,
+          };
         }
         bytes += sized;
-        if (rows.length > maxRows || bytes > MAX_CONSUMED_REVISION_BYTES) {
-          return { budgetExhausted: 'revision' };
+        if (rows.length > maxRows) {
+          return { budgetExhausted: 'revision', budgetLimit: 'ledgerLimits.maxRevisionRows' };
+        }
+        if (bytes > maxBytes) {
+          return {
+            budgetExhausted: 'revision',
+            budgetLimit:
+              maxBytes < MAX_CONSUMED_REVISION_BYTES
+                ? 'ledgerLimits.maxRevisionBytes'
+                : `this SDK's ${MAX_CONSUMED_REVISION_BYTES}-byte per-revision ceiling, which maxRevisionBytes can only tighten`,
+          };
         }
       }
       if (response.pagination?.has_more) {
@@ -3531,7 +4014,7 @@ async function consumeReportingRevision(
     // out of the diagnostic: it is untrusted text, and the wire carries a
     // closed `failure_code` precisely so agents dispatch on the code.
     if (error instanceof ReportingReconciliationError && error.code === 'CONSUMER_STATUS_READ_FAILED') {
-      return { budgetExhausted: 'run' };
+      return { budgetExhausted: 'run', budgetLimit: 'ledgerLimits.maxLoadMs' };
     }
     return { failureCode: 'transport_failed', detail: 'the exact-revision read failed before the rows were complete' };
   }
@@ -3583,7 +4066,15 @@ async function consumeReportingRevision(
     // engine's limit, or a nesting depth exceeding the stack — so it is the
     // buyer's own ceiling and stays silent. Anything else is content this
     // reader cannot digest, which is what `reader_incompatible` names.
-    if (error instanceof RangeError) return { budgetExhausted: 'revision' };
+    //
+    // No reachable trigger for the `RangeError` arm is known today: the byte
+    // ceiling pre-empts the string limit and `MAX_ROW_ESTIMATE_DEPTH`
+    // pre-empts the stack, so an 8,000-deep row never reaches `canonicalize`.
+    // It is kept because the alternative if one is ever found is aborting a
+    // reconcile that already synced receipts, and it is deliberately not
+    // claimed as tested.
+    if (error instanceof RangeError)
+      return { budgetExhausted: 'revision', budgetLimit: "this runtime's own size limit for the canonical form" };
     // The message is this SDK's own canonicalizer talking, not a provider
     // response body, so carrying it is safe and it is the only clue a genuine
     // defect leaves. `detail` stays local — the wire carries the closed code.
@@ -3604,31 +4095,68 @@ async function consumeReportingRevision(
   return { digest, consumedAt, rowCount: rows.length, rows };
 }
 
+/** Hard bound on rows accumulated from one revision read. */
+const MAX_CONSUMED_REVISION_ROWS = 10_000_000;
+
+/** The caller's row ceiling, never above the SDK's own — see the byte twin. */
+function revisionRowCeiling(limits: ReportingLedgerLimits | undefined): number {
+  const requested = limits?.maxRevisionRows;
+  return typeof requested === 'number' && Number.isSafeInteger(requested) && requested > 0
+    ? Math.min(requested, MAX_CONSUMED_REVISION_ROWS)
+    : 100_000;
+}
+
+/**
+ * The caller's byte ceiling, never above the SDK's own.
+ *
+ * `loadReportingLedger` already refuses a value above `MAX_CONSUMED_REVISION_BYTES`
+ * outright, which is the behaviour adopters see. This clamp is the second line:
+ * the ceiling bounds this process's memory, which is not the caller's to spend,
+ * and `consumeReportingRevision` is reachable without that validation.
+ */
+function revisionByteCeiling(limits: ReportingLedgerLimits | undefined): number {
+  const requested = limits?.maxRevisionBytes;
+  return typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+    ? Math.min(requested, MAX_CONSUMED_REVISION_BYTES)
+    : MAX_CONSUMED_REVISION_BYTES;
+}
+
+/** Sentinel for a row too deeply nested to walk. Never a byte count. */
+const TOO_DEEP_TO_SIZE = -1;
+
 /**
  * Cheap upper bound on a row's in-memory cost.
  *
  * Deliberately approximate and deliberately cheap: the point is to stop an
  * unbounded accumulation, not to measure it, and a serializing measurement
  * would itself be the cost being guarded against.
+ *
+ * Returns `TOO_DEEP_TO_SIZE` for a row that nests past
+ * `MAX_ROW_ESTIMATE_DEPTH`, `undefined` for one that exceeds
+ * `MAX_ROW_ESTIMATE_CONTAINERS`, and a byte estimate otherwise. The caller
+ * treats those three answers differently, and states why where it decides.
  */
-const TOO_DEEP_TO_SIZE = -1;
-
 function approximateRowBytes(row: unknown): number | undefined {
   // Strings and primitives are sized in O(1) and never consume budget: they
   // carry the bytes, and charging them a flat constant is what created both
   // failure directions. Only *containers* are budgeted, because they are what
   // makes the walk expensive.
   //
-  // Exceeding either bound returns `undefined`; the caller decides what that
-  // means, and states the trade-off where the decision is made.
+  // Depth returns `TOO_DEEP_TO_SIZE` and breadth returns `undefined`; the
+  // caller decides what each means, and states the trade-off where the
+  // decision is made.
   let containers = MAX_ROW_ESTIMATE_CONTAINERS;
   const visit = (value: unknown, depth: number): number | undefined => {
     // Per-value floors, sized against *retained heap* rather than wire bytes —
     // the ceiling exists to bound memory, and a two-byte `0,` on the wire is
     // eight bytes in an array slot. The previous shape charged an empty string
     // zero, so hundreds of megabytes of them slipped past the ceiling
-    // entirely; that was the real hole. These figures land within about 2x of
-    // measured retained heap in both directions.
+    // entirely; that was the real hole. The constants are reasoned from V8's
+    // object and slot layout rather than measured, so treat them as an
+    // ordering — every value costs something, containers cost more than the
+    // values they hold — and not as a byte-accurate figure. What is pinned by
+    // test is that ordering: `maxRevisionBytes` exists so an adopter can
+    // exercise the ceiling, and a row of empty strings has to reach it.
     if (typeof value === 'string') return 16 + value.length * 2;
     if (value === null || typeof value !== 'object') return 8;
     // Depth and breadth are different claims. No conformant tabular reporting
@@ -3735,6 +4263,12 @@ function replayMatchesPlan(
   if (usableLeafInstant({ status_as_of: statement.status_as_of } as ReportingConsumerStatus, now) === undefined) {
     return false;
   }
+  // A floor as well as a ceiling. The non-future check alone let a store
+  // poisoner backdate a statement to before the period it describes, which
+  // `expected_period` makes invalid; the plan already carries the earliest
+  // instant this claim can honestly bear.
+  const replayed = normalizedInstant(statement.status_as_of);
+  if (replayed === undefined || Date.parse(replayed) < Date.parse(plan.statusAsOfFloor)) return false;
   if (Object.keys(statement).some(key => !REPLAYABLE_STATEMENT_KEYS.has(key))) return false;
   if (
     !sameOptionalSha256(
@@ -3751,6 +4285,10 @@ function replayMatchesPlan(
     statement.delivery_config_id === plan.deliveryConfigId &&
     statement.delivery_config_version === plan.deliveryConfigVersion &&
     statement.report_definition_id === plan.reportDefinitionId &&
+    // Replayable, and previously compared to nothing — so it was in neither the
+    // claim fingerprint nor the recomputed id, and a forged value reached the
+    // wire verbatim.
+    (statement.reporting_obligation_id ?? undefined) === plan.reportingObligationId &&
     period?.start === plan.period.start &&
     period?.end === plan.period.end &&
     period?.source_timezone === plan.period.source_timezone &&
