@@ -9,6 +9,7 @@ import { validActionsForStatus } from '../server/media-buy-helpers';
 import { getRollupParent } from './available-actions';
 import type {
   ActionBuy,
+  LiveMediaBuyAction,
   ActionProposal,
   MediaBuyAction,
   MediaBuyTask,
@@ -349,6 +350,18 @@ export function supportsRc3Actions(version: string): boolean {
   if (Number(match[1]) !== 3 || Number(match[2]) !== 2) return false;
   return !match[4] || (/^rc\.(\d+)$/.test(match[4]) && Number(match[4].slice(3)) >= 3);
 }
+/** Check wire feature introductions independently of whether an action has commercial terms. */
+export function liveActionFitsVersion(entry: LiveMediaBuyAction, version: string): boolean {
+  if (/^3\.[01](?:\.|-|$)/.test(version) && (!legacyActionSupported(entry.action) || entry.task !== undefined))
+    return false;
+  if (!supportsChangeTermIdentity(version) && (entry.change_term_id !== undefined || entry.mode === 'seller_managed'))
+    return false;
+  return (
+    supportsRc3Actions(version) ||
+    (entry.action !== 'update_media_buy_frequency_cap' && entry.applicable_package_ids === undefined)
+  );
+}
+
 /** Narrow error-details vocabulary is distinct from canonical actions; older served versions stay gated. */
 export function actionFitsErrorDetails(action: string, version: string): boolean {
   if (/^3\.[01](?:\.|-|$)/.test(version)) return legacyActionSupported(action);

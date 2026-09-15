@@ -140,7 +140,7 @@ stale flat array.
 The compatibility preflight retains legacy buy-level grants. Package pause/resume
 also requires current operational buy and package state; missing, pending,
 terminal, or unknown package state cannot be overridden by a legacy grant.
-An explicitly named task must be canonical for the advertised action.
+An explicitly named task must be canonical for the requested fine-grained action, including when a legacy rollup supplies its live grant.
 
 Modern actions join through `change_term_id`. Set `termsRefIsAlias: true` only
 when the 3.2 producer deliberately emits both fields as aliases; equality then
@@ -294,3 +294,5 @@ inventing an action identity would be incorrect. When only the action
 echo cannot be represented, it omits that optional echo. Buyers then re-read
 `get_media_buys`; the SDK never fabricates a rollup identity or a partial current
 action list.
+
+Served-version checks apply to metadata actions and error echoes as well as commercial rights. When an `ACTION_NOT_ALLOWED` reason or action cannot be represented by the served schema, the error retains its code and message and omits structured details; an unrepresentable action set is never echoed partially.

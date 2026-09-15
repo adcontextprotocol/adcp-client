@@ -21,7 +21,7 @@ import {
   findProductAction,
   NON_TERMINAL_ACTION_STATUSES,
   liveActionIssues,
-  supportsRc3Actions,
+  liveActionFitsVersion,
   supportsChangeTermIdentity,
   withActionProposal,
   packageActionStatus,
@@ -240,11 +240,7 @@ export function assessActionAvailability(
   if (liveActionIssues(entries).length)
     return deny('condition_unresolved', 'The live action projection is invalid or ambiguous.', 'unknown');
   const entry = entries.find(e => e.action === action);
-  if (
-    options.adcpVersion &&
-    !supportsRc3Actions(options.adcpVersion) &&
-    (action === 'update_media_buy_frequency_cap' || entry?.applicable_package_ids !== undefined)
-  )
+  if (options.adcpVersion && entry && !liveActionFitsVersion(entry, options.adcpVersion))
     return deny(
       'condition_unresolved',
       'The action uses metadata introduced after the supplied seller version.',

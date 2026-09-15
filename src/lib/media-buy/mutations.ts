@@ -68,7 +68,8 @@ export interface DecomposedUpdateMediaBuy {
 /**
  * Walk the request body and return the set of fine-grained actions it
  * covers. Compatibility wrapper over `decomposeUpdateMediaBuy()` for callers
- * that only need the action-level view.
+ * that only need the action-level view. Hydrated change_terms select canonical
+ * field bindings; without them, this wrapper retains legacy action mappings.
  *
  * Returns an empty array when the request touches no recognized field
  * (e.g. only `idempotency_key` / `revision` / `account` were set).

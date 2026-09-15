@@ -1,5 +1,10 @@
 import { ADCP_VERSION } from '../version';
-import { actionFitsErrorDetails, supportsRc3Actions, liveActionIssues } from '../media-buy/action-contracts';
+import {
+  actionFitsErrorDetails,
+  liveActionFitsVersion,
+  liveActionIssues,
+  supportsChangeTermIdentity,
+} from '../media-buy/action-contracts';
 import type { LiveMediaBuyAction as MediaBuyAvailableAction } from '../media-buy/action-types';
 /**
  * Server/adopter helpers for enforcing the update_media_buy action surface.
@@ -176,16 +181,17 @@ function actionNotAllowed(
       entry =>
         actionFitsErrorDetails(entry.action, version) &&
         ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(entry.mode) &&
-        (!/^3\.[01](?:\.|-|$)/.test(version) || (entry.task === undefined && entry.change_term_id === undefined)) &&
-        (entry.applicable_package_ids === undefined || supportsRc3Actions(version))
+        liveActionFitsVersion(entry, version)
     );
-  const details = actionFitsErrorDetails(attemptedAction, version)
-    ? {
-        attempted_action: attemptedAction,
-        reason,
-        ...(echoFits && { currently_available_actions: currentlyAvailable }),
-      }
-    : undefined;
+  const details =
+    actionFitsErrorDetails(attemptedAction, version) &&
+    (reason !== 'condition_unresolved' || supportsChangeTermIdentity(version))
+      ? {
+          attempted_action: attemptedAction,
+          reason,
+          ...(echoFits && { currently_available_actions: currentlyAvailable }),
+        }
+      : undefined;
 
   return new AdcpError('ACTION_NOT_ALLOWED', {
     message: buildActionNotAllowedMessage(attemptedAction, reason),

@@ -304,7 +304,9 @@ export const mediaBuyActionResolver = {
         task: metadata.task ?? 'control_media_buy',
         ...(metadata.sla && { sla: structuredClone(metadata.sla) }),
       };
-      const result = assessActionAvailability({ ...input.buy, available_actions: [entry] }, 'update_name');
+      const result = assessActionAvailability({ ...input.buy, available_actions: [entry] }, 'update_name', {
+        adcpVersion: input.adcpVersion ?? ADCP_VERSION,
+      });
       if (
         metadata.authorization === true &&
         metadata.governance === true &&

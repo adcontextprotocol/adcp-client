@@ -15,8 +15,7 @@ import { ValidationError } from '../errors';
 import {
   withActionProposal,
   liveActionIssues,
-  supportsRc3Actions,
-  supportsChangeTermIdentity,
+  liveActionFitsVersion,
   mediaBuyActionTasks,
   packageActionStatus,
   actionAllowedStatuses,
@@ -219,13 +218,7 @@ export function preflightUpdateMediaBuy(
       continue;
     }
     // Native field bindings must not grant newer wire features to a legacy snapshot.
-    if (
-      options.adcpVersion &&
-      ((!supportsRc3Actions(options.adcpVersion) &&
-        (resolvedAction.action === 'update_media_buy_frequency_cap' ||
-          lookup.entry.applicable_package_ids !== undefined)) ||
-        (!supportsChangeTermIdentity(options.adcpVersion) && lookup.entry.mode === 'seller_managed'))
-    ) {
+    if (options.adcpVersion && !liveActionFitsVersion(lookup.entry, options.adcpVersion)) {
       denials.push({
         action: resolvedAction.action,
         reason: 'condition_unresolved',
@@ -242,7 +235,7 @@ export function preflightUpdateMediaBuy(
     if (
       !strict &&
       lookup.entry.task !== undefined &&
-      !mediaBuyActionTasks(lookup.entry.action).includes(lookup.entry.task)
+      !mediaBuyActionTasks(resolvedAction.action).includes(lookup.entry.task)
     ) {
       denials.push({ action: resolvedAction.action, reason: 'mode_mismatch' });
       continue;
