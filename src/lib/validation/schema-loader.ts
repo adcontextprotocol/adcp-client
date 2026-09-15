@@ -343,6 +343,8 @@ function compareBundleNamesDesc(a: string, b: string): number {
 
 interface LoaderState {
   ajv: Ajv;
+  canonicalAjv?: Ajv;
+  canonicalValidators: Map<string, ValidateFunction>;
   fileIndex: Map<string, string>;
   validators: Map<string, ValidateFunction>;
   rawSchemas: Map<string, Record<string, unknown>>;
@@ -734,6 +736,7 @@ function ensureInit(version: string): LoaderState {
 
   const state: LoaderState = {
     ajv,
+    canonicalValidators: new Map(),
     fileIndex: buildFileIndex(root),
     validators: new Map(),
     rawSchemas: new Map(),
@@ -880,6 +883,15 @@ export interface ResolvedSchemaDocument {
   schema: Readonly<Record<string, unknown>>;
 }
 
+function authoredToolSchemaFile(state: LoaderState, indexedFile: string): string {
+  const bundledRoot = path.join(state.root, 'bundled');
+  const relative = path.relative(bundledRoot, indexedFile);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) return indexedFile;
+
+  const authoredFile = path.join(state.root, relative);
+  return existsSync(authoredFile) ? authoredFile : indexedFile;
+}
+
 /**
  * Return an unmodified tool JSON Schema from the same version-aware bundle
  * resolver used by runtime validation. Unlike `getValidator().schema`, response
@@ -977,7 +989,8 @@ export function getSchemaDocumentByRef(
 export function getSchemaValidatorByRef(
   schemaRef: string,
   version: string = ADCP_VERSION,
-  keywords?: ReadonlyArray<KeywordDefinition>
+  keywords?: ReadonlyArray<KeywordDefinition>,
+  options: { allErrors?: boolean } = {}
 ): ValidateFunction | undefined {
   // Keep remote schema-ref validation out of the shared tool-validator AJV,
   // which intentionally collects all errors for developer diagnostics.
@@ -997,7 +1010,8 @@ export function getSchemaValidatorByRef(
     }
     cache = entry.validators;
   }
-  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}`;
+  const allErrors = options.allErrors ?? false;
+  const cacheKey = `${stateCacheKey(bundleKey, root)}\0schema-ref::${normalized}\0all-errors::${allErrors}`;
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
@@ -1010,10 +1024,11 @@ export function getSchemaValidatorByRef(
   // shared tool-validator registry with unrelaxed response schemas.
   const ajv = new Ajv({
     strict: false,
-    // Schema-ref validators process remote webhook payloads. Fail on the
-    // first violation so deeply nested hostile input cannot amplify error
-    // collection into CPU or memory exhaustion.
-    allErrors: false,
+    // Schema-ref validators process remote webhook payloads. By default they
+    // fail on the first violation so deeply nested hostile input cannot
+    // amplify error collection into CPU or memory exhaustion. Canonical
+    // offline validators explicitly opt into complete developer diagnostics.
+    allErrors,
     allowUnionTypes: true,
   });
   addFormats(ajv);
@@ -1030,12 +1045,12 @@ export function getSchemaValidatorByRef(
     }
     if (schemaFile === file) continue;
     const schema = loadJson(schemaFile);
-    if (keywords && typeof schema.$id === 'string') {
+    if ((keywords || allErrors) && typeof schema.$id === 'string') {
       const previous = schema.$id === rawSchema.$id ? rawSchema : registeredIds.get(schema.$id);
       // Bundles intentionally mirror async-response refs. Identical copies
       // are harmless; conflicting definitions must not shadow audited files.
       if (previous && !isDeepStrictEqual(previous, schema)) {
-        throw new ConfigurationError('Schema keyword validation requires unambiguous schema identities', 'schemaRoot');
+        throw new ConfigurationError('Schema validation requires unambiguous schema identities', 'schemaRoot');
       }
       if (schema.$id === rawSchema.$id) continue;
     }
@@ -1050,6 +1065,72 @@ export function getSchemaValidatorByRef(
   const compiled = ajv.compile(rawSchema);
   cache.set(cacheKey, compiled);
   return compiled;
+}
+
+/**
+ * Compile a tool schema without the response-root relaxation used by the SDK's
+ * live-wire validator. Kept in the loader so the public schema facade does not
+ * need access to loader file-system state.
+ */
+export function getCanonicalToolValidatorForVersion(
+  toolName: string,
+  direction: Direction,
+  version: string = ADCP_VERSION
+): ValidateFunction | undefined {
+  const state = ensureInit(version);
+  const cacheKey = `${toolName}::${direction}`;
+  const cached = state.canonicalValidators.get(cacheKey);
+  if (cached) return cached;
+
+  const indexedFile = state.fileIndex.get(cacheKey);
+  if (!indexedFile) return undefined;
+  const file = authoredToolSchemaFile(state, indexedFile);
+  const rawSchema = loadJson(file);
+  const ajv = ensureCanonicalAjv(state);
+  const existing = typeof rawSchema.$id === 'string' ? ajv.getSchema(rawSchema.$id) : undefined;
+  // External/legacy schema roots may contain only self-contained bundled
+  // contracts. They have no authored graph to pre-register, so compile the
+  // strict bundled fallback lazily after removing nested metadata `$id`s.
+  const fromBundled = file.includes(`${path.sep}bundled${path.sep}`);
+  const compiled = existing ?? ajv.compile(fromBundled ? stripNestedIds(rawSchema) : rawSchema);
+  state.canonicalValidators.set(cacheKey, compiled);
+  return compiled;
+}
+
+function ensureCanonicalAjv(state: LoaderState): Ajv {
+  if (state.canonicalAjv) return state.canonicalAjv;
+
+  const ajv = new Ajv({
+    strict: false,
+    allErrors: true,
+    allowUnionTypes: true,
+  });
+  addFormats(ajv);
+
+  const schemasById = new Map<string, LoadedSchema>();
+  for (const schemaFile of walkJsonFiles(state.root)) {
+    if (schemaFile.includes(`${path.sep}bundled${path.sep}`)) continue;
+    if (
+      [...TRANSPORT_PROJECTION_DIRECTORIES].some(directory => schemaFile.includes(`${path.sep}${directory}${path.sep}`))
+    ) {
+      continue;
+    }
+
+    const schema = loadJson(schemaFile);
+    if (typeof schema.$id !== 'string') continue;
+    const previous = schemasById.get(schema.$id);
+    if (previous) {
+      if (!isDeepStrictEqual(previous, schema)) {
+        throw new ConfigurationError('Canonical validation requires unambiguous schema identities', 'schemaRoot');
+      }
+      continue;
+    }
+    schemasById.set(schema.$id, schema);
+  }
+
+  if (schemasById.size > 0) ajv.addSchema([...schemasById.values()]);
+  state.canonicalAjv = ajv;
+  return ajv;
 }
 
 function normalizeSchemaRef(schemaRef: string): string | undefined {

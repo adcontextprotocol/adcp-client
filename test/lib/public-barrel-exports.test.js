@@ -412,6 +412,8 @@ test('general generated schema exports stay behind @adcp/sdk/schemas', () => {
   assert.ok(schemas.TOOL_REQUEST_SCHEMAS.create_media_buy);
   assert.ok(schemas.TOOL_RESPONSE_SCHEMAS.create_media_buy);
   assert.ok(schemas.SyncCreativesItemSchema);
+  assert.strictEqual(typeof schemas.getCanonicalToolValidator, 'function');
+  assert.strictEqual(typeof schemas.getSchemaDocumentByRef, 'function');
 });
 
 test('raw creative and v5 helper values require explicit Legacy names', () => {

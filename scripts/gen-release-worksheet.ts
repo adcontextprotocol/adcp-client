@@ -60,6 +60,61 @@ Install the peer packages used by your application at versions satisfying these 
 | --- | --- | --- |
 ${requiredPeers}
 
+## Schema access and validation tiers
+
+| Tier | Public route | Intended use | Normative behavior |
+| --- | --- | --- | --- |
+| Convenience Zod schemas | Generated values such as \`GetReportingStatusResponseSchema\` from \`@adcp/sdk/schemas\` | Application parsing and typed integration | SDK convenience surface; do not substitute it for protocol conformance |
+| Runtime AJV validation | Automatic client/server validation | Live wire traffic with extensible response envelopes | Response roots may be relaxed for envelope compatibility; diagnostics are bounded for runtime input |
+| Canonical JSON Schema validation | \`getCanonicalToolValidator()\` from \`@adcp/sdk/schemas\` | Offline conformance checks and CI | Exact selected protocol documents, no response-root relaxation, all AJV errors collected |
+| Bundled tool descriptor | \`getToolInputSchema()\` and \`getToolResponseSchema()\` | Schema publication and MCP registration | Self-contained, pre-resolved descriptor retained for compatibility; returns a caller-owned document, not a compiled validator |
+| Raw authored document | \`getSchemaDocumentByRef()\` | Immutable graph inspection and custom tooling | Callers traversing \`$ref\` must register the complete selected-version graph and preserve nested \`$id\` scopes |
+
+The canonical validator compiles the complete selected bundle offline and does
+not fetch references at runtime. Unknown tools return \`undefined\`; unresolved,
+unknown, or cross-version references fail compilation rather than falling back
+to another bundled release. It is deliberately not the live-response validator:
+transport envelope extensions accepted by the SDK runtime can be rejected by
+the authored tool schema.
+
+ESM example:
+
+\`\`\`ts
+import { getCanonicalToolValidator } from '@adcp/sdk/schemas';
+
+const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
+  adcpVersion: '3.2.0-rc.3',
+});
+if (!validate) throw new Error('Requested protocol schema is unavailable');
+
+const valid = {
+  status: 'failed',
+  view: 'summary',
+  failure_kind: 'lookup_unavailable',
+  message: 'Reporting status resource is unavailable.',
+  errors: [{ code: 'NOT_FOUND', message: 'Reporting status resource is unavailable.' }],
+};
+if (!validate(valid)) throw new Error(JSON.stringify(validate.errors));
+
+const invalid = { status: 'completed', view: 'summary' };
+if (validate(invalid)) throw new Error('Invalid control unexpectedly passed');
+console.error(validate.errors); // all collected normative violations
+\`\`\`
+
+CommonJS uses the same packed-artifact export:
+
+\`\`\`js
+const { getCanonicalToolValidator } = require('@adcp/sdk/schemas');
+const validate = getCanonicalToolValidator('get_reporting_status', 'sync', {
+  adcpVersion: '3.2.0-rc.3',
+});
+if (!validate) throw new Error('Requested protocol schema is unavailable');
+if (validate({ status: 'completed', view: 'summary' })) {
+  throw new Error('Invalid control unexpectedly passed');
+}
+console.error(validate.errors);
+\`\`\`
+
 ## Historical worked example: rc.33/rc.35 → rc.36
 
 This example is intentionally retained as the concrete migration that introduced

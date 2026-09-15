@@ -284,7 +284,7 @@ try {
     { specifier: '@adcp/sdk/signing/server', symbol: 'resolveAgent' },
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
     { specifier: '@adcp/sdk/negotiation/verification', symbol: 'verifyProposalCommercialTerms' },
-    { specifier: '@adcp/sdk/schemas', symbol: 'CreativeAssetSchema' },
+    { specifier: '@adcp/sdk/schemas', symbol: 'getCanonicalToolValidator' },
   ];
 
   // Shared by both generated smoke modules. A function declaration (not an
@@ -308,7 +308,16 @@ try {
         `import * as m${i} from '${c.specifier}';\nassertion(m${i}, '${c.symbol}');\nconsole.log('  ESM ${c.specifier} → ${c.symbol} ok');`
     )
     .join('\n');
-  writeFileSync(path.join(tmpDir, 'smoke.mjs'), `${assertSource}${esmBody}\n`);
+  const canonicalSchemaSmoke = [
+    "const canonical = m6.getCanonicalToolValidator('get_reporting_status', 'sync', { adcpVersion: '3.2.0-rc.3' });",
+    "if (!canonical) throw new Error('canonical get_reporting_status schema is missing');",
+    "const validReportingFailure = { status: 'failed', view: 'summary', failure_kind: 'lookup_unavailable', errors: [{ code: 'NOT_FOUND', message: 'Reporting status resource is unavailable.' }] };",
+    "if (!canonical(validReportingFailure)) throw new Error('valid canonical control failed: ' + JSON.stringify(canonical.errors));",
+    "if (canonical({ status: 'completed', view: 'summary' })) throw new Error('invalid canonical control passed');",
+    "if (!Array.isArray(canonical.errors) || canonical.errors.length < 2) throw new Error('canonical validator did not collect all errors');",
+    '',
+  ].join('\n');
+  writeFileSync(path.join(tmpDir, 'smoke.mjs'), `${assertSource}${esmBody}\n${canonicalSchemaSmoke}`);
 
   // CJS: real `require` of every case in one module.
   const cjsBody = cases
@@ -317,7 +326,7 @@ try {
         `const m${i} = require('${c.specifier}');\nassertion(m${i}, '${c.symbol}');\nconsole.log('  CJS ${c.specifier} → ${c.symbol} ok');`
     )
     .join('\n');
-  writeFileSync(path.join(tmpDir, 'smoke.cjs'), `${assertSource}${cjsBody}\n`);
+  writeFileSync(path.join(tmpDir, 'smoke.cjs'), `${assertSource}${cjsBody}\n${canonicalSchemaSmoke}`);
 
   console.log('🔍 ESM import:');
   run('node', ['smoke.mjs'], { cwd: tmpDir, stdio: 'inherit' });
