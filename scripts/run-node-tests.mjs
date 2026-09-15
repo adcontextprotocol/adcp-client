@@ -28,6 +28,13 @@ export const SLOW_NODE_TESTS = new Set([
   'test/lib/cli-soft-fail.test.js',
   'test/lib/cli-webhook-receiver-flag.test.js',
   'test/lib/conformance-cli.test.js',
+  // Boots a real seller and runs the conformance runner end to end. It needs
+  // ~27s standing alone on an idle machine, which leaves no margin under the
+  // fast suite's 60s per-file ceiling once the shard runs files concurrently —
+  // it timed out at exactly 60.00s on two of three recent runs with `# fail 0`,
+  // i.e. never on an assertion. Its siblings below are here for the same
+  // reason; this one was simply missed.
+  'test/lib/conformance-integration.test.js',
   'test/lib/conformance-seeder.test.js',
   'test/lib/media-buy-lifecycle-release-gate.test.js',
   'test/lib/storyboard-notices.test.js',
