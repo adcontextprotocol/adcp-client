@@ -1522,7 +1522,9 @@ function planReportingConsumerStatuses(
       period,
     };
     const expectedAt = reportingExpectedAt(obligationForPeriod, expected);
-    const schedule = consumerStatusSchedule(expectedAt, expected, now);
+    const declaredExpectedAt = obligationForPeriod?.expected_at;
+    const malformedExpectedAt = typeof declaredExpectedAt === 'string' && expectedAt !== declaredExpectedAt;
+    const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt);
     const leaf = currentConsumerLeaf(
       ledger,
       base,
@@ -1552,16 +1554,18 @@ function planReportingConsumerStatuses(
     const obligation = obligationForPeriod;
     const selected = selectCurrent(obligation, ledger, expected);
     const revision = selected.revision;
-    if (!revision) {
-      // A chain the buyer could not resolve is not the same claim as a period
-      // the seller never published for. Saying `revision_missing` because the
-      // chain forked blames the seller for the buyer's own read.
-      // `MISSING_CURRENT_REVISION` alone is the ordinary case — the seller
-      // published nothing for this period — and is a true `revision_missing`.
-      // A fork or an unwalkable predecessor is not.
-      const indeterminate =
-        selected.reasons.includes('AMBIGUOUS_REVISION_CHAIN') ||
-        selected.reasons.includes('REVISION_PREDECESSOR_MISSING');
+    // A chain the buyer could not resolve is not the same claim as a period the
+    // seller never published for, and it is not a claim about the head either:
+    // if a revision names a predecessor the buyer never materialised, the buyer
+    // has not established that the head it picked is the current one. Both
+    // signals therefore suppress whether or not a head resolved.
+    // `MISSING_CURRENT_REVISION` alone is the ordinary case — the seller
+    // published nothing for this period — and is a true `revision_missing`.
+    const indeterminate =
+      selected.reasons.includes('AMBIGUOUS_REVISION_CHAIN') ||
+      selected.reasons.includes('REVISION_PREDECESSOR_MISSING');
+
+    if (!revision || indeterminate) {
       return finalizeConsumerStatusPlan(
         {
           ...base,
@@ -1640,7 +1644,13 @@ const REVISION_DISQUALIFYING_REASONS = new Set([
   'EXPECTED_CONTRACT_MISMATCH',
   'EXPECTED_CONTRACT_MISSING',
   'REVISION_SCOPE_MISMATCH',
-  'REVISION_CHAIN_SCOPE_MISMATCH',
+  // Deliberately *not* REVISION_CHAIN_SCOPE_MISMATCH: it fires when any
+  // candidate in the chain is off-scope, including a long-superseded one, so a
+  // perfectly valid current revision would be reported as missing.
+  // REVISION_SCOPE_MISMATCH already covers the revision actually being named.
+  // (In practice `assertReportingLedgerGraph` refuses an off-scope revision
+  // before planning ever runs, so this is defence in depth rather than a live
+  // path — which is also why the test covers the in-scope predecessor case.)
 ]);
 
 interface ConsumerStatusDraft {
@@ -1840,7 +1850,14 @@ function reportingExpectedAt(
   expected: ExpectedReportingPeriod
 ): string | undefined {
   const declared = obligation?.expected_at;
-  if (typeof declared === 'string' && Number.isFinite(Date.parse(declared))) return declared;
+  // Same regex the monotonicity floor uses. `Date.parse` alone accepts
+  // "Mon, 01 Jan 2035 00:00:00 GMT" and worse, and whatever comes back here is
+  // re-emitted verbatim as the buyer's own `status_as_of`. A seller that sends
+  // something else has not told the buyer when the period was due, so the
+  // period has no computable deadline rather than a guessed one.
+  if (typeof declared === 'string') {
+    return RFC3339_INSTANT.test(declared) && Number.isFinite(Date.parse(declared)) ? declared : undefined;
+  }
   const slaSeconds =
     expected.requiredFinality === 'official' && typeof expected.officialAfterSeconds === 'number'
       ? expected.officialAfterSeconds
@@ -1862,10 +1879,18 @@ function reportingExpectedAt(
 function consumerStatusSchedule(
   expectedAt: string | undefined,
   expected: ExpectedReportingPeriod,
-  now: Date
+  now: Date,
+  malformedExpectedAt = false
 ): { deadline?: string; overdue: boolean; missingPin?: string } {
   const windowSeconds = expected.automatedRecoveryWindowSeconds;
-  if (expectedAt === undefined) return { overdue: false, missingPin: 'deliverySlaSeconds' };
+  if (expectedAt === undefined) {
+    // Distinguish the two causes: a pin the buyer never recorded, versus an
+    // obligation whose own `expected_at` the buyer could not read.
+    return {
+      overdue: false,
+      missingPin: malformedExpectedAt ? 'obligation.expected_at (not an RFC 3339 instant)' : 'deliverySlaSeconds',
+    };
+  }
   if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds < 0) {
     return { overdue: false, missingPin: 'automatedRecoveryWindowSeconds' };
   }
@@ -2879,7 +2904,10 @@ async function consumeReportingRevision(
         'utf8'
       )
       .digest('hex');
-  } catch {
+  } catch (error) {
+    // Only the size failure is a budget. Anything else is a real defect and
+    // must not be relabelled as "the buyer ran out of room".
+    if (!(error instanceof RangeError)) throw error;
     return { budgetExhausted: 'revision' };
   }
   if (!sameSha256(digest, binding.content_sha256)) {
@@ -2898,12 +2926,20 @@ async function consumeReportingRevision(
  * unbounded accumulation, not to measure it, and a serializing measurement
  * would itself be the cost being guarded against.
  */
-function approximateRowBytes(row: unknown): number {
+function approximateRowBytes(row: unknown, depth = 0): number {
   if (typeof row === 'string') return row.length * 2;
   if (row === null || typeof row !== 'object') return 16;
+  // Bounded recursion: a flat scan charged a nested object 16 bytes however
+  // large it was, which is the shape a seller would use to walk past the
+  // ceiling. The depth cap keeps the estimate itself cheap.
+  if (depth >= 4) return 64;
   let total = 32;
+  if (Array.isArray(row)) {
+    for (const value of row) total += approximateRowBytes(value, depth + 1);
+    return total;
+  }
   for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
-    total += key.length * 2 + (typeof value === 'string' ? value.length * 2 : 16);
+    total += key.length * 2 + approximateRowBytes(value, depth + 1);
   }
   return total;
 }
