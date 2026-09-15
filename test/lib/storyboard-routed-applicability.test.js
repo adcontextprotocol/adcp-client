@@ -1829,3 +1829,146 @@ test('CLI capability skip diagnostics escape controls without exposing unrelated
   });
   assert.equal(lines.length, 1);
 });
+
+test('neutral stateful cascades cannot conceal hard declared input dependencies', async () => {
+  for (const mode of ['missing', 'restored', 'unreferenced', 'override', 'independent']) {
+    const restored = mode === 'restored';
+    const shouldFail = mode === 'missing';
+    for (const explicit of [false, true]) {
+      if (mode === 'override' && explicit) continue;
+      for (const depends_on of [
+        ['capability', 'hard'],
+        ['hard', 'capability'],
+      ]) {
+        const sb = storyboard([]);
+        sb.phases = [
+          {
+            id: 'capability',
+            title: 'Capability',
+            requires_capability: { path: 'account.require_operator_auth', equals: true },
+            steps: [{ id: 'cap', title: 'Cap', task: 'get_adcp_capabilities', agent: 'a', stateful: true }],
+          },
+          {
+            id: 'hard',
+            title: 'Hard',
+            depends_on: [],
+            steps: [
+              {
+                id: 'missing',
+                title: 'Missing',
+                task: 'get_adcp_capabilities',
+                requires_tool: 'get_signals',
+                agent: 'a',
+                context_outputs: [{ key: 'hard_output', path: 'identity.brand_json_url' }],
+              },
+              ...(restored
+                ? [
+                    {
+                      id: 'rescue',
+                      title: 'Rescue',
+                      task: 'get_adcp_capabilities',
+                      agent: 'b',
+                      context_outputs: [{ key: 'hard_output', path: 'identity.brand_json_url' }],
+                    },
+                  ]
+                : []),
+            ],
+          },
+          {
+            id: 'dependent',
+            title: 'Dependent',
+            depends_on: mode === 'independent' ? ['capability'] : depends_on,
+            steps: [
+              {
+                id: 'consumer',
+                title: 'Consumer',
+                task: 'get_signals',
+                agent: 'b',
+                stateful: true,
+                ...(explicit
+                  ? { sample_request: {}, context_inputs: [{ key: 'hard_output', inject_at: 'signal_spec' }] }
+                  : { sample_request: { signal_spec: '$context.hard_output' } }),
+              },
+              { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' },
+            ],
+          },
+        ];
+        if (mode === 'unreferenced') {
+          sb.phases[2].steps[0].sample_request = { signal_spec: 'unrelated' };
+          sb.phases[2].steps[0].context_inputs = [];
+        }
+        const { result, calls } = await run(
+          {
+            a: [[], { account: { require_operator_auth: false } }],
+            b: [
+              ['get_signals'],
+              {
+                account: { require_operator_auth: true },
+                supported_protocols: ['signals'],
+                identity: { brand_json_url: 'https://brand.example.test/brand.json' },
+              },
+            ],
+          },
+          sb,
+          mode === 'override' ? { request: { signal_spec: 'operator-supplied' } } : {}
+        );
+        const row = result.phases[2].steps[0];
+        assert.equal(row.passed, !shouldFail);
+        assert.equal(row.skip_reason, shouldFail ? 'prerequisite_failed' : 'capability_prerequisite_unavailable');
+        assert.equal(result.overall_passed, !shouldFail);
+        assert.equal(result.failed_count, 0);
+        assert.equal(calls.b.filter(task => task === 'get_signals').length, 0);
+      }
+    }
+  }
+});
+
+test('intrinsic missing tools under a capability cascade retain local hard-state rules', async () => {
+  for (const kind of ['requires_tool', 'missing_task', 'controller']) {
+    for (const statefulPeer of [true, false]) {
+      const sb = storyboard([]);
+      sb.phases = [
+        {
+          id: 'capability',
+          title: 'Capability',
+          requires_capability: { path: 'account.require_operator_auth', equals: true },
+          steps: [{ id: 'cap', title: 'Cap', task: 'get_adcp_capabilities', agent: 'a', stateful: true }],
+        },
+        {
+          id: 'dependent',
+          title: 'Dependent',
+          steps: [
+            {
+              id: 'missing',
+              title: 'Missing',
+              task:
+                kind === 'missing_task'
+                  ? 'get_signals'
+                  : kind === 'controller'
+                    ? 'comply_test_controller'
+                    : 'get_adcp_capabilities',
+              ...(kind === 'requires_tool' ? { requires_tool: 'get_signals' } : {}),
+              agent: 'a',
+              stateful: true,
+            },
+            { id: 'peer', title: 'Peer', task: 'get_adcp_capabilities', agent: 'b', stateful: statefulPeer },
+            { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' },
+          ],
+        },
+      ];
+      const { result } = await run(
+        {
+          a: [[], { account: { require_operator_auth: false } }],
+          b: [['get_signals', 'comply_test_controller'], { supported_protocols: ['signals'] }],
+        },
+        sb
+      );
+      const [missing, peer] = result.phases[1].steps;
+      assert.equal(missing.skip_reason, kind === 'controller' ? 'missing_test_controller' : 'missing_tool');
+      assert.equal(peer.passed, !statefulPeer);
+      assert.equal(peer.skip_reason, statefulPeer ? 'prerequisite_failed' : undefined);
+      assert.equal(result.overall_passed, !statefulPeer);
+      assert.equal(result.failed_count, 0);
+    }
+  }
+});

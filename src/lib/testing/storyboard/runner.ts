@@ -3373,11 +3373,13 @@ async function executeStoryboardPass(
     // AND has at least one declared substitute in this phase. Only the
     // first such trigger is recorded — the cascade-detail message
     // references the leftmost step.
-    let phasePendingMissingTool: {
-      stepId: string;
-      reason: RunnerSkipReason | RunnerDetailedSkipReason;
-      substitutes: string[];
-    } | null = null;
+    const phasePendingMissingTool: {
+      trigger: {
+        stepId: string;
+        reason: RunnerSkipReason | RunnerDetailedSkipReason;
+        substitutes: string[];
+      } | null;
+    } = { trigger: null };
     // Targets actually rescued by a passing declared substitute. Populated
     // when a step with `provides_state_for: X` (or the deprecated synonym
     // `peer_substitutes_for: X`) passes — every X in its declaration list
@@ -3535,6 +3537,61 @@ async function executeStoryboardPass(
       continue;
     }
 
+    const recordHardMissingState = (step: StoryboardStep, result: StoryboardStepResult): void => {
+      // Hard-missing skip on a stateful step. Defer the cascade only
+      // when a peer in this phase has declared
+      // `peer_substitutes_for: <this_step_id>` — that peer's pass
+      // establishes equivalent state. Without a declaration,
+      // missing_tool / missing_test_controller trips the cascade
+      // immediately (existing behavior).
+      const substitutes = phaseSubstitutes.get(step.id);
+      if (substitutes && substitutes.length > 0) {
+        if (phasePendingMissingTool.trigger === null) {
+          phasePendingMissingTool.trigger = {
+            stepId: step.id,
+            reason: result.skip_reason ?? 'missing_tool',
+            substitutes,
+          };
+        }
+      } else {
+        // Sole-stateful-step exemption (adcp-client-python#550):
+        // when a hard-missing skip lands on the ONLY stateful step
+        // in the phase, no peer could have established substitute
+        // state — same shape as #1146's `not_applicable` exemption.
+        // The platform legitimately doesn't implement this pathway
+        // (e.g., proposal-mode / implicit-account adopters that
+        // skip `sync_accounts` because account state materializes
+        // on the first `get_products` call). Cascading every
+        // downstream phase to `prerequisite_failed` collapses
+        // useful coverage; let downstream phases run and fail on
+        // their own merits if state genuinely never materialized.
+        //
+        // The skipping step is always stateful and always in
+        // `phaseStatefulStepIds` (built eagerly at phase init), so
+        // length > 1 ⇔ a stateful peer exists.
+        const hasStatefulPeers = phaseStatefulStepIds.length > 1;
+        if (hasStatefulPeers && !phaseStatefulCascades.has(phase.id)) {
+          // Multiple stateful steps in the phase but no declared
+          // substitute. Trip the cascade. First trip wins —
+          // subsequent triggers don't overwrite, since the cascade
+          // text references the originating diagnostic (the
+          // leftmost missing-state stateful step in the phase).
+          phaseStatefulCascades.set(phase.id, {
+            stepId: step.id,
+            reason: result.skip_reason ?? 'missing_tool',
+          });
+        } else if (!hasStatefulPeers && result.skip) {
+          // Exemption applied. Surface the runner's decision on the
+          // step result so adopters reading per-step output don't
+          // have to infer it from the absence of downstream skips.
+          result.skip = {
+            ...result.skip,
+            detail: result.skip.detail + soleStatefulExemptionDetail(phase.id),
+          };
+        }
+      }
+    };
+
     for (const step of phase.steps) {
       // adcp-client#1612: per-step abort gate. The dominant comply() cost
       // on a healthy seller is sequential per-tool calls inside a single
@@ -3654,17 +3711,51 @@ async function executeStoryboardPass(
           };
           stepResults.push(missingToolResult);
           priorStepResults.set(step.id, missingToolResult);
-          if (routingContext) recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
+          if (routingContext) {
+            recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
+            recordHardMissingState(step, missingToolResult);
+          }
           skippedCount++;
           continue;
         }
         const trigger = (cascade as { tripped: true; trigger: CascadeTrigger | null }).trigger;
-        const detail = trigger
+        let detail = trigger
           ? trigger.substitution_chain
             ? `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); ${trigger.substitution_chain}; state never materialized.`
             : `Skipped: prior stateful step "${trigger.stepId}" skipped (${trigger.reason}); state never materialized.`
           : 'Skipped: prior stateful step failed.';
-        const capabilityUnavailable = trigger?.capabilityUnavailable === true;
+        let capabilityUnavailable = trigger?.capabilityUnavailable === true;
+        if (
+          capabilityUnavailable &&
+          routingContext &&
+          !TRUSTED_MATCH_PUBLISHER_AUTH_TASKS.has(step.task) &&
+          !PROBE_TASKS.has(step.task) &&
+          !WEBHOOK_ASSERTION_TASKS.has(step.task) &&
+          step.task !== REPLAY_WEBHOOK_VECTOR_TASK &&
+          (!step.requires_contract || (selectedOptions.contracts ?? []).includes(step.requires_contract))
+        ) {
+          const hardKeys = unavailableContextKeysForPhase(phase, priorPhaseIds, missingPrerequisiteContextKeysByPhase);
+          if (hardKeys.size > 0) {
+            const effectiveRequest = buildEffectiveStepRequest(
+              { ...step, task: resolvedTask ?? step.task },
+              context,
+              selectedOptions,
+              buildExecutionState(assignment?.agentUrl, assignment?.profile)
+            );
+            const missingKeys = new Set([
+              ...(effectiveRequest.ok ? findUnresolvedContextVars(effectiveRequest.request) : [])
+                .filter(v => hardKeys.has(v.key))
+                .map(v => v.key),
+              ...(step.context_inputs ?? [])
+                .filter(input => !(input.key in context) && hardKeys.has(input.key))
+                .map(input => input.key),
+            ]);
+            if (missingKeys.size > 0) {
+              capabilityUnavailable = false;
+              detail = `Skipped: context required from a missing-tool prerequisite is unavailable: ${[...missingKeys].join(', ')}.`;
+            }
+          }
+        }
         if (capabilityUnavailable) recordUnavailableOutputs(phase.id, step);
         else if (routingContext) recordUnavailableOutputs(phase.id, step, missingPrerequisiteContextKeysByPhase);
         stepResults.push({
@@ -3890,58 +3981,7 @@ async function executeStoryboardPass(
         // path) deliberately don't trip the flag.
         if (step.stateful) {
           if (isHardMissingStateSkipReason(result.skip_reason)) {
-            // Hard-missing skip on a stateful step. Defer the cascade only
-            // when a peer in this phase has declared
-            // `peer_substitutes_for: <this_step_id>` — that peer's pass
-            // establishes equivalent state. Without a declaration,
-            // missing_tool / missing_test_controller trips the cascade
-            // immediately (existing behavior).
-            const substitutes = phaseSubstitutes.get(step.id);
-            if (substitutes && substitutes.length > 0) {
-              if (phasePendingMissingTool === null) {
-                phasePendingMissingTool = {
-                  stepId: step.id,
-                  reason: result.skip_reason ?? 'missing_tool',
-                  substitutes,
-                };
-              }
-            } else {
-              // Sole-stateful-step exemption (adcp-client-python#550):
-              // when a hard-missing skip lands on the ONLY stateful step
-              // in the phase, no peer could have established substitute
-              // state — same shape as #1146's `not_applicable` exemption.
-              // The platform legitimately doesn't implement this pathway
-              // (e.g., proposal-mode / implicit-account adopters that
-              // skip `sync_accounts` because account state materializes
-              // on the first `get_products` call). Cascading every
-              // downstream phase to `prerequisite_failed` collapses
-              // useful coverage; let downstream phases run and fail on
-              // their own merits if state genuinely never materialized.
-              //
-              // The skipping step is always stateful and always in
-              // `phaseStatefulStepIds` (built eagerly at phase init), so
-              // length > 1 ⇔ a stateful peer exists.
-              const hasStatefulPeers = phaseStatefulStepIds.length > 1;
-              if (hasStatefulPeers && !phaseStatefulCascades.has(phase.id)) {
-                // Multiple stateful steps in the phase but no declared
-                // substitute. Trip the cascade. First trip wins —
-                // subsequent triggers don't overwrite, since the cascade
-                // text references the originating diagnostic (the
-                // leftmost missing-state stateful step in the phase).
-                phaseStatefulCascades.set(phase.id, {
-                  stepId: step.id,
-                  reason: result.skip_reason ?? 'missing_tool',
-                });
-              } else if (!hasStatefulPeers && result.skip) {
-                // Exemption applied. Surface the runner's decision on the
-                // step result so adopters reading per-step output don't
-                // have to infer it from the absence of downstream skips.
-                result.skip = {
-                  ...result.skip,
-                  detail: result.skip.detail + soleStatefulExemptionDetail(phase.id),
-                };
-              }
-            }
+            recordHardMissingState(step, result);
           } else if (
             result.skip_reason === 'not_applicable' ||
             result.skip_reason === 'capability_prerequisite_unavailable'
@@ -4079,15 +4119,15 @@ async function executeStoryboardPass(
     // see the substitution chain rather than a bare `missing_tool`
     // cascade origin.
     if (
-      phasePendingMissingTool &&
-      !phaseRescuedTargets.has(phasePendingMissingTool.stepId) &&
+      phasePendingMissingTool.trigger &&
+      !phaseRescuedTargets.has(phasePendingMissingTool.trigger.stepId) &&
       !phaseStatefulCascades.has(phase.id)
     ) {
-      const subs = phasePendingMissingTool.substitutes;
+      const subs = phasePendingMissingTool.trigger.substitutes;
       const subsList = subs.length === 1 ? `"${subs[0]}"` : subs.map(s => `"${s}"`).join(', ');
       phaseStatefulCascades.set(phase.id, {
-        stepId: phasePendingMissingTool.stepId,
-        reason: phasePendingMissingTool.reason,
+        stepId: phasePendingMissingTool.trigger.stepId,
+        reason: phasePendingMissingTool.trigger.reason,
         substitution_chain: `declared substitute ${subsList} did not pass`,
       });
     }
@@ -4962,6 +5002,73 @@ interface ExecutionState {
   storyboardRequiresPublisherAuthRunner?: boolean;
 }
 
+// Shared request construction for execution and inspection before a cascade
+// skip. This never dispatches, but may generate context/runner aliases.
+function buildStepRequest(
+  step: StoryboardStep,
+  effectiveStep: StoryboardStep,
+  context: StoryboardContext,
+  options: StoryboardRunOptions,
+  runnerVars?: RunnerVariables
+): Record<string, unknown> {
+  // Build request — priority (issue #820, fixture-authoritative):
+  // 1. User-provided --request override
+  // 2. For expect_error steps: sample_request directly (preserves intentionally invalid input)
+  // 3. enrichRequest — fixture is the base, enricher fills gaps (fixture wins conflicts)
+  // 4. sample_request with context injection when no enricher is registered
+  // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
+  let request: Record<string, unknown>;
+  if (options.request) {
+    request = injectContext({ ...options.request }, context, runnerVars);
+  } else if (step.expect_error && step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context, runnerVars);
+  } else if (hasRequestEnricher(effectiveStep.task)) {
+    request = enrichRequest(effectiveStep, context, options, runnerVars);
+  } else if (step.sample_request) {
+    request = injectContext({ ...step.sample_request }, context, runnerVars);
+  } else {
+    request = {};
+  }
+
+  // Apply explicit context_inputs on top of whatever request source was used
+  if (step.context_inputs?.length) {
+    request = applyContextInputs(request, step.context_inputs, context);
+  }
+
+  // Brand/account is a storyboard-run-scoped invariant: every step in a run
+  // targets the same brand, so every outgoing request's brand context must
+  // match the options. Enforcing this here (after builder + sample_request)
+  // prevents session-key divergence across create/get/update/delete steps
+  // when individual builders or sample_request YAML omit brand.
+  // `step.omit_account` suppresses account synthesis for schema_validation
+  // steps that deliberately test the seller's missing-account rejection path.
+  request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: step.omit_account });
+
+  // Per-run sandbox-bypass hint (#841). When the operator passes
+  // `--no-sandbox` (or sets `disable_sandbox: true` programmatically), the
+  // runner stamps `ext.adcp.disable_sandbox: true` on every outgoing
+  // request. Adopters that read this field bypass their internal sandbox
+  // routing — env-var fallbacks, brand-domain heuristics, fixture
+  // substitutes — and exercise their real adapter path. Agents that
+  // don't recognize the field ignore it (per spec, `ext` is accepted
+  // without error and not echoed). Gated on the schema check that
+  // `applyBrandInvariant` uses for `account` and `brand` so tools whose
+  // `additionalProperties: false` schema would reject `ext` aren't broken.
+  if (options.disable_sandbox === true) {
+    request = applyDisableSandboxHint(request, effectiveStep.task);
+  }
+
+  // Mutating AdCP requests require idempotency_key per spec. Storyboard
+  // yamls generally omit it so authors don't have to remember it on every
+  // mutating step — mint one here on the runner's behalf, matching how a
+  // real buyer would operate. Suppressed when the step expects a missing-key
+  // error (see `testsIdempotencyKeyOmission` below) so that compliance
+  // surfaces can still exercise the server's required-field check.
+  request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+
+  return request;
+}
+
 async function executeStep(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- client type varies (TestClient)
   client: any,
@@ -5171,60 +5278,7 @@ async function executeStep(
     };
   }
 
-  // Build request — priority (issue #820, fixture-authoritative):
-  // 1. User-provided --request override
-  // 2. For expect_error steps: sample_request directly (preserves intentionally invalid input)
-  // 3. enrichRequest — fixture is the base, enricher fills gaps (fixture wins conflicts)
-  // 4. sample_request with context injection when no enricher is registered
-  // 5. Empty object (only reachable for non-mutating tasks with neither fixture nor enricher)
-  let request: Record<string, unknown>;
-  if (options.request) {
-    request = injectContext({ ...options.request }, context, runState.runnerVars);
-  } else if (step.expect_error && step.sample_request) {
-    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
-  } else if (hasRequestEnricher(effectiveStep.task)) {
-    request = enrichRequest(effectiveStep, context, options, runState.runnerVars);
-  } else if (step.sample_request) {
-    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
-  } else {
-    request = {};
-  }
-
-  // Apply explicit context_inputs on top of whatever request source was used
-  if (step.context_inputs?.length) {
-    request = applyContextInputs(request, step.context_inputs, context);
-  }
-
-  // Brand/account is a storyboard-run-scoped invariant: every step in a run
-  // targets the same brand, so every outgoing request's brand context must
-  // match the options. Enforcing this here (after builder + sample_request)
-  // prevents session-key divergence across create/get/update/delete steps
-  // when individual builders or sample_request YAML omit brand.
-  // `step.omit_account` suppresses account synthesis for schema_validation
-  // steps that deliberately test the seller's missing-account rejection path.
-  request = applyBrandInvariant(request, options, effectiveStep.task, { omit_account: step.omit_account });
-
-  // Per-run sandbox-bypass hint (#841). When the operator passes
-  // `--no-sandbox` (or sets `disable_sandbox: true` programmatically), the
-  // runner stamps `ext.adcp.disable_sandbox: true` on every outgoing
-  // request. Adopters that read this field bypass their internal sandbox
-  // routing — env-var fallbacks, brand-domain heuristics, fixture
-  // substitutes — and exercise their real adapter path. Agents that
-  // don't recognize the field ignore it (per spec, `ext` is accepted
-  // without error and not echoed). Gated on the schema check that
-  // `applyBrandInvariant` uses for `account` and `brand` so tools whose
-  // `additionalProperties: false` schema would reject `ext` aren't broken.
-  if (options.disable_sandbox === true) {
-    request = applyDisableSandboxHint(request, effectiveStep.task);
-  }
-
-  // Mutating AdCP requests require idempotency_key per spec. Storyboard
-  // yamls generally omit it so authors don't have to remember it on every
-  // mutating step — mint one here on the runner's behalf, matching how a
-  // real buyer would operate. Suppressed when the step expects a missing-key
-  // error (see `testsIdempotencyKeyOmission` below) so that compliance
-  // surfaces can still exercise the server's required-field check.
-  request = applyIdempotencyInvariant(request, effectiveStep.task, step);
+  let request = buildStepRequest(step, effectiveStep, context, options, runState.runnerVars);
 
   // Fixture handles are replaced only at request-schema fields carrying the
   // matching x-entity annotation. This applies equally to ordinary AdCP calls
@@ -7068,26 +7122,7 @@ function buildEffectiveStepRequest(
   options: StoryboardRunOptions,
   runState: ExecutionState
 ): EffectiveStepRequestResult {
-  let request: Record<string, unknown>;
-  if (options.request) {
-    request = injectContext({ ...options.request }, context, runState.runnerVars);
-  } else if (step.expect_error && step.sample_request) {
-    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
-  } else if (hasRequestEnricher(step.task)) {
-    request = enrichRequest(step, context, options, runState.runnerVars);
-  } else if (step.sample_request) {
-    request = injectContext({ ...step.sample_request }, context, runState.runnerVars);
-  } else {
-    request = {};
-  }
-  if (step.context_inputs?.length) {
-    request = applyContextInputs(request, step.context_inputs, context);
-  }
-  request = applyBrandInvariant(request, options, step.task, { omit_account: step.omit_account });
-  if (options.disable_sandbox === true) {
-    request = applyDisableSandboxHint(request, step.task);
-  }
-  request = applyIdempotencyInvariant(request, step.task, step);
+  const request = buildStepRequest(step, step, context, options, runState.runnerVars);
   const fixtureBinding = applyFixtureBindingsSafely(request, step.task, options, runState);
   if (!fixtureBinding.ok) return fixtureBinding;
   const creativeAssetExpansion = expandCreativeAssetDirectivesWithDiagnostics(
