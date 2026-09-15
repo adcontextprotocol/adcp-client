@@ -1073,11 +1073,80 @@ export function normalizeCanonicalFormatOptionKindsForCodegen(schema: any): any 
   };
 }
 
+/** Name request-only array aliases without changing protocol constraints. */
+export function nameTargetingInputForCodegen(schema: any): any {
+  if (schema?.title !== 'Targeting Overlay Input' || !schema.properties) return schema;
+  const namedSchema = { ...schema };
+  // Request-only clear commands must not share a generated alias with strict
+  // targeting state. Otherwise first-definition deduplication either drops
+  // input nullability or leaks it into accepted snapshots, depending on root
+  // compilation order. Keep the canonical state names and name the nullable
+  // input arrays separately; the wire schema and its constraints are unchanged.
+  namedSchema.properties = Object.fromEntries(
+    Object.entries(namedSchema.properties).map(([key, property]: [string, any]) => {
+      if (
+        Array.isArray(property.type) &&
+        property.type.includes('array') &&
+        property.type.includes('null') &&
+        typeof property.title === 'string' &&
+        !property.title.endsWith(' Input')
+      ) {
+        return [key, { ...property, title: `${property.title} Input` }];
+      }
+      // Pointer-inferred DeviceType/DevicePlatform array names also collide
+      // with their canonical item enums. Name the array branch in both raw
+      // and bundled schemas, retaining its values and the outer null command.
+      if ((key === 'device_type' || key === 'device_platform') && Array.isArray(property.anyOf)) {
+        return [
+          key,
+          {
+            ...property,
+            anyOf: property.anyOf.map((branch: any) =>
+              (branch.type === 'array' ||
+                (typeof branch.$ref === 'string' && branch.$ref.endsWith(`/core/targeting.json#/properties/${key}`))) &&
+              branch.title === undefined
+                ? {
+                    ...branch,
+                    title: key === 'device_type' ? 'Targeting Device Types Input' : 'Targeting Device Platforms Input',
+                  }
+                : branch
+            ),
+          },
+        ];
+      }
+      return [key, property];
+    })
+  );
+
+  return namedSchema;
+}
+
+/** Ensure referenced targeting input gets the same names as an inline root. */
+export function codegenRefResolvers(refResolver: any, readTargetingInput = loadCachedSchema) {
+  return {
+    cache: refResolver,
+    targetingInput: {
+      order: 1,
+      canRead: (file: { url: string }) => schemaRefToCacheRelativePath(file.url) === 'core/targeting-input.json',
+      read: (file: { url: string }) => {
+        const schema = readTargetingInput(file.url);
+        // The parser can fall through to HTTP on a read error. The generated
+        // targeting parity tests must also guard against missing normalization.
+        if (!schema) throw new Error(`Targeting input is missing from the verified cache: ${file.url}`);
+        // HTTP otherwise wins before the generic cache resolver. Apply only
+        // naming here, retaining the referenced wire shape and constraints.
+        return nameTargetingInputForCodegen(schema);
+      },
+    },
+  };
+}
+
 export function enforceStrictSchema(schema: any): any {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
 
+  schema = nameTargetingInputForCodegen(schema);
   schema = normalizeSignalTargetingForCodegen(schema);
   schema = normalizePostalAreaForCodegen(schema);
   schema = nameVendorMetricValueQualifierForCodegen(schema);
@@ -2791,9 +2860,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -2816,9 +2883,7 @@ async function generateToolTypes(tools: ToolDefinition[], preGeneratedTypes: Set
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -4215,9 +4280,7 @@ async function compileGapSchemas(
     additionalProperties: false,
     strictIndexSignatures: true,
     $refOptions: {
-      resolve: {
-        cache: refResolver,
-      },
+      resolve: codegenRefResolvers(refResolver),
     },
   };
   // json-schema-to-typescript clones its options and schema and creates a new
@@ -4329,7 +4392,7 @@ async function generateTypes() {
         style: { semi: true, singleQuote: true },
         additionalProperties: false,
         strictIndexSignatures: true,
-        $refOptions: { resolve: { cache: refResolver } },
+        $refOptions: { resolve: codegenRefResolvers(refResolver) },
       });
       const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
       coreTypes += `// ${typeName.toUpperCase()} CANONICAL ENUM\n${filteredTypes}\n`;
@@ -4357,7 +4420,7 @@ async function generateTypes() {
         style: { semi: true, singleQuote: true },
         additionalProperties: false,
         strictIndexSignatures: true,
-        $refOptions: { resolve: { cache: refResolver } },
+        $refOptions: { resolve: codegenRefResolvers(refResolver) },
       });
       const filteredTypes = filterDuplicateTypeDefinitions(types, generatedCoreTypes);
       coreTypes += `// ${typeName.toUpperCase()} PRIORITY CANONICAL SCHEMA\n${filteredTypes}\n`;
@@ -4382,7 +4445,7 @@ async function generateTypes() {
         style: { semi: true, singleQuote: true },
         additionalProperties: false,
         strictIndexSignatures: true,
-        $refOptions: { resolve: { cache: refResolver } },
+        $refOptions: { resolve: codegenRefResolvers(refResolver) },
       });
       const emittedNames = collectExportedTypeNames(types);
       if (!emittedNames.has(typeName)) {
@@ -4425,9 +4488,7 @@ async function generateTypes() {
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 
@@ -4477,9 +4538,7 @@ async function generateTypes() {
           additionalProperties: false, // Disable [k: string]: unknown for type safety
           strictIndexSignatures: true, // Add | undefined to index signatures for optional property compatibility
           $refOptions: {
-            resolve: {
-              cache: refResolver,
-            },
+            resolve: codegenRefResolvers(refResolver),
           },
         });
 

@@ -1,5 +1,5 @@
 // Generated Zod v4 schemas from TypeScript types
-// Generated at: 2026-09-14T18:54:10.665Z
+// Generated at: 2026-09-15T15:57:39.540Z
 // Sources:
 //   - core.generated.ts (core types)
 //   - tools.generated.ts (tool types)
@@ -1118,7 +1118,11 @@ export const AgeRestrictionSchema = z.object({
     accepted_methods: z.array(AgeVerificationMethodSchema).optional()
 }).passthrough();
 
+export const TargetingDevicePlatformsInputSchema = z.array(DevicePlatformSchema);
+
 export const DevicePlatformExcludeSchema = z.array(DevicePlatformSchema);
+
+export const TargetingDeviceTypesInputSchema = z.array(DeviceTypeSchema);
 
 export const DeviceTypeExcludeSchema = z.array(DeviceTypeSchema);
 
@@ -1134,13 +1138,13 @@ export const StoreCatchmentsSchema = z.array(z.object({
 
 export const GeoProximitySchema = z.array(z.union([z.object({}).passthrough(), z.object({}).passthrough(), z.object({}).passthrough()]));
 
-export const TargetingLanguagesSchema = z.array(LanguageTagSchema);
+export const TargetingLanguagesInputSchema = z.array(LanguageTagSchema).nullable();
 
-export const TargetingKeywordsSchema = z.array(z.object({
+export const TargetingKeywordsInputSchema = z.array(z.object({
     keyword: z.string(),
     match_type: MatchTypeSchema,
     bid_price: z.number().optional()
-}).passthrough());
+}).passthrough()).nullable();
 
 export const GeoMetroSchema = z.object({
     system: MetroAreaSystemSchema,
@@ -3007,6 +3011,14 @@ export const AttestationEvaluationSchema = z.object({}).passthrough().merge(z.ob
 }).passthrough());
 
 export const TargetingGeoMetrosSchema = z.array(GeoMetroSchema);
+
+export const TargetingLanguagesSchema = z.array(LanguageTagSchema);
+
+export const TargetingKeywordsSchema = z.array(z.object({
+    keyword: z.string(),
+    match_type: MatchTypeSchema,
+    bid_price: z.number().optional()
+}).passthrough());
 
 export const TargetingNegativeKeywordsSchema = z.array(NegativeKeywordSchema);
 
@@ -9019,6 +9031,8 @@ export const DeclineProposalsRequestSchema = z.object({
     opportunity: OpportunityContextSchema.optional()
 }).passthrough();
 
+export const TargetingGeoMetrosInputSchema = z.array(GeoMetroSchema).nullable();
+
 export const GeoPostalAreasSchema = z.array(PostalAreaSchema);
 
 export const GeoPostalAreasExcludeSchema = z.array(PostalAreaSchema);
@@ -9028,6 +9042,8 @@ export const GeoPlacesSchema = z.array(GeographicPlaceAreaSchema);
 export const GeoPlacesExcludeSchema = z.array(GeographicPlaceAreaSchema);
 
 export const DaypartTargetsSchema = z.array(DaypartTargetSchema);
+
+export const TargetingNegativeKeywordsInputSchema = z.array(NegativeKeywordSchema).nullable();
 
 export const AcceptProposalRequestSchema = z.object({
     adcp_version: z.string().optional(),
@@ -14555,7 +14571,7 @@ export const TargetingOverlayInputSchema = TargetingUnknownAgeEligibilityConstra
     geo_countries_exclude: GeoCountriesExcludeSchema.optional().nullable(),
     geo_regions: GeoRegionsSchema.optional().nullable(),
     geo_regions_exclude: GeoRegionsExcludeSchema.optional().nullable(),
-    geo_metros: TargetingGeoMetrosSchema.optional(),
+    geo_metros: TargetingGeoMetrosInputSchema.optional(),
     geo_metros_exclude: GeoMetrosExcludeSchema.optional().nullable(),
     geo_postal_areas: GeoPostalAreasSchema.optional().nullable(),
     geo_postal_areas_exclude: GeoPostalAreasExcludeSchema.optional().nullable(),
@@ -14577,17 +14593,17 @@ export const TargetingOverlayInputSchema = TargetingUnknownAgeEligibilityConstra
     placement_selection: PlacementSelectionSchema.optional().nullable(),
     collection_selection: TargetingCollectionSelectionSchema.optional().nullable(),
     age_restriction: AgeRestrictionSchema.optional().nullable(),
-    device_platform: z.array(DevicePlatformSchema).optional().nullable(),
+    device_platform: TargetingDevicePlatformsInputSchema.optional().nullable(),
     device_platform_exclude: DevicePlatformExcludeSchema.optional().nullable(),
-    device_type: z.array(DeviceTypeSchema).optional().nullable(),
+    device_type: TargetingDeviceTypesInputSchema.optional().nullable(),
     device_type_exclude: DeviceTypeExcludeSchema.optional().nullable(),
     browser: BrowserSchema.optional().nullable(),
     browser_exclude: BrowserExcludeSchema.optional().nullable(),
     store_catchments: StoreCatchmentsSchema.optional().nullable(),
     geo_proximity: GeoProximitySchema.optional().nullable(),
-    language: TargetingLanguagesSchema.optional(),
-    keyword_targets: TargetingKeywordsSchema.optional(),
-    negative_keywords: TargetingNegativeKeywordsSchema.optional()
+    language: TargetingLanguagesInputSchema.optional(),
+    keyword_targets: TargetingKeywordsInputSchema.optional(),
+    negative_keywords: TargetingNegativeKeywordsInputSchema.optional()
 }).passthrough());
 
 export const ProductDiscoveryCriteriaSchema = z.object({
