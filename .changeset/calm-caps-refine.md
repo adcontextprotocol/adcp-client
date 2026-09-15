@@ -1,5 +1,5 @@
 ---
-'@adcp/sdk': patch
+'@adcp/sdk': minor
 ---
 
 Accept the pinned AdCP 3.2 proposal-refinement frequency-cap, outcome-target,
