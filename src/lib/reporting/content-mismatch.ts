@@ -99,6 +99,26 @@ export interface ReportingContentMismatchV1 {
  * First applicable contradiction between a consumed revision and the frozen
  * contract, or `undefined` when nothing decidable is contradicted.
  *
+ * **What `reconcileReporting` can reach, and what it cannot.** The reconciler
+ * consumes the revision's rows to recompute its binding digest, so it calls
+ * this with real row evidence — but it can only derive `observedMetricNames`,
+ * and only when the buyer pinned `committedMetrics`. That makes
+ * `coverage_short`, `currency_mismatch` and `metric_missing` reachable through
+ * the reconcile loop. The remaining three are a **documented limitation**:
+ *
+ * - `scope_media_buy_missing` needs to know which media buy a row belongs to.
+ * - `period_mismatch` needs the time dimension the pinned grain declares.
+ * - `schema_nonconformant` needs the rows validated against the pinned schema.
+ *
+ * All three depend on the reporting profile's own row shape, which is
+ * profile-defined and not readable from a generic row object. The SDK does not
+ * guess at them, because the cost of being wrong is asymmetric: a false
+ * `content_mismatch` pins the caller's view at `action_required` and the seller
+ * MUST NOT return the period to healthy while the statement is the current
+ * leaf. An adopter whose own reader *does* understand its profile can call this
+ * function directly with a fuller `ReportingRowEvidenceV1` and act on the
+ * result.
+ *
  * **Precedence.** The spec pins exactly one ordering rule: a metric that is
  * simply absent uses `metric_missing` even when the pinned schema declares it
  * required, so `metric_missing` is evaluated before `schema_nonconformant`.

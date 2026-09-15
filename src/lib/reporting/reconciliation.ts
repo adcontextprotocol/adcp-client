@@ -282,6 +282,45 @@ export interface ReportingCheckpointStore {
   put(key: ReportingCheckpointKey, checkpoint: ReportingCheckpoint): Promise<void>;
 }
 
+/** One consumer-status supersession chain: the logical key the spec defines. */
+export interface ReportingPendingConsumerStatusKey {
+  accountId: string;
+  deliveryConfigId: string;
+  deliveryConfigVersion: number;
+  reportDefinitionId: string;
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface ReportingPendingConsumerStatus {
+  /** The exact wire statement, replayed verbatim until the seller confirms it. */
+  statement: Record<string, unknown>;
+  /** Fingerprint of the claim it makes; a changed claim discards it. */
+  claimFingerprint: string;
+}
+
+/**
+ * Durable memory of a statement that has been built but not yet confirmed.
+ *
+ * `status_as_of` for `received` and `unreadable` is *when this consumer
+ * consumed the revision* — buyer-attributed arrival evidence that the spec
+ * explicitly refuses to let a seller substitute publication time for. That
+ * makes it irreducibly stateful: a stateless reconciler cannot reproduce it,
+ * so after a lost response it would build a different statement for the same
+ * claim.
+ *
+ * Wire this store and the reconciler replays the original statement
+ * byte-for-byte until the seller confirms it, which is the "exact retry" the
+ * spec's `immutability` and `idempotency_key` rules are written around. Leave
+ * it out and a re-plan is a new, valid statement instead: the chain still ends
+ * with exactly one, it just is not literally the same one.
+ */
+export interface ReportingPendingConsumerStatusStore {
+  get(key: ReportingPendingConsumerStatusKey): Promise<ReportingPendingConsumerStatus | undefined>;
+  put(key: ReportingPendingConsumerStatusKey, pending: ReportingPendingConsumerStatus): Promise<void>;
+  clear(key: ReportingPendingConsumerStatusKey): Promise<void>;
+}
+
 export interface ReportingInspectionContext {
   obligation: ManagedReportingObligation;
   revision: ManagedReportingRevision;
@@ -458,6 +497,12 @@ interface ReconcileReportingBaseOptions {
    * page a human. Inert display metadata — never dereference it.
    */
   operationsContact?: { url?: string; email?: string };
+  /**
+   * Durable memory for statements built but not yet confirmed, so a retry
+   * after a lost response is the same statement rather than a new one. Optional;
+   * see `ReportingPendingConsumerStatusStore` for what changes without it.
+   */
+  pendingConsumerStatusStore?: ReportingPendingConsumerStatusStore;
 }
 
 type ReportingCheckpointOptions =
@@ -2166,21 +2211,42 @@ export async function reconcileReporting<TCredential = unknown>(
       continue;
     }
     const next = await attestConsumerStatusPlan(plan, ledger, options, readDeadline);
-    if (next.suppressed === 'budget_exhausted') budgetExhausted = true;
-    attested.push(next);
+    // Only the shared wall-clock budget stops the loop; a per-revision page or
+    // record limit is that revision's problem alone.
+    if (next.suppressed === 'budget_exhausted' && next.budgetScope === 'run') budgetExhausted = true;
+    const { budgetScope: _scope, ...carried } = next;
+    attested.push(carried);
   }
   const consumerStatuses = attested;
   const owed = consumerStatuses.filter(plan => plan.overdue && plan.suppressed === undefined);
   const postedConsumerStatuses: ReportingConsumerStatusPlanV1[] = [];
   const failedConsumerStatuses: ReportingReconciliationResult['failedConsumerStatuses'] = [];
+  const confirmed: ReportingPendingConsumerStatusKey[] = [];
   if (owed.length > 0 && options.client.syncReportingStatus) {
-    const deadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
-    // One batch per request, up to the schema's maxItems. Posting one call per
-    // status against a single shared budget meant a later timeout threw away
-    // the record of everything the seller had already accepted.
+    // One batch per request, up to the schema's maxItems, each with its own
+    // budget — matching the receipt path. A single budget shared across every
+    // batch exhausts mid-loop on a backlog first run, which is precisely when
+    // there are most statuses to post.
     for (let offset = 0; offset < owed.length; offset += CONSUMER_STATUS_BATCH_MAX) {
       const batch = owed.slice(offset, offset + CONSUMER_STATUS_BATCH_MAX);
-      const wireStatuses = batch.map(wireConsumerStatus);
+      const deadline = Date.now() + (options.ledgerLimits?.maxLoadMs ?? 60_000);
+      // A statement already built for this exact claim is replayed verbatim.
+      // Rebuilding it would re-derive `status_as_of` from the buyer's clock,
+      // and a body that changed under a stable claim is what turns a retry into
+      // an idempotency conflict.
+      const wireStatuses: Record<string, unknown>[] = [];
+      for (const plan of batch) {
+        const key = pendingConsumerStatusKey(ledger.accountId, plan);
+        const fingerprint = consumerStatusClaimFingerprint(plan);
+        const pending = await options.pendingConsumerStatusStore?.get(key);
+        if (pending && pending.claimFingerprint === fingerprint) {
+          wireStatuses.push(pending.statement);
+          continue;
+        }
+        const statement = wireConsumerStatus(plan);
+        await options.pendingConsumerStatusStore?.put(key, { statement, claimFingerprint: fingerprint });
+        wireStatuses.push(statement);
+      }
       // A batch that fails is recorded and ends the loop rather than thrown.
       // Throwing from the second batch discarded the record of everything the
       // first one had already appended — statements that are durably the
@@ -2228,6 +2294,10 @@ export async function reconcileReporting<TCredential = unknown>(
           | undefined;
         if (result && ['recorded', 'unchanged'].includes(result.result ?? '')) {
           postedConsumerStatuses.push(plan);
+          // Confirmed durable at the seller, so it is no longer pending. A
+          // failure deliberately leaves it, because the next run must retry
+          // that exact statement rather than mint a competing one.
+          confirmed.push(pendingConsumerStatusKey(ledger.accountId, plan));
           return;
         }
         failedConsumerStatuses.push({
@@ -2238,6 +2308,8 @@ export async function reconcileReporting<TCredential = unknown>(
       });
     }
   }
+
+  for (const key of confirmed) await options.pendingConsumerStatusStore?.clear(key);
 
   const consumerStatusPending = await readReportingConsumerStatusPending(options);
 
@@ -2270,9 +2342,15 @@ interface UnconsumableReportingRevisionV1 {
 /**
  * The buyer ran out of its own budget. Not a seller failure and therefore not
  * a `failure_code` — the caller stays silent for this revision this run.
+ *
+ * The scope matters. `run` is the wall-clock budget, which is genuinely shared,
+ * so nothing after it can succeed either and the loop stops. `revision` is a
+ * per-revision page or record limit that resets on the next call: latching on
+ * it would let one pathologically paginating revision starve every revision
+ * ordered after it, run after run, without a single read being attempted.
  */
 interface ExhaustedReportingReadBudgetV1 {
-  budgetExhausted: true;
+  budgetExhausted: 'run' | 'revision';
 }
 
 /**
@@ -2291,14 +2369,16 @@ async function attestConsumerStatusPlan(
   ledger: ReportingLedger,
   options: ReconcileReportingOptions,
   deadline: number
-): Promise<ReportingConsumerStatusPlanV1> {
+): Promise<AttestedConsumerStatusPlan> {
   if (!plan.requiresConsumption || !plan.reportingRevisionId) return plan;
   if (!options.client.getMediaBuyDelivery) return { ...plan, suppressed: 'consumption_unavailable' };
 
   const outcome = await consumeReportingRevision(options, plan.reportingRevisionId, deadline);
   const leaf = currentConsumerLeaf(ledger, plan, plan.supersedesReportingStatusId);
 
-  if ('budgetExhausted' in outcome) return { ...plan, suppressed: 'budget_exhausted' };
+  if ('budgetExhausted' in outcome) {
+    return { ...plan, suppressed: 'budget_exhausted', budgetScope: outcome.budgetExhausted };
+  }
 
   if ('failureCode' in outcome) {
     return withSuppression(
@@ -2380,6 +2460,13 @@ async function attestConsumerStatusPlan(
   );
 }
 
+/**
+ * A plan plus the internal note of *which* budget ran out, so the caller can
+ * tell a shared wall-clock budget from a per-revision page limit. Stripped
+ * before the plan reaches the result: it is loop bookkeeping, not a claim.
+ */
+type AttestedConsumerStatusPlan = ReportingConsumerStatusPlanV1 & { budgetScope?: 'run' | 'revision' };
+
 /** Re-apply the unchanged/undisclosed test after a plan's meaning has changed. */
 function withSuppression(plan: ReportingConsumerStatusPlanV1, leaf: ConsumerStatusLeaf): ReportingConsumerStatusPlanV1 {
   const suppressed = consumerStatusSuppression(plan, leaf);
@@ -2417,7 +2504,7 @@ async function consumeReportingRevision(
   try {
     do {
       pages += 1;
-      if (pages > maxPages) return { budgetExhausted: true };
+      if (pages > maxPages) return { budgetExhausted: 'revision' };
       const response = await callBeforeDeadline(
         signal =>
           read(
@@ -2476,7 +2563,7 @@ async function consumeReportingRevision(
     // out of the diagnostic: it is untrusted text, and the wire carries a
     // closed `failure_code` precisely so agents dispatch on the code.
     if (error instanceof ReportingReconciliationError && error.code === 'CONSUMER_STATUS_READ_FAILED') {
-      return { budgetExhausted: true };
+      return { budgetExhausted: 'run' };
     }
     return { failureCode: 'transport_failed', detail: 'the exact-revision read failed before the rows were complete' };
   }
@@ -2562,39 +2649,69 @@ function recordConsumerStatusBatchFailure(
 }
 
 /**
- * Immutable identity for one statement, derived from the claim it makes.
+ * Immutable identity for one statement.
  *
- * `immutability` requires an exact retry to reuse the ID and content, so the
- * derivation excludes everything that moves between attempts at the same claim
- * — most importantly `status_as_of`, which for `received` and `unreadable` is
- * the buyer's own clock and is therefore new on every re-plan.
+ * `immutability` makes ID reuse with different content an idempotency conflict,
+ * so the derivation covers **everything on the wire**, including `status_as_of`.
+ * Leaving it out looks like it buys retry stability, but `status_as_of` for
+ * `received` and `unreadable` is the buyer's own clock and genuinely moves
+ * between re-plans — an ID that ignored it would come back identical with a
+ * different body, which is the conflict rather than the replay.
  *
- * `supersedes_reporting_status_id` **is** included, and is not a moving part:
- * a post that did not land leaves the leaf exactly where it was, so a retry
- * hashes the same value. What it buys is distinctness for a claim that
- * genuinely recurs later in the chain — `received` on a revision, then
- * `unreadable` on it after a flaky read, then `received` again — where an
- * ID derived from the claim alone would collide with the first statement and
- * be replayed as an exact retry, silently leaving `unreadable` as the leaf.
+ * Retry stability is bought by not re-deriving that timestamp at all:
+ * `pendingConsumerStatusStore` replays the exact statement until the seller
+ * confirms it. Without that store a re-plan is simply a *new* statement, which
+ * the seller accepts — a post that did not land leaves the leaf where it was,
+ * so the supersession still resolves and the chain still ends with exactly one
+ * statement.
+ *
+ * `supersedes_reporting_status_id` is included for a second reason: it keeps a
+ * claim that genuinely recurs later in the chain — `received` on a revision,
+ * then `unreadable` on it after a flaky read, then `received` again — from
+ * colliding with the earlier identical one.
  */
 function consumerStatusId(plan: ReportingConsumerStatusPlanV1): string {
   return `adcp-sdk.${createHash('sha256')
-    .update(
-      canonical([
-        plan.deliveryConfigId,
-        plan.deliveryConfigVersion,
-        plan.reportDefinitionId,
-        plan.period,
-        plan.consumerStatus,
-        plan.mismatchCode ?? null,
-        plan.failureCode ?? null,
-        plan.reportingRevisionId ?? null,
-        plan.observedRevisionContentSha256 ?? null,
-        plan.supersedesReportingStatusId ?? null,
-      ])
-    )
+    .update(canonical([...consumerStatusClaim(plan), plan.statusAsOf ?? null]))
     .digest('hex')
     .slice(0, 32)}`;
+}
+
+/** Everything the statement asserts, excluding when the buyer established it. */
+function consumerStatusClaim(plan: ReportingConsumerStatusPlanV1): unknown[] {
+  return [
+    plan.deliveryConfigId,
+    plan.deliveryConfigVersion,
+    plan.reportDefinitionId,
+    plan.period,
+    plan.consumerStatus,
+    plan.mismatchCode ?? null,
+    plan.failureCode ?? null,
+    plan.reportingRevisionId ?? null,
+    plan.observedRevisionContentSha256 ?? null,
+    plan.supersedesReportingStatusId ?? null,
+  ];
+}
+
+/** Identity of the *claim*, deciding whether a pending statement still applies. */
+function consumerStatusClaimFingerprint(plan: ReportingConsumerStatusPlanV1): string {
+  return createHash('sha256')
+    .update(canonical(consumerStatusClaim(plan)))
+    .digest('hex');
+}
+
+function pendingConsumerStatusKey(
+  accountId: string,
+  plan: ReportingConsumerStatusPlanV1
+): ReportingPendingConsumerStatusKey {
+  return {
+    accountId,
+    deliveryConfigId: plan.deliveryConfigId,
+    deliveryConfigVersion: plan.deliveryConfigVersion,
+    reportDefinitionId: plan.reportDefinitionId,
+    periodStart: plan.period.start,
+    periodEnd: plan.period.end,
+  };
 }
 
 /**

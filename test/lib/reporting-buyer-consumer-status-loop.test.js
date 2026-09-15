@@ -152,6 +152,32 @@ function expectedPeriod(request, anchor, overrides = {}) {
   };
 }
 
+/** In-memory `ReportingPendingConsumerStatusStore`. */
+function pendingConsumerStatusStore() {
+  const entries = new Map();
+  const id = key =>
+    [
+      key.accountId,
+      key.deliveryConfigId,
+      key.deliveryConfigVersion,
+      key.reportDefinitionId,
+      key.periodStart,
+      key.periodEnd,
+    ].join('|');
+  return {
+    entries,
+    async get(key) {
+      return entries.get(id(key));
+    },
+    async put(key, pending) {
+      entries.set(id(key), pending);
+    },
+    async clear(key) {
+      entries.delete(id(key));
+    },
+  };
+}
+
 describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', () => {
   test('posts revision_missing, then says nothing, then supersedes it with a consumed received', async () => {
     const seller = await harness();
@@ -527,7 +553,8 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const honest = seller.client.getMediaBuyDelivery;
     let page = 0;
     seller.client.getMediaBuyDelivery = async params => {
-      const response = await honest(params);
+      const { pagination: _cursor, ...firstPage } = params;
+      const response = await honest(firstPage);
       page += 1;
       return { ...response, pagination: { has_more: true, cursor: `endless-${page}` } };
     };
@@ -538,6 +565,197 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(result.consumerStatuses[0].suppressed, 'budget_exhausted');
     assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
     assert.equal(seller.store.consumerStatements.length, 0, 'nothing was said at all');
+  });
+
+  test('the posted wire body carries exactly the fields the statement needs', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const [revision] = await seller.store.listRevisions(
+      [...seller.store.obligations.values()][0].reporting_obligation_id
+    );
+    const obligation = [...seller.store.obligations.values()][0];
+
+    const honest = seller.client.syncReportingStatus;
+    let body;
+    seller.client.syncReportingStatus = async params => {
+      body = params;
+      return honest(params);
+    };
+    const result = await seller.reconcile(at, expected);
+
+    assert.equal(result.postedConsumerStatuses.length, 1, 'posted matches owed');
+    assert.equal(body.statuses.length, 1);
+    const wire = body.statuses[0];
+    assert.deepEqual(Object.keys(wire).sort(), [
+      'consumer_status',
+      'delivery_config_id',
+      'delivery_config_version',
+      'observed_revision_content_sha256',
+      'period',
+      'report_definition_id',
+      'reporting_obligation_id',
+      'reporting_revision_id',
+      'reporting_status_id',
+      'status_as_of',
+    ]);
+    assert.equal(wire.consumer_status, 'received');
+    assert.equal(wire.reporting_obligation_id, obligation.reporting_obligation_id);
+    assert.equal(wire.reporting_revision_id, revision.reporting_revision_id);
+    assert.equal(wire.observed_revision_content_sha256, revision.wireRevision.revision_content_sha256);
+    assert.deepEqual(wire.period, {
+      start: new Date(seller.anchor).toISOString(),
+      end: new Date(seller.anchor + DAY).toISOString(),
+      source_timezone: 'UTC',
+    });
+    assert.match(wire.reporting_status_id, /^[A-Za-z0-9_.:-]{16,255}$/);
+    assert.match(body.idempotency_key, /^[A-Za-z0-9_.:-]{16,255}$/);
+    // No chain pointer on the first statement, and no failure/mismatch fields
+    // on a clean read — the spec forbids carrying either here.
+    assert.equal(wire.supersedes_reporting_status_id, undefined);
+    assert.equal(wire.mismatch_code, undefined);
+    assert.equal(wire.failure_code, undefined);
+  });
+
+  test('a lost received response replays byte-identically when the statement is remembered', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const pending = pendingConsumerStatusStore();
+
+    const honestPost = seller.client.syncReportingStatus;
+    let sent;
+    seller.client.syncReportingStatus = async params => {
+      sent = params;
+      await honestPost(params);
+      throw new Error('socket hang up');
+    };
+    const lost = await seller.reconcile(at, expected, { pendingConsumerStatusStore: pending });
+    assert.equal(lost.failedConsumerStatuses.length, 1);
+    assert.equal(seller.store.consumerStatements.length, 1);
+    assert.equal(seller.store.consumerStatements[0].consumer_status, 'received');
+    assert.equal(pending.entries.size, 1, 'an unconfirmed statement is remembered');
+
+    // Re-plan against a ledger that discloses nothing about the chain, so
+    // suppression cannot help — and re-consume, so `consumedAt` genuinely moves.
+    const honestRead = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honestRead(params);
+      return {
+        ...page,
+        consumer_statuses: [],
+        periods: page.periods.map(({ current_consumer_status_id: _leaf, ...period }) => ({
+          ...period,
+          consumer_status_count: 0,
+        })),
+      };
+    };
+    let replanned;
+    seller.client.syncReportingStatus = async params => {
+      replanned = params;
+      return honestPost(params);
+    };
+
+    const retry = await seller.reconcile(at + HOUR, expected, { pendingConsumerStatusStore: pending });
+    // `status_as_of` for received is the buyer's own consumption instant and
+    // cannot be re-derived, so the statement is replayed rather than rebuilt.
+    assert.deepEqual(replanned.statuses, sent.statuses, 'byte-identical body');
+    assert.equal(replanned.idempotency_key, sent.idempotency_key, 'and therefore the same batch key');
+    assert.equal(seller.store.consumerStatements.length, 1, 'a replay is not a second statement');
+    assert.deepEqual(retry.failedConsumerStatuses, [], 'a replay is not an idempotency conflict either');
+    assert.equal(retry.postedConsumerStatuses.length, 1);
+    assert.equal(pending.entries.size, 0, 'and once confirmed it is forgotten');
+  });
+
+  test('one pathologically paginating revision does not starve the next one', async () => {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + 2 * DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + 2 * DAY + HOUR), maxIterations: 4 });
+    const obligations = [...seller.store.obligations.values()].sort((left, right) =>
+      left.period.start.localeCompare(right.period.start)
+    );
+    assert.equal(obligations.length, 2, 'two elapsed periods');
+    const revisions = await Promise.all(
+      obligations.map(async value => (await seller.store.listRevisions(value.reporting_obligation_id))[0])
+    );
+    assert.ok(revisions[0] && revisions[1], 'both periods published');
+    const at = seller.anchor + 2 * DAY + 3 * HOUR;
+    seller.observeAt(at);
+    const expected = [
+      expectedPeriod(seller.request, seller.anchor),
+      expectedPeriod(seller.request, seller.anchor + DAY),
+    ];
+
+    // Only the first revision pages forever. Its per-revision page limit is its
+    // own problem: latching on it would suppress every revision ordered after
+    // it, run after run, with no read attempted.
+    const honest = seller.client.getMediaBuyDelivery;
+    let page = 0;
+    seller.client.getMediaBuyDelivery = async params => {
+      if (params.reporting_revision_id !== revisions[0].reporting_revision_id) return honest(params);
+      // Always the first page, always claiming another one follows.
+      const { pagination: _cursor, ...firstPage } = params;
+      const response = await honest(firstPage);
+      page += 1;
+      return { ...response, pagination: { has_more: true, cursor: `endless-${page}` } };
+    };
+
+    const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 2 } });
+    const byPeriod = new Map(result.consumerStatuses.map(plan => [plan.period.start, plan]));
+    const first = byPeriod.get(new Date(seller.anchor).toISOString());
+    const second = byPeriod.get(new Date(seller.anchor + DAY).toISOString());
+
+    assert.equal(first.suppressed, 'budget_exhausted');
+    assert.equal(second.suppressed, undefined, 'the healthy revision was still read');
+    assert.equal(second.consumerStatus, 'received');
+    assert.equal(second.observedRevisionContentSha256, revisions[1].wireRevision.revision_content_sha256);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+  });
+
+  test('a batch that fails keeps the statuses earlier batches already posted', async () => {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // More owed statuses than fit in one request, so the posting loop runs
+    // twice. Periods before the accepted generation opened, so every one is
+    // obligation_missing and none collides with the seller's real obligation.
+    const expected = Array.from({ length: 101 }, (_unused, index) =>
+      expectedPeriod(seller.request, seller.anchor - (index + 1) * DAY)
+    );
+
+    // Stubbed: what is under test is the reconciler's accounting across
+    // batches, not the seller's acceptance rules for each statement.
+    const batches = [];
+    seller.client.syncReportingStatus = async params => {
+      batches.push(params);
+      if (batches.length > 1) throw new Error('gateway timeout');
+      return {
+        status: 'completed',
+        results: params.statuses.map(status => ({
+          result: 'recorded',
+          consumer_status: { ...status, recorded_at: new Date(at).toISOString() },
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+
+    assert.equal(batches.length, 2, 'the schema caps a batch at 100 statuses');
+    assert.equal(batches[0].statuses.length, 100);
+    assert.equal(batches[1].statuses.length, 1);
+    // The first batch is durably the caller's leaves whether or not the second
+    // one worked, so throwing it away would misreport what the buyer owes.
+    assert.equal(result.postedConsumerStatuses.length, 100);
+    assert.equal(result.failedConsumerStatuses.length, 1);
+    assert.match(result.failedConsumerStatuses[0].errors[0].message, /gateway timeout/);
   });
 
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {
