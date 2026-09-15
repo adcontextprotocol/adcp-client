@@ -49,17 +49,23 @@ the obligation, so it comes from `ExpectedReportingPeriod.automatedRecoveryWindo
 either pin marks nothing overdue and posts nothing, because posting on a guessed clock would churn
 the status chain.
 
-**Identity that survives a retry.** `reporting_status_id` is derived from the claim the statement
-makes — configuration generation, report definition, period, status, revision, recomputed digest,
-`mismatch_code` / `failure_code`, and the leaf it supersedes — and no longer from `status_as_of`,
-which for `received` and `unreadable` is the buyer's own clock and is new on every re-plan.
+**Identity that survives a retry.** `reporting_status_id` is derived from the whole wire statement,
+`status_as_of` included, so an ID can never come back identical with a different body — which the
+spec reads as an idempotency conflict, not a replay. Retry stability comes from the new optional
+`pendingConsumerStatusStore` instead: it remembers a statement that has been built but not confirmed
+and replays it verbatim. `status_as_of` for `received` is buyer-attributed arrival evidence the spec
+refuses to let a seller substitute publication time for, so it is irreducibly stateful — a stateless
+reconciler cannot reproduce it. Without the store a re-plan is simply a new, valid statement, and
+the chain still ends with exactly one.
+
 `idempotency_key` is likewise derived from the batch body rather than minted per attempt: it is
 documented as _"Exact retries reuse the key and body"_, and a fresh key made the seller's batch
-replay unreachable by construction. Together they make a reconstructed post byte-identical to the one
-whose response was lost, so the seller replays it instead of appending a second statement. The leaf
-stays in the ID derivation on purpose — it is stable across attempts at the same claim, and it keeps
-a claim that genuinely recurs later in a chain (`received`, then `unreadable` after a flaky read,
-then `received` again) from colliding with the earlier identical one.
+replay unreachable by construction. Both hashes use RFC 8785 JCS rather than the module's local
+canonical-form helper, whose `localeCompare` key ordering is ICU-dependent and so would not
+reproduce byte-identically in another process. The leaf stays in the ID derivation on purpose — it
+is stable across attempts at the same claim, and it keeps a claim that genuinely recurs later in a
+chain (`received`, then `unreadable` after a flaky read, then `received` again) from colliding with
+the earlier identical one.
 
 **Row-level mismatch codes are reachable.** Detection runs a second time once the rows are in hand,
 so `metric_missing` and the other row-gated codes can fire through the reconciler at all. Only
@@ -83,6 +89,19 @@ rejections with the errors the seller returned, so a partial-success batch never
 Without the client method the reconciler still plans everything and reports it, so existing adopters
 are unaffected.
 
+**Wiring order.** Four optional pieces each independently decide whether anything is posted:
+
+1. `ExpectedReportingPeriod.automatedRecoveryWindowSeconds` — without it nothing is ever `overdue`.
+2. `ExpectedReportingPeriod.deliverySlaSeconds` — needed to date `obligation_missing`, where there is
+   no obligation to read `expected_at` from. Add `officialAfterSeconds` for official-finality
+   generations against a seller that advertises one.
+3. `client.getMediaBuyDelivery` — without it `received` / `content_mismatch` come back
+   `suppressed: 'consumption_unavailable'`.
+4. `client.syncReportingStatus` — without it nothing posts.
+
+Anything planned but not posted says why in `suppressed` and `reason`, so a misconfiguration reads
+as a misconfiguration rather than as a quiet steady state.
+
 **Failures stay data, not exceptions.** A batch write that fails records every statement in it on
 `failedConsumerStatuses` and stops posting, rather than throwing: a throw from the second batch
 discarded the record of everything the first had already appended, and those statements are durably
@@ -91,6 +110,10 @@ runs out mid-run, the remaining revisions come back `suppressed: 'budget_exhaust
 `unreadable` / `transport_failed` — a limit the buyer set is not evidence that the seller published
 bytes it could not consume, and a self-inflicted negative claim pins the caller's own view at
 `action_required`.
+
+**Compile-visible changes.** Behaviour is additive for existing callers, but `ReportingLedger` gains
+an optional `consumerStatuses` and `ReportingConsumerStatusPlanV1.statusAsOf` is now optional —
+anyone reading that field off a plan they did not attest needs a narrowing check.
 
 **Surfacing.** `consumerStatusPending` carries the seller's own count of obligations past the buyer's
 deadline with no current status; a failed read leaves it `undefined` rather than failing

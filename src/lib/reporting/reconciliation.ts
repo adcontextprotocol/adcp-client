@@ -32,6 +32,15 @@ import {
 /** `sync-reporting-status-request.json` caps `statuses` at 100 per batch. */
 const CONSUMER_STATUS_BATCH_MAX = 100;
 
+/**
+ * Ceiling on the accumulated rows of one revision read, in approximate bytes.
+ *
+ * `maxRecords` bounds the row *count*; this bounds their size, which is the
+ * dimension a seller actually controls. Exceeding it is a buyer-side budget,
+ * so it suppresses rather than accusing.
+ */
+const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
+
 // Runtime guards keep these evidence-bearing fields optional at the boundary so
 // malformed or older seller payloads fail with reconciliation diagnostics rather
 // than an unchecked property access.
@@ -139,7 +148,7 @@ export interface ReportingReconciliationClient {
       content_sha256?: string;
     };
     reporting_rows?: unknown[];
-    pagination?: { has_more?: boolean; cursor?: string };
+    pagination?: { has_more?: boolean; cursor?: string; total_count?: number };
   }>;
 }
 
@@ -158,13 +167,28 @@ export interface ReportingLedger {
    * see the current leaf's *content* — which is what tells the buyer whether it
    * has anything new to say.
    */
-  consumerStatuses: ReportingConsumerStatus[];
+  consumerStatuses?: ReportingConsumerStatus[];
 }
 
 export interface ReportingLedgerLimits {
+  /** Cursor pages per read. Bounds the ledger walk and each revision row read. */
   maxPages?: number;
+  /** Ledger records (obligations + revisions + adjustments) in one snapshot. */
   maxRecords?: number;
+  /**
+   * Wall-clock budget, applied per read: the ledger walk, each receipt write,
+   * each posting batch, the summary read — and, shared across all of them, the
+   * consumer-status consumption pass.
+   */
   maxLoadMs?: number;
+  /**
+   * Rows accumulated from one exact-revision read. Separate from `maxRecords`,
+   * which bounds *ledger* records: a caller who capped a small ledger at a few
+   * hundred records should not thereby cap every revision read at the same
+   * number. Defaults to 100,000, and exceeding it suppresses the statement
+   * rather than accusing the seller.
+   */
+  maxRevisionRows?: number;
 }
 
 interface ExpectedReportingPeriodBase {
@@ -223,6 +247,19 @@ interface ExpectedReportingPeriodBase {
    * seller.
    */
   deliverySlaSeconds?: number;
+  /**
+   * Offset used instead of `deliverySlaSeconds` when `requiredFinality` is
+   * `official`, if the seller advertises one.
+   *
+   * `reporting-schedule.json` defines only `delivery_sla`, but this repo's own
+   * seller ingest anchors `expected_at` for official-finality generations on a
+   * separate `officialAfterMilliseconds` and rejects a missing-status statement
+   * dated before it. Without a matching pin a buyer on an official generation
+   * posts at `period.end + delivery_sla`, is refused, and — because that
+   * statement takes no clock input — rebuilds the identical body and is refused
+   * again on every run. Leave it unset when the seller does not advertise one.
+   */
+  officialAfterSeconds?: number;
   /**
    * `period.source_timezone` for the accepted generation. Used only when the
    * seller omitted the obligation, since the chain's logical key needs it and
@@ -387,7 +424,7 @@ export interface ReportingConsumerStatusPlanV1 {
    * instant it became true and the superseded leaf's own `status_as_of`, since
    * `time` forbids a chain from moving backwards.
    */
-  earliestStatusAsOf: string;
+  statusAsOfFloor: string;
   /**
    * True until the buyer has consumed the named revision and recomputed its
    * binding digest. `received` and `content_mismatch` both require that
@@ -405,11 +442,24 @@ export interface ReportingConsumerStatusPlanV1 {
    *   guess.
    * - `consumption_unavailable` — no exact-revision reader is wired, so the
    *   buyer cannot honestly attest consumption.
-   * - `budget_exhausted` — the buyer's own read budget ran out before it could
-   *   consume the revision. Self-inflicted, so it is silence rather than an
-   *   `unreadable` claim against a seller that did nothing wrong.
+   * - `local_budget_exhausted` — the buyer's own read budget ran out before it
+   *   could consume the revision. Self-inflicted, so it is silence rather than
+   *   an `unreadable` claim against a seller that did nothing wrong.
+   * - `deadline_unknown` — a pin the buyer has to supply is missing, so no
+   *   posting deadline exists. Without this value a permanent misconfiguration
+   *   renders exactly like a period that is simply not due yet; `reason` names
+   *   the missing pin.
+   * - `chain_indeterminate` — the seller's revision chain forked, or the buyer
+   *   could not walk it. That is the buyer failing to read, not the seller
+   *   failing to publish, and `revision_missing` would blame the wrong party.
    */
-  suppressed?: 'unchanged' | 'leaf_undisclosed' | 'consumption_unavailable' | 'budget_exhausted';
+  suppressed?:
+    | 'unchanged'
+    | 'leaf_undisclosed'
+    | 'consumption_unavailable'
+    | 'local_budget_exhausted'
+    | 'deadline_unknown'
+    | 'chain_indeterminate';
   /** Why this status, in adopter-readable terms. Never a measurement claim. */
   reason: string;
 }
@@ -467,7 +517,9 @@ export interface ReportingReconciliationResult {
    * The seller's own count of obligations past the buyer's posting deadline
    * with no current status from this caller. Surfaced verbatim; it is a
    * visibility count over the buyer's silence and never a health input.
-   * `undefined` when the seller does not advertise `consumer_status_task`.
+   * `undefined` when the read could not establish it: the client carries no
+   * `syncReportingStatus` (so this seller is not running the loop), the seller
+   * omitted the field, or the summary read failed.
    */
   consumerStatusPending?: number;
   /** Seller-reported issues, with escalation destination attached. */
@@ -1492,15 +1544,46 @@ function planReportingConsumerStatuses(
             ? 'the independently expected period is absent from the seller ledger'
             : 'no obligation in the ledger matches this expected period',
         },
-        leaf
+        leaf,
+        now
       );
     }
 
     const obligation = obligationForPeriod;
     const selected = selectCurrent(obligation, ledger, expected);
     const revision = selected.revision;
-
     if (!revision) {
+      // A chain the buyer could not resolve is not the same claim as a period
+      // the seller never published for. Saying `revision_missing` because the
+      // chain forked blames the seller for the buyer's own read.
+      // `MISSING_CURRENT_REVISION` alone is the ordinary case — the seller
+      // published nothing for this period — and is a true `revision_missing`.
+      // A fork or an unwalkable predecessor is not.
+      const indeterminate =
+        selected.reasons.includes('AMBIGUOUS_REVISION_CHAIN') ||
+        selected.reasons.includes('REVISION_PREDECESSOR_MISSING');
+      return finalizeConsumerStatusPlan(
+        {
+          ...base,
+          ...schedule,
+          reportingObligationId: obligation.reporting_obligation_id,
+          consumerStatus: 'revision_missing',
+          ...(indeterminate ? { indeterminate: true } : {}),
+          establishedAt,
+          reason: 'the obligation exists but no required revision was available',
+        },
+        leaf,
+        now
+      );
+    }
+
+    // `consumer_status`: revision_missing means no **required** revision was
+    // available. A revision the frozen generation disqualifies — wrong
+    // finality, a contract or coverage the obligation did not accept — is
+    // exactly that, and posting `received` for it would affirmatively clear
+    // the condition this loop exists to surface.
+    const disqualifying = selected.reasons.filter(reason => REVISION_DISQUALIFYING_REASONS.has(reason));
+    if (disqualifying.length > 0) {
       return finalizeConsumerStatusPlan(
         {
           ...base,
@@ -1508,9 +1591,10 @@ function planReportingConsumerStatuses(
           reportingObligationId: obligation.reporting_obligation_id,
           consumerStatus: 'revision_missing',
           establishedAt,
-          reason: 'the obligation exists but no required revision was available',
+          reason: `the published revision does not satisfy the accepted generation (${disqualifying.join(', ')})`,
         },
-        leaf
+        leaf,
+        now
       );
     }
 
@@ -1531,10 +1615,33 @@ function planReportingConsumerStatuses(
         requiresConsumption: true,
         reason: mismatch?.detail ?? 'the named revision is ready to consume and honors every frozen contract fact',
       },
-      leaf
+      leaf,
+      now
     );
   });
 }
+
+/**
+ * `selectCurrent` reasons that disqualify a published revision from being the
+ * one the accepted generation requires.
+ *
+ * Deliberately narrow. Coverage shortfalls, missing metrics, unit
+ * disagreements and period violations all have their own `mismatch_code` under
+ * `content_mismatch`, and routing them here would replace a specific
+ * contradiction the seller can act on with a flat "no revision". What is left
+ * is the set `content_mismatch` has no vocabulary for: wrong finality, a
+ * different pinned definition or schema, or a revision that belongs to another
+ * slice entirely. The buyer's own inability to read the chain is separate
+ * again — that is `chain_indeterminate`.
+ */
+const REVISION_DISQUALIFYING_REASONS = new Set([
+  'FINALITY_NOT_MET',
+  'EXPECTED_FINALITY_POLICY_MISMATCH',
+  'EXPECTED_CONTRACT_MISMATCH',
+  'EXPECTED_CONTRACT_MISSING',
+  'REVISION_SCOPE_MISMATCH',
+  'REVISION_CHAIN_SCOPE_MISMATCH',
+]);
 
 interface ConsumerStatusDraft {
   deliveryConfigId: string;
@@ -1548,6 +1655,10 @@ interface ConsumerStatusDraft {
   deadline?: string;
   overdue: boolean;
   requiresConsumption?: boolean;
+  /** Buyer pin whose absence left this period with no computable deadline. */
+  missingPin?: string;
+  /** The buyer could not resolve the chain, so it must not assert anything. */
+  indeterminate?: boolean;
   /** The instant this statement became true, before the monotonicity floor. */
   establishedAt: string;
   reason: string;
@@ -1567,20 +1678,59 @@ interface ConsumerStatusLeaf {
  */
 function finalizeConsumerStatusPlan(
   draft: ConsumerStatusDraft,
-  leaf: ConsumerStatusLeaf
+  leaf: ConsumerStatusLeaf,
+  now: Date
 ): ReportingConsumerStatusPlanV1 {
-  const earliestStatusAsOf = latestInstant([draft.establishedAt, leaf.statement?.status_as_of]) ?? draft.establishedAt;
-  const { establishedAt: _establishedAt, ...carried } = draft;
+  const statusAsOfFloor =
+    latestInstant([draft.establishedAt, usableLeafInstant(leaf.statement, now)]) ?? draft.establishedAt;
+  const { establishedAt: _establishedAt, missingPin, indeterminate, ...carried } = draft;
   const plan: ReportingConsumerStatusPlanV1 = {
     ...carried,
     ...(leaf.statusId ? { supersedesReportingStatusId: leaf.statusId } : {}),
-    earliestStatusAsOf,
+    statusAsOfFloor,
     // A statement the buyer can already date is dated now; one that still owes
     // a read is left open for `attestConsumerStatusPlan`.
-    ...(draft.requiresConsumption ? {} : { statusAsOf: earliestStatusAsOf }),
+    ...(draft.requiresConsumption ? {} : { statusAsOf: statusAsOfFloor }),
   };
+  if (indeterminate) {
+    return {
+      ...plan,
+      suppressed: 'chain_indeterminate',
+      reason: suppressionReason('chain_indeterminate', plan.reason),
+    };
+  }
+  if (missingPin) {
+    return {
+      ...plan,
+      suppressed: 'deadline_unknown',
+      reason: `no posting deadline: ExpectedReportingPeriod.${missingPin} was not recorded`,
+    };
+  }
   const suppressed = consumerStatusSuppression(plan, leaf);
-  return suppressed ? { ...plan, suppressed } : plan;
+  // `reason` explains the status; once a plan is suppressed it also has to
+  // explain the silence, or a log line built from it reads as a success.
+  return suppressed ? { ...plan, suppressed, reason: suppressionReason(suppressed, plan.reason) } : plan;
+}
+
+/** Say why nothing was posted, without losing why the status was planned. */
+function suppressionReason(
+  suppressed: NonNullable<ReportingConsumerStatusPlanV1['suppressed']>,
+  reason: string
+): string {
+  switch (suppressed) {
+    case 'unchanged':
+      return `not posted: the current leaf already says this (${reason})`;
+    case 'leaf_undisclosed':
+      return 'not posted: the seller named a current status leaf it did not disclose, so the buyer cannot tell whether it has anything new to say';
+    case 'consumption_unavailable':
+      return 'not posted: no exact-revision reader is wired, so consumption cannot be attested';
+    case 'local_budget_exhausted':
+      return "not posted: the buyer's own ledgerLimits read budget ran out before the revision could be consumed";
+    case 'chain_indeterminate':
+      return 'not posted: the revision chain could not be resolved to one current revision, which is the buyer failing to read rather than the seller failing to publish';
+    default:
+      return reason;
+  }
 }
 
 /** Why this statement must not be posted, or `undefined` when it may be. */
@@ -1589,6 +1739,11 @@ function consumerStatusSuppression(
   leaf: ConsumerStatusLeaf
 ): ReportingConsumerStatusPlanV1['suppressed'] {
   if (leaf.undisclosed) return 'leaf_undisclosed';
+  // Before attestation a consumption plan has no digest yet, so the comparison
+  // would test `undefined` against the leaf's recorded one and suppress a
+  // statement whose content has not been established. `withSuppression` runs
+  // the same test again once the digest exists.
+  if (plan.requiresConsumption) return undefined;
   if (leaf.statement && sameConsumerStatement(plan, leaf.statement)) return 'unchanged';
   return undefined;
 }
@@ -1606,12 +1761,24 @@ function consumerStatusSuppression(
  * shows up as a different `consumer_status`.
  */
 function sameConsumerStatement(plan: ReportingConsumerStatusPlanV1, statement: ReportingConsumerStatus): boolean {
+  // The digest is in the comparison because it is the one fact in this whole
+  // loop the buyer established itself. A seller that rewrites a revision's
+  // bytes under a stable `reporting_revision_id` is committing the
+  // immutability violation `observed_revision_content_sha256` exists to catch,
+  // and leaving the digest out of the churn guard would suppress the very
+  // supersession that reports it.
   return (
     statement.consumer_status === plan.consumerStatus &&
     (statement.reporting_revision_id ?? undefined) === plan.reportingRevisionId &&
     (statement.mismatch_code ?? undefined) === plan.mismatchCode &&
-    (statement.failure_code ?? undefined) === plan.failureCode
+    (statement.failure_code ?? undefined) === plan.failureCode &&
+    sameOptionalSha256(statement.observed_revision_content_sha256, plan.observedRevisionContentSha256)
   );
+}
+
+function sameOptionalSha256(left: string | undefined, right: string | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return sameSha256(left, right);
 }
 
 /**
@@ -1674,7 +1841,10 @@ function reportingExpectedAt(
 ): string | undefined {
   const declared = obligation?.expected_at;
   if (typeof declared === 'string' && Number.isFinite(Date.parse(declared))) return declared;
-  const slaSeconds = expected.deliverySlaSeconds;
+  const slaSeconds =
+    expected.requiredFinality === 'official' && typeof expected.officialAfterSeconds === 'number'
+      ? expected.officialAfterSeconds
+      : expected.deliverySlaSeconds;
   const periodEnd = Date.parse(expected.periodEnd);
   if (typeof slaSeconds !== 'number' || !Number.isFinite(slaSeconds) || slaSeconds < 0) return undefined;
   if (!Number.isFinite(periodEnd)) return undefined;
@@ -1693,26 +1863,52 @@ function consumerStatusSchedule(
   expectedAt: string | undefined,
   expected: ExpectedReportingPeriod,
   now: Date
-): { deadline?: string; overdue: boolean } {
+): { deadline?: string; overdue: boolean; missingPin?: string } {
   const windowSeconds = expected.automatedRecoveryWindowSeconds;
-  if (expectedAt === undefined) return { overdue: false };
+  if (expectedAt === undefined) return { overdue: false, missingPin: 'deliverySlaSeconds' };
   if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds < 0) {
-    return { overdue: false };
+    return { overdue: false, missingPin: 'automatedRecoveryWindowSeconds' };
   }
   const deadline = new Date(Date.parse(expectedAt) + windowSeconds * 1_000).toISOString();
   return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
+}
+
+const RFC3339_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/** Strip control characters and bound any string headed for an adopter's log. */
+function boundedDiagnostic(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, 256);
 }
 
 /** Latest of a set of possibly-absent RFC 3339 instants. */
 function latestInstant(values: ReadonlyArray<string | undefined>): string | undefined {
   let latest: string | undefined;
   for (const value of values) {
-    if (typeof value !== 'string') continue;
+    if (typeof value !== 'string' || !RFC3339_INSTANT.test(value)) continue;
     const parsed = Date.parse(value);
     if (!Number.isFinite(parsed)) continue;
     if (latest === undefined || parsed > Date.parse(latest)) latest = value;
   }
   return latest;
+}
+
+/**
+ * The superseded leaf's `status_as_of`, only when the buyer could plausibly
+ * have issued it.
+ *
+ * `time` floors a new statement at the leaf's instant, and the leaf is a record
+ * the *seller* hands back. Adopting it unchecked lets a seller — or one with a
+ * skewed clock — date the buyer's own durable statement arbitrarily far into
+ * the future and, because the floor applies to every later statement, poison
+ * the chain permanently. A leaf the buyer could not have issued is the same
+ * class of problem as one the seller never disclosed.
+ */
+function usableLeafInstant(statement: ReportingConsumerStatus | undefined, now: Date): string | undefined {
+  const value = statement?.status_as_of;
+  if (typeof value !== 'string' || !RFC3339_INSTANT.test(value)) return undefined;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed) || parsed > now.getTime()) return undefined;
+  return value;
 }
 
 /** Facts the accepted generation froze, drawn from the obligation plus the buyer's own pins. */
@@ -1745,17 +1941,17 @@ function collectReportingEscalations(
   const escalations: ReportingEscalationV1[] = [];
   for (const obligation of ledger.obligations) {
     for (const issue of (obligation as { issues?: Array<Record<string, unknown>> }).issues ?? []) {
-      const recommendedAction = String(issue.recommended_action ?? '');
+      const recommendedAction = boundedDiagnostic(String(issue.recommended_action ?? ''));
       escalations.push({
         reportingObligationId: obligation.reporting_obligation_id,
-        issueId: String(issue.issue_id ?? ''),
-        code: String(issue.code ?? ''),
-        severity: String(issue.severity ?? ''),
-        responsibleParty: String(issue.responsible_party ?? ''),
+        issueId: boundedDiagnostic(String(issue.issue_id ?? '')),
+        code: boundedDiagnostic(String(issue.code ?? '')),
+        severity: boundedDiagnostic(String(issue.severity ?? '')),
+        responsibleParty: boundedDiagnostic(String(issue.responsible_party ?? '')),
         recommendedAction,
         ...(typeof issue.opened_at === 'string' ? { openedAt: issue.opened_at } : {}),
         ...(typeof issue.issue_state === 'string' ? { issueState: issue.issue_state } : {}),
-        ...(typeof issue.external_ref === 'string' ? { externalRef: issue.external_ref } : {}),
+        ...(typeof issue.external_ref === 'string' ? { externalRef: boundedDiagnostic(issue.external_ref) } : {}),
         ...(typeof issue.reporting_status_id === 'string' ? { reportingStatusId: issue.reporting_status_id } : {}),
         ...(operationsContact ? { operationsContact } : {}),
         requiresHumanContact: recommendedAction.startsWith('contact_'),
@@ -2188,7 +2384,10 @@ export async function reconcileReporting<TCredential = unknown>(
     );
   }
 
-  const evaluated = evaluateReportingLedger(ledger, options.expectedPeriods, options.now, options.operationsContact);
+  // One clock for the whole run: planning, attestation and every timestamp the
+  // buyer puts its name to come from here.
+  const now = options.now ?? new Date();
+  const evaluated = evaluateReportingLedger(ledger, options.expectedPeriods, now, options.operationsContact);
 
   // rc.3 buyer duty: a current status is owed by `expected_at` plus the
   // seller's advertised recovery window — not merely before the scope closes.
@@ -2206,22 +2405,65 @@ export async function reconcileReporting<TCredential = unknown>(
       attested.push(plan);
       continue;
     }
-    if (budgetExhausted || (plan.requiresConsumption && Date.now() >= readDeadline)) {
-      attested.push(plan.requiresConsumption ? { ...plan, suppressed: 'budget_exhausted' } : plan);
+    // A plan suppressed before attestation is not going to be posted whatever
+    // the read says, so reading would only spend the shared budget that later
+    // revisions need. `unchanged` is deliberately *not* decided before
+    // attestation — that comparison includes the recomputed digest, which is
+    // how a revision rewritten under a stable id gets caught.
+    if (plan.suppressed !== undefined) {
+      attested.push(plan);
       continue;
     }
-    const next = await attestConsumerStatusPlan(plan, ledger, options, readDeadline);
+    if (budgetExhausted || (plan.requiresConsumption && Date.now() >= readDeadline)) {
+      attested.push(
+        plan.requiresConsumption
+          ? {
+              ...plan,
+              suppressed: 'local_budget_exhausted' as const,
+              reason: suppressionReason('local_budget_exhausted', plan.reason),
+            }
+          : plan
+      );
+      continue;
+    }
+    const next = await attestConsumerStatusPlan(plan, ledger, options, readDeadline, now);
     // Only the shared wall-clock budget stops the loop; a per-revision page or
     // record limit is that revision's problem alone.
-    if (next.suppressed === 'budget_exhausted' && next.budgetScope === 'run') budgetExhausted = true;
+    if (next.suppressed === 'local_budget_exhausted' && next.budgetScope === 'run') budgetExhausted = true;
     const { budgetScope: _scope, ...carried } = next;
     attested.push(carried);
   }
   const consumerStatuses = attested;
-  const owed = consumerStatuses.filter(plan => plan.overdue && plan.suppressed === undefined);
   const postedConsumerStatuses: ReportingConsumerStatusPlanV1[] = [];
   const failedConsumerStatuses: ReportingReconciliationResult['failedConsumerStatuses'] = [];
   const confirmed: ReportingPendingConsumerStatusKey[] = [];
+  // `batch_identity`: "A batch MUST contain at most one statement for each
+  // logical chain ... sellers reject every duplicate-chain entry in that batch
+  // without evaluating their supersession order." Two expected periods can
+  // differ on fields the chain key does not carry (destination, feed purpose,
+  // coverage) and still collapse onto one chain, so posting both guarantees
+  // that neither lands — every run, forever.
+  const owed: ReportingConsumerStatusPlanV1[] = [];
+  const claimedChains = new Set<string>();
+  for (const plan of consumerStatuses) {
+    if (!plan.overdue || plan.suppressed !== undefined) continue;
+    const chain = canonical(pendingConsumerStatusKey(ledger.accountId, plan));
+    if (claimedChains.has(chain)) {
+      failedConsumerStatuses.push({
+        plan,
+        errors: [
+          {
+            code: 'DUPLICATE_STATUS_CHAIN',
+            message:
+              'two expected periods resolve to one consumer-status chain; a batch may carry at most one statement per chain',
+          },
+        ],
+      });
+      continue;
+    }
+    claimedChains.add(chain);
+    owed.push(plan);
+  }
   if (owed.length > 0 && options.client.syncReportingStatus) {
     // One batch per request, up to the schema's maxItems, each with its own
     // budget — matching the receipt path. A single budget shared across every
@@ -2235,17 +2477,28 @@ export async function reconcileReporting<TCredential = unknown>(
       // and a body that changed under a stable claim is what turns a retry into
       // an idempotency conflict.
       const wireStatuses: Record<string, unknown>[] = [];
+      // Parallel to `wireStatuses`: the plan each one actually carries, which
+      // is not always the freshly re-planned object.
+      const posted: ReportingConsumerStatusPlanV1[] = [];
       for (const plan of batch) {
         const key = pendingConsumerStatusKey(ledger.accountId, plan);
         const fingerprint = consumerStatusClaimFingerprint(plan);
         const pending = await options.pendingConsumerStatusStore?.get(key);
-        if (pending && pending.claimFingerprint === fingerprint) {
+        // A stored blob is durable state from an earlier process. Replaying it
+        // unchecked would bypass every guard in `wireConsumerStatus` and post
+        // whatever the store happens to hold, so it is re-verified against the
+        // plan it stands in for. The posted record also takes the replayed
+        // body's `status_as_of`, so the result reports what went on the wire
+        // rather than the instant this run happened to re-derive.
+        if (pending && pending.claimFingerprint === fingerprint && replayMatchesPlan(pending.statement, plan)) {
           wireStatuses.push(pending.statement);
+          posted.push({ ...plan, statusAsOf: String(pending.statement.status_as_of) });
           continue;
         }
         const statement = wireConsumerStatus(plan);
         await options.pendingConsumerStatusStore?.put(key, { statement, claimFingerprint: fingerprint });
         wireStatuses.push(statement);
+        posted.push(plan);
       }
       // A batch that fails is recorded and ends the loop rather than thrown.
       // Throwing from the second batch discarded the record of everything the
@@ -2270,8 +2523,8 @@ export async function reconcileReporting<TCredential = unknown>(
       } catch (error) {
         recordConsumerStatusBatchFailure(
           failedConsumerStatuses,
-          batch,
-          error instanceof Error ? error.message : 'sync_reporting_status failed'
+          posted.length === batch.length ? posted : batch,
+          boundedDiagnostic(error instanceof Error ? error.message : 'sync_reporting_status failed')
         );
         break;
       }
@@ -2288,7 +2541,7 @@ export async function reconcileReporting<TCredential = unknown>(
       // not be reported as posted and must not discard its successful peers.
       // A rejection is carried out with its errors rather than dropped — a
       // buyer that silently loses one believes it discharged a duty it did not.
-      batch.forEach((plan, index) => {
+      posted.forEach((plan, index) => {
         const result = results[index] as
           | { result?: string; reporting_status_id?: unknown; errors?: unknown }
           | undefined;
@@ -2303,7 +2556,9 @@ export async function reconcileReporting<TCredential = unknown>(
         failedConsumerStatuses.push({
           plan,
           ...(typeof result?.reporting_status_id === 'string' ? { reportingStatusId: result.reporting_status_id } : {}),
-          errors: Array.isArray(result?.errors) ? result.errors : [],
+          // Bounded: seller objects of arbitrary size and shape that land
+          // wherever the adopter logs its reconciliation result.
+          errors: Array.isArray(result?.errors) ? result.errors.slice(0, 16) : [],
         });
       });
     }
@@ -2368,16 +2623,28 @@ async function attestConsumerStatusPlan(
   plan: ReportingConsumerStatusPlanV1,
   ledger: ReportingLedger,
   options: ReconcileReportingOptions,
-  deadline: number
+  deadline: number,
+  now: Date
 ): Promise<AttestedConsumerStatusPlan> {
   if (!plan.requiresConsumption || !plan.reportingRevisionId) return plan;
-  if (!options.client.getMediaBuyDelivery) return { ...plan, suppressed: 'consumption_unavailable' };
+  if (!options.client.getMediaBuyDelivery) {
+    return {
+      ...plan,
+      suppressed: 'consumption_unavailable',
+      reason: suppressionReason('consumption_unavailable', plan.reason),
+    };
+  }
 
-  const outcome = await consumeReportingRevision(options, plan.reportingRevisionId, deadline);
+  const outcome = await consumeReportingRevision(options, plan.reportingRevisionId, deadline, now);
   const leaf = currentConsumerLeaf(ledger, plan, plan.supersedesReportingStatusId);
 
   if ('budgetExhausted' in outcome) {
-    return { ...plan, suppressed: 'budget_exhausted', budgetScope: outcome.budgetExhausted };
+    return {
+      ...plan,
+      suppressed: 'local_budget_exhausted',
+      reason: suppressionReason('local_budget_exhausted', plan.reason),
+      budgetScope: outcome.budgetExhausted,
+    };
   }
 
   if ('failureCode' in outcome) {
@@ -2389,7 +2656,7 @@ async function attestConsumerStatusPlan(
         mismatchCode: undefined,
         observedRevisionContentSha256: undefined,
         requiresConsumption: false,
-        statusAsOf: latestInstant([new Date().toISOString(), plan.earliestStatusAsOf]) ?? plan.earliestStatusAsOf,
+        statusAsOf: latestInstant([now.toISOString(), plan.statusAsOfFloor]) ?? plan.statusAsOfFloor,
         reason: outcome.detail,
       },
       leaf
@@ -2411,7 +2678,7 @@ async function attestConsumerStatusPlan(
         mismatchCode: undefined,
         observedRevisionContentSha256: undefined,
         requiresConsumption: false,
-        statusAsOf: latestInstant([outcome.consumedAt, plan.earliestStatusAsOf]) ?? plan.earliestStatusAsOf,
+        statusAsOf: latestInstant([outcome.consumedAt, plan.statusAsOfFloor]) ?? plan.statusAsOfFloor,
         reason: 'the consumed rows do not hash to the revision_content_sha256 the ledger declares',
       },
       leaf
@@ -2453,7 +2720,7 @@ async function attestConsumerStatusPlan(
       // `status_as_of` is when the revision became consumable to *this*
       // consumer, floored by the superseded leaf so the chain never moves
       // backwards.
-      statusAsOf: latestInstant([outcome.consumedAt, plan.earliestStatusAsOf]) ?? plan.earliestStatusAsOf,
+      statusAsOf: latestInstant([outcome.consumedAt, plan.statusAsOfFloor]) ?? plan.statusAsOfFloor,
       reason: mismatch?.detail ?? 'the exact revision content was consumed and honors every frozen contract fact',
     },
     leaf
@@ -2470,7 +2737,9 @@ type AttestedConsumerStatusPlan = ReportingConsumerStatusPlanV1 & { budgetScope?
 /** Re-apply the unchanged/undisclosed test after a plan's meaning has changed. */
 function withSuppression(plan: ReportingConsumerStatusPlanV1, leaf: ConsumerStatusLeaf): ReportingConsumerStatusPlanV1 {
   const suppressed = consumerStatusSuppression(plan, leaf);
-  return suppressed ? { ...plan, suppressed } : { ...plan, suppressed: undefined };
+  if (suppressed) return { ...plan, suppressed, reason: suppressionReason(suppressed, plan.reason) };
+  const { suppressed: _cleared, ...unsuppressed } = plan;
+  return unsuppressed;
 }
 
 /**
@@ -2483,12 +2752,15 @@ function withSuppression(plan: ReportingConsumerStatusPlanV1, leaf: ConsumerStat
 async function consumeReportingRevision(
   options: ReconcileReportingOptions,
   reportingRevisionId: string,
-  deadline: number
+  deadline: number,
+  now: Date
 ): Promise<ConsumedReportingRevisionV1 | UnconsumableReportingRevisionV1 | ExhaustedReportingReadBudgetV1> {
   const read = options.client.getMediaBuyDelivery!;
   const maxPages = options.ledgerLimits?.maxPages ?? 1_000;
-  const maxRows = options.ledgerLimits?.maxRecords ?? 100_000;
+  const maxRows = options.ledgerLimits?.maxRevisionRows ?? 100_000;
   const rows: unknown[] = [];
+  let bytes = 0;
+  let totalCount: number | undefined;
   const seenCursors = new Set<string>();
   let binding:
     | {
@@ -2539,12 +2811,16 @@ async function consumeReportingRevision(
         return { failureCode: 'integrity_mismatch', detail: 'the revision binding changed between cursor pages' };
       }
       binding = page;
-      for (const row of response.reporting_rows ?? []) rows.push(row);
-      if (rows.length > maxRows) {
-        return {
-          failureCode: 'transport_failed',
-          detail: 'the revision row read exceeded the configured record limit',
-        };
+      if (typeof response.pagination?.total_count === 'number') totalCount = response.pagination.total_count;
+      // Bounded by size as well as by count: 100,000 rows is a count budget a
+      // ten-kilobyte row walks straight through, and everything here is
+      // accumulated in memory and then serialized again by `canonicalize`.
+      for (const row of response.reporting_rows ?? []) {
+        rows.push(row);
+        bytes += approximateRowBytes(row);
+        if (rows.length > maxRows || bytes > MAX_CONSUMED_REVISION_BYTES) {
+          return { budgetExhausted: 'revision' };
+        }
       }
       if (response.pagination?.has_more) {
         const next = response.pagination.cursor;
@@ -2568,11 +2844,18 @@ async function consumeReportingRevision(
     return { failureCode: 'transport_failed', detail: 'the exact-revision read failed before the rows were complete' };
   }
 
-  // Taken after the last page lands: this is when the revision actually became
-  // consumable to this consumer, which is what `status_as_of` means.
-  const consumedAt = new Date().toISOString();
+  // The run's own clock, not a second one: `options.now` is where every other
+  // instant in this reconcile comes from, and a statement dated off a different
+  // clock cannot be reasoned about against the leaf it supersedes.
+  const consumedAt = now.toISOString();
   if (!binding) {
     return { failureCode: 'reader_incompatible', detail: 'the exact-revision read returned no binding' };
+  }
+  if (totalCount !== undefined && totalCount !== binding.row_count) {
+    return {
+      failureCode: 'integrity_mismatch',
+      detail: `the read declares ${totalCount} total rows and the binding declares ${binding.row_count}`,
+    };
   }
   if (rows.length !== binding.row_count) {
     return {
@@ -2580,17 +2863,25 @@ async function consumeReportingRevision(
       detail: `the revision declares ${binding.row_count} rows and the read returned ${rows.length}`,
     };
   }
-  const digest = createHash('sha256')
-    .update(
-      canonicalize({
-        reporting_revision_id: reportingRevisionId,
-        row_count: binding.row_count,
-        control_totals: binding.control_totals,
-        reporting_rows: rows,
-      }),
-      'utf8'
-    )
-    .digest('hex');
+  let digest: string;
+  try {
+    // Inside the guard: `canonicalize` builds the whole binding object as one
+    // string, and a `RangeError` escaping here would abort `reconcileReporting`
+    // outright, discarding receipts and statuses this run already appended.
+    digest = createHash('sha256')
+      .update(
+        canonicalize({
+          reporting_revision_id: reportingRevisionId,
+          row_count: binding.row_count,
+          control_totals: binding.control_totals,
+          reporting_rows: rows,
+        }),
+        'utf8'
+      )
+      .digest('hex');
+  } catch {
+    return { budgetExhausted: 'revision' };
+  }
   if (!sameSha256(digest, binding.content_sha256)) {
     return {
       failureCode: 'integrity_mismatch',
@@ -2598,6 +2889,23 @@ async function consumeReportingRevision(
     };
   }
   return { digest, consumedAt, rowCount: rows.length, rows };
+}
+
+/**
+ * Cheap upper bound on a row's in-memory cost.
+ *
+ * Deliberately approximate and deliberately cheap: the point is to stop an
+ * unbounded accumulation, not to measure it, and a serializing measurement
+ * would itself be the cost being guarded against.
+ */
+function approximateRowBytes(row: unknown): number {
+  if (typeof row === 'string') return row.length * 2;
+  if (row === null || typeof row !== 'object') return 16;
+  let total = 32;
+  for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
+    total += key.length * 2 + (typeof value === 'string' ? value.length * 2 : 16);
+  }
+  return total;
 }
 
 /**
@@ -2637,6 +2945,33 @@ function rowEvidenceFor(
   return { observedMetricNames: [...observed] };
 }
 
+/**
+ * Whether a remembered statement still describes the plan it is replayed for.
+ *
+ * The claim fingerprint already covers the semantic fields; this re-checks them
+ * on the serialized statement itself, so a store entry that was corrupted,
+ * crossed between tenants, or written by a different version cannot be posted
+ * as this buyer's durable claim.
+ */
+function replayMatchesPlan(statement: Record<string, unknown>, plan: ReportingConsumerStatusPlanV1): boolean {
+  const period = statement.period as { start?: unknown; end?: unknown; source_timezone?: unknown } | undefined;
+  return (
+    statement.delivery_config_id === plan.deliveryConfigId &&
+    statement.delivery_config_version === plan.deliveryConfigVersion &&
+    statement.report_definition_id === plan.reportDefinitionId &&
+    period?.start === plan.period.start &&
+    period?.end === plan.period.end &&
+    period?.source_timezone === plan.period.source_timezone &&
+    statement.consumer_status === plan.consumerStatus &&
+    (statement.reporting_revision_id ?? undefined) === plan.reportingRevisionId &&
+    (statement.mismatch_code ?? undefined) === plan.mismatchCode &&
+    (statement.failure_code ?? undefined) === plan.failureCode &&
+    (statement.supersedes_reporting_status_id ?? undefined) === plan.supersedesReportingStatusId &&
+    typeof statement.reporting_status_id === 'string' &&
+    typeof statement.status_as_of === 'string'
+  );
+}
+
 /** Record a whole-batch failure per statement, so none of it is lost. */
 function recordConsumerStatusBatchFailure(
   failed: ReportingReconciliationResult['failedConsumerStatuses'],
@@ -2672,7 +3007,7 @@ function recordConsumerStatusBatchFailure(
  */
 function consumerStatusId(plan: ReportingConsumerStatusPlanV1): string {
   return `adcp-sdk.${createHash('sha256')
-    .update(canonical([...consumerStatusClaim(plan), plan.statusAsOf ?? null]))
+    .update(canonicalize([...consumerStatusClaim(plan), plan.statusAsOf ?? null]))
     .digest('hex')
     .slice(0, 32)}`;
 }
@@ -2696,7 +3031,7 @@ function consumerStatusClaim(plan: ReportingConsumerStatusPlanV1): unknown[] {
 /** Identity of the *claim*, deciding whether a pending statement still applies. */
 function consumerStatusClaimFingerprint(plan: ReportingConsumerStatusPlanV1): string {
   return createHash('sha256')
-    .update(canonical(consumerStatusClaim(plan)))
+    .update(canonicalize(consumerStatusClaim(plan)))
     .digest('hex');
 }
 
@@ -2725,7 +3060,10 @@ function pendingConsumerStatusKey(
  * condition.
  */
 function consumerStatusBatchKey(statuses: ReadonlyArray<Record<string, unknown>>): string {
-  return `adcp-sdk-batch.${createHash('sha256').update(canonical(statuses)).digest('hex').slice(0, 32)}`;
+  // RFC 8785, not the local `canonical()` helper: that one orders keys with
+  // `localeCompare`, which is ICU- and locale-dependent, and these hashes have
+  // to come out byte-identical in a different process for a retry to replay.
+  return `adcp-sdk-batch.${createHash('sha256').update(canonicalize(statuses)).digest('hex').slice(0, 32)}`;
 }
 
 /** Project a planned status onto the `sync_reporting_status` wire shape. */
@@ -2757,10 +3095,10 @@ function wireConsumerStatus(plan: ReportingConsumerStatusPlanV1): Record<string,
     report_definition_id: plan.reportDefinitionId,
     period: plan.period,
     consumer_status: plan.consumerStatus,
-    // The buyer's own instant, deliberately outside the ID derivation above:
-    // for `received` the spec wants when the revision became consumable to this
-    // consumer, which moves between re-plans, and an ID that moved with it
-    // could never be reused by a retry.
+    // The buyer's own instant, and part of the ID derivation above so the two
+    // can never disagree. For `received` the spec wants when the revision
+    // became consumable to this consumer, which genuinely moves between
+    // re-plans; `pendingConsumerStatusStore` is what makes a retry reuse it.
     status_as_of: plan.statusAsOf,
     ...(plan.reportingObligationId ? { reporting_obligation_id: plan.reportingObligationId } : {}),
     ...(plan.reportingRevisionId ? { reporting_revision_id: plan.reportingRevisionId } : {}),

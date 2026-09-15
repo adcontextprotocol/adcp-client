@@ -4,6 +4,7 @@ export type {
   ReportingContentMismatchV1,
   ReportingContractFactsV1,
   ReportingMismatchCodeV1,
+  ReportingRowEvidenceV1,
 } from './content-mismatch';
 export {
   ReportingReconciliationError,

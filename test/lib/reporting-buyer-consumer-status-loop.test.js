@@ -562,7 +562,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const result = await seller.reconcile(at, expected, { ledgerLimits: { maxPages: 1 } });
     assert.deepEqual(result.postedConsumerStatuses, []);
     assert.deepEqual(result.failedConsumerStatuses, []);
-    assert.equal(result.consumerStatuses[0].suppressed, 'budget_exhausted');
+    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
     assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
     assert.equal(seller.store.consumerStatements.length, 0, 'nothing was said at all');
   });
@@ -711,7 +711,7 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     const first = byPeriod.get(new Date(seller.anchor).toISOString());
     const second = byPeriod.get(new Date(seller.anchor + DAY).toISOString());
 
-    assert.equal(first.suppressed, 'budget_exhausted');
+    assert.equal(first.suppressed, 'local_budget_exhausted');
     assert.equal(second.suppressed, undefined, 'the healthy revision was still read');
     assert.equal(second.consumerStatus, 'received');
     assert.equal(second.observedRevisionContentSha256, revisions[1].wireRevision.revision_content_sha256);
@@ -756,6 +756,150 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.equal(result.postedConsumerStatuses.length, 100);
     assert.equal(result.failedConsumerStatuses.length, 1);
     assert.match(result.failedConsumerStatuses[0].errors[0].message, /gateway timeout/);
+  });
+
+  test('a buyer-set record limit suppresses instead of accusing the seller', async () => {
+    const seller = await harness({
+      rows: [
+        { media_buy_id: 'fixture-media-buy', impressions: 3, spend: '1.2500' },
+        { media_buy_id: 'fixture-media-buy', impressions: 4, spend: '1.5000' },
+      ],
+    });
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // maxRecords is the buyer's own knob. Exceeding it used to post
+    // unreadable/transport_failed, pinning the buyer's view at action_required
+    // against a seller whose revision was perfectly readable.
+    const result = await seller.reconcile(at, expected, { ledgerLimits: { maxRevisionRows: 1 } });
+
+    assert.deepEqual(result.postedConsumerStatuses, []);
+    assert.deepEqual(result.failedConsumerStatuses, []);
+    assert.equal(result.consumerStatuses[0].suppressed, 'local_budget_exhausted');
+    assert.notEqual(result.consumerStatuses[0].consumerStatus, 'unreadable');
+    assert.equal(seller.store.consumerStatements.length, 0);
+  });
+
+  test('a revision that does not meet required_finality is revision_missing, not received', async () => {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // The generation requires an official revision; the seller has published
+    // only a snapshot. Posting `received` would affirmatively clear the exact
+    // condition this loop exists to surface.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return { ...page, periods: page.periods.map(period => ({ ...period, required_finality: 'official' })) };
+    };
+    const expected = [expectedPeriod(seller.request, seller.anchor, { requiredFinality: 'official' })];
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.consumerStatus, 'revision_missing');
+    assert.match(plan.reason, /FINALITY_NOT_MET/);
+    assert.equal(plan.reportingRevisionId, undefined, 'the schema forbids naming a revision here');
+  });
+
+  test('a leaf the seller dates in the future does not become the buyer floor', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    await seller.reconcile(at, expected);
+    assert.equal(seller.store.consumerStatements.length, 1);
+
+    // `time` floors a new statement at the leaf's status_as_of, and the leaf is
+    // a record the seller hands back. Adopting it unchecked lets a seller date
+    // the buyer's own durable statement arbitrarily far ahead — and the floor
+    // then applies to every later statement on the chain, permanently.
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + 4 * HOUR), maxIterations: 2 });
+    seller.observeAt(seller.anchor + DAY + 5 * HOUR);
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        consumer_statuses: (page.consumer_statuses ?? []).map(statement => ({
+          ...statement,
+          status_as_of: '9999-01-01T00:00:00.000Z',
+        })),
+      };
+    };
+
+    const result = await seller.reconcile(seller.anchor + DAY + 5 * HOUR, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    const posted = result.postedConsumerStatuses[0];
+    assert.equal(posted.consumerStatus, 'received');
+    assert.ok(Date.parse(posted.statusAsOf) < Date.parse('9999-01-01T00:00:00.000Z'));
+    // Accepted by the real seller, which rejects unreasonable future timestamps.
+    assert.deepEqual(result.failedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements.length, 2);
+  });
+
+  test('two expected periods on one chain post once and report the collision', async () => {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    // `batch_identity` makes the seller reject every duplicate-chain entry in a
+    // batch without evaluating supersession, so posting both means neither
+    // lands — on every run, forever.
+    const expected = [
+      expectedPeriod(seller.request, seller.anchor),
+      expectedPeriod(seller.request, seller.anchor, { destinationRef: 'other-destination' }),
+    ];
+
+    const result = await seller.reconcile(at, expected);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+    assert.equal(result.failedConsumerStatuses.length, 1);
+    assert.equal(result.failedConsumerStatuses[0].errors[0].code, 'DUPLICATE_STATUS_CHAIN');
+    assert.equal(seller.store.consumerStatements.length, 1);
+  });
+
+  test('the monotonicity floor lifts a later statement to the leaf it supersedes', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+    seller.client.getMediaBuyDelivery = async () => {
+      throw new Error('connection reset by peer');
+    };
+    const first = await seller.reconcile(at, expected);
+    assert.equal(first.postedConsumerStatuses[0].consumerStatus, 'unreadable');
+    const leafAt = seller.store.consumerStatements[0].status_as_of;
+
+    // The revision vanishes, so the next claim is revision_missing — whose own
+    // instant is expected_at, long before the unreadable leaf. `time` forbids
+    // the chain from moving backwards, so the floor has to lift it.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        revisions: [],
+        pagination: { ...page.pagination, total_count: page.pagination.total_count - page.revisions.length },
+      };
+    };
+
+    const second = await seller.reconcile(at + HOUR, expected);
+    const plan = second.consumerStatuses[0];
+    assert.equal(plan.consumerStatus, 'revision_missing');
+    assert.ok(
+      Date.parse(plan.statusAsOf) > seller.anchor + DAY + SLA_SECONDS * 1_000,
+      'expected_at alone would have dated this before the leaf'
+    );
+    assert.equal(plan.statusAsOf, leafAt, 'so it is floored at the leaf it supersedes');
+    assert.deepEqual(second.failedConsumerStatuses, []);
   });
 
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {
