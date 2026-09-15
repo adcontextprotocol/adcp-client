@@ -1457,3 +1457,82 @@ test('unrescued missing tools outrank deferred capability skips when both trigge
     assert.equal(result.overall_passed, rescued);
   }
 });
+
+test('hard state dependencies outrank capability-only dependencies in either declared order', async () => {
+  for (const kind of ['missing_tool', 'real_failure']) {
+    for (const depends_on of [
+      ['capability', 'broken'],
+      ['broken', 'capability'],
+    ]) {
+      const sb = storyboard([]);
+      sb.phases = [
+        {
+          id: 'capability',
+          title: 'Capability',
+          requires_capability: { path: 'account.require_operator_auth', equals: true },
+          steps: [
+            { id: 'unsupported', title: 'Unsupported', task: 'get_adcp_capabilities', agent: 'a', stateful: true },
+          ],
+        },
+        {
+          id: 'broken',
+          title: 'Broken',
+          depends_on: [],
+          steps: [
+            ...(kind === 'missing_tool'
+              ? [
+                  {
+                    id: 'missing_first',
+                    title: 'Missing first',
+                    task: 'get_adcp_capabilities',
+                    requires_tool: 'get_signals',
+                    agent: 'b',
+                    stateful: true,
+                  },
+                  {
+                    id: 'missing_second',
+                    title: 'Missing second',
+                    task: 'get_adcp_capabilities',
+                    requires_tool: 'get_signals',
+                    agent: 'b',
+                    stateful: true,
+                  },
+                ]
+              : [
+                  {
+                    id: 'real_failure',
+                    title: 'Real failure',
+                    task: 'get_signals',
+                    agent: 'b',
+                    stateful: true,
+                    sample_request: { signal_spec: 'test' },
+                  },
+                ]),
+            { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' },
+          ],
+        },
+        {
+          id: 'dependent',
+          title: 'Dependent',
+          depends_on,
+          steps: [{ id: 'downstream', title: 'Downstream', task: 'get_adcp_capabilities', agent: 'b', stateful: true }],
+        },
+      ];
+      const { result } = await run(
+        {
+          a: [[], { account: { require_operator_auth: false } }],
+          b: [
+            kind === 'real_failure' ? ['get_signals'] : [],
+            { account: { require_operator_auth: true }, supported_protocols: ['signals'] },
+            true,
+          ],
+        },
+        sb
+      );
+      const downstream = result.phases.find(phase => phase.phase_id === 'dependent').steps[0];
+      assert.equal(downstream.passed, false, `${kind}: ${depends_on}`);
+      assert.equal(downstream.skip_reason, 'prerequisite_failed');
+      assert.equal(result.overall_passed, false);
+    }
+  }
+});

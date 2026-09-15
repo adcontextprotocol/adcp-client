@@ -2860,11 +2860,6 @@ async function executeStoryboardPass(
     phase: { id: string; depends_on?: string[] },
     prior: readonly string[]
   ): { tripped: true; trigger: CascadeTrigger | null } | { tripped: false } => {
-    // Within-phase cascade always counts — stateful steps later in this
-    // phase depend on state from stateful steps earlier in this phase.
-    if (phaseStatefulCascades.has(phase.id)) {
-      return { tripped: true, trigger: phaseStatefulCascades.get(phase.id) ?? null };
-    }
     // Branch-set peers under `any_of` are mutually-exclusive ALTERNATIVES, not
     // a stateful dependency chain: a conformant seller satisfies exactly one
     // peer, so the non-taken peer(s) fail by design (storyboard-schema.yaml,
@@ -2881,15 +2876,27 @@ async function executeStoryboardPass(
     // forward-compat hardening rather than live behavior.
     const ownSpec = branchSetsByPhaseId.get(phase.id);
     const ownAnyOfBranchSet = ownSpec?.semantics === 'any_of' ? ownSpec.id : undefined;
-    for (const depId of effectiveDependsOn(phase, prior)) {
-      if (ownAnyOfBranchSet !== undefined && branchSetsByPhaseId.get(depId)?.id === ownAnyOfBranchSet) {
+    let capabilityTrigger: CascadeTrigger | undefined;
+    let missingStateTrigger: CascadeTrigger | undefined;
+    // Include this phase's own state, then inspect every applicable dependency.
+    // A neutral capability gate cannot conceal an independent hard failure.
+    for (const depId of [phase.id, ...effectiveDependsOn(phase, prior)]) {
+      if (
+        depId !== phase.id &&
+        ownAnyOfBranchSet !== undefined &&
+        branchSetsByPhaseId.get(depId)?.id === ownAnyOfBranchSet
+      ) {
         continue;
       }
       if (phaseStatefulCascades.has(depId)) {
-        return { tripped: true, trigger: phaseStatefulCascades.get(depId) ?? null };
+        const trigger = phaseStatefulCascades.get(depId) ?? null;
+        if (trigger === null) return { tripped: true, trigger: null };
+        if (trigger.capabilityUnavailable) capabilityTrigger ??= trigger;
+        else missingStateTrigger ??= trigger;
       }
     }
-    return { tripped: false };
+    const trigger = missingStateTrigger ?? capabilityTrigger;
+    return trigger ? { tripped: true, trigger } : { tripped: false };
   };
   const capabilityUnavailableContextKeysForPhase = (
     phase: { id: string; depends_on?: string[] },
