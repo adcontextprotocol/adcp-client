@@ -18,6 +18,12 @@ Adding one task to an application that already owns auth and storage? Start
 with [`existing-platform-thin.ts`](./existing-platform-thin.ts) and the
 [existing-platform guide](../docs/guides/EXISTING-PLATFORM.md).
 
+Migrating a seller adapter to AdCP 3.2 targeting? The focused
+[`targeting-input-existing-platform.ts`](./targeting-input-existing-platform.ts)
+example carries nullable omit/clear/set commands through provider translation,
+persists strict accepted state, produces strict readback, and refuses clears the
+provider cannot honor.
+
 ## Building an AdCP agent — fork-target reference adapters
 
 Pick the example whose AdCP role and specialism most closely matches what you're building, fork it, replace the `// SWAP:` markers, and follow the `FORK CHECKLIST` block for the unmarked but load-bearing constants. The `hello_*_adapter_*` examples are paired with the three-gate CI test (strict tsc / storyboard / upstream-traffic) where a matching mock server exists; examples without one are called out below with the narrower runtime coverage they currently have. `proxy-seller-snap/` is a lighter bridge-pattern fork target: it proves seed-bridge wiring and must be paired with your live-OAuth sandbox runner for upstream health.

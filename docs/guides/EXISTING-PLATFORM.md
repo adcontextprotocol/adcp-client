@@ -14,6 +14,35 @@ This is the thin integration path for an application that already owns authentic
 
 The example accepts an already authenticated request context, rechecks tenant/account authorization before starting a submitted-task poll, calls `list_products`, records the initial mixed-status result in the application's transaction, and records terminal settlement after polling. Its store also implements `WebhookRegistrationStore` and idempotent `recordWebhookSettlement`, so verified callbacks can resolve the persisted operation to its tenant, re-authorize, and save completion after a restart. It imports only from `@adcp/sdk`, uses no private `dist/` path, and does not enable the optional schema subpath.
 
+## Migrate targeting adapters without casts
+
+AdCP 3.2 mutation targeting is a command shape, while accepted provider state
+and response readback are strict state shapes. The packed, compile-gated
+[`targeting-input-existing-platform.ts`](../../examples/targeting-input-existing-platform.ts)
+example derives its input types from the public `BuyProductsRequest` and
+`ControlMediaBuyRequest` exports and uses only public projection helpers.
+
+| Request state | Adapter action | Accepted/readback state |
+| --- | --- | --- |
+| Dimension omitted | Create: preserve the product/provider default. Update: make no provider call and retain stored state. | Existing strict value remains; no command is stored. |
+| Dimension `null` | Verify that the product and provider support clearing, then send the provider's explicit clear/replacement operation. | The dimension is absent. Never echo `null`. |
+| Dimension has a value | Translate and replace the complete provider dimension. | Persist and return the validated value. |
+
+Translate the original request into provider set/clear operations first; do not
+drop `null` before the provider executes the clear. After provider acceptance,
+call `resolveTargetingInput()` on create before building an accepted proposal or
+durable record. On update, load strict state and call `applyTargetingInput()` to
+preserve omitted dimensions, delete cleared dimensions, and replace supplied
+dimensions. Commit only that strict result. If the provider succeeds but the
+local commit fails, reconcile through the application's existing transaction or
+outbox boundary.
+
+The example deliberately throws `UnsupportedTargetingClearError` before any
+provider call or durable write. Do not cast the request to a strict overlay,
+drop `null` keys before the provider has executed the clear, or persist the
+request object unchanged. Provider adapters should also reject targeting
+dimensions they do not translate instead of silently discarding them.
+
 Configure the callback as an absolute template containing both trusted route macros, for example `https://buyer.example/adcp/webhook/{task_type}/{operation_id}`. Supply a framework adapter that derives the public URL only from server-owned configuration, and mount raw-body parsing on the matching route:
 
 ```ts
