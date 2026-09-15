@@ -3120,16 +3120,22 @@ function canonicalZone(name: unknown): unknown {
   } catch {
     resolved = CANONICAL_ZONE_UNRESOLVED;
   }
-  // Bounded so a seller cycling distinct garbage strings cannot grow it without
-  // limit. Evicting the oldest single entry rather than clearing: dropping the
-  // whole working set turned the memo off for everything once the cap was
-  // crossed, measured as a ~6x amplification, which handed the attacker back
-  // most of what the cache was added to remove.
-  if (CANONICAL_ZONE_CACHE.size >= MAX_CANONICAL_ZONE_CACHE) {
-    const oldest = CANONICAL_ZONE_CACHE.keys().next();
-    if (!oldest.done) CANONICAL_ZONE_CACHE.delete(oldest.value);
-  }
-  CANONICAL_ZONE_CACHE.set(name, resolved);
+  // Insert only while there is room, and never evict.
+  //
+  // Both eviction policies tried here were worse than not caching the overflow
+  // at all, because the caller is a *cyclic sweep*: `selectCurrent` walks the
+  // whole scope bucket once per obligation, in the same order. Clearing on full
+  // dropped the entire working set, and evicting the oldest entry drops exactly
+  // the one the next pass asks for first — both give a ~0% hit rate once the
+  // distinct spellings in one bucket exceed the cap, which is O(n x m) misses
+  // instead of O(n + m). Measured 6,014 ms against 244 ms for 4,200 spellings.
+  //
+  // A conformant seller reaches this: `Intl` canonicalizes case variants
+  // identically, so 4,097 spellings of one zone are all blessed by
+  // `iana_timezone` and all land in one bucket. Keeping the first 4,096 and
+  // paying full price for the rest degrades gracefully; the map still never
+  // exceeds the cap, which is what the bound was for.
+  if (CANONICAL_ZONE_CACHE.size < MAX_CANONICAL_ZONE_CACHE) CANONICAL_ZONE_CACHE.set(name, resolved);
   return resolved === CANONICAL_ZONE_UNRESOLVED ? undefined : resolved;
 }
 

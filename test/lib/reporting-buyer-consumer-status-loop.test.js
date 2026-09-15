@@ -3345,6 +3345,69 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     );
   });
 
+  test('the zone cache keeps its working set once full', async () => {
+    // The caller is a cyclic sweep — `selectCurrent` walks the whole scope
+    // bucket once per obligation, in the same order — so any policy that
+    // discards a hot entry on a miss gives a ~0% hit rate past the cap, which
+    // is O(n x m) `Intl` constructions instead of O(n + m). Clearing the whole
+    // map and evicting the oldest entry were both measured *worse* than not
+    // caching the overflow at all (6,014 ms against 244 ms), and neither was
+    // distinguishable from the correct policy without a probe like this one.
+    //
+    // A conformant seller reaches it: `Intl` resolves case variants of one
+    // zone identically, so thousands of spellings are all valid and all share
+    // a bucket.
+    const { __testing } = require('../../dist/lib/reporting/reconciliation.js');
+    const { reportingRevisionScopeKey } = __testing;
+    const construct = Intl.DateTimeFormat;
+    let built = 0;
+    Intl.DateTimeFormat = function countingDateTimeFormat(...args) {
+      built += 1;
+      return new construct(...args);
+    };
+    try {
+      const record = zone => ({
+        account_id: 'acct',
+        report_definition_id: 'rd',
+        reporting_profile: 'rp',
+        media_buy_ids: ['m1'],
+        period: { start: 'a', end: 'b', source_timezone: zone },
+      });
+      // More distinct spellings than the cache holds (4,096), all canonicalizing
+      // to one zone, then swept twice in the same order the bucket walk uses.
+      // Case variants are the conformant version of "distinct spelling" —
+      // `Intl` resolves every one of these to `America/Argentina/Rio_Gallegos`.
+      const zoneName = 'America/Argentina/Rio_Gallegos';
+      const letterPositions = [...zoneName].flatMap((ch, at) => (/[a-z]/i.test(ch) ? [at] : []));
+      const distinct = [
+        ...new Set(
+          Array.from({ length: 4_600 }, (_unused, index) => {
+            const chars = [...zoneName];
+            letterPositions.forEach((pos, bit) => {
+              chars[pos] = (index >> bit) & 1 ? chars[pos].toUpperCase() : chars[pos].toLowerCase();
+            });
+            return chars.join('');
+          })
+        ),
+      ];
+      assert.ok(distinct.length > 4_096, `the sweep must exceed the cache cap, got ${distinct.length}`);
+      for (const zone of distinct) reportingRevisionScopeKey(record(zone));
+      const afterFirstSweep = built;
+      for (const zone of distinct) reportingRevisionScopeKey(record(zone));
+      const secondSweep = built - afterFirstSweep;
+
+      // The second sweep asks for the same spellings in the same order. With a
+      // retained working set most are hits; with clear-on-full or
+      // evict-oldest almost none are.
+      assert.ok(
+        secondSweep < afterFirstSweep * 0.6,
+        `a second identical sweep must mostly hit: ${afterFirstSweep} then ${secondSweep}`
+      );
+    } finally {
+      Intl.DateTimeFormat = construct;
+    }
+  });
+
   test('a zone name too long for any zone never reaches Intl', async () => {
     // Formatter construction costs time proportional to the input: a 1 MB zone
     // name measured 8.2 ms against 32 us for a real one, and the string is

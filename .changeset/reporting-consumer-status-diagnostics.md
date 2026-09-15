@@ -81,8 +81,11 @@ revision per obligation — so a seller spelling its revision's zone as a _link_
 obligation's, both blessed by `iana_timezone`, turned a 150×150 ledger from 84 ms into 6,068 ms of
 synchronous work. Nothing bounded it: `maxLoadMs` covers only the ledger read, and the burn is
 synchronous, so every `AbortSignal` deadline in the SDK is unreachable while it runs. Canonical zones
-are now memoized in a bounded cache and a zone name is length-checked before `Intl` sees it (a 1 MB
-name measured 8.2 ms). The revision-to-obligation scope match is also indexed by scope key rather
+are now memoized in a bounded cache — filled to its cap and never evicted, because the caller is a
+cyclic sweep and any policy that discards a hot entry gives a ~0% hit rate past the cap, measured
+6,014 ms against 244 ms — and a zone name is length-checked before `Intl` sees it (a 1 MB name
+measured 8.2 ms). A conformant seller reaches the cap: `Intl` resolves case variants of one zone
+identically, so thousands of spellings are all valid under `iana_timezone` and all share one bucket. The revision-to-obligation scope match is also indexed by scope key rather
 than rescanned per obligation. That lowers the constant sharply but not the order: obligations
 sharing one scope key — the normal shape for a logical reporting slice — still walk their bucket, so
 a large ledger remains an expensive synchronous pass that no deadline covers. `maxRecords` bounds
