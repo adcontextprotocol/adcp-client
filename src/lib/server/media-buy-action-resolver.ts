@@ -59,6 +59,7 @@ export interface SellerActionResolutionOptions {
 export interface SellerActionResolution {
   available_actions: LiveMediaBuyAction[];
   unavailable: ActionAvailability[];
+  /** One assessment per decomposed requested action, including gate denials and missing rights. */
   request_assessments?: ActionAvailability[];
 }
 
@@ -129,6 +130,7 @@ export const mediaBuyActionResolver = {
     const available_actions: LiveMediaBuyAction[] = [],
       unavailable: ActionAvailability[] = [],
       request_assessments: ActionAvailability[] = [];
+    const requestedActions = input.request ? decomposeUpdateMediaBuy(input.buy, input.request).actions : [];
     for (const original of terms) {
       // Callbacks receive copies so they cannot widen the accepted snapshot.
       const term = structuredClone(original);
@@ -239,12 +241,7 @@ export const mediaBuyActionResolver = {
         accepted_proposal: { ...input.buy.accepted_proposal, commercial_terms: { change_terms: [evaluatedTerm] } },
         available_actions: [entry],
       };
-      if (
-        input.request &&
-        decomposeUpdateMediaBuy(input.buy as Parameters<typeof decomposeUpdateMediaBuy>[0], input.request).actions.some(
-          a => a.action === term.action
-        )
-      )
+      if (input.request && requestedActions.some(a => a.action === term.action))
         request_assessments.push(
           structuredClone(
             assessActionAvailability(evaluatedBuy, term.action, { request: input.request, now: input.now })
@@ -344,7 +341,23 @@ export const mediaBuyActionResolver = {
               }
         );
     }
-    return { available_actions, unavailable, ...(input.request && { request_assessments }) };
+    return {
+      available_actions,
+      unavailable,
+      ...(input.request && {
+        request_assessments: requestedActions.map(({ action }) =>
+          structuredClone(
+            request_assessments.find(assessment => assessment.action === action) ??
+              unavailable.find(assessment => assessment.action === action) ??
+              assessActionAvailability({ ...input.buy, available_actions }, action, {
+                request: input.request,
+                now: input.now,
+                adcpVersion: input.adcpVersion ?? ADCP_VERSION,
+              })
+          )
+        ),
+      }),
+    };
   },
 };
 

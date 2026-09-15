@@ -1993,3 +1993,107 @@ test('legacy rollup routes validate the requested action and cannot widen negoti
     assert.equal(preflightUpdateMediaBuy(negotiated, request).ok, false);
   }
 });
+
+test('seller request preview covers missing rights and every gate denial in mixed requests', () => {
+  const request = { paused: true, canceled: true };
+  const state = buy([term('pause')]);
+  const mixed = mediaBuyActionResolver.resolve({ buy: state, request, decide: accept });
+  assert.deepEqual(
+    mixed.request_assessments.map(a => [a.action, a.status]),
+    [
+      ['pause', 'available_now'],
+      ['cancel', 'currently_unavailable'],
+    ]
+  );
+  assert.equal(mixed.request_assessments[1].reason, 'not_supported_on_buy');
+  const onlyMissing = mediaBuyActionResolver.resolve({ buy: state, request: { canceled: true }, decide: accept });
+  assert.equal(onlyMissing.request_assessments.length, 1);
+  assert.equal(onlyMissing.request_assessments[0].status, 'currently_unavailable');
+  assert.deepEqual(onlyMissing.available_actions, mixed.available_actions);
+  for (const gate of ['authorization', 'governance', 'policy']) {
+    for (const value of [false, 'unknown']) {
+      const denied = mediaBuyActionResolver.resolve({
+        buy: buy([term('pause'), term('cancel')]),
+        request,
+        decide: t => ({ ...accept(), ...(t.action === 'cancel' && { [gate]: value }) }),
+      });
+      assert.equal(denied.request_assessments.length, 2);
+      assert.equal(denied.request_assessments[0].status, 'available_now');
+      assert.equal(denied.request_assessments[1].status, 'currently_unavailable');
+      assert.equal(denied.request_assessments[1].certainty, value === 'unknown' ? 'unknown' : 'blocked');
+      assert.deepEqual(
+        denied.available_actions.map(a => a.action),
+        ['pause']
+      );
+    }
+  }
+  const opaque = buy([term('pause', { conditions: ['seller_check'] })]);
+  const unresolved = mediaBuyActionResolver.resolve({ buy: opaque, request: { paused: true }, decide: accept });
+  assert.equal(unresolved.request_assessments[0].certainty, 'unknown');
+  const resolved = mediaBuyActionResolver.resolve({
+    buy: opaque,
+    request: { paused: true },
+    decide: () => ({ ...accept(), conditionsSatisfied: true }),
+  });
+  assert.equal(resolved.request_assessments[0].status, 'available_now');
+});
+
+test('seller request preview includes metadata, stale revisions, and opaque request siblings', () => {
+  const state = { status: 'active', revision: 3 };
+  const metadata = { update_name: accept() };
+  for (const request of [
+    { name: 'Renamed' },
+    { name: 'Renamed', revision: 2 },
+    { name: 'Renamed', ext: { opaque: true } },
+  ]) {
+    const result = mediaBuyActionResolver.resolve({ buy: state, request, metadata, decide: accept });
+    assert.equal(result.available_actions.length, 1);
+    assert.equal(result.request_assessments.length, 1);
+    assert.equal(result.request_assessments[0].action, 'update_name');
+    assert.equal(
+      result.request_assessments[0].status,
+      request.revision || request.ext ? 'currently_unavailable' : 'available_now'
+    );
+    if (request.revision) assert.equal(result.request_assessments[0].code, 'CONFLICT');
+  }
+  const denied = mediaBuyActionResolver.resolve({ buy: state, request: { name: 'Renamed' }, decide: accept });
+  assert.equal(denied.request_assessments[0].status, 'currently_unavailable');
+  const gateDenied = mediaBuyActionResolver.resolve({
+    buy: state,
+    request: { name: 'Renamed' },
+    decide: accept,
+    metadata: { update_name: { ...accept(), policy: false } },
+  });
+  assert.equal(gateDenied.request_assessments[0].status, 'currently_unavailable');
+});
+
+test('unknown-direction legacy rollups require a task common to every possible canonical child', () => {
+  const { preflightMediaBuyActions } = require('../../dist/lib/media-buy/actions.js');
+  const { assertUpdateMediaBuyAllowed } = require('../../dist/lib/server/media-buy-actions.js');
+  for (const [action, request, allowedTasks] of [
+    ['update_budget', { daily_budget_cap: 50 }, ['control_media_buy', 'refine_proposals']],
+    ['update_budget', { total_budget: { amount: 50, currency: 'USD' } }, ['control_media_buy', 'refine_proposals']],
+    ['update_dates', { packages: [{ package_id: 'p1', end_time: '2027-02-01T00:00:00Z' }] }, ['refine_proposals']],
+  ]) {
+    for (const task of ['control_media_buy', 'refine_proposals', 'sync_creatives']) {
+      const state = { available_actions: [{ action, mode: 'self_serve', task }] };
+      const allowed = allowedTasks.includes(task);
+      assert.equal(preflightUpdateMediaBuy(state, request, { task }).ok, allowed, `${action}/${task}`);
+      if (allowed) assert.equal(assertUpdateMediaBuyAllowed(state, request, { task }).ok, true);
+      else
+        assert.throws(
+          () => assertUpdateMediaBuyAllowed(state, request, { task }),
+          error => error.code === 'ACTION_NOT_ALLOWED'
+        );
+      assert.equal(preflightMediaBuyActions(state, request, { task }).ok, false);
+      assert.equal(
+        preflightUpdateMediaBuy(
+          buy([term('increase_budget')], { available_actions: state.available_actions }),
+          request,
+          { task }
+        ).ok,
+        false
+      );
+    }
+  }
+});

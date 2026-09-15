@@ -285,6 +285,7 @@ try {
     { specifier: '@adcp/sdk/testing', symbol: 'mergeSeedProductLegacy' },
     { specifier: '@adcp/sdk/negotiation/verification', symbol: 'verifyProposalCommercialTerms' },
     { specifier: '@adcp/sdk/schemas', symbol: 'getCanonicalToolValidator' },
+    { specifier: '@adcp/sdk/media-buy/actions', symbol: 'assessMediaBuyAction' },
   ];
 
   // Shared by both generated smoke modules. A function declaration (not an

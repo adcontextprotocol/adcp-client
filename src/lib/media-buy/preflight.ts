@@ -21,7 +21,13 @@ import {
   actionAllowedStatuses,
 } from './action-contracts';
 import { assessActionAvailability, type ActionAssessmentOptions } from './action-assessment';
-import { findAvailableAction, getAvailableActions, type AvailableActionsResult } from './available-actions';
+import {
+  findAvailableAction,
+  getAvailableActions,
+  getRollupParent,
+  type AvailableActionsResult,
+} from './available-actions';
+import { CANONICAL_ACTION_TASKS } from './action-metadata.generated';
 import type {
   ActionNotAllowedReason,
   MediaBuyActionContext,
@@ -41,6 +47,19 @@ export * from './mutations';
 // ---------------------------------------------------------------------------
 // Boolean gates
 // ---------------------------------------------------------------------------
+
+/** A coarse unknown-direction mutation may only use tasks common to every canonical child. */
+function tasksForLegacyMutation(action: MediaBuyActionId) {
+  const direct = mediaBuyActionTasks(action);
+  if (direct.length) return direct;
+  const children = (Object.keys(CANONICAL_ACTION_TASKS) as MediaBuyActionId[]).filter(
+    child => getRollupParent(child) === action
+  );
+  if (!children.length) return [];
+  return mediaBuyActionTasks(children[0]!).filter(task =>
+    children.every(child => mediaBuyActionTasks(child).includes(task))
+  );
+}
 
 function isAvailable(buy: MediaBuyActionContext, action: MediaBuyActionId): boolean {
   return findAvailableAction(buy, action, { silent: true }) !== undefined;
@@ -235,7 +254,7 @@ export function preflightUpdateMediaBuy(
     if (
       !strict &&
       lookup.entry.task !== undefined &&
-      !mediaBuyActionTasks(resolvedAction.action).includes(lookup.entry.task)
+      !tasksForLegacyMutation(resolvedAction.action).includes(lookup.entry.task)
     ) {
       denials.push({ action: resolvedAction.action, reason: 'mode_mismatch' });
       continue;

@@ -140,7 +140,7 @@ stale flat array.
 The compatibility preflight retains legacy buy-level grants. Package pause/resume
 also requires current operational buy and package state; missing, pending,
 terminal, or unknown package state cannot be overridden by a legacy grant.
-An explicitly named task must be canonical for the requested fine-grained action, including when a legacy rollup supplies its live grant.
+An explicitly named task must be canonical for the requested fine-grained action, including when a legacy rollup supplies its live grant. A coarse mutation with unknown direction can use only tasks common to every canonical child; it still cannot establish a negotiated right.
 
 Modern actions join through `change_term_id`. Set `termsRefIsAlias: true` only
 when the 3.2 producer deliberately emits both fields as aliases; equality then
@@ -235,8 +235,10 @@ accepted term; a tighter seller decision can satisfy a newly tightened policy.
 Materialization validates term/action uniqueness, status/mode/SLA shape, compatible
 constraint kinds and currencies, consistent bounds, and every product template.
 The original accepted data is preserved; callback inputs and output terms are
-copies. Optional `request` returns separate `request_assessments`; it does not
-filter the full `available_actions` projection that is returned to clients. `now`
+copies. Optional `request` returns one `request_assessments` entry for every
+decomposed action, including unnegotiated actions, denied seller gates, and metadata
+changes. It does not filter the full `available_actions` projection returned to
+clients. Use whole-request preflight for wire shape and combined-route validation. `now`
 evaluates current absolute effective-time gates. Notice and requested-change
 bounds remain on the advertised right and are evaluated against an actual
 request, never against a fabricated empty patch. Terminal statuses project an empty array.

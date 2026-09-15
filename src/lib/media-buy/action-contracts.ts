@@ -333,7 +333,7 @@ export function liveActionIssues(entries: unknown): string[] {
   return [];
 }
 
-/** beta.9 introduced change_term_id and the seller_managed service mode. */
+/** beta.9 introduced change_term_id, seller_managed and condition_unresolved together (upstream a1672f9). */
 export function supportsChangeTermIdentity(version: string): boolean {
   const match = /^(\d+)\.(\d+)(?:\.(\d+))?(?:-(.*))?$/.exec(version);
   if (!match) return false;
