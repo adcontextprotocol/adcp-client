@@ -7,10 +7,12 @@ const assert = require('node:assert/strict');
 const {
   ExistingPlatformTargeting,
   UnsupportedTargetingClearError,
+  UnsupportedTargetingDimensionError,
 } = require('../../examples/targeting-input-existing-platform.ts');
 
 function harness(clearableDimensions = new Set()) {
   const providerCalls = [];
+  const storeCalls = [];
   const stored = new Map();
   const provider = {
     async applyPackageTargeting(packageId, operations) {
@@ -22,6 +24,7 @@ function harness(clearableDimensions = new Set()) {
       return structuredClone(stored.get(packageId));
     },
     async saveAcceptedTargeting(packageId, targeting) {
+      storeCalls.push({ packageId, targeting: structuredClone(targeting) });
       if (targeting === undefined) stored.delete(packageId);
       else stored.set(packageId, structuredClone(targeting));
     },
@@ -29,6 +32,7 @@ function harness(clearableDimensions = new Set()) {
   return {
     integration: new ExistingPlatformTargeting(provider, store, clearableDimensions),
     providerCalls,
+    storeCalls,
     stored,
   };
 }
@@ -37,12 +41,13 @@ describe('targeting-input existing-platform example', () => {
   it('executes create clears before persisting strict accepted state', async () => {
     const { integration, providerCalls, stored } = harness(new Set(['geo_metros']));
 
-    const accepted = await integration.create('package-1', {
-      geo_countries: ['US'],
-      geo_metros: null,
-    });
+    const accepted = await integration.create(
+      'package-1',
+      { geo_metros: [{ system: 'nielsen_dma', values: ['501'] }], language: ['en'] },
+      { geo_countries: ['US'], geo_metros: null }
+    );
 
-    assert.deepEqual(accepted, { geo_countries: ['US'] });
+    assert.deepEqual(accepted, { language: ['en'], geo_countries: ['US'] });
     assert.deepEqual(providerCalls, [
       {
         packageId: 'package-1',
@@ -52,13 +57,13 @@ describe('targeting-input existing-platform example', () => {
         ],
       },
     ]);
-    assert.deepEqual(stored.get('package-1'), { geo_countries: ['US'] });
-    assert.deepEqual(await integration.readback('package-1'), { geo_countries: ['US'] });
+    assert.deepEqual(stored.get('package-1'), { language: ['en'], geo_countries: ['US'] });
+    assert.deepEqual(await integration.readback('package-1'), { language: ['en'], geo_countries: ['US'] });
   });
 
   it('keeps omitted dimensions, replaces values, and removes cleared dimensions', async () => {
     const { integration, providerCalls } = harness(new Set(['geo_countries']));
-    await integration.create('package-1', { geo_countries: ['US'] });
+    await integration.create('package-1', undefined, { geo_countries: ['US'] });
 
     const omitted = await integration.update('package-1', undefined);
     assert.deepEqual(omitted, { geo_countries: ['US'] });
@@ -81,9 +86,10 @@ describe('targeting-input existing-platform example', () => {
   });
 
   it('refuses an unsupported clear before provider or durable-store mutation', async () => {
-    const { integration, providerCalls, stored } = harness();
-    await integration.create('package-1', { geo_countries: ['US'] });
+    const { integration, providerCalls, storeCalls, stored } = harness();
+    await integration.create('package-1', undefined, { geo_countries: ['US'] });
     const callsBeforeRefusal = providerCalls.length;
+    const writesBeforeRefusal = storeCalls.length;
 
     await assert.rejects(
       integration.update('package-1', { geo_countries: null }),
@@ -92,6 +98,22 @@ describe('targeting-input existing-platform example', () => {
     );
 
     assert.equal(providerCalls.length, callsBeforeRefusal);
+    assert.equal(storeCalls.length, writesBeforeRefusal);
     assert.deepEqual(stored.get('package-1'), { geo_countries: ['US'] });
+  });
+
+  it('refuses an unmapped dimension before provider or durable-store mutation', async () => {
+    const { integration, providerCalls, storeCalls, stored } = harness();
+
+    await assert.rejects(
+      integration.create('package-1', undefined, { audience_include: ['audience-1'] }),
+      error =>
+        error instanceof UnsupportedTargetingDimensionError &&
+        error.field === 'purchases[].targeting_overlay.audience_include'
+    );
+
+    assert.deepEqual(providerCalls, []);
+    assert.deepEqual(storeCalls, []);
+    assert.equal(stored.has('package-1'), false);
   });
 });

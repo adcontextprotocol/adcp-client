@@ -9,7 +9,6 @@
 import {
   applyTargetingInput,
   hasTargetingClears,
-  resolveTargetingInput,
   type BuyProductsRequest,
   type ControlMediaBuyRequest,
   type ResolvedTargetingInput,
@@ -28,11 +27,14 @@ type ProviderTargetingField = 'countryCodes' | 'metroCodes' | 'languageCodes' | 
 /** One concrete translation into an existing provider's mutation language. */
 export type ProviderTargetingOperation =
   | { kind: 'set'; field: ProviderTargetingField; value: unknown }
-  | { kind: 'clear'; field: ProviderTargetingField }
-  | { kind: 'clear_all' };
+  | { kind: 'clear'; field: ProviderTargetingField };
 
 export interface ExistingProviderClient {
-  /** Applies only the explicit operations; omitted dimensions never appear. */
+  /**
+   * Atomically applies the exact supplied values or rejects the whole call;
+   * omitted dimensions never appear. If a provider normalizes accepted values,
+   * change this seam to return its canonical readback and persist that instead.
+   */
   applyPackageTargeting(packageId: string, operations: readonly ProviderTargetingOperation[]): Promise<void>;
 }
 
@@ -75,15 +77,11 @@ const PROVIDER_FIELD_BY_DIMENSION: Readonly<Record<string, ProviderTargetingFiel
  * provider mapping here before advertising support for another dimension.
  */
 export function toProviderTargetingOperations(
-  input: object | null | undefined,
+  input: object | undefined,
   clearableDimensions: ReadonlySet<string>,
   fieldPrefix: string
 ): ProviderTargetingOperation[] {
   if (input === undefined) return [];
-  if (input === null) {
-    if (!clearableDimensions.has('*')) throw new UnsupportedTargetingClearError(`${fieldPrefix}.*`);
-    return [{ kind: 'clear_all' }];
-  }
 
   const operations: ProviderTargetingOperation[] = [];
   for (const [dimension, value] of Object.entries(input)) {
@@ -104,8 +102,9 @@ export function toProviderTargetingOperations(
 
 /**
  * Thin orchestration around application-owned provider and durable-store
- * adapters. A production store should reconcile a provider success if its
- * subsequent local commit fails.
+ * adapters. The outer control handler must serialize/CAS the read-provider-save
+ * block using the request revision. A production store should also reconcile a
+ * provider success if its subsequent local commit fails.
  */
 export class ExistingPlatformTargeting {
   constructor(
@@ -115,13 +114,18 @@ export class ExistingPlatformTargeting {
     private readonly clearableDimensions: ReadonlySet<string>
   ) {}
 
-  async create(packageId: string, input: CreateTargetingInput): Promise<AcceptedTargeting | undefined> {
+  async create(
+    packageId: string,
+    configuredProductTargeting: AcceptedTargeting | undefined,
+    input: CreateTargetingInput
+  ): Promise<AcceptedTargeting | undefined> {
     const operations = toProviderTargetingOperations(input, this.clearableDimensions, 'purchases[].targeting_overlay');
     if (operations.length > 0) await this.provider.applyPackageTargeting(packageId, operations);
 
-    // The provider has now executed every clear command. Only at this point is
-    // it safe to remove nulls and build strict accepted/readback state.
-    const accepted = resolveTargetingInput(input);
+    // Start with the selected product's strict defaults: omission inherits a
+    // default, null suppresses it, and a value replaces it. The provider has
+    // now executed every explicit command, so this result is safe to persist.
+    const accepted = applyTargetingInput(configuredProductTargeting, input);
     await this.store.saveAcceptedTargeting(packageId, accepted);
     return accepted;
   }

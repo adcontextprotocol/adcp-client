@@ -29,13 +29,19 @@ example derives its input types from the public `BuyProductsRequest` and
 | Dimension has a value | Translate and replace the complete provider dimension. | Persist and return the validated value. |
 
 Translate the original request into provider set/clear operations first; do not
-drop `null` before the provider executes the clear. After provider acceptance,
-call `resolveTargetingInput()` on create before building an accepted proposal or
-durable record. On update, load strict state and call `applyTargetingInput()` to
-preserve omitted dimensions, delete cleared dimensions, and replace supplied
-dimensions. Commit only that strict result. If the provider succeeds but the
-local commit fails, reconcile through the application's existing transaction or
-outbox boundary.
+drop `null` before the provider executes the clear. On create, start from the
+selected product's strict configured/default targeting and call
+`applyTargetingInput()` so omitted dimensions are materialized, cleared defaults
+are removed, and supplied dimensions replace them. On update, load the prior
+strict state and apply the same helper. Commit only that complete strict result.
+`resolveTargetingInput()` removes request commands but cannot materialize create
+defaults on its own. If the provider succeeds but the local commit fails,
+reconcile through the application's existing transaction or outbox boundary.
+The outer `control_media_buy` handler must also serialize or CAS the whole
+read-provider-save block using the request revision so concurrent patches cannot
+lose an accepted dimension. The example's provider seam assumes exact, atomic
+application: an adapter whose provider normalizes values should return its
+canonical post-mutation readback and persist that instead of the request value.
 
 The example deliberately throws `UnsupportedTargetingClearError` before any
 provider call or durable write. Do not cast the request to a strict overlay,

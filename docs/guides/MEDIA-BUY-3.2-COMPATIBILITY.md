@@ -527,9 +527,9 @@ Three helpers do the projection — exported from the package root and from
 ```ts
 import { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from '@adcp/sdk/server';
 
-// CREATE — drop the clear commands before the overlay becomes durable state
-// or part of an accepted proposal snapshot.
-const effective = resolveTargetingInput(purchase.targeting_overlay);
+// CREATE — merge with the selected product's strict defaults so the accepted
+// snapshot contains complete effective targeting. Null removes a default.
+const effective = applyTargetingInput(configuredProduct.targeting, purchase.targeting_overlay);
 // { geo_countries: ['US'], audience_include: null } -> { geo_countries: ['US'] }
 
 // UPDATE — three states in one call: omitted preserves, null clears, value replaces.
@@ -543,6 +543,10 @@ if (hasTargetingClears(patch.targeting_overlay)) assertProductPermitsClear(produ
 Both projections return `undefined`, never `{}`, when no dimension survives — a
 cleared dimension is *absent* from effective readback, so omit `targeting_overlay`
 rather than echoing an empty object.
+
+`resolveTargetingInput()` is sufficient only when no configured/product
+targeting defaults need to be materialized. It removes request commands; it
+does not invent the omitted create dimensions that the selected product owns.
 
 `null` cannot remove inherent product scope. These helpers only project the
 three states; deciding whether a clear is *executable* is the seller's
