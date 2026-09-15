@@ -499,6 +499,59 @@ a shared principal-scoped execution fence before dispatch. Only a verified
 new acceptance evidence under its own proposal ID. In-flight, malformed,
 ambiguous, disposed, and expired refinements leave the source non-executable.
 
+## Request-only Targeting Input (`null` = clear)
+
+AdCP 3.2 gives every targeting dimension **three** states on a mutation
+request, and the difference between two of them is invisible if you only read
+the type:
+
+| wire state | `create_media_buy` / `buy_products` | `update_media_buy` / `control_media_buy` |
+| --- | --- | --- |
+| dimension **omitted** | inherit the configured-product / product default | leave stored state unchanged |
+| dimension **`null`** | suppress that default | clear the stored dimension |
+| dimension **non-null** | replace the complete dimension | replace the complete dimension |
+
+`null` is a **command, not targeting state**. Discovery criteria, configured
+products, accepted commercial snapshots, mutation responses, and package
+readback all use the strict Targeting *Overlay*, whose schema forbids `null`.
+That is why codegen emits two types: `TargetingOverlayInput` (nullable
+dimensions, request-only) and `TargetingOverlay` (strict, everywhere else).
+
+Getting this backwards fails in two directions, and neither is loud: persisting
+a request overlay verbatim writes a clear command into durable state, and
+echoing that back emits `null` on a response the schema rejects.
+
+Three helpers do the projection — exported from the package root and from
+`@adcp/sdk/server`:
+
+```ts
+import { applyTargetingInput, hasTargetingClears, resolveTargetingInput } from '@adcp/sdk/server';
+
+// CREATE — drop the clear commands before the overlay becomes durable state
+// or part of an accepted proposal snapshot.
+const effective = resolveTargetingInput(purchase.targeting_overlay);
+// { geo_countries: ['US'], audience_include: null } -> { geo_countries: ['US'] }
+
+// UPDATE — three states in one call: omitted preserves, null clears, value replaces.
+const merged = applyTargetingInput(stored, patch.targeting_overlay);
+// an `undefined` patch preserves; a `null` patch clears the whole overlay
+
+// Decide whether a clear is executable before accepting the mutation.
+if (hasTargetingClears(patch.targeting_overlay)) assertProductPermitsClear(product);
+```
+
+Both projections return `undefined`, never `{}`, when no dimension survives — a
+cleared dimension is *absent* from effective readback, so omit `targeting_overlay`
+rather than echoing an empty object.
+
+`null` cannot remove inherent product scope. These helpers only project the
+three states; deciding whether a clear is *executable* is the seller's
+validation step, which per DR-0020 rejects a clear it cannot honor rather than
+silently retaining the default.
+
+If you use `createMediaBuyStore`, this is already handled on both the create and
+update paths — it persists and echoes strict overlays only.
+
 ## Buyer projection policy
 
 | Coordinator operation | Compact tool | Established projection | Boundary |

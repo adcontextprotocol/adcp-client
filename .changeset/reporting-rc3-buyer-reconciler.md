@@ -106,7 +106,7 @@ as a misconfiguration rather than as a quiet steady state.
 `failedConsumerStatuses` and stops posting, rather than throwing: a throw from the second batch
 discarded the record of everything the first had already appended, and those statements are durably
 the caller's current leaves whether or not the call returns. And when the buyer's own read budget
-runs out mid-run, the remaining revisions come back `suppressed: 'budget_exhausted'` instead of
+runs out mid-run, the remaining revisions come back `suppressed: 'local_budget_exhausted'` instead of
 `unreadable` / `transport_failed` — a limit the buyer set is not evidence that the seller published
 bytes it could not consume, and a self-inflicted negative claim pins the caller's own view at
 `action_required`.

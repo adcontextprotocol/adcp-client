@@ -902,6 +902,101 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.deepEqual(second.failedConsumerStatuses, []);
   });
 
+  test('a malformed seller expected_at is not re-emitted as the buyer status_as_of', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `Date.parse` accepts this; RFC 3339 does not. It used to flow straight
+    // through to `status_as_of` on a statement the buyer puts its name to.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      return {
+        ...page,
+        periods: page.periods.map(period => ({ ...period, expected_at: 'Mon, 02 Sep 2026 01:00:00 GMT' })),
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.suppressed, 'deadline_unknown');
+    assert.match(plan.reason, /expected_at/);
+    assert.equal(plan.deadline, undefined);
+    assert.notEqual(plan.statusAsOf, 'Mon, 02 Sep 2026 01:00:00 GMT');
+    assert.deepEqual(result.postedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements.length, 0);
+  });
+
+  test('a forked revision chain suppresses rather than blaming the seller', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // Two unsuperseded heads. The buyer cannot tell which revision the seller
+    // currently requires, and that is the buyer failing to read — not the
+    // seller failing to publish, which is what `revision_missing` asserts.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const [first] = page.revisions;
+      if (!first) return page;
+      const fork = { ...first, reporting_revision_id: `${first.reporting_revision_id}-fork` };
+      return {
+        ...page,
+        revisions: [...page.revisions, fork],
+        pagination: { ...page.pagination, total_count: page.pagination.total_count + 1 },
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.suppressed, 'chain_indeterminate');
+    assert.match(plan.reason, /could not be resolved/);
+    assert.deepEqual(result.postedConsumerStatuses, []);
+    assert.equal(seller.store.consumerStatements.length, 0, 'silence, not a statement about the seller');
+  });
+
+  test('a superseded predecessor does not make a valid current revision missing', async () => {
+    const seller = await harness();
+    const expected = [expectedPeriod(seller.request, seller.anchor)];
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // A two-link chain. `REVISION_CHAIN_SCOPE_MISMATCH` is evaluated over every
+    // candidate including superseded ones, which is why it is not in
+    // REVISION_DISQUALIFYING_REASONS: a predecessor must never be able to turn
+    // a sound current revision into `revision_missing`.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const [current] = page.revisions;
+      if (!current) return page;
+      const predecessor = {
+        ...current,
+        reporting_revision_id: `${current.reporting_revision_id}-predecessor`,
+      };
+      return {
+        ...page,
+        revisions: [predecessor, { ...current, supersedes_reporting_revision_id: predecessor.reporting_revision_id }],
+        pagination: { ...page.pagination, total_count: page.pagination.total_count + 1 },
+      };
+    };
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.consumerStatus, 'received');
+    assert.equal(plan.suppressed, undefined);
+    assert.equal(result.postedConsumerStatuses.length, 1);
+  });
+
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
