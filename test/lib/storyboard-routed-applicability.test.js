@@ -44,6 +44,14 @@ async function startAgent(
         calls.push(name);
         authorization.push(req.headers.authorization);
         if (rejectTools && name !== 'get_adcp_capabilities') {
+          if (rejectTools === 'structured') {
+            const error = { errors: [{ code: 'INVALID_REQUEST', message: 'Deterministic agent rejection' }] };
+            return {
+              isError: true,
+              content: [{ type: 'text', text: JSON.stringify(error) }],
+              structuredContent: error,
+            };
+          }
           return { isError: true, content: [{ type: 'text', text: 'Deterministic agent rejection' }] };
         }
         const data =
@@ -1339,6 +1347,99 @@ test('mixed skipped phases retain only known routed capability output gaps', asy
       assert.equal(calls.b.filter(task => task === 'get_signals').length, executes ? 1 : 0, label);
       assert.equal(result.overall_passed, !hard, label);
       assert.equal(result.failed_count, hard ? 1 : 0, label);
+    }
+  }
+});
+
+test('routed rate-limit targets respect known unavailable context after normalization', async () => {
+  for (const origin of ['capability', 'hard', 'mixed']) {
+    for (const mode of ['token', 'explicit', 'restored', 'independent', 'override', 'missing_target']) {
+      const sb = storyboard([]);
+      sb.context = mode === 'restored' ? { needed: 'restored' } : {};
+      sb.phases = [
+        {
+          id: 'producer',
+          title: 'Producer',
+          ...(origin !== 'hard'
+            ? { requires_capability: { path: 'account.require_operator_auth', equals: true } }
+            : {}),
+          steps: [
+            {
+              id: 'producer',
+              title: 'Producer',
+              task: 'get_adcp_capabilities',
+              agent: 'a',
+              ...(origin === 'hard' ? { requires_tool: 'get_signals' } : {}),
+              context_outputs: [{ key: 'needed', path: 'identity.brand_json_url' }],
+            },
+            ...(origin === 'mixed'
+              ? [
+                  {
+                    id: 'hard',
+                    title: 'Hard',
+                    task: 'unknown_tool',
+                    context_outputs: [{ key: 'needed', path: 'value' }],
+                  },
+                ]
+              : []),
+          ],
+        },
+        {
+          id: 'consumer',
+          title: 'Consumer',
+          ...(mode === 'independent' ? { depends_on: [] } : {}),
+          steps: [
+            {
+              id: 'trip',
+              title: 'Trip',
+              task: 'expect_rate_limit_not_replayed',
+              agent: 'b',
+              expect_error: true,
+              requires_contract: 'rate_limit_trip_runner',
+              ...(mode === 'explicit' ? { context_inputs: [{ key: 'needed', inject_at: 'signal_spec' }] } : {}),
+              rate_limit_trip: {
+                trip_target_task: 'get_signals',
+                trip_target_sample_request: mode === 'explicit' ? {} : { signal_spec: '$context.needed' },
+                max_attempts: 50,
+                replay_max_wait_seconds: 1,
+              },
+            },
+            { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' },
+          ],
+        },
+      ];
+      const { result, calls } = await run(
+        {
+          a: [[], { account: { require_operator_auth: false } }],
+          b: [mode === 'missing_target' ? [] : ['get_signals'], { supported_protocols: ['signals'] }, 'structured'],
+        },
+        sb,
+        {
+          contracts: ['rate_limit_trip_runner'],
+          allowLiveSideEffects: true,
+          ...(mode === 'override' ? { request: { signal_spec: 'override' } } : {}),
+        }
+      );
+      const blocked = mode === 'token' || mode === 'explicit';
+      const label = `${origin}/${mode}`;
+      const trip = result.phases[1].steps[0];
+      assert.equal(
+        calls.b.filter(task => task === 'get_signals').length,
+        blocked || mode === 'missing_target' ? 0 : 1,
+        label
+      );
+      assert.equal(
+        trip.skip_reason,
+        blocked
+          ? origin === 'capability'
+            ? 'capability_prerequisite_unavailable'
+            : 'prerequisite_failed'
+          : mode === 'missing_target'
+            ? 'missing_tool'
+            : undefined,
+        label
+      );
+      if (blocked) assert.equal(trip.passed, origin === 'capability', label);
     }
   }
 });

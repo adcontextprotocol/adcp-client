@@ -5010,7 +5010,7 @@ interface ExecutionState {
   responseDerivedNotApplicableContextKeys?: Map<string, string>;
   /** Context keys from capability-gated phases this step depends on. */
   capabilityUnavailableContextKeys?: Set<string>;
-  /** Outputs absent because a routed producer could not satisfy its tool prerequisites. */
+  /** Routed-only prerequisite scope, present even when no hard outputs are absent. */
   missingPrerequisiteContextKeys?: Set<string>;
   /** Shared ephemeral webhook receiver, when the run has one enabled. */
   webhookReceiver?: WebhookReceiver;
@@ -5057,6 +5057,24 @@ interface ExecutionState {
   storyboardRequiresRequestSigner?: boolean;
   /** Dedicated TMP raw-HTTP tasks are invalid outside their explicit runner contract. */
   storyboardRequiresPublisherAuthRunner?: boolean;
+}
+
+function unresolvedStepContextVars(
+  step: StoryboardStep,
+  request: Record<string, unknown>,
+  context: StoryboardContext,
+  runState: ExecutionState
+): ReturnType<typeof findUnresolvedContextVars> {
+  const unavailableInputs = (step.context_inputs ?? []).filter(
+    input =>
+      !(input.key in context) &&
+      (runState.capabilityUnavailableContextKeys?.has(input.key) === true ||
+        runState.missingPrerequisiteContextKeys?.has(input.key) === true)
+  );
+  return [
+    ...findUnresolvedContextVars(request),
+    ...unavailableInputs.map(input => ({ key: input.key, token: `$context.${input.key}` })),
+  ];
 }
 
 // Shared request construction for execution and inspection before a cascade
@@ -5391,16 +5409,7 @@ async function executeStep(
   // Classify explicit inputs together with tokens after request normalization.
   // An early neutral input return must not conceal a hard missing token, and
   // tokens replaced by normalizers are no longer missing prerequisites.
-  const unavailableContextInputs = (step.context_inputs ?? []).filter(
-    input =>
-      !(input.key in context) &&
-      (runState.capabilityUnavailableContextKeys?.has(input.key) === true ||
-        runState.missingPrerequisiteContextKeys?.has(input.key) === true)
-  );
-  const unresolvedContextVars = [
-    ...findUnresolvedContextVars(request),
-    ...unavailableContextInputs.map(input => ({ key: input.key, token: `$context.${input.key}` })),
-  ];
+  const unresolvedContextVars = unresolvedStepContextVars(step, request, context, runState);
   const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(request).map(path => ({
     key: path,
     token: BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
@@ -6893,32 +6902,52 @@ async function executeProbeStep(
         };
       }
       const resolvedTargetRequest = targetRequestResult.request;
-      const unresolvedContextVars = findUnresolvedContextVars(resolvedTargetRequest);
+      const advertisedTools = resolveAdvertisedTools(options);
+      // Preserve the native target's existing missing-tool disposition when
+      // expect_error would otherwise bypass unresolved-token validation.
+      const routedPrerequisites =
+        runState.missingPrerequisiteContextKeys !== undefined &&
+        (!advertisedTools || advertisedTools.includes(rateLimitTrip.trip_target_task));
+      const unresolvedContextVars = routedPrerequisites
+        ? unresolvedStepContextVars(targetStep, resolvedTargetRequest, context, runState)
+        : findUnresolvedContextVars(resolvedTargetRequest);
       const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(resolvedTargetRequest).map(path => ({
         key: path,
         token: BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,
       }));
       const unresolvedVars = [...unresolvedContextVars, ...unresolvedAssetDirectives];
-      if (unresolvedAssetDirectives.length > 0 || (unresolvedContextVars.length > 0 && !targetStep.expect_error)) {
+      const hardUnavailable =
+        routedPrerequisites && unresolvedContextVars.some(v => runState.missingPrerequisiteContextKeys?.has(v.key));
+      const capabilityUnavailable =
+        routedPrerequisites && unresolvedContextVars.some(v => runState.capabilityUnavailableContextKeys?.has(v.key));
+      if (
+        unresolvedAssetDirectives.length > 0 ||
+        (unresolvedContextVars.length > 0 && (!targetStep.expect_error || hardUnavailable || capabilityUnavailable))
+      ) {
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
-        const detail = `Skipped: unresolved context variables from rate_limit_trip.trip_target_sample_request: ${unresolvedVars
-          .map(v => v.key)
-          .join(', ')}.`;
+        const allCapabilityUnavailable =
+          capabilityUnavailable &&
+          !hardUnavailable &&
+          unresolvedAssetDirectives.length === 0 &&
+          unresolvedContextVars.every(v => runState.capabilityUnavailableContextKeys?.has(v.key));
+        const detail = allCapabilityUnavailable
+          ? `Skipped: context required by a capability-gated phase is unavailable: ${unresolvedVars.map(v => v.key).join(', ')}.`
+          : `Skipped: unresolved context variables from rate_limit_trip.trip_target_sample_request: ${unresolvedVars.map(v => v.key).join(', ')}.`;
         return {
           step_id: step.id,
           phase_id: phaseId,
           title: step.title,
           task: step.task,
-          passed: false,
+          passed: allCapabilityUnavailable,
           skipped: true,
-          skip_reason: 'prerequisite_failed',
-          skip: buildSkip('prerequisite_failed', detail),
+          skip_reason: allCapabilityUnavailable ? 'capability_prerequisite_unavailable' : 'prerequisite_failed',
+          skip: buildSkip(allCapabilityUnavailable ? 'not_applicable' : 'prerequisite_failed', detail),
           duration_ms: Date.now() - start,
           validations: [],
           context,
           next,
           extraction: { path: 'none' },
-          error: detail,
+          ...(!allCapabilityUnavailable && { error: detail }),
         };
       }
       const unresolvedRunnerTokens = findUnresolvedRunnerTokens(resolvedTargetRequest);
@@ -6946,7 +6975,6 @@ async function executeProbeStep(
           ...(isPrerequisiteFailure ? { error: detail } : {}),
         };
       }
-      const advertisedTools = resolveAdvertisedTools(options);
       if (advertisedTools && !advertisedTools.includes(rateLimitTrip.trip_target_task)) {
         const next = getNextStepPreview(step.id, allSteps, context, runState.runnerVars);
         const detail = `Agent did not advertise tool "${rateLimitTrip.trip_target_task}"; agent tools: [${advertisedTools.join(', ')}].`;
