@@ -5,6 +5,20 @@
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
 
+## MediaBuy Action Assessment Types
+
+Use `@adcp/sdk/media-buy/actions` for pure buyer assessment and `@adcp/sdk/server` for `mediaBuyActionResolver`. See [action assessment guide](guides/MEDIA-BUY-ACTION-ASSESSMENT.md).
+
+| Type | Use |
+| --- | --- |
+| `MediaBuyTask` | Narrow routing union: `update_media_buy`, `control_media_buy`, `refine_proposals`, `sync_creatives`. |
+| `ActionAvailability` | `available_now` with optional `nonDefaultRoute`, mode and authority; or `currently_unavailable` with reason, certainty and optional compatibility/constraint detail. |
+| `ActionBuy`, `ActionProduct`, `ActionProposal` | Structural inputs for joining current accepted terms with live actions and advisory products. |
+| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including rc.3 package scope. |
+| `MediaBuyAvailableAction`, `MediaBuyValidAction` | Generated legacy wire entry / deprecated flat vocabulary; distinct from canonical helper entries. |
+| `MediaBuyAction`, `MediaBuyActionId` | Action identifiers accepted by assessment / mutation helpers; runtime validation preserves unknown future data. |
+| `ProposalChangeTerm`, `ChangeTermConstraints` | Negotiated term view and portable discriminated budget / flight / package-count / effective-timing constraints. |
+
 ## Client Types
 
 ```typescript

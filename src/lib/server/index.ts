@@ -799,3 +799,10 @@ export {
   type ConformanceClientOptions,
   type ConformanceStatus,
 } from './socket-mode';
+
+export { mediaBuyActionResolver } from './media-buy-action-resolver';
+export type {
+  SellerActionDecision,
+  SellerActionResolutionOptions,
+  SellerActionResolution,
+} from './media-buy-action-resolver';

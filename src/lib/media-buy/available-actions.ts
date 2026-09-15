@@ -1,3 +1,4 @@
+import type { LiveMediaBuyAction as MediaBuyAvailableAction } from './action-types';
 // Compat shim between the legacy `valid_actions[]` flat shape and the
 // 3.1 `available_actions[]` structured shape (RFC #4480).
 //
@@ -6,7 +7,7 @@
 // authoritative source and surfaces a deprecation hint when only the
 // legacy field is populated.
 
-import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyAvailableAction, MediaBuyValidAction } from './types';
+import type { MediaBuyActionContext, MediaBuyActionId, MediaBuyValidAction } from './types';
 
 /**
  * Source the normalized `available_actions[]` came from. Callers branch on
@@ -64,7 +65,7 @@ export function getAvailableActions(
   buy: MediaBuyActionContext,
   options: { silent?: boolean } = {}
 ): AvailableActionsResult {
-  if (buy.available_actions && buy.available_actions.length > 0) {
+  if (buy.available_actions !== undefined) {
     return { actions: [...buy.available_actions], source: 'available_actions' };
   }
   if (buy.valid_actions && buy.valid_actions.length > 0) {
@@ -99,12 +100,15 @@ export function findAvailableAction(
 ): { entry: MediaBuyAvailableAction; result: AvailableActionsResult } | undefined {
   const result = getAvailableActions(buy, options);
   const direct = result.actions.find(a => a.action === action);
-  if (direct) return { entry: direct, result };
+  // Future opaque modes carry no executable authority, including legacy structured projections.
+  const knownMode = (entry: MediaBuyAvailableAction) =>
+    ['self_serve', 'conditional_self_serve', 'seller_managed', 'requires_approval'].includes(entry.mode);
+  if (direct) return knownMode(direct) ? { entry: direct, result } : undefined;
 
   const rollupParent = ROLLUP_PARENT_OF[action];
   if (rollupParent) {
     const parent = result.actions.find(a => a.action === rollupParent);
-    if (parent) return { entry: parent, result };
+    if (parent && knownMode(parent)) return { entry: parent, result };
   }
   return undefined;
 }

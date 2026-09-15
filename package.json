@@ -379,7 +379,17 @@
         "default": "./dist/lib/negotiation/verification.js"
       }
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./media-buy/actions": {
+      "import": {
+        "types": "./dist/lib/media-buy/actions.d.mts",
+        "default": "./dist/lib/media-buy/actions.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/media-buy/actions.d.ts",
+        "default": "./dist/lib/media-buy/actions.js"
+      }
+    }
   },
   "typesVersions": {
     "*": {
@@ -490,6 +500,9 @@
       ],
       "negotiation/verification": [
         "dist/lib/negotiation/verification.d.ts"
+      ],
+      "media-buy/actions": [
+        "dist/lib/media-buy/actions.d.ts"
       ]
     }
   },
@@ -509,6 +522,7 @@
     "!compliance/cache/3.2.0-beta.1/**/*",
     "!compliance/cache/3.2.0-beta.8/**/*",
     "!compliance/cache/3.2.0-rc.1/**/*",
+    "!compliance/cache/3.2.0-rc.2/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -591,7 +605,7 @@
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
     "schemas:ensure": "tsx scripts/schemas-ensure.ts",
     "schema-diff": "tsx scripts/schema-diff.ts",
-    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts",
+    "generate-types": "tsx scripts/generate-types.ts && tsx scripts/generate-enum-arrays.ts && tsx scripts/generate-inline-enum-arrays.ts && tsx scripts/generate-manifest-derived.ts && tsx scripts/generate-entity-hydration.ts && tsx scripts/generate-media-buy-update-fields.ts && tsx scripts/generate-media-buy-action-metadata.ts",
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
@@ -629,7 +643,7 @@
     "ci:validate": "node scripts/ci-validate.js",
     "ci:quick": "npm run format:check && npm run typecheck && npm run build:lib && npm test",
     "test:zod-openapi-portability": "node --test test/lib/zod-openapi-portability.test.js",
-    "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync' && exit 1)",
+    "ci:schema-check": "npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync && git diff --exit-code -I '// Generated at:' src/lib/types/ src/lib/agents/ src/lib/media-buy/action-metadata.generated.ts src/lib/media-buy/update-fields.generated.ts src/lib/registry/types.generated.ts schemas/registry/registry.yaml || (echo '⚠️  Generated files are out of sync. Run: npm run sync-schemas && npm run generate-types && npm run generate-registry-types -- --sync' && exit 1)",
     "ci:codegen-strict": "tsx scripts/check-no-loose-oneof.ts",
     "ci:docs-check": "npm run generate-agent-docs && npm run generate-release-worksheet && git diff --exit-code -I '> Generated at:' docs/llms.txt docs/TYPE-SUMMARY.md docs/migration-14.x-rc-worksheet.md || (echo '⚠️  Generated docs are out of sync. Run: npm run generate-agent-docs && npm run generate-release-worksheet' && exit 1)",
     "ci:doc-links": "tsx scripts/check-doc-links.ts",

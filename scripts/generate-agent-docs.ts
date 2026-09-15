@@ -614,6 +614,9 @@ function generateLlmsTxt(
     `SDK 14 is compact-lifecycle first: \`list_products → buy_products → control_media_buy\`, with \`request_proposals → refine_proposals → accept_proposal\` when terms need negotiation.`
   );
   ln();
+  ln(
+    '- **MediaBuy change rights:** use `assessMediaBuyAction` from `@adcp/sdk/media-buy/actions` for possible / promised / available-now assessment, and `mediaBuyActionResolver` from `@adcp/sdk/server` for explicit seller acceptance and current projection. See `docs/guides/MEDIA-BUY-ACTION-ASSESSMENT.md`.'
+  );
   ln(`- **Buyer** (calling a seller): read \`docs/guides/BUYER-QUICKSTART-3.2.md\` first.`);
   ln(
     `- **Before proposal acceptance:** use \`verifyProposalCommercialTerms\` from \`@adcp/sdk/negotiation/verification\` with a complete, independently reviewed snapshot and the seller-served schema version. Never use an unreviewed candidate as its own expected terms. See \`docs/guides/PROPOSAL-TERMS-VERIFICATION.md\`.`
@@ -1294,6 +1297,7 @@ function generateLlmsTxt(
   const docLinks: [string, string][] = [
     ['Full type signatures', 'TYPE-SUMMARY.md'],
     ['Buyer quick start (AdCP 3.2)', 'guides/BUYER-QUICKSTART-3.2.md'],
+    ['Assess and resolve MediaBuy actions', 'guides/MEDIA-BUY-ACTION-ASSESSMENT.md'],
     ['Verify proposal terms before acceptance', 'guides/PROPOSAL-TERMS-VERIFICATION.md'],
     ['Seller quick start (AdCP 3.2)', 'guides/SELLER-QUICKSTART-3.2.md'],
     ['Production durability checklist', 'guides/PRODUCTION-DURABILITY.md'],
@@ -1368,6 +1372,37 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln();
   ln(
     `Curated reference of the types that matter for using the AdCP client. For full generated types see \`src/lib/types/tools.generated.ts\` and \`src/lib/types/core.generated.ts\`.`
+  );
+  ln();
+
+  ln('## MediaBuy Action Assessment Types');
+  ln();
+  ln(
+    'Use `@adcp/sdk/media-buy/actions` for pure buyer assessment and `@adcp/sdk/server` for `mediaBuyActionResolver`. See [action assessment guide](guides/MEDIA-BUY-ACTION-ASSESSMENT.md).'
+  );
+  ln();
+  ln('| Type | Use |');
+  ln('| --- | --- |');
+  ln(
+    '| `MediaBuyTask` | Narrow routing union: `update_media_buy`, `control_media_buy`, `refine_proposals`, `sync_creatives`. |'
+  );
+  ln(
+    '| `ActionAvailability` | `available_now` with optional `nonDefaultRoute`, mode and authority; or `currently_unavailable` with reason, certainty and optional compatibility/constraint detail. |'
+  );
+  ln(
+    '| `ActionBuy`, `ActionProduct`, `ActionProposal` | Structural inputs for joining current accepted terms with live actions and advisory products. |'
+  );
+  ln(
+    '| `LiveMediaBuyAction` | Readable canonical or legacy entry for assessment, projection and existing preflight helpers, including rc.3 package scope. |'
+  );
+  ln(
+    '| `MediaBuyAvailableAction`, `MediaBuyValidAction` | Generated legacy wire entry / deprecated flat vocabulary; distinct from canonical helper entries. |'
+  );
+  ln(
+    '| `MediaBuyAction`, `MediaBuyActionId` | Action identifiers accepted by assessment / mutation helpers; runtime validation preserves unknown future data. |'
+  );
+  ln(
+    '| `ProposalChangeTerm`, `ChangeTermConstraints` | Negotiated term view and portable discriminated budget / flight / package-count / effective-timing constraints. |'
   );
   ln();
 

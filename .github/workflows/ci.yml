@@ -73,6 +73,7 @@ jobs:
             src/lib/types/v2-5/tools.generated.ts
             src/lib/agents/index.generated.ts
             src/lib/media-buy/update-fields.generated.ts
+            src/lib/media-buy/action-metadata.generated.ts
             src/lib/server/decisioning/runtime/entity-hydration.generated.ts
             src/lib/registry/types.generated.ts
             schemas/registry/registry.yaml
@@ -81,6 +82,7 @@ jobs:
             ':(glob)src/lib/types/*.generated.ts'
             src/lib/agents/index.generated.ts
             src/lib/media-buy/update-fields.generated.ts
+            src/lib/media-buy/action-metadata.generated.ts
             src/lib/server/decisioning/runtime/entity-hydration.generated.ts
           )
 

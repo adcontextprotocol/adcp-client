@@ -1,5 +1,7 @@
 # Call a seller with AdCP 3.2
 
+For product possibility, accepted change rights, and current execution routes, use the [MediaBuy action assessment helpers](./MEDIA-BUY-ACTION-ASSESSMENT.md).
+
 Requires Node.js `^20.19.0 || >=22.12.0`. Install the SDK 14 prerelease
 and create one client:
 

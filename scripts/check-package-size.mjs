@@ -45,7 +45,11 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // `reporting/content-mismatch` (CJS + ESM + both declaration flavours), for +4.
 // Its reconciliation changes are edits to existing modules, and the unpacked
 // total is unchanged against the 120 MiB ceiling.
-const MAX_PACKED_FILE_COUNT = 6_074;
+// Unified action assessment adds nine module sets (36 artifacts) and one guide.
+// Superseded rc.2 compliance and historical compatibility test schemas are not
+// published. Main 6e11406a contributes 6,074 files plus 37 action artifacts.
+// Byte budgets stay fixed.
+const MAX_PACKED_FILE_COUNT = 6_111;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

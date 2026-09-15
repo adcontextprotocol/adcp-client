@@ -2303,3 +2303,11 @@ export * from './client/account-changes';
 export * from './client/account-change-subscription';
 export * from './notifications/account-change-recorded';
 export type { AccountChangeFeedCapabilities } from './utils/capabilities';
+
+export * from './media-buy/actions';
+export { mediaBuyActionResolver } from './server/media-buy-action-resolver';
+export type {
+  SellerActionDecision,
+  SellerActionResolutionOptions,
+  SellerActionResolution,
+} from './server/media-buy-action-resolver';
