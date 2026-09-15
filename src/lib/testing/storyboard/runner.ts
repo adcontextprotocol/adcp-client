@@ -3335,8 +3335,7 @@ async function executeStoryboardPass(
     // `peer_substitutes_for: <target_step_id>` to assert that its passing
     // establishes equivalent state. Phase membership alone is NOT treated
     // as substitutability — explicit declaration is required.
-    let phasePendingNotApplicable: { stepId: string; reason: RunnerSkipReason | RunnerDetailedSkipReason } | null =
-      null;
+    let phasePendingNotApplicable: CascadeTrigger | null = null;
     let phaseEstablishedStatefulState = false;
     // Path (2): index of declared substitutions for this phase. Map keys
     // are target step IDs (the steps being substituted FOR); values are the
@@ -3916,14 +3915,18 @@ async function executeStoryboardPass(
                 };
               }
             }
-          } else if (result.skip_reason === 'not_applicable') {
+          } else if (
+            result.skip_reason === 'not_applicable' ||
+            result.skip_reason === 'capability_prerequisite_unavailable'
+          ) {
             // Defer cascade decision until end of phase. Applies the
             // same first-wins rule used for `statefulSkipTrigger`: the
             // eventual cascade-detail message references the leftmost
             // not_applicable step in the phase.
             //
             // Scope note: this branch matches the canonical literal
-            // `'not_applicable'` only. Detailed-form skip reasons that
+            // `'not_applicable'` and capability-unavailable dependencies.
+            // Other detailed-form skip reasons that
             // canonicalize to not_applicable (`probe_skipped`,
             // `not_in_only_vectors`, `grader_skipped`,
             // `mcp_mode_flattens_url_edges`) carry the detailed form
@@ -3936,7 +3939,13 @@ async function executeStoryboardPass(
             // condition deliberately rather than assuming canonical
             // mapping is enough.
             if (phasePendingNotApplicable === null) {
-              phasePendingNotApplicable = { stepId: step.id, reason: 'not_applicable' };
+              phasePendingNotApplicable = {
+                stepId: step.id,
+                reason: result.skip_reason,
+                ...(routedCapabilityDetail !== undefined || result.skip_reason === 'capability_prerequisite_unavailable'
+                  ? { capabilityUnavailable: true }
+                  : {}),
+              };
             }
           }
         }

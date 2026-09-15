@@ -1347,3 +1347,82 @@ test('a successful alternate producer rescues a capability-skipped context outpu
   });
   assert.equal(calls.b.filter(task => task === 'get_signals').length, 1);
 });
+
+test('stateful routed capability cascades retain neutral origin, rescue, and real failure precedence', async () => {
+  for (const mode of ['unavailable', 'rescued', 'failed']) {
+    const sb = storyboard([
+      {
+        id: 'producer',
+        task: 'get_adcp_capabilities',
+        agent: 'a',
+        stateful: true,
+        context_outputs: [{ key: 'needed', path: 'identity.brand_json_url' }],
+      },
+      ...(mode === 'rescued'
+        ? [
+            {
+              id: 'rescue',
+              task: 'get_adcp_capabilities',
+              agent: 'b',
+              stateful: true,
+              context_outputs: [{ key: 'needed', path: 'identity.brand_json_url' }],
+            },
+          ]
+        : []),
+      ...(mode === 'failed'
+        ? [
+            {
+              id: 'real_failure',
+              task: 'get_signals',
+              agent: 'b',
+              stateful: true,
+              sample_request: { signal_spec: 'test' },
+            },
+          ]
+        : []),
+      {
+        id: 'consumer',
+        task: 'get_signals',
+        agent: 'b',
+        stateful: true,
+        expect_error: true,
+        sample_request: { signal_spec: '$context.needed' },
+      },
+    ]);
+    sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
+    sb.phases.push({
+      id: 'dependent',
+      title: 'Dependent',
+      steps: [{ id: 'downstream', title: 'Downstream', task: 'get_adcp_capabilities', agent: 'b', stateful: true }],
+    });
+    const { result, calls } = await run(
+      {
+        a: [[], { account: { require_operator_auth: false } }],
+        b: [
+          ['get_signals'],
+          {
+            account: { require_operator_auth: true },
+            supported_protocols: ['signals'],
+            identity: { brand_json_url: 'https://brand.example.test/brand.json' },
+          },
+          true,
+        ],
+      },
+      sb
+    );
+    const downstream = result.phases.find(phase => phase.phase_id === 'dependent').steps[0];
+    assert.equal(downstream.passed, mode !== 'failed', mode);
+    assert.equal(downstream.skipped === true, mode !== 'rescued', mode);
+    assert.equal(
+      downstream.skip_reason,
+      mode === 'failed'
+        ? 'prerequisite_failed'
+        : mode === 'unavailable'
+          ? 'capability_prerequisite_unavailable'
+          : undefined,
+      mode
+    );
+    assert.equal(result.overall_passed, mode !== 'failed', mode);
+    assert.equal(calls.b.filter(task => task === 'get_signals').length, mode === 'unavailable' ? 0 : 1, mode);
+  }
+});
