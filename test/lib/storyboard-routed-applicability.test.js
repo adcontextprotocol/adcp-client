@@ -1556,3 +1556,36 @@ test('hard state dependencies outrank capability-only dependencies in either dec
     }
   }
 });
+
+test('ordinary not-applicable state outranks capability-only state in either step order', async () => {
+  for (const capabilityFirst of [true, false]) {
+    for (const rescued of [false, true]) {
+      const producers = [
+        { id: 'capability_skip', task: 'get_adcp_capabilities', agent: 'a', stateful: true },
+        { id: 'account_shape', task: 'sync_accounts', agent: 'b', stateful: true },
+      ];
+      if (!capabilityFirst) producers.reverse();
+      if (rescued) producers.push({ id: 'rescue', task: 'get_adcp_capabilities', agent: 'b', stateful: true });
+      const sb = storyboard(producers);
+      sb.phases[0].requires_capability = { path: 'account.require_operator_auth', equals: true };
+      sb.phases.push({
+        id: 'dependent',
+        title: 'Dependent',
+        steps: [{ id: 'downstream', title: 'Downstream', task: 'get_adcp_capabilities', agent: 'b', stateful: true }],
+      });
+      const { result, calls } = await run(
+        {
+          a: [[], { account: { require_operator_auth: false } }],
+          b: [[], { account: { require_operator_auth: true } }],
+        },
+        sb
+      );
+      const downstream = result.phases.find(phase => phase.phase_id === 'dependent').steps[0];
+      assert.equal(downstream.passed, rescued);
+      assert.equal(downstream.skip_reason, rescued ? undefined : 'prerequisite_failed');
+      assert.equal(result.overall_passed, rescued);
+      assert.equal(calls.b.filter(task => task === 'get_adcp_capabilities').length, rescued ? 3 : 1);
+      if (!rescued) assert.match(downstream.skip.detail, /account_shape/);
+    }
+  }
+});

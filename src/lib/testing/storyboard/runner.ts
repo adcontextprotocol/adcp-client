@@ -3926,10 +3926,9 @@ async function executeStoryboardPass(
             result.skip_reason === 'not_applicable' ||
             result.skip_reason === 'capability_prerequisite_unavailable'
           ) {
-            // Defer cascade decision until end of phase. Applies the
-            // same first-wins rule used for `statefulSkipTrigger`: the
-            // eventual cascade-detail message references the leftmost
-            // not_applicable step in the phase.
+            // Defer cascade decision until end of phase. Ordinary missing
+            // state outranks capability-only unavailability; retain the
+            // leftmost trigger within the same class for stable diagnostics.
             //
             // Scope note: this branch matches the canonical literal
             // `'not_applicable'` and capability-unavailable dependencies.
@@ -3945,13 +3944,16 @@ async function executeStoryboardPass(
             // participate in substitute-aware deferral, extend this
             // condition deliberately rather than assuming canonical
             // mapping is enough.
-            if (phasePendingNotApplicable === null) {
+            const capabilityUnavailable =
+              routedCapabilityDetail !== undefined || result.skip_reason === 'capability_prerequisite_unavailable';
+            if (
+              phasePendingNotApplicable === null ||
+              (phasePendingNotApplicable.capabilityUnavailable === true && !capabilityUnavailable)
+            ) {
               phasePendingNotApplicable = {
                 stepId: step.id,
                 reason: result.skip_reason,
-                ...(routedCapabilityDetail !== undefined || result.skip_reason === 'capability_prerequisite_unavailable'
-                  ? { capabilityUnavailable: true }
-                  : {}),
+                ...(capabilityUnavailable ? { capabilityUnavailable: true } : {}),
               };
             }
           }
