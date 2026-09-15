@@ -1684,12 +1684,11 @@ const REVISION_DISQUALIFYING_REASONS = new Set([
   // lost by dropping it — the head-only predicate REVISION_SCOPE_MISMATCH
   // tests the same fields against the revision actually being named.
   //
-  // An earlier version of this comment claimed `assertReportingLedgerGraph`
-  // refuses an off-scope revision first, making this defence in depth. That is
-  // wrong: that assertion checks the materialization-to-obligation join and
-  // `revision.account_id`, not `report_definition_id`, `reporting_profile`,
-  // `media_buy_ids` or `period`. For a managed-delivery obligation, candidates
-  // are joined purely by materialization revision id, so this is a live path.
+  // It is a live path, not defence in depth: for a direct-Core obligation the
+  // graph assertion does refuse an off-scope revision, but a revision joined
+  // through a materialization is checked only for `account_id`, so under
+  // managed delivery an off-scope predecessor survives the load and becomes a
+  // candidate. The test builds exactly that fixture.
 ]);
 
 interface ConsumerStatusDraft {

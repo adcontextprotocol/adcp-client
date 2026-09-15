@@ -1450,6 +1450,68 @@ describe('rc.3 buyer consumer-status loop, end to end against the SDK seller', (
     assert.deepEqual(result.failedConsumerStatuses, []);
   });
 
+  test('an off-scope superseded predecessor does not make a valid current revision missing', async () => {
+    const seller = await harness();
+    await seller.producer.planObligations(new Date(seller.anchor + DAY).toISOString());
+    await seller.producer.runWorker({ now: () => new Date(seller.anchor + DAY + HOUR), maxIterations: 2 });
+    const at = seller.anchor + DAY + 3 * HOUR;
+    seller.observeAt(at);
+
+    // `REVISION_CHAIN_SCOPE_MISMATCH` is evaluated over every candidate in the
+    // chain, including superseded ones, which is why it is not a disqualifying
+    // reason: a predecessor's slice violation must not turn a sound current
+    // revision into `revision_missing`.
+    //
+    // Reaching it needs managed delivery. For a direct-Core obligation the
+    // ledger graph assertion refuses an off-scope revision outright, but a
+    // revision referenced by a materialization is joined through that
+    // materialization instead — so an off-scope predecessor survives the load
+    // and becomes a candidate, which is exactly the shape the exclusion exists
+    // to protect against.
+    const honest = seller.client.getReportingStatus;
+    seller.client.getReportingStatus = async params => {
+      const page = await honest(params);
+      const [obligation] = page.periods ?? [];
+      const [head] = page.revisions ?? [];
+      if (!obligation || !head) return page;
+      const predecessor = {
+        ...head,
+        reporting_revision_id: `${head.reporting_revision_id}-stale`,
+        // Off-scope: a period the obligation does not cover.
+        period: { ...head.period, start: '2020-01-01T00:00:00.000Z', end: '2020-01-02T00:00:00.000Z' },
+      };
+      const materialization = (revisionId, index) => ({
+        reporting_materialization_id: `rmat_${index}`,
+        reporting_revision_id: revisionId,
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        delivery_config_id: obligation.delivery_config_id,
+        delivery_config_version: obligation.delivery_config_version,
+        destination_ref: obligation.destination_ref,
+        feed_purpose: obligation.feed_purpose,
+        method: 'file_transfer',
+        attempt: index + 1,
+        status: 'pending',
+        created_at: obligation.period.end,
+      });
+      return {
+        ...page,
+        revisions: [predecessor, { ...head, supersedes_reporting_revision_id: predecessor.reporting_revision_id }],
+        materializations: [
+          materialization(predecessor.reporting_revision_id, 0),
+          materialization(head.reporting_revision_id, 1),
+        ],
+        // One extra revision plus two materializations.
+        pagination: { ...page.pagination, total_count: page.pagination.total_count + 3 },
+      };
+    };
+    const expected = [expectedPeriod(seller.request, seller.anchor, { deliveryMethod: 'file_transfer' })];
+
+    const result = await seller.reconcile(at, expected);
+    const plan = result.consumerStatuses[0];
+    assert.equal(plan.consumerStatus, 'received', 'the head is sound, so the buyer consumed it');
+    assert.equal(plan.suppressed, undefined);
+  });
+
   test('without an exact-revision reader the buyer plans received but never attests it', async () => {
     const seller = await harness();
     const expected = [expectedPeriod(seller.request, seller.anchor)];
