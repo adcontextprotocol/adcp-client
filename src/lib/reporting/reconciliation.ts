@@ -41,6 +41,15 @@ const CONSUMER_STATUS_BATCH_MAX = 100;
  */
 const MAX_CONSUMED_REVISION_BYTES = 256 * 1024 * 1024;
 
+/**
+ * What one unexamined subtree costs against the ceiling above.
+ *
+ * Chosen so a row set of deeply nested containers trips the ceiling in the
+ * low hundreds of rows rather than never. Rows this deep are not a normal
+ * reporting shape, so the pessimism has no cost against a real profile.
+ */
+const DEEP_SUBTREE_BYTE_CHARGE = 1024 * 1024;
+
 // Runtime guards keep these evidence-bearing fields optional at the boundary so
 // malformed or older seller payloads fail with reconciliation diagnostics rather
 // than an unchecked property access.
@@ -1510,9 +1519,15 @@ function planReportingConsumerStatuses(
     const period = {
       start: expected.periodStart,
       end: expected.periodEnd,
+      // Bounded before adoption: it goes into the buyer's durable statement,
+      // into the `reporting_status_id` hash, and into the seller-side chain
+      // key — so a seller that varies it forks the buyer's own chain. The
+      // ingest path bounds it at 255; this read path has to as well.
       source_timezone:
-        (obligationForPeriod as { period?: { source_timezone?: string } } | undefined)?.period?.source_timezone ??
-        expected.periodSourceTimezone ??
+        boundedSourceTimezone(
+          (obligationForPeriod as { period?: { source_timezone?: unknown } } | undefined)?.period?.source_timezone
+        ) ??
+        boundedSourceTimezone(expected.periodSourceTimezone) ??
         'UTC',
     };
     const base = {
@@ -1522,8 +1537,11 @@ function planReportingConsumerStatuses(
       period,
     };
     const expectedAt = reportingExpectedAt(obligationForPeriod, expected);
+    // The seller sent something we could not read *and* could not recompute
+    // from its own schedule — carried so the diagnostic can name the value.
     const declaredExpectedAt = obligationForPeriod?.expected_at;
-    const malformedExpectedAt = typeof declaredExpectedAt === 'string' && expectedAt !== declaredExpectedAt;
+    const malformedExpectedAt =
+      expectedAt === undefined && typeof declaredExpectedAt === 'string' ? declaredExpectedAt : undefined;
     const schedule = consumerStatusSchedule(expectedAt, expected, now, malformedExpectedAt);
     const leaf = currentConsumerLeaf(
       ledger,
@@ -1561,9 +1579,9 @@ function planReportingConsumerStatuses(
     // signals therefore suppress whether or not a head resolved.
     // `MISSING_CURRENT_REVISION` alone is the ordinary case — the seller
     // published nothing for this period — and is a true `revision_missing`.
-    const indeterminate =
-      selected.reasons.includes('AMBIGUOUS_REVISION_CHAIN') ||
-      selected.reasons.includes('REVISION_PREDECESSOR_MISSING');
+    const forked = selected.reasons.includes('AMBIGUOUS_REVISION_CHAIN');
+    const predecessorMissing = selected.reasons.includes('REVISION_PREDECESSOR_MISSING');
+    const indeterminate = forked || predecessorMissing;
 
     if (!revision || indeterminate) {
       return finalizeConsumerStatusPlan(
@@ -1574,7 +1592,11 @@ function planReportingConsumerStatuses(
           consumerStatus: 'revision_missing',
           ...(indeterminate ? { indeterminate: true } : {}),
           establishedAt,
-          reason: 'the obligation exists but no required revision was available',
+          reason: forked
+            ? 'the revision chain forks, so no single current revision could be resolved'
+            : predecessorMissing
+              ? `a revision names a predecessor the buyer never saw, so ${revision ? `the head ${revision.reporting_revision_id} ` : 'no head '}could not be proven current`
+              : 'the obligation exists but no required revision was available',
         },
         leaf,
         now
@@ -1665,8 +1687,12 @@ interface ConsumerStatusDraft {
   deadline?: string;
   overdue: boolean;
   requiresConsumption?: boolean;
-  /** Buyer pin whose absence left this period with no computable deadline. */
-  missingPin?: string;
+  /**
+   * Why this period has no computable deadline. Either a pin the buyer never
+   * recorded, or the seller's own `expected_at` being unreadable — different
+   * parties, so they are told apart rather than sharing one sentence.
+   */
+  deadlineGap?: { cause: 'missing_pin'; pin: string } | { cause: 'unreadable_expected_at'; value: string };
   /** The buyer could not resolve the chain, so it must not assert anything. */
   indeterminate?: boolean;
   /** The instant this statement became true, before the monotonicity floor. */
@@ -1693,7 +1719,7 @@ function finalizeConsumerStatusPlan(
 ): ReportingConsumerStatusPlanV1 {
   const statusAsOfFloor =
     latestInstant([draft.establishedAt, usableLeafInstant(leaf.statement, now)]) ?? draft.establishedAt;
-  const { establishedAt: _establishedAt, missingPin, indeterminate, ...carried } = draft;
+  const { establishedAt: _establishedAt, deadlineGap, indeterminate, ...carried } = draft;
   const plan: ReportingConsumerStatusPlanV1 = {
     ...carried,
     ...(leaf.statusId ? { supersedesReportingStatusId: leaf.statusId } : {}),
@@ -1709,11 +1735,18 @@ function finalizeConsumerStatusPlan(
       reason: suppressionReason('chain_indeterminate', plan.reason),
     };
   }
-  if (missingPin) {
+  // Only the statuses that actually require `expected_at` are suppressed for
+  // the lack of it: `expected_period` puts that precondition on
+  // obligation_missing and revision_missing alone. The others simply are not
+  // overdue, which already prevents a post.
+  if (deadlineGap && (plan.consumerStatus === 'obligation_missing' || plan.consumerStatus === 'revision_missing')) {
     return {
       ...plan,
       suppressed: 'deadline_unknown',
-      reason: `no posting deadline: ExpectedReportingPeriod.${missingPin} was not recorded`,
+      reason:
+        deadlineGap.cause === 'missing_pin'
+          ? `no posting deadline: record ExpectedReportingPeriod.${deadlineGap.pin} to derive one`
+          : `no posting deadline: the seller's obligation.expected_at (${boundedDiagnostic(deadlineGap.value)}) is not a readable instant and its schedule.delivery_sla did not resolve one either; record ExpectedReportingPeriod.deliverySlaSeconds to derive one locally`,
     };
   }
   const suppressed = consumerStatusSuppression(plan, leaf);
@@ -1737,7 +1770,10 @@ function suppressionReason(
     case 'local_budget_exhausted':
       return "not posted: the buyer's own ledgerLimits read budget ran out before the revision could be consumed";
     case 'chain_indeterminate':
-      return 'not posted: the revision chain could not be resolved to one current revision, which is the buyer failing to read rather than the seller failing to publish';
+      // The draft already says which defect it was, and the two differ: a fork
+      // leaves no head at all, a missing predecessor leaves one the buyer
+      // cannot prove is current.
+      return `not posted: ${reason}`;
     default:
       return reason;
   }
@@ -1849,14 +1885,19 @@ function reportingExpectedAt(
   obligation: ManagedReportingObligation | undefined,
   expected: ExpectedReportingPeriod
 ): string | undefined {
-  const declared = obligation?.expected_at;
-  // Same regex the monotonicity floor uses. `Date.parse` alone accepts
-  // "Mon, 01 Jan 2035 00:00:00 GMT" and worse, and whatever comes back here is
-  // re-emitted verbatim as the buyer's own `status_as_of`. A seller that sends
-  // something else has not told the buyer when the period was due, so the
-  // period has no computable deadline rather than a guessed one.
-  if (typeof declared === 'string') {
-    return RFC3339_INSTANT.test(declared) && Number.isFinite(Date.parse(declared)) ? declared : undefined;
+  // Normalised, never echoed: whatever comes back here is re-emitted as the
+  // buyer's own `status_as_of`.
+  const declared = normalizedInstant(obligation?.expected_at);
+  if (declared !== undefined) return declared;
+  // `reporting-schedule.json`: "expected_at equals the resolved period end plus
+  // this duration", and `schedule` is required on every obligation. So when the
+  // seller's own `expected_at` is unreadable the buyer can still recompute the
+  // seller's number rather than falling back to its own pin — same instant, by
+  // the spec's own definition.
+  const scheduledSeconds = reportingDeliverySlaSeconds(obligation);
+  const periodEndFromObligation = Date.parse(expected.periodEnd);
+  if (scheduledSeconds !== undefined && Number.isFinite(periodEndFromObligation)) {
+    return new Date(periodEndFromObligation + scheduledSeconds * 1_000).toISOString();
   }
   const slaSeconds =
     expected.requiredFinality === 'official' && typeof expected.officialAfterSeconds === 'number'
@@ -1866,6 +1907,26 @@ function reportingExpectedAt(
   if (typeof slaSeconds !== 'number' || !Number.isFinite(slaSeconds) || slaSeconds < 0) return undefined;
   if (!Number.isFinite(periodEnd)) return undefined;
   return new Date(periodEnd + slaSeconds * 1_000).toISOString();
+}
+
+/** `schedule.delivery_sla` off the obligation, as seconds. */
+function reportingDeliverySlaSeconds(obligation: ManagedReportingObligation | undefined): number | undefined {
+  const schedule = (obligation as { schedule?: { delivery_sla?: unknown } } | undefined)?.schedule;
+  return typeof schedule?.delivery_sla === 'string' ? iso8601DurationSeconds(schedule.delivery_sla) : undefined;
+}
+
+/**
+ * Seconds in a non-negative ISO 8601 duration, for the subset
+ * `reporting-schedule.json` permits on `delivery_sla`.
+ *
+ * Years and months are deliberately unsupported: they are calendar-dependent,
+ * so resolving them here would invent an instant the seller did not mean.
+ */
+function iso8601DurationSeconds(value: string): number | undefined {
+  const match = /^P(?!$)(?:(\d+)D)?(?:T(?!$)(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/.exec(value);
+  if (!match) return undefined;
+  const [, days, hours, minutes, seconds] = match;
+  return Number(days ?? 0) * 86_400 + Number(hours ?? 0) * 3_600 + Number(minutes ?? 0) * 60 + Number(seconds ?? 0);
 }
 
 /**
@@ -1880,25 +1941,54 @@ function consumerStatusSchedule(
   expectedAt: string | undefined,
   expected: ExpectedReportingPeriod,
   now: Date,
-  malformedExpectedAt = false
-): { deadline?: string; overdue: boolean; missingPin?: string } {
+  malformedExpectedAt?: string
+): { deadline?: string; overdue: boolean; deadlineGap?: ConsumerStatusDraft['deadlineGap'] } {
   const windowSeconds = expected.automatedRecoveryWindowSeconds;
   if (expectedAt === undefined) {
     // Distinguish the two causes: a pin the buyer never recorded, versus an
     // obligation whose own `expected_at` the buyer could not read.
     return {
       overdue: false,
-      missingPin: malformedExpectedAt ? 'obligation.expected_at (not an RFC 3339 instant)' : 'deliverySlaSeconds',
+      deadlineGap:
+        malformedExpectedAt !== undefined
+          ? { cause: 'unreadable_expected_at', value: malformedExpectedAt }
+          : { cause: 'missing_pin', pin: 'deliverySlaSeconds' },
     };
   }
   if (typeof windowSeconds !== 'number' || !Number.isFinite(windowSeconds) || windowSeconds < 0) {
-    return { overdue: false, missingPin: 'automatedRecoveryWindowSeconds' };
+    return { overdue: false, deadlineGap: { cause: 'missing_pin', pin: 'automatedRecoveryWindowSeconds' } };
   }
   const deadline = new Date(Date.parse(expectedAt) + windowSeconds * 1_000).toISOString();
   return { deadline, overdue: now.getTime() >= Date.parse(deadline) };
 }
 
-const RFC3339_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+/**
+ * Deliberately as permissive as the `date-time` format this SDK validates
+ * seller payloads with (`ajv-formats`), which accepts a lowercase `t`/`z`, a
+ * space separator, and `+hhmm` or `+hh` offsets. A stricter reader here would
+ * silence a seller the SDK itself just told was conformant.
+ */
+const RFC3339_INSTANT = /^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$/;
+
+/**
+ * One canonical spelling of a seller-supplied instant, or `undefined`.
+ *
+ * Normalising rather than echoing matters twice over: `Date.parse` silently
+ * rolls an out-of-range date forward, so `2026-02-30T00:00:00Z` passes every
+ * syntactic check and then means March 2 — and re-emitting the seller's bytes
+ * would put that contradiction on a statement the buyer signs, where a
+ * validator doing real calendar checking rejects it forever.
+ */
+function normalizedInstant(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !RFC3339_INSTANT.test(value)) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+}
+
+/** A usable, bounded source timezone, or `undefined` to fall through. */
+function boundedSourceTimezone(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 && value.length <= 255 ? value : undefined;
+}
 
 /** Strip control characters and bound any string headed for an adopter's log. */
 function boundedDiagnostic(value: string): string {
@@ -1929,10 +2019,8 @@ function latestInstant(values: ReadonlyArray<string | undefined>): string | unde
  * class of problem as one the seller never disclosed.
  */
 function usableLeafInstant(statement: ReportingConsumerStatus | undefined, now: Date): string | undefined {
-  const value = statement?.status_as_of;
-  if (typeof value !== 'string' || !RFC3339_INSTANT.test(value)) return undefined;
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || parsed > now.getTime()) return undefined;
+  const value = normalizedInstant(statement?.status_as_of);
+  if (value === undefined || Date.parse(value) > now.getTime()) return undefined;
   return value;
 }
 
@@ -2905,10 +2993,19 @@ async function consumeReportingRevision(
       )
       .digest('hex');
   } catch (error) {
-    // Only the size failure is a budget. Anything else is a real defect and
-    // must not be relabelled as "the buyer ran out of room".
-    if (!(error instanceof RangeError)) throw error;
-    return { budgetExhausted: 'revision' };
+    // Never rethrow. The only caller does not catch, so an escape here aborts
+    // `reconcileReporting` after it has already synced receipts — losing the
+    // caller's record of durable work, which is the hazard this guard exists
+    // for. And the trigger is wire-reachable: `JSON.parse('1e999')` is
+    // `Infinity`, which `canonicalize` rejects, so one seller-supplied number
+    // is enough.
+    //
+    // A `RangeError` is a size failure — the canonical string exceeding the
+    // engine's limit, or a nesting depth exceeding the stack — so it is the
+    // buyer's own ceiling and stays silent. Anything else is content this
+    // reader cannot digest, which is what `reader_incompatible` names.
+    if (error instanceof RangeError) return { budgetExhausted: 'revision' };
+    return { failureCode: 'reader_incompatible', detail: 'the revision rows could not be canonicalized' };
   }
   if (!sameSha256(digest, binding.content_sha256)) {
     return {
@@ -2929,10 +3026,13 @@ async function consumeReportingRevision(
 function approximateRowBytes(row: unknown, depth = 0): number {
   if (typeof row === 'string') return row.length * 2;
   if (row === null || typeof row !== 'object') return 16;
-  // Bounded recursion: a flat scan charged a nested object 16 bytes however
-  // large it was, which is the shape a seller would use to walk past the
-  // ceiling. The depth cap keeps the estimate itself cheap.
-  if (depth >= 4) return 64;
+  // Past the depth cap the subtree is charged a deliberately *pessimistic*
+  // constant rather than a cheap one. Charging 64 bytes for an unexamined
+  // container just moved the bypass four levels down — `{a:{b:{c:{d:{blob}}}}}`
+  // measured 200 bytes against a one-megabyte row. Over-charging costs a
+  // conformant seller nothing but an earlier, silent `local_budget_exhausted`;
+  // under-charging is unbounded memory.
+  if (depth >= 4) return DEEP_SUBTREE_BYTE_CHARGE;
   let total = 32;
   if (Array.isArray(row)) {
     for (const value of row) total += approximateRowBytes(value, depth + 1);
