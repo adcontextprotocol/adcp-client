@@ -1,3 +1,11 @@
+export { detectReportingContentMismatch } from './content-mismatch';
+export type {
+  ReportingConsumedRevisionV1,
+  ReportingContentMismatchV1,
+  ReportingContractFactsV1,
+  ReportingMismatchCodeV1,
+  ReportingRowEvidenceV1,
+} from './content-mismatch';
 export {
   ReportingReconciliationError,
   buildReportingReceipt,
@@ -19,6 +27,9 @@ export type {
   ReportingCheckpoint,
   ReportingCheckpointKey,
   ReportingCheckpointStore,
+  ReportingPendingConsumerStatus,
+  ReportingPendingConsumerStatusKey,
+  ReportingPendingConsumerStatusStore,
   ReportingCanonicalDigestEvidence,
   ReportingCoverageEvidence,
   ReportingCoverageLimitation,
@@ -26,6 +37,8 @@ export type {
   ReportingLedger,
   ReportingLedgerLimits,
   ReportingObservation,
+  ReportingConsumerStatusPlanV1,
+  ReportingEscalationV1,
   ReportingReconciliationClient,
   ReportingReconciliationResult,
 } from './reconciliation';
