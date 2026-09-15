@@ -5195,44 +5195,6 @@ async function executeStep(
     request = applyContextInputs(request, step.context_inputs, context);
   }
 
-  // applyContextInputs intentionally leaves absent keys alone. When such a
-  // key belongs to an unavailable declared dependency, stop before
-  // dispatch rather than letting an expect_error vector accidentally test the
-  // runner's missing state.
-  const unavailableContextInputs = (step.context_inputs ?? []).filter(
-    input =>
-      !(input.key in context) &&
-      (runState.capabilityUnavailableContextKeys?.has(input.key) === true ||
-        runState.missingPrerequisiteContextKeys?.has(input.key) === true)
-  );
-  if (unavailableContextInputs.length > 0) {
-    const hardUnavailable = unavailableContextInputs.some(
-      input => runState.missingPrerequisiteContextKeys?.has(input.key) === true
-    );
-    const detail =
-      (hardUnavailable
-        ? 'Skipped: context required from a missing-tool prerequisite is unavailable: '
-        : 'Skipped: context required by a capability-gated phase is unavailable: ') +
-      unavailableContextInputs.map(input => input.key).join(', ') +
-      '.';
-    return {
-      step_id: step.id,
-      phase_id: phaseId,
-      title: step.title,
-      task: step.task,
-      passed: !hardUnavailable,
-      skipped: true,
-      skip_reason: hardUnavailable ? 'prerequisite_failed' : 'capability_prerequisite_unavailable',
-      skip: buildSkip(hardUnavailable ? 'prerequisite_failed' : 'not_applicable', detail),
-      ...(hardUnavailable && { error: detail }),
-      duration_ms: 0,
-      validations: [],
-      context,
-      next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
-      extraction: { path: 'none' },
-    };
-  }
-
   // Brand/account is a storyboard-run-scoped invariant: every step in a run
   // targets the same brand, so every outgoing request's brand context must
   // match the options. Enforcing this here (after builder + sample_request)
@@ -5315,7 +5277,19 @@ async function executeStep(
 
   // Detect unresolved $context placeholders — a prior step likely failed
   // and didn't produce the expected output. Skip rather than sending garbage.
-  const unresolvedContextVars = findUnresolvedContextVars(request);
+  // Classify explicit inputs together with tokens after request normalization.
+  // An early neutral input return must not conceal a hard missing token, and
+  // tokens replaced by normalizers are no longer missing prerequisites.
+  const unavailableContextInputs = (step.context_inputs ?? []).filter(
+    input =>
+      !(input.key in context) &&
+      (runState.capabilityUnavailableContextKeys?.has(input.key) === true ||
+        runState.missingPrerequisiteContextKeys?.has(input.key) === true)
+  );
+  const unresolvedContextVars = [
+    ...findUnresolvedContextVars(request),
+    ...unavailableContextInputs.map(input => ({ key: input.key, token: `$context.${input.key}` })),
+  ];
   const unresolvedAssetDirectives = findUnresolvedCreativeAssetDirectives(request).map(path => ({
     key: path,
     token: BUILD_ASSETS_FROM_FORMAT_DIRECTIVE,

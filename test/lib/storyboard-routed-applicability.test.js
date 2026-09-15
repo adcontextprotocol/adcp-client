@@ -1694,3 +1694,138 @@ test('routed missing-tool outputs cannot satisfy dependent negative vectors', as
     }
   }
 });
+
+test('mixed explicit inputs and request tokens preserve hard prerequisite precedence', async () => {
+  for (const form of ['hard_token', 'hard_input', 'both_tokens', 'both_inputs']) {
+    for (const restored of ['neither', 'hard', 'capability', 'both']) {
+      const hardRestored = restored === 'hard' || restored === 'both';
+      const capRestored = restored === 'capability' || restored === 'both';
+      const consumer = {
+        id: 'consumer',
+        title: 'Consumer',
+        task: 'get_signals',
+        agent: 'b',
+        expect_error: true,
+        sample_request: {},
+        context_inputs: [],
+      };
+      for (const [key, field, token] of [
+        ['hard_output', 'signal_spec', form === 'hard_token' || form === 'both_tokens'],
+        ['cap_output', 'other_field', form === 'hard_input' || form === 'both_tokens'],
+      ]) {
+        if (token) consumer.sample_request[field] = `$context.${key}`;
+        else consumer.context_inputs.push({ key, inject_at: field });
+      }
+      const sb = storyboard([]);
+      sb.phases = [
+        {
+          id: 'capability',
+          title: 'Capability',
+          requires_capability: { path: 'account.require_operator_auth', equals: true },
+          steps: [
+            {
+              id: 'cap',
+              title: 'Cap',
+              task: 'get_adcp_capabilities',
+              agent: 'a',
+              context_outputs: [{ key: 'cap_output', path: 'identity.brand_json_url' }],
+            },
+          ],
+        },
+        {
+          id: 'missing',
+          title: 'Missing',
+          depends_on: [],
+          steps: [
+            {
+              id: 'hard',
+              title: 'Hard',
+              task: 'get_adcp_capabilities',
+              requires_tool: 'get_signals',
+              agent: 'a',
+              stateful: true,
+              context_outputs: [{ key: 'hard_output', path: 'identity.brand_json_url' }],
+            },
+            ...(hardRestored || capRestored
+              ? [
+                  {
+                    id: 'rescue',
+                    title: 'Rescue',
+                    task: 'get_adcp_capabilities',
+                    agent: 'b',
+                    context_outputs: [
+                      ...(hardRestored ? ['hard_output'] : []),
+                      ...(capRestored ? ['cap_output'] : []),
+                    ].map(key => ({ key, path: 'identity.brand_json_url' })),
+                  },
+                ]
+              : []),
+          ],
+        },
+        {
+          id: 'dependent',
+          title: 'Dependent',
+          steps: [consumer, { id: 'read', title: 'Read', task: 'get_adcp_capabilities', agent: 'b' }],
+        },
+      ];
+      const { result, calls } = await run(
+        {
+          a: [[], { account: { require_operator_auth: false } }],
+          b: [
+            ['get_signals'],
+            {
+              account: { require_operator_auth: true },
+              supported_protocols: ['signals'],
+              identity: { brand_json_url: 'https://brand.example.test/brand.json' },
+            },
+            true,
+          ],
+        },
+        sb
+      );
+      const row = result.phases[2].steps[0];
+      const label = `${form}/${restored}`;
+      assert.equal(row.passed, hardRestored, label);
+      assert.equal(
+        row.skip_reason,
+        !hardRestored ? 'prerequisite_failed' : !capRestored ? 'capability_prerequisite_unavailable' : undefined,
+        label
+      );
+      assert.equal(result.overall_passed, hardRestored, label);
+      assert.equal(result.failed_count, 0, label);
+      assert.equal(calls.b.filter(task => task === 'get_signals').length, hardRestored && capRestored ? 1 : 0, label);
+    }
+  }
+});
+
+test('CLI capability skip diagnostics escape controls without exposing unrelated seller details', () => {
+  const fs = require('node:fs');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(require.resolve('../../bin/adcp.js'), 'utf8');
+  const helper = source.slice(
+    source.indexOf('function printCapabilityPrerequisiteSkip'),
+    source.indexOf('async function handleStoryboardRun')
+  );
+  const lines = [];
+  const scope = { console: { log: line => lines.push(line) } };
+  vm.runInNewContext(helper, scope);
+  scope.printCapabilityPrerequisiteSkip({
+    skipped: true,
+    skip_reason: 'not_applicable',
+    skip: { detail: 'seller-secret\u001b[2J' },
+  });
+  assert.deepEqual(lines, []);
+  scope.printCapabilityPrerequisiteSkip({
+    skipped: true,
+    skip_reason: 'capability_prerequisite_unavailable',
+    skip: { detail: 'missing\u001b[2J\u009b31m\nkey' },
+  });
+  assert.deepEqual(lines, ['   Skipped: missing\\u001b[2J\\u009b31m\\u000akey']);
+  scope.printCapabilityPrerequisiteSkip({
+    skipped: true,
+    skip_reason: 'capability_prerequisite_unavailable',
+    skip: { detail: 'duplicate' },
+    error: 'already rendered',
+  });
+  assert.equal(lines.length, 1);
+});
