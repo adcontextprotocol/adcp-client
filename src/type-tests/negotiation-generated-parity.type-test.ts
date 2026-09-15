@@ -1,15 +1,27 @@
 import type {
+  AcceptanceContext as RootAcceptanceContext,
   CanonicalDeliveryForecast as RootCanonicalDeliveryForecast,
   CanonicalForecastPoint as RootCanonicalForecastPoint,
   CanonicalProposal,
+  MediaBuyFrequencyCap as RootMediaBuyFrequencyCap,
+  OutcomeTarget as RootOutcomeTarget,
+  ProposalDiscoveryCriteria,
   ProposalPurchase,
+  ProductMediaBuySupportRequirements as RootProductMediaBuySupportRequirements,
+  ReviseProposalRefinement,
 } from '../lib';
 import type {
+  AcceptanceContext as TypesAcceptanceContext,
   CanonicalDeliveryForecast as TypesCanonicalDeliveryForecast,
   CanonicalForecastPoint as TypesCanonicalForecastPoint,
+  MediaBuyFrequencyCap as TypesMediaBuyFrequencyCap,
+  OutcomeTarget as TypesOutcomeTarget,
+  ProductMediaBuySupportRequirements as TypesProductMediaBuySupportRequirements,
 } from '../lib/types';
 import type {
   CanonicalProposal as GeneratedCanonicalProposal,
+  ProductDiscoveryCriteria as GeneratedProductDiscoveryCriteria,
+  ProposalRefinement as GeneratedProposalRefinement,
   ProductPurchase as GeneratedProductPurchase,
 } from '../lib/types/core.generated';
 
@@ -29,9 +41,43 @@ type _ProposalKeysStayComplete = Assert<
 >;
 type _PurchaseKeysStayComplete = Assert<Equal<Exclude<keyof GeneratedProductPurchase, keyof ProposalPurchase>, never>>;
 
+// Handwritten negotiation inputs retain their backwards-compatible optional
+// fields while using the exact generated schema types for new 3.2 criteria.
+type _FrequencyCapCriteriaParity = Assert<
+  Equal<
+    ProposalDiscoveryCriteria['media_buy_frequency_cap'],
+    GeneratedProductDiscoveryCriteria['media_buy_frequency_cap']
+  >
+>;
+type _MediaBuySupportCriteriaParity = Assert<
+  Equal<
+    ProposalDiscoveryCriteria['required_media_buy_support'],
+    GeneratedProductDiscoveryCriteria['required_media_buy_support']
+  >
+>;
+type _OutcomeTargetCriteriaParity = Assert<
+  Equal<ProposalDiscoveryCriteria['outcome_target'], GeneratedProductDiscoveryCriteria['outcome_target']>
+>;
+type _AcceptanceContextCriteriaParity = Assert<
+  Equal<ProposalDiscoveryCriteria['acceptance_context'], GeneratedProductDiscoveryCriteria['acceptance_context']>
+>;
+type DistributedProperty<T, K extends PropertyKey> = T extends unknown ? (K extends keyof T ? T[K] : never) : never;
+type _RemoveFrequencyCapParity = Assert<
+  Equal<
+    ReviseProposalRefinement['remove_media_buy_frequency_cap'],
+    DistributedProperty<GeneratedProposalRefinement, 'remove_media_buy_frequency_cap'>
+  >
+>;
+
 // The forecast supporting type is reachable from both documented barrels.
 type _RootForecastExport = Assert<Equal<RootCanonicalDeliveryForecast, TypesCanonicalDeliveryForecast>>;
 type _RootForecastPointExport = Assert<Equal<RootCanonicalForecastPoint, TypesCanonicalForecastPoint>>;
+type _RootFrequencyCapExport = Assert<Equal<RootMediaBuyFrequencyCap, TypesMediaBuyFrequencyCap>>;
+type _RootMediaBuySupportExport = Assert<
+  Equal<RootProductMediaBuySupportRequirements, TypesProductMediaBuySupportRequirements>
+>;
+type _RootOutcomeTargetExport = Assert<Equal<RootOutcomeTarget, TypesOutcomeTarget>>;
+type _RootAcceptanceContextExport = Assert<Equal<RootAcceptanceContext, TypesAcceptanceContext>>;
 
 const purchaseWithSchemaFields: ProposalPurchase = {
   product_id: 'product-1',
@@ -40,10 +86,30 @@ const purchaseWithSchemaFields: ProposalPurchase = {
   pacing: 'even',
 };
 
+const legacyRevisionRemainsValid: ReviseProposalRefinement = {
+  proposal_id: 'proposal-legacy',
+  action: 'revise',
+  ask: 'Keep the existing request shape valid',
+};
+const removeOnlyRevision: ReviseProposalRefinement = {
+  proposal_id: 'proposal-remove-cap',
+  action: 'revise',
+  remove_media_buy_frequency_cap: true,
+};
+const invalidRemoveRevision: ReviseProposalRefinement = {
+  proposal_id: 'proposal-keep-cap',
+  action: 'revise',
+  // @ts-expect-error The official schema permits only the literal true removal command.
+  remove_media_buy_frequency_cap: false,
+};
+
 declare const proposal: CanonicalProposal;
 const forecast: RootCanonicalDeliveryForecast | undefined = proposal.forecast;
 const budgetGuidance: { currency: string } | undefined = proposal.total_budget_guidance;
 
 void purchaseWithSchemaFields;
+void legacyRevisionRemainsValid;
+void removeOnlyRevision;
+void invalidRemoveRevision;
 void forecast;
 void budgetGuidance;
