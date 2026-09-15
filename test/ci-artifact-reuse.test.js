@@ -10,6 +10,9 @@ const { parse } = require('yaml');
 const root = path.resolve(__dirname, '..');
 const workflow = parse(fs.readFileSync(path.join(root, '.github/workflows/ci.yml'), 'utf8'));
 const { jobs } = workflow;
+// Execute GNU tar/sha256sum and bash only on the workflow's Linux platform.
+// Static contract checks remain available to local contributors on every OS.
+const linuxRunner = { skip: process.platform !== 'linux' };
 const consumers = [
   'library-checks',
   'adopter-typechecks',
@@ -157,122 +160,134 @@ test('Node floor rebuilds and external runtime compatibility retain every matrix
   }
 });
 
-test('the actual archive/verification scripts round-trip output and reject stale, missing or tampered inputs', t => {
-  const { cwd, env } = fixture(t);
-  fs.mkdirSync(path.join(cwd, 'dist'));
-  const content = fs.readFileSync(path.join(root, 'package.json'));
-  fs.writeFileSync(path.join(cwd, 'dist/package.json'), content);
-  for (const cache of ['schemas/cache', 'compliance/cache']) {
-    fs.mkdirSync(path.join(cwd, cache, 'current'), { recursive: true });
-    fs.copyFileSync(path.join(root, 'ADCP_VERSION'), path.join(cwd, cache, 'current/ADCP_VERSION'));
-    fs.symlinkSync('current', path.join(cwd, cache, 'latest'));
-  }
-  succeeds(shell(archive.run, cwd, env));
-  const outputs = Object.fromEntries(
-    fs
-      .readFileSync(env.GITHUB_OUTPUT, 'utf8')
-      .trim()
-      .split('\n')
-      .map(line => line.split('='))
-  );
-  const bytes = fs.readFileSync(path.join(env.RUNNER_TEMP, 'library-dist.tar.gz'));
-  assert.equal(outputs.sha256, createHash('sha256').update(bytes).digest('hex'));
-  assert.equal(outputs.commit, env.GITHUB_SHA);
-  const artifactDir = path.join(env.RUNNER_TEMP, 'library-artifact');
-  fs.mkdirSync(artifactDir);
-  const artifactPath = path.join(artifactDir, 'library-dist.tar.gz');
-  fs.writeFileSync(artifactPath, bytes);
-  for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
-    fs.writeFileSync(path.join(cwd, tree, 'stale'), 'must not survive extraction');
-  }
-  const consumerEnv = { ...env, LIBRARY_SHA256: outputs.sha256, LIBRARY_COMMIT: outputs.commit };
-  succeeds(shell(verify.run, cwd, consumerEnv));
-  assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
-  for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
-    assert.equal(fs.existsSync(path.join(cwd, tree, 'stale')), false);
-  }
-  for (const cache of ['schemas/cache', 'compliance/cache']) {
-    assert.equal(fs.readlinkSync(path.join(cwd, cache, 'latest')), 'current');
-    assert.deepEqual(
-      fs.readFileSync(path.join(cwd, cache, 'latest/ADCP_VERSION')),
-      fs.readFileSync(path.join(root, 'ADCP_VERSION'))
+test(
+  'the actual archive/verification scripts round-trip output and reject stale, missing or tampered inputs',
+  linuxRunner,
+  t => {
+    const { cwd, env } = fixture(t);
+    fs.mkdirSync(path.join(cwd, 'dist'));
+    const content = fs.readFileSync(path.join(root, 'package.json'));
+    fs.writeFileSync(path.join(cwd, 'dist/package.json'), content);
+    for (const cache of ['schemas/cache', 'compliance/cache']) {
+      fs.mkdirSync(path.join(cwd, cache, 'current'), { recursive: true });
+      fs.copyFileSync(path.join(root, 'ADCP_VERSION'), path.join(cwd, cache, 'current/ADCP_VERSION'));
+      fs.symlinkSync('current', path.join(cwd, cache, 'latest'));
+    }
+    succeeds(shell(archive.run, cwd, env));
+    const outputs = Object.fromEntries(
+      fs
+        .readFileSync(env.GITHUB_OUTPUT, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => line.split('='))
     );
-  }
+    const bytes = fs.readFileSync(path.join(env.RUNNER_TEMP, 'library-dist.tar.gz'));
+    assert.equal(outputs.sha256, createHash('sha256').update(bytes).digest('hex'));
+    assert.equal(outputs.commit, env.GITHUB_SHA);
+    const artifactDir = path.join(env.RUNNER_TEMP, 'library-artifact');
+    fs.mkdirSync(artifactDir);
+    const artifactPath = path.join(artifactDir, 'library-dist.tar.gz');
+    fs.writeFileSync(artifactPath, bytes);
+    for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
+      fs.writeFileSync(path.join(cwd, tree, 'stale'), 'must not survive extraction');
+    }
+    const consumerEnv = { ...env, LIBRARY_SHA256: outputs.sha256, LIBRARY_COMMIT: outputs.commit };
+    succeeds(shell(verify.run, cwd, consumerEnv));
+    assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
+    for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
+      assert.equal(fs.existsSync(path.join(cwd, tree, 'stale')), false);
+    }
+    for (const cache of ['schemas/cache', 'compliance/cache']) {
+      assert.equal(fs.readlinkSync(path.join(cwd, cache, 'latest')), 'current');
+      assert.deepEqual(
+        fs.readFileSync(path.join(cwd, cache, 'latest/ADCP_VERSION')),
+        fs.readFileSync(path.join(root, 'ADCP_VERSION'))
+      );
+    }
 
-  for (const badEnv of [{ LIBRARY_SHA256: '' }, { LIBRARY_SHA256: 'invalid' }, { LIBRARY_COMMIT: '0'.repeat(40) }]) {
-    const result = shell(verify.run, cwd, { ...consumerEnv, ...badEnv });
+    for (const badEnv of [{ LIBRARY_SHA256: '' }, { LIBRARY_SHA256: 'invalid' }, { LIBRARY_COMMIT: '0'.repeat(40) }]) {
+      const result = shell(verify.run, cwd, { ...consumerEnv, ...badEnv });
+      assert.notEqual(result.status, 0);
+      assert.match(result.stdout, /::error::Missing library-build digest or checkout identity mismatch/);
+    }
+    fs.appendFileSync(artifactPath, 'corrupt');
+    let result = shell(verify.run, cwd, consumerEnv);
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout, /::error::Missing library-build digest or checkout identity mismatch/);
-  }
-  fs.appendFileSync(artifactPath, 'corrupt');
-  let result = shell(verify.run, cwd, consumerEnv);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stdout, /::error::Library artifact SHA-256 mismatch/);
-  fs.unlinkSync(artifactPath);
-  result = shell(verify.run, cwd, consumerEnv);
-  assert.notEqual(result.status, 0);
-  assert.match(result.stdout, /::error::Missing library-build artifact/);
-  // Existing dist never makes a failed verification succeed.
-  assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
-  const wrongCheckout = shell(archive.run, cwd, { ...env, GITHUB_SHA: '0'.repeat(40) });
-  assert.notEqual(wrongCheckout.status, 0);
-  assert.match(wrongCheckout.stdout, /::error::Library Build checkout does not match this workflow run/);
-  succeeds(
-    run(
-      'git',
-      [
-        '-c',
-        'user.name=CI Test',
-        '-c',
-        'user.email=ci@example.test',
-        'commit',
-        '--allow-empty',
-        '-qm',
-        'test: different checkout',
-      ],
-      cwd
-    )
-  );
-  fs.writeFileSync(artifactPath, bytes);
-  const wrongConsumer = shell(verify.run, cwd, consumerEnv);
-  assert.notEqual(wrongConsumer.status, 0);
-  assert.match(wrongConsumer.stdout, /checkout identity mismatch/);
-});
-
-test('package smoke still skips doc-only changes and rebuilds for workflow changes or an unavailable base', t => {
-  const { cwd, env } = fixture(t);
-  const job = jobs['package-smoke'];
-  assert.ok(job.steps.some(step => step.run === 'npm run build:lib'));
-  assert.ok(!job.steps.some(step => step.uses?.startsWith('actions/download-artifact@')));
-  const detect = job.steps.find(step => step.id === 'detect');
-  for (const step of job.steps.slice(job.steps.indexOf(detect) + 1)) {
-    assert.equal(step.if, "steps.detect.outputs.changed == 'true'", step.name);
-  }
-  function changed(base) {
-    fs.writeFileSync(env.GITHUB_OUTPUT, '');
+    assert.match(result.stdout, /::error::Library artifact SHA-256 mismatch/);
+    fs.unlinkSync(artifactPath);
+    result = shell(verify.run, cwd, consumerEnv);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /::error::Missing library-build artifact/);
+    // Existing dist never makes a failed verification succeed.
+    assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
+    const wrongCheckout = shell(archive.run, cwd, { ...env, GITHUB_SHA: '0'.repeat(40) });
+    assert.notEqual(wrongCheckout.status, 0);
+    assert.match(wrongCheckout.stdout, /::error::Library Build checkout does not match this workflow run/);
     succeeds(
-      shell(detect.run.replace('${{ github.event.pull_request.base.sha || github.event.before }}', base), cwd, env)
+      run(
+        'git',
+        [
+          '-c',
+          'user.name=CI Test',
+          '-c',
+          'user.email=ci@example.test',
+          'commit',
+          '--allow-empty',
+          '-qm',
+          'test: different checkout',
+        ],
+        cwd
+      )
     );
-    return fs.readFileSync(env.GITHUB_OUTPUT, 'utf8').trim();
+    fs.writeFileSync(artifactPath, bytes);
+    const wrongConsumer = shell(verify.run, cwd, consumerEnv);
+    assert.notEqual(wrongConsumer.status, 0);
+    assert.match(wrongConsumer.stdout, /checkout identity mismatch/);
   }
-  function commit() {
-    succeeds(run('git', ['add', '.'], cwd));
-    succeeds(
-      run('git', ['-c', 'user.name=CI Test', '-c', 'user.email=ci@example.test', 'commit', '-qm', 'test: change'], cwd)
-    );
-  }
-  fs.appendFileSync(path.join(cwd, 'README.md'), '\nDocumentation-only change.\n');
-  commit();
-  assert.equal(changed(env.GITHUB_SHA), 'changed=false');
-  assert.equal(changed(''), 'changed=true');
-  assert.equal(changed('0'.repeat(40)), 'changed=true');
-  fs.mkdirSync(path.join(cwd, '.github/workflows'), { recursive: true });
-  fs.copyFileSync(path.join(root, '.github/workflows/ci.yml'), path.join(cwd, '.github/workflows/ci.yml'));
-  commit();
-  assert.equal(changed(env.GITHUB_SHA), 'changed=true');
-});
+);
 
-test('required aggregators reject failed, skipped and cancelled dependencies', () => {
+test(
+  'package smoke still skips doc-only changes and rebuilds for workflow changes or an unavailable base',
+  linuxRunner,
+  t => {
+    const { cwd, env } = fixture(t);
+    const job = jobs['package-smoke'];
+    assert.ok(job.steps.some(step => step.run === 'npm run build:lib'));
+    assert.ok(!job.steps.some(step => step.uses?.startsWith('actions/download-artifact@')));
+    const detect = job.steps.find(step => step.id === 'detect');
+    for (const step of job.steps.slice(job.steps.indexOf(detect) + 1)) {
+      assert.equal(step.if, "steps.detect.outputs.changed == 'true'", step.name);
+    }
+    function changed(base) {
+      fs.writeFileSync(env.GITHUB_OUTPUT, '');
+      succeeds(
+        shell(detect.run.replace('${{ github.event.pull_request.base.sha || github.event.before }}', base), cwd, env)
+      );
+      return fs.readFileSync(env.GITHUB_OUTPUT, 'utf8').trim();
+    }
+    function commit() {
+      succeeds(run('git', ['add', '.'], cwd));
+      succeeds(
+        run(
+          'git',
+          ['-c', 'user.name=CI Test', '-c', 'user.email=ci@example.test', 'commit', '-qm', 'test: change'],
+          cwd
+        )
+      );
+    }
+    fs.appendFileSync(path.join(cwd, 'README.md'), '\nDocumentation-only change.\n');
+    commit();
+    assert.equal(changed(env.GITHUB_SHA), 'changed=false');
+    assert.equal(changed(''), 'changed=true');
+    assert.equal(changed('0'.repeat(40)), 'changed=true');
+    fs.mkdirSync(path.join(cwd, '.github/workflows'), { recursive: true });
+    fs.copyFileSync(path.join(root, '.github/workflows/ci.yml'), path.join(cwd, '.github/workflows/ci.yml'));
+    commit();
+    assert.equal(changed(env.GITHUB_SHA), 'changed=true');
+  }
+);
+
+test('required aggregators reject failed, skipped and cancelled dependencies', linuxRunner, () => {
   for (const name of ['test', 'unit-tests', 'typecheck-build']) {
     const job = jobs[name];
     assert.equal(job.if, '${{ always() }}');
