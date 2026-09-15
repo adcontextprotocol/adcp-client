@@ -80,12 +80,15 @@ function runPrereleaseSortFixture() {
       [
         '-e',
         `
-const { getValidator } = require(${JSON.stringify(loaderPath)});
+const { getCanonicalToolValidatorForVersion, getValidator } = require(${JSON.stringify(loaderPath)});
 const validator = getValidator('get_products', 'request', ${JSON.stringify(PRERELEASE_SORT_FAMILY)});
+const canonical = getCanonicalToolValidatorForVersion('get_products', 'request', ${JSON.stringify(PRERELEASE_SORT_FAMILY)});
 console.log(JSON.stringify({
   hasValidator: !!validator,
   acceptsNew: validator ? validator({ sentinel: 'new' }) : false,
   acceptsOld: validator ? validator({ sentinel: 'old' }) : false,
+  canonicalAcceptsNew: canonical ? canonical({ sentinel: 'new' }) : false,
+  canonicalAcceptsOld: canonical ? canonical({ sentinel: 'old' }) : false,
   errors: validator?.errors ?? null,
 }));
 `,
@@ -240,6 +243,8 @@ describe('schema-loader per-version state', () => {
     assert.strictEqual(result.hasValidator, true, `${PRERELEASE_SORT_FAMILY} get_products::request must compile`);
     assert.strictEqual(result.acceptsNew, true, 'rc.10 must sort newer than rc.9');
     assert.strictEqual(result.acceptsOld, false, 'rc.9 must not win lexicographically over rc.10');
+    assert.strictEqual(result.canonicalAcceptsNew, true, 'bundled-only canonical fallbacks must compile strictly');
+    assert.strictEqual(result.canonicalAcceptsOld, false, 'the canonical fallback must use the selected bundle');
   });
 
   test('resolveBundleKey rejects prerelease tags with non-SemVer chars (path-traversal hardening)', () => {
@@ -393,7 +398,12 @@ describe('schema-loader per-version state', () => {
   test('getSchemaValidatorByRef compiles MCP webhook payload schema with nested refs', () => {
     _resetValidationLoader(ADCP_VERSION);
     const validate = getSchemaValidatorByRef('core/mcp-webhook-payload.json', ADCP_VERSION);
+    const collectAll = getSchemaValidatorByRef('core/mcp-webhook-payload.json', ADCP_VERSION, undefined, {
+      allErrors: true,
+    });
     assert.ok(validate, 'MCP webhook payload schema must compile');
+    assert.ok(collectAll, 'all-errors MCP webhook payload schema must compile');
+    assert.notStrictEqual(validate, collectAll, 'all-errors validators must use a separate cache entry');
 
     const ok = validate({
       idempotency_key: 'evt_schema_ref_0000001',
@@ -418,5 +428,18 @@ describe('schema-loader per-version state', () => {
       result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
     });
     assert.strictEqual(missingEnvelopeFields, false, 'schema should reject missing operation_id and timestamp');
+    assert.strictEqual(validate.errors.length, 1, 'the default remote-payload validator must remain fail-fast');
+
+    assert.strictEqual(
+      collectAll({
+        idempotency_key: 'evt_schema_ref_0000001',
+        task_id: 'task_schema_ref',
+        task_type: 'create_media_buy',
+        status: 'completed',
+        result: { status: 'completed', media_buy_id: 'mb_1', packages: [] },
+      }),
+      false
+    );
+    assert.ok(collectAll.errors.length >= 2, 'the opt-in validator must collect multiple errors');
   });
 });

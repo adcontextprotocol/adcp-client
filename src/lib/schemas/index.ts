@@ -47,10 +47,14 @@ import type { CanonicalGetProductsRequest } from '../v2/projection/creative-deli
 import { TOOL_REQUEST_SCHEMAS } from '../utils/tool-request-schemas';
 import type { KnownToolRequestSchemas } from '../utils/tool-request-schemas';
 import {
+  getCanonicalToolValidatorForVersion,
+  getSchemaDocumentByRef,
   getToolSchemaDocument,
+  type Direction,
   type ResolvedToolSchemaDocument,
   type ResponseVariant,
 } from '../validation/schema-loader';
+import type { ValidateFunction } from 'ajv';
 import { resolveAdcpVersion } from '../utils/adcp-version-config';
 
 export * from '../types/schemas.generated';
@@ -111,6 +115,16 @@ export interface ToolResponseSchemaLookupOptions extends ToolSchemaLookupOptions
 
 export type VersionedToolSchema = ResolvedToolSchemaDocument;
 
+/**
+ * Retrieve one immutable protocol-authored JSON Schema document by its path
+ * within a selected AdCP bundle. This exposes the authored `$ref` graph as a
+ * separate surface from the self-contained bundled documents returned by
+ * {@link getToolInputSchema} and {@link getToolResponseSchema}. Validation
+ * callers should normally prefer {@link getCanonicalToolValidator} so
+ * reference registration stays internal.
+ */
+export { getSchemaDocumentByRef };
+
 /** Retrieve the protocol-authored request JSON Schema for a specific AdCP release. */
 export function getToolInputSchema(
   toolName: string,
@@ -125,6 +139,24 @@ export function getToolResponseSchema(
   options: ToolResponseSchemaLookupOptions = {}
 ): VersionedToolSchema | undefined {
   return getToolSchemaDocument(toolName, options.variant ?? 'sync', resolveAdcpVersion(options.adcpVersion));
+}
+
+/**
+ * Compile the exact protocol-authored JSON Schema for offline conformance and
+ * CI validation. Unlike the SDK's live-wire response validation, this does not
+ * apply `relaxResponseRoot`, so extensible envelope fields can be rejected when
+ * the selected normative schema does not declare them.
+ *
+ * This validator is not intended for validating live wire responses, whose
+ * transport envelope can carry extension fields. It uses `allErrors: true`, so
+ * every call reports all violations collected by AJV in `validator.errors`.
+ */
+export function getCanonicalToolValidator(
+  toolName: string,
+  direction: Direction,
+  options: ToolSchemaLookupOptions = {}
+): ValidateFunction | undefined {
+  return getCanonicalToolValidatorForVersion(toolName, direction, resolveAdcpVersion(options.adcpVersion));
 }
 
 type InputShape = Record<string, z.ZodType>;
