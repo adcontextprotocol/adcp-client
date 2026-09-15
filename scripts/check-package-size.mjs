@@ -37,7 +37,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // module (CJS + ESM + both declaration flavours), for +4 more.
 // The 14.x adoption pass adds an existing-platform guide, a release worksheet,
 // and a compile-gated thin integration example; byte budgets remain unchanged.
-const MAX_PACKED_FILE_COUNT = 6_062;
+// Canonical principal/reporting-core distribution adds two YAML files, one
+// provenance manifest, and one dual-format module/declaration set (+7 files).
+const MAX_PACKED_FILE_COUNT = 6_069;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
