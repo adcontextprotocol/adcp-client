@@ -3453,7 +3453,7 @@ async function executeStoryboardPass(
     // step failures even though the phase is `optional: true`. The skip
     // is phase-level — not storyboard-level — so the universal
     // `unauth_rejection` and `mechanism_required` phases still run.
-    if (!routingContext && !phaseAbsent && phaseContainsOauthMetadataProbe(phase) && !agentAdvertisesOauth(profile)) {
+    if (!routingContext && phaseContainsOauthMetadataProbe(phase) && !agentAdvertisesOauth(profile)) {
       phaseAbsent = true;
     }
 
