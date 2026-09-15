@@ -139,6 +139,11 @@ test('the actual archive/verification scripts round-trip output and reject stale
   fs.mkdirSync(path.join(cwd, 'dist'));
   const content = fs.readFileSync(path.join(root, 'package.json'));
   fs.writeFileSync(path.join(cwd, 'dist/package.json'), content);
+  for (const cache of ['schemas/cache', 'compliance/cache']) {
+    fs.mkdirSync(path.join(cwd, cache, 'current'), { recursive: true });
+    fs.copyFileSync(path.join(root, 'ADCP_VERSION'), path.join(cwd, cache, 'current/ADCP_VERSION'));
+    fs.symlinkSync('current', path.join(cwd, cache, 'latest'));
+  }
   succeeds(shell(archive.run, cwd, env));
   const outputs = Object.fromEntries(
     fs
@@ -154,11 +159,22 @@ test('the actual archive/verification scripts round-trip output and reject stale
   fs.mkdirSync(artifactDir);
   const artifactPath = path.join(artifactDir, 'library-dist.tar.gz');
   fs.writeFileSync(artifactPath, bytes);
-  fs.writeFileSync(path.join(cwd, 'dist/stale'), 'must not survive extraction');
+  for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
+    fs.writeFileSync(path.join(cwd, tree, 'stale'), 'must not survive extraction');
+  }
   const consumerEnv = { ...env, LIBRARY_SHA256: outputs.sha256, LIBRARY_COMMIT: outputs.commit };
   succeeds(shell(verify.run, cwd, consumerEnv));
   assert.deepEqual(fs.readFileSync(path.join(cwd, 'dist/package.json')), content);
-  assert.equal(fs.existsSync(path.join(cwd, 'dist/stale')), false);
+  for (const tree of ['dist', 'schemas/cache', 'compliance/cache']) {
+    assert.equal(fs.existsSync(path.join(cwd, tree, 'stale')), false);
+  }
+  for (const cache of ['schemas/cache', 'compliance/cache']) {
+    assert.equal(fs.readlinkSync(path.join(cwd, cache, 'latest')), 'current');
+    assert.deepEqual(
+      fs.readFileSync(path.join(cwd, cache, 'latest/ADCP_VERSION')),
+      fs.readFileSync(path.join(root, 'ADCP_VERSION'))
+    );
+  }
 
   for (const badEnv of [{ LIBRARY_SHA256: '' }, { LIBRARY_SHA256: 'invalid' }, { LIBRARY_COMMIT: '0'.repeat(40) }]) {
     const result = shell(verify.run, cwd, { ...consumerEnv, ...badEnv });

@@ -181,8 +181,10 @@ jobs:
       - name: Run TypeScript type checking
         run: npm run typecheck
 
-  # Build once from this run's checkout; only dist/ crosses the job boundary.
-  # Consumers: unit shards/slow tests and webhook/ESLint contracts execute dist;
+  # Build once from this run's checkout. Include the schema/compliance caches
+  # prepared by schemas:ensure: codegen and protocol tests read those fixtures
+  # directly, including their versioned trees and relative latest symlinks.
+  # Consumers: unit shards/slow tests and webhook/ESLint contracts use the build;
   # adopter/example typechecks read its declarations. Network matrix cells test
   # runtime dependencies (tsup keeps external imports), including the Undici 7
   # packed-consumer override. Package/export checks consume the same tree.
@@ -220,7 +222,7 @@ jobs:
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist
+          tar -czf "$RUNNER_TEMP/library-dist.tar.gz" dist schemas/cache compliance/cache
           digest=$(sha256sum "$RUNNER_TEMP/library-dist.tar.gz" | cut -d ' ' -f 1)
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
           echo "commit=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
@@ -283,7 +285,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Guard public Zod OpenAPI portability
@@ -411,7 +413,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Adopter type-check (catch d.ts leaks)
@@ -465,7 +467,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Typecheck examples
@@ -554,7 +556,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run fast unit test shard
@@ -607,7 +609,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run slow unit tests
@@ -682,7 +684,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run durable webhook backend contract
@@ -758,7 +760,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Run ESLint plugin tests
@@ -964,7 +966,7 @@ jobs:
             echo "::error::Library artifact SHA-256 mismatch. Refusing to use unverified output."
             exit 1
           fi
-          rm -rf dist
+          rm -rf dist schemas/cache compliance/cache
           tar -xzf "$archive"
 
       - name: Published-package Undici 7 consumer override
