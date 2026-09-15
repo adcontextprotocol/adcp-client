@@ -1827,9 +1827,10 @@ export interface AdcpServerConfig<TAccount = unknown> {
    * account) and principal-keyed agents (`resolution: 'implicit'`) still get
    * a tenant-scoped `ctx.account`.
    *
-   * Returns `null` when no account can be derived. The handler then runs
-   * with `ctx.account` undefined — appropriate for tools that legitimately
-   * don't need tenant scoping (publisher-wide format catalogs).
+   * Returns `null` when no account can be derived. Account-scoped operations
+   * then fail with correctable `ACCOUNT_REQUIRED`; tools that legitimately
+   * do not need tenant scoping (publisher-wide format catalogs) still run
+   * with `ctx.account` undefined.
    */
   resolveAccountFromAuth?: (ctx: ResolveAccountContext) => Promise<TAccount | null>;
 
@@ -4780,6 +4781,43 @@ function selectServedAdcpRelease(
 // createAdcpServer
 // ---------------------------------------------------------------------------
 
+const ACCOUNT_VIA_RESOURCE_TOOLS = new Set(['refine_proposals', 'decline_proposals']);
+
+function accountRequiredError(toolName: string): McpToolResponse {
+  const viaResource = ACCOUNT_VIA_RESOURCE_TOOLS.has(toolName);
+  return adcpError('ACCOUNT_REQUIRED', {
+    message: `${toolName} requires an account selection, but the request and referenced resources did not identify one`,
+    field: viaResource ? 'context_id' : 'account',
+    suggestion: viaResource
+      ? 'Provide a context_id or proposal reference whose owning account the seller can resolve. On implicit sellers, call sync_accounts first.'
+      : 'Use list_accounts and pass an account reference accepted by this tool. On implicit sellers, call sync_accounts first and retry without an inline account_id.',
+  });
+}
+
+function projectAuthDerivedAccountError(
+  err: unknown,
+  toolName: string,
+  accountIsRequired: boolean
+): McpToolResponse | undefined {
+  if (isThrownAdcpError(err)) {
+    const code = (err.structuredContent as { adcp_error: { code: string } }).adcp_error.code;
+    return accountIsRequired && code === 'ACCOUNT_NOT_FOUND' ? accountRequiredError(toolName) : err;
+  }
+  if (err instanceof AdcpError) {
+    return accountIsRequired && err.code === 'ACCOUNT_NOT_FOUND'
+      ? accountRequiredError(toolName)
+      : projectThrownAdcpError(err);
+  }
+  return undefined;
+}
+
+function isAuthDerivedAccountNotFound(err: unknown): boolean {
+  if (isThrownAdcpError(err)) {
+    return (err.structuredContent as { adcp_error: { code: string } }).adcp_error.code === 'ACCOUNT_NOT_FOUND';
+  }
+  return err instanceof AdcpError && err.code === 'ACCOUNT_NOT_FOUND';
+}
+
 /**
  * Create an AdCP-compliant MCP server from domain-grouped handler functions.
  *
@@ -5823,12 +5861,17 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         accountResolutionAttempted = true;
         if (account != null) {
           ctx.account = account;
+        } else {
+          return {
+            accountResolutionAttempted,
+            error: accountRequiredError(toolName),
+          };
         }
       } catch (err) {
         accountResolutionAttempted = true;
-        if (isThrownAdcpError(err)) return { accountResolutionAttempted, error: err };
-        if (err instanceof AdcpError) {
-          return { accountResolutionAttempted, error: projectThrownAdcpError(err) };
+        const projected = projectAuthDerivedAccountError(err, toolName, true);
+        if (projected !== undefined) {
+          return { accountResolutionAttempted, error: projected };
         }
         const reason = err instanceof Error ? err.message : String(err);
         logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
@@ -6532,8 +6575,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           // field (provide_performance_feedback, list_creative_formats, the
           // `tasks/get` polling path). Single-tenant agents return their
           // singleton; principal-keyed agents look up by authInfo. A `null`
-          // return is allowed — handler sees ctx.account undefined and
-          // either tolerates it (publisher-wide reads) or throws AdcpError.
+          // return is allowed for publisher-wide tools whose schema has no
+          // account field. Framework-known account-required tools fail below
+          // with the shared correctable ACCOUNT_REQUIRED envelope.
           try {
             const account = await resolveAccountFromAuth(
               withImmutableServedAdcpVersion(
@@ -6548,22 +6592,32 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
             if (account != null) ctx.account = account;
           } catch (err) {
-            // Same typed-error pass-through as the explicit `resolveAccount`
-            // catch above — both the already-projected envelope shape and
-            // the raw `AdcpError` class throw propagate verbatim. Generic
-            // exceptions project to SERVICE_UNAVAILABLE.
-            if (isThrownAdcpError(err)) return finalize(err);
-            if (err instanceof AdcpError) {
-              return finalize(projectThrownAdcpError(err));
+            // Typed auth-derived failures propagate. For a framework-known
+            // account-required mutation, ACCOUNT_NOT_FOUND is projected to
+            // ACCOUNT_REQUIRED because no buyer reference was supplied. An
+            // anonymous compact call instead falls through so AUTH_MISSING
+            // retains precedence over account recovery guidance.
+            const compactAccountRequired =
+              requireCompactMutationAccountScope && COMPACT_MEDIA_BUY_MUTATION_TOOLS.has(toolName);
+            const hasAuthenticatedPrincipal = authenticatedPrincipalForContext(ctx.authInfo, ctx.agent) !== undefined;
+            const anonymousCompactNotFound =
+              compactAccountRequired && !hasAuthenticatedPrincipal && isAuthDerivedAccountNotFound(err);
+            if (!anonymousCompactNotFound) {
+              const projected = projectAuthDerivedAccountError(
+                err,
+                toolName,
+                compactAccountRequired && hasAuthenticatedPrincipal
+              );
+              if (projected !== undefined) return finalize(projected);
+              const reason = err instanceof Error ? err.message : String(err);
+              logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
+              return finalize(
+                adcpError('SERVICE_UNAVAILABLE', {
+                  message: 'Account resolution failed',
+                  ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+                })
+              );
             }
-            const reason = err instanceof Error ? err.message : String(err);
-            logger.error('Auth-derived account resolution failed', { tool: toolName, error: reason });
-            return finalize(
-              adcpError('SERVICE_UNAVAILABLE', {
-                message: 'Account resolution failed',
-                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
-              })
-            );
           }
         }
 
@@ -6671,11 +6725,15 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             );
           }
           if (requireCompactMutationAccountScope && ctx.account == null) {
-            return finalize(
-              adcpError('ACCOUNT_NOT_FOUND', {
-                message: `${toolName} requires a resolved account scope`,
-              })
-            );
+            if (params.account != null) {
+              return finalize(
+                adcpError('ACCOUNT_NOT_FOUND', {
+                  message: 'The specified account does not exist',
+                  field: 'account',
+                })
+              );
+            }
+            return finalize(accountRequiredError(toolName));
           }
         }
 

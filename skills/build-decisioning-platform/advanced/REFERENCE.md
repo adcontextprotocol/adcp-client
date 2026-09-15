@@ -417,13 +417,13 @@ Coercion rules (per-entry):
 
 `accounts.resolve(ref, ctx?)` is the single tenant boundary. Three resolution modes:
 
-| `resolution`           | When to pick                                                                                                                                                         | What `resolve` receives                                          |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `'explicit'` (default) | Multi-tenant; buyer passes `account_id` on every request (Snap, Meta, GAM via Network/Company id).                                                                   | `ref = { account_id }` (or `{ brand, operator }`) on every call. |
-| `'implicit'`           | Buyer pre-syncs accounts via `sync_accounts`; subsequent calls resolved by `ctx.authInfo` lookup against pre-synced linkage (LinkedIn, some retail-media operators). | `ref` may be undefined; use `ctx.authInfo.clientId` to look up.  |
+| `resolution`           | When to pick                                                                                                                                                                                             | What `resolve` receives                                                                                                                                                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `'explicit'` (default) | Multi-tenant; buyer passes `account_id` on every request (Snap, Meta, GAM via Network/Company id).                                                                                                       | `ref = { account_id }` (or `{ brand, operator }`) on every call.                                                                                                                                 |
+| `'implicit'`           | Buyer pre-syncs accounts via `sync_accounts`; subsequent calls resolved by `ctx.authInfo` lookup against pre-synced linkage (LinkedIn, some retail-media operators).                                     | `ref` may be undefined; use `ctx.authInfo.clientId` to look up.                                                                                                                                  |
 | `'derived'`            | Account-id namespace discovered through `list_accounts` — an upstream platform owns the roster (Meta / Snap / AudioStack), or your credential is bound to a single account. `accounts.list` is required. | `ref = { account_id }` after discovery, or undefined on ref-less tools. Verify the id against what the caller's credential can reach; the framework refuses `{ brand, operator }` for this mode. |
 
-**If one credential reaches one account, declare `resolution: 'derived'`.** The default is `'explicit'`. An agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`, `tasks_get` without explicit account) silently fail with `ACCOUNT_NOT_FOUND` because the framework expects the buyer to pass an account on those tools too. In `'derived'` mode the framework auto-selects the one account the credential reaches.
+**If one credential reaches one account, declare `resolution: 'derived'`.** The default is `'explicit'`. An agent that omits `resolution` falls into `'explicit'` mode where tools whose buyer omits the `account` field (`provide_performance_feedback`, `list_creative_formats`, `report_usage`, `tasks_get` without explicit account) cannot derive a tenant unless the resolver handles `ref === undefined`. Account-required operations emit `ACCOUNT_REQUIRED`; account-optional tools may run without `ctx.account`. In `'derived'` mode the framework auto-selects the one account the credential reaches.
 
 **`'derived'` changed in SDK 14 (adcp-client#1647 / upstream adcp#5062).** It used to mean "single-tenant; `account_id` is meaningless on the wire" and the framework refused inline `account_id`. Corrected: `'derived'` is an upstream-managed account-id namespace — buyers discover ids with `list_accounts` and send `{ account_id }`; the `{ brand, operator }` arm is refused; `accounts.list` is mandatory (`createAdcpServerFromPlatform` throws `PlatformConfigError` without it); and `accounts.resolve` must verify a buyer-supplied id against the caller's reachable set. Use `createDerivedAccountStore`, which does the verification and wires `list` for you.
 
@@ -436,7 +436,7 @@ accounts: {
     if (ref?.brand) return await this.db.findByBrand(ref.brand.domain, ref.operator);
     // ref undefined: tool without `account` field on wire — auth-derived path.
     if (ctx?.authInfo?.clientId) return await this.db.findByClient(ctx.authInfo.clientId);
-    return null; // → ACCOUNT_NOT_FOUND
+    return null; // account-required operation → ACCOUNT_REQUIRED
   },
 } satisfies AccountStore;
 ```
@@ -453,7 +453,7 @@ The framework calls `accounts.resolve(undefined, { authInfo, toolName })` for ev
 - `tasks_get` when called without `account` (single-tenant case)
 - `get_account_financials` (account is implicit from auth)
 
-If your `'explicit'`-mode resolver only handles `ref?.account_id` and falls through on `undefined`, those tools get `ctx.account === undefined` and the framework returns `ACCOUNT_NOT_FOUND`. The fix is the `if (ctx?.authInfo?.clientId)` branch in the example above. Your tenants are reachable from the OAuth client / API-key principal — that's how multi-tenant SaaS auth works — so this is a code-path you already have at the auth layer; just thread it into `resolve()`.
+If your `'explicit'`-mode resolver only handles `ref?.account_id` and falls through on `undefined`, those tools get `ctx.account === undefined`; account-required tools return `ACCOUNT_REQUIRED`. The fix is the `if (ctx?.authInfo?.clientId)` branch in the example above. Your tenants are reachable from the OAuth client / API-key principal — that's how multi-tenant SaaS auth works — so this is a code-path you already have at the auth layer; just thread it into `resolve()`.
 
 Throwing `AccountNotFoundError` only from `resolve()` — never from specialism methods — gets the spec's fixed `ACCOUNT_NOT_FOUND` envelope. Generic throws from inside `resolve()` map to `SERVICE_UNAVAILABLE`.
 

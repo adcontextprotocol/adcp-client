@@ -344,51 +344,113 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.ok(!listed.tools.some(tool => tool.name === 'get_products'));
   });
 
-  it('rejects compact proposal mutations before invoking without trusted account and principal scope', async () => {
+  it('distinguishes omitted accounts from supplied unresolved accounts in every resolution mode', async () => {
+    const auth = {
+      authInfo: {
+        token: 'redacted',
+        clientId: 'buyer-1',
+        scopes: [],
+        credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+      },
+    };
+
+    for (const resolution of ['explicit', 'implicit', 'derived']) {
+      let calls = 0;
+      const base = buildPlatform();
+      const platform = buildPlatform({
+        accounts: {
+          ...base.accounts,
+          resolution,
+          resolve: async () => null,
+        },
+        mediaBuyLifecycle: {
+          requestProposals: async () => {
+            calls += 1;
+            return { outcome: 'declined', reason: 'not available' };
+          },
+          declineProposals: async () => {
+            calls += 1;
+            return { results: [] };
+          },
+        },
+      });
+      const server = createAdcpServerFromPlatform(platform, {
+        name: `scoped-compact-${resolution}`,
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.3',
+        validation: { requests: 'off', responses: 'off' },
+      });
+
+      const omitted = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'request_proposals',
+            arguments: { idempotency_key: `proposal-scope-${resolution}-0001`, brief: 'test' },
+          },
+        },
+        auth
+      );
+      assert.strictEqual(omitted.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED', resolution);
+      assert.strictEqual(omitted.structuredContent.adcp_error.recovery, 'correctable', resolution);
+      assert.strictEqual(omitted.structuredContent.adcp_error.field, 'account', resolution);
+      if (resolution === 'implicit') {
+        assert.match(omitted.structuredContent.adcp_error.suggestion, /sync_accounts/i, resolution);
+        assert.doesNotMatch(omitted.structuredContent.adcp_error.suggestion, /account:\s*\{\s*account_id/i);
+      } else {
+        assert.match(omitted.structuredContent.adcp_error.suggestion, /list_accounts/i, resolution);
+      }
+
+      const suppliedRef =
+        resolution === 'implicit'
+          ? { brand: { domain: 'missing.example' }, operator: 'missing-operator' }
+          : { account_id: 'missing-account' };
+      const supplied = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'request_proposals',
+            arguments: {
+              idempotency_key: `proposal-supplied-${resolution}-0001`,
+              brief: 'test',
+              account: suppliedRef,
+            },
+          },
+        },
+        auth
+      );
+      assert.strictEqual(supplied.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND', resolution);
+      assert.strictEqual(supplied.structuredContent.adcp_error.recovery, 'terminal', resolution);
+
+      const resourceScoped = await server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'decline_proposals',
+            arguments: { idempotency_key: `decline-scope-${resolution}-0001`, declines: [] },
+          },
+        },
+        auth
+      );
+      assert.strictEqual(resourceScoped.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED', resolution);
+      assert.strictEqual(resourceScoped.structuredContent.adcp_error.field, 'context_id', resolution);
+      assert.match(
+        resourceScoped.structuredContent.adcp_error.suggestion,
+        resolution === 'implicit' ? /sync_accounts/i : /context_id|proposal reference/i,
+        resolution
+      );
+      assert.strictEqual(calls, 0, resolution);
+    }
+  });
+
+  it('does not treat an unauthenticated session key as compact-mutation authentication', async () => {
     let calls = 0;
     const base = buildPlatform();
     const platform = buildPlatform({
       accounts: {
         ...base.accounts,
-        resolve: async ref => (ref == null ? null : { id: ref.account_id, metadata: {} }),
+        resolve: async () => null,
       },
-      mediaBuyLifecycle: {
-        declineProposals: async () => {
-          calls += 1;
-          return { results: [] };
-        },
-      },
-    });
-    const server = createAdcpServerFromPlatform(platform, {
-      name: 'scoped-compact',
-      version: '1.0.0',
-      adcpVersion: '3.2.0-rc.3',
-      validation: { requests: 'off', responses: 'off' },
-    });
-    const response = await server.dispatchTestRequest(
-      {
-        method: 'tools/call',
-        params: {
-          name: 'decline_proposals',
-          arguments: { idempotency_key: 'decline-scope-key-0001', declines: [] },
-        },
-      },
-      {
-        authInfo: {
-          token: 'redacted',
-          clientId: 'buyer-1',
-          scopes: [],
-          credential: { kind: 'api_key', key_id: 'buyer-key-1' },
-        },
-      }
-    );
-    assert.strictEqual(response.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
-    assert.strictEqual(calls, 0);
-  });
-
-  it('does not treat an unauthenticated session key as compact-mutation authentication', async () => {
-    let calls = 0;
-    const platform = buildPlatform({
       mediaBuyLifecycle: {
         declineProposals: async () => {
           calls += 1;
@@ -3525,6 +3587,42 @@ describe('createAdcpServerFromPlatform — v6.0 alpha', () => {
     assert.strictEqual(result.isError, true);
     assert.strictEqual(result.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
   });
+
+  it('preserves a typed auth-derived ACCOUNT_NOT_FOUND on account-optional sync discovery', async () => {
+    let calls = 0;
+    const base = buildPlatform();
+    const platform = buildPlatform({
+      accounts: {
+        ...base.accounts,
+        resolve: async ref => {
+          if (ref == null) {
+            throw new AdcpError('ACCOUNT_NOT_FOUND', { message: 'no account linkage for this principal' });
+          }
+          return null;
+        },
+      },
+      sales: {
+        ...base.sales,
+        getProducts: async () => {
+          calls += 1;
+          return { products: [], cache_scope: 'public' };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'typed-auth-derived-error',
+      version: '0.0.1',
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: { name: 'get_products', arguments: { buying_mode: 'brief', brief: 'test' } },
+    });
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+    assert.strictEqual(result.structuredContent.adcp_error.recovery, 'terminal');
+    assert.strictEqual(calls, 0);
+  });
 });
 
 describe('SalesPlatform — full surface dispatch', () => {
@@ -4957,7 +5055,7 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     assertMcpWebhookPayloadValid(emits[0].payload);
   });
 
-  it('rejects async discovery when account is omitted', async () => {
+  it('returns ACCOUNT_REQUIRED before async discovery when account is omitted', async () => {
     const productsPlatform = {
       ...buildHitlPlatform({
         getProducts: async (_req, ctx) =>
@@ -4980,7 +5078,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     const products = await dispatchGetProducts(productsServer, { account: undefined });
     assert.strictEqual(products.isError, true);
-    assert.strictEqual(products.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(products.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+    assert.strictEqual(products.structuredContent.adcp_error.recovery, 'correctable');
     assert.strictEqual(products.structuredContent.adcp_error.field, 'account');
 
     const signalsPlatform = {
@@ -5005,7 +5104,8 @@ describe('HITL dual-method dispatch — *Task variants', () => {
     });
     const signals = await dispatchGetSignals(signalsServer, { account: undefined });
     assert.strictEqual(signals.isError, true);
-    assert.strictEqual(signals.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+    assert.strictEqual(signals.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+    assert.strictEqual(signals.structuredContent.adcp_error.recovery, 'correctable');
     assert.strictEqual(signals.structuredContent.adcp_error.field, 'account');
   });
 
@@ -9130,7 +9230,69 @@ describe('tasks_get wire tool (B9)', () => {
     assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
   });
 
-  it('refuses to leak when caller omits account AND no auth context resolves one', async () => {
+  it('preserves ACCOUNT_NOT_FOUND for a supplied unresolved tasks_get account', async () => {
+    const base = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
+    const server = createAdcpServerFromPlatform(
+      {
+        ...base,
+        accounts: {
+          ...base.accounts,
+          resolve: async () => null,
+        },
+      },
+      { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+    );
+    const result = await server.dispatchTestRequest({
+      method: 'tools/call',
+      params: {
+        name: 'tasks_get',
+        arguments: { task_id: 'task_unknown', account: { account_id: 'missing-account' } },
+      },
+    });
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+    assert.strictEqual(result.structuredContent.adcp_error.recovery, 'terminal');
+  });
+
+  it('normalizes supported auth-derived tasks_get not-found signals without weakening supplied refs', async () => {
+    const failures = [
+      () => new AccountNotFoundError(),
+      () => new AdcpError('ACCOUNT_NOT_FOUND', { message: 'no auth-derived account' }),
+    ];
+    for (const failure of failures) {
+      const base = buildHitlPlatform(async () => ({ media_buy_id: 'mb_42', status: 'active' }));
+      const server = createAdcpServerFromPlatform(
+        {
+          ...base,
+          accounts: {
+            ...base.accounts,
+            resolve: async () => {
+              throw failure();
+            },
+          },
+        },
+        { name: 'p', version: '0.0.1', validation: { requests: 'off', responses: 'off' } }
+      );
+
+      const omitted = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: { name: 'tasks_get', arguments: { task_id: 'task_unknown' } },
+      });
+      assert.strictEqual(omitted.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(omitted.structuredContent.adcp_error.recovery, 'correctable');
+
+      const supplied = await server.dispatchTestRequest({
+        method: 'tools/call',
+        params: {
+          name: 'tasks_get',
+          arguments: { task_id: 'task_unknown', account: { account_id: 'missing-account' } },
+        },
+      });
+      assert.strictEqual(supplied.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+      assert.strictEqual(supplied.structuredContent.adcp_error.recovery, 'terminal');
+    }
+  });
+
+  it('returns ACCOUNT_REQUIRED without leaking a task when auth-derived account resolution finds none', async () => {
     // Unauthenticated probe path: caller passes only { task_id }, no
     // `account` arg, and the resolver returns nothing for `undefined` ref
     // (i.e. there's no auth-derived account either). The handler must NOT
@@ -9175,7 +9337,10 @@ describe('tasks_get wire tool (B9)', () => {
       params: { name: 'tasks_get', arguments: { task_id: taskId } },
     });
     assert.strictEqual(result.isError, true);
-    assert.strictEqual(result.structuredContent.adcp_error.code, 'REFERENCE_NOT_FOUND');
+    assert.strictEqual(result.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+    assert.strictEqual(result.structuredContent.adcp_error.recovery, 'correctable');
+    assert.strictEqual(result.structuredContent.adcp_error.field, 'account');
+    assert.match(result.structuredContent.adcp_error.suggestion, /list_accounts|pass account/i);
   });
 
   it('returns REFERENCE_NOT_FOUND for unknown task_id', async () => {

@@ -9,6 +9,7 @@ const { getSdkServer } = require('../dist/lib/server/adcp-server');
 const { InMemoryStateStore } = require('../dist/lib/server/state-store');
 const { InMemoryTaskStore } = require('../dist/lib/server/tasks');
 const { createInMemoryTaskRegistry } = require('../dist/lib/server/decisioning/runtime/task-registry');
+const { AdcpError } = require('../dist/lib/server/decisioning/async-outcome');
 const { adcpError } = require('../dist/lib/server/errors');
 const { createIdempotencyStore, memoryBackend } = require('../dist/lib/server/idempotency');
 const { ADCP_MIRRORED_STRUCTURED_CONTENT_META_KEY } = require('../dist/lib/server/structured-content-fallback');
@@ -996,6 +997,82 @@ describe('createAdcpServer', () => {
       // Should not throw — second registration is silently skipped
       const count = registeredTools(server).filter(t => t === 'list_creative_formats').length;
       assert.strictEqual(count, 1);
+    });
+  });
+
+  describe('compact account-selection envelope', () => {
+    it('preserves ACCOUNT_NOT_FOUND when a buyer supplies a reference but no resolver is configured', async () => {
+      let calls = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.3',
+        requireCompactMutationAccountScope: true,
+        resolveAccountFromAuth: async () => null,
+        mediaBuy: {
+          requestProposals: async () => {
+            calls += 1;
+            return { outcome: 'declined', reason: 'not available' };
+          },
+        },
+      });
+      const extra = {
+        authInfo: {
+          token: 'redacted',
+          clientId: 'buyer-1',
+          scopes: [],
+          credential: { kind: 'api_key', key_id: 'buyer-key-1' },
+        },
+      };
+
+      const omitted = await callToolRaw(
+        server,
+        'request_proposals',
+        { idempotency_key: 'proposal-omitted-0001', brief: 'test' },
+        extra
+      );
+      assert.strictEqual(omitted.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+
+      const supplied = await callToolRaw(
+        server,
+        'request_proposals',
+        {
+          idempotency_key: 'proposal-supplied-0001',
+          brief: 'test',
+          account: { account_id: 'missing-account' },
+        },
+        extra
+      );
+      assert.strictEqual(supplied.structuredContent.adcp_error.code, 'ACCOUNT_NOT_FOUND');
+      assert.strictEqual(supplied.structuredContent.adcp_error.recovery, 'terminal');
+      assert.strictEqual(calls, 0);
+
+      for (const missingError of [
+        adcpError('ACCOUNT_NOT_FOUND', { message: 'no auth-derived account' }),
+        new AdcpError('ACCOUNT_NOT_FOUND', { message: 'no auth-derived account' }),
+      ]) {
+        const throwingServer = createAdcpServer({
+          name: 'Test',
+          version: '1.0.0',
+          adcpVersion: '3.2.0-rc.3',
+          requireCompactMutationAccountScope: true,
+          resolveAccountFromAuth: async () => {
+            throw missingError;
+          },
+          mediaBuy: {
+            requestProposals: async () => {
+              calls += 1;
+              return { outcome: 'declined', reason: 'not available' };
+            },
+          },
+        });
+        const unauthenticated = await callToolRaw(throwingServer, 'request_proposals', {
+          idempotency_key: `proposal-anonymous-${missingError instanceof Error ? 'class' : 'envelope'}-0001`,
+          brief: 'test',
+        });
+        assert.strictEqual(unauthenticated.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      }
+      assert.strictEqual(calls, 0);
     });
   });
 
@@ -3831,6 +3908,45 @@ describe('createAdcpServer', () => {
 
       const listed = await callTool(server, 'list_tasks', { filters: { task_ids: [owned.taskId, other.taskId] } });
       assert.deepStrictEqual(listed.tasks, []);
+    });
+
+    it('returns ACCOUNT_REQUIRED when auth-derived task scope cannot select an account', async () => {
+      const taskRegistry = createInMemoryTaskRegistry();
+      const owned = await taskRegistry.create({ tool: 'sync_creatives', accountId: 'acct_1' });
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        stateStore: new InMemoryStateStore(),
+        resolveAccountFromAuth: async () => null,
+      });
+
+      const status = await callToolRaw(server, 'get_task_status', { task_id: owned.taskId });
+      assert.strictEqual(status.isError, true);
+      assert.strictEqual(status.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(status.structuredContent.adcp_error.recovery, 'correctable');
+      assert.strictEqual(status.structuredContent.adcp_error.field, 'account');
+      assert.match(status.structuredContent.adcp_error.suggestion, /list_accounts|pass account/i);
+
+      const listed = await callToolRaw(server, 'list_tasks', {});
+      assert.strictEqual(listed.isError, true);
+      assert.strictEqual(listed.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(listed.structuredContent.adcp_error.recovery, 'correctable');
+      assert.strictEqual(listed.structuredContent.adcp_error.field, 'account');
+      assert.match(listed.structuredContent.adcp_error.suggestion, /list_accounts|pass account/i);
+
+      const throwingServer = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        taskRegistry,
+        stateStore: new InMemoryStateStore(),
+        resolveAccountFromAuth: async () => {
+          throw adcpError('ACCOUNT_NOT_FOUND', { message: 'credential did not select an account' });
+        },
+      });
+      const projected = await callToolRaw(throwingServer, 'get_task_status', { task_id: owned.taskId });
+      assert.strictEqual(projected.structuredContent.adcp_error.code, 'ACCOUNT_REQUIRED');
+      assert.strictEqual(projected.structuredContent.adcp_error.field, 'account');
     });
 
     it('returns ACCOUNT_NOT_FOUND for explicit nonexistent task-query accounts', async () => {
