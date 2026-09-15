@@ -1,14 +1,19 @@
 # Package artifact verification
 
 The SDK ships a tree-shakeable dual ESM + CJS build with ~30 subpath exports.
-Three mechanical guards keep the publish artifact honest so packaging regressions
+Four mechanical guards keep the publish artifact honest so packaging regressions
 fail CI instead of reaching consumers.
 
-**How they run in CI** (all three live in `.github/workflows/ci.yml`):
+**How they run in CI** (all four live in `.github/workflows/ci.yml`):
 
 - `check:package-size` is a fast, offline `npm pack --dry-run` audit, so it runs
   after every `library-build`. It caps packed bytes, unpacked bytes, file count,
   and the generated declaration sizes, and requires the exact schema façade.
+- `check:publish-protocol-artifacts` inspects the actual npm pack inventory,
+  export map, and advertised compatibility list. It permits maintained stable
+  bundles plus the exact `ADCP_VERSION` prerelease and rejects every superseded
+  beta/RC schema, compliance bundle, or versioned type subpath. It also runs
+  from `prepublishOnly` after schema sync and build.
 - `check:package` is cheap and offline, so it runs on **every PR** as a step in
   the `library-build` job.
 - `verify:package` does a live registry install, so it runs in the
@@ -50,6 +55,10 @@ also rejects source maps in the publish artifact. Because it runs
 unconditionally after `build:lib`, growth from any packaged source, generated
 schema, or copied cache is covered even when the live package smoke is skipped.
 The full `verify:package` smoke imports and runs the same checker.
+
+Historical documentation is intentionally outside this policy. SDK release
+notes may mention beta versions; only executable protocol artifacts and public
+compatibility claims are restricted.
 
 ### Compact offline schema bundles
 

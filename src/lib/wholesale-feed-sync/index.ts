@@ -32,3 +32,9 @@ export type {
   WholesaleFeedWebhookNotificationErrorDetails,
   WholesaleFeedWebhookNotificationType,
 } from './webhook-notification';
+export type {
+  LegacyWholesaleFeedEvent,
+  LegacyWholesaleFeedWebhook,
+  LegacyWholesaleProduct,
+  LegacyWholesaleSignal,
+} from './protocol-types';

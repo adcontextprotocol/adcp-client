@@ -160,16 +160,20 @@ npx tsx scripts/smoke-wonderstruck-v2-5.ts
 
 Auto-detects Wonderstruck from `SALES_AGENTS_CONFIG`; trivial to point at any v2 seller.
 
-## Two compat patterns — pick the right one
+## Active compatibility and the retired preview pattern
 
-This repo carries two distinct compat surfaces with different shapes. Choose based on the direction relative to the SDK's primary pin (`ADCP_VERSION`):
+This repo actively maintains older-wire compatibility. A former preview
+side-bundle pattern is documented only so maintainers can recognize and remove
+its artifacts:
 
 | Pattern | When | Shape | Example |
 |---|---|---|---|
 | **Older-than-pin legacy shim** | Sellers still on a wire version older than the SDK's primary pin (e.g. v2.5 sellers when SDK pins 3.0) | Per-tool `AdapterPair` registry under `src/lib/adapters/legacy/<version>/` that translates v3 inputs down to the older wire and normalizes responses back up | `legacy/v2-5/` — primary precedent |
-| **Newer-than-pin opt-in side-bundle** | Spec-published beta (or future GA) that consumers want to opt into before the SDK promotes the primary pin (e.g. 3.1.0-beta.x while SDK pins 3.0.x) | Schema cache + parallel type surface under `src/lib/types/<version-dir>/`, no adapter needed (newer wire is additive over the SDK's pin from the buyer's perspective) | `v3-1-beta/` — second precedent |
+| **Newer-than-pin opt-in side-bundle (retired)** | Historical previews before the SDK promoted its primary pin | Schema cache + parallel type surface; current package policy rejects this shape | Historical 3.1 preview bundle |
 
-The legacy-shim recipe below covers the **older-than-pin** path. For the **newer-than-pin** opt-in pattern, jump to [Recipe: opt-in side-bundle](#recipe-opt-in-side-bundle-for-a-newer-than-pin-spec-version).
+The legacy-shim recipe below is the supported path. The [retired side-bundle
+section](#historical-recipe-opt-in-side-bundle-for-a-newer-than-pin-spec-version-retired)
+exists for historical context, not as an implementation option.
 
 ## Recipe: adding a new wire-shape compat shim
 
@@ -433,15 +437,22 @@ What gets caught in code review every time:
 - **Don't omit the `removeNumberedTypeDuplicates` codegen pass.** `json-schema-to-typescript` emits `Foo`, `Foo1`, `Foo2` for re-referenced enums. The dedupe is in `scripts/generate-types.ts` and shared with v2.5 codegen — call it from your new generator. Skipping it produces autocomplete confusion that won't surface until adopters import the types.
 - **Don't bypass `_provenance.json`.** The schema cache is reproducible because we pin the source SHA + sha256. Stripping that for "convenience" defeats CI determinism.
 
-## Recipe: opt-in side-bundle for a newer-than-pin spec version
+## Historical recipe: opt-in side-bundle for a newer-than-pin spec version (retired)
 
-Use this when adopters need access to a spec version **newer** than the SDK's primary pin — e.g. AdCP cuts `3.1.0-beta.x` while the SDK pin stays at `3.0.x` GA. The pattern is fundamentally different from the legacy-shim recipe above:
+> Do not add a preview side-bundle to a current release. The package policy now
+> permits only the exact primary prerelease and maintained stable compatibility
+> bundles; it rejects versioned preview type exports and preview compatibility
+> aliases. This section is retained only to explain older release mechanics.
+
+This was used when adopters needed access to a spec version **newer** than the SDK's primary pin. The pattern was fundamentally different from the legacy-shim recipe above:
 
 - **No adapter.** From a buyer's perspective, the newer wire is additive over the SDK's pin — extra optional fields, new tools, expanded capability declarations. There's nothing to translate; consumers pinning the newer version just need strict validation and typed access to the new shape.
 - **The SDK pin doesn't move.** `ADCP_VERSION` stays at the GA value; the newer bundle is a side-bundle that consumers opt into via `adcpVersion: 'X.Y-beta'` (or full semver). Default behavior is unchanged.
 - **Tarball, not SHA-pin.** Pull from the cosign-verified `adcontextprotocol.org/protocol/<version>.tgz` artifact — the upstream release is the source of truth for an opt-in beta. SHA-pinning is reserved for versions that aren't tagged (the v2.5 case).
 
-Precedent: `scripts/sync-3-1-beta-schemas.ts` + `scripts/generate-3-1-beta-types.ts` + `src/lib/types/v3-1-beta/` (PR #1879).
+Historical precedent: the 3.1 beta side-bundle introduced in PR #1879. It was
+retired before 3.2 GA once the primary SDK pin had advanced beyond it; do not
+copy its deleted paths verbatim.
 
 ### 1. Pull the schema bundle (opt-in shape)
 
@@ -464,7 +475,7 @@ Wire into `package.json#scripts`:
 
 ### 2. Generate types (mega-schema with preprocessing)
 
-Add `scripts/generate-<version>-types.ts` modeled on `scripts/generate-3-1-beta-types.ts`. The 3.1-beta codegen extends the v2.5 mega-schema pipeline with three preprocessors that newer AdCP schemas need:
+Add `scripts/generate-<version>-types.ts` using the v2.5 mega-schema pipeline plus the preprocessors newer AdCP schemas need:
 
 - **`stripIfThenElse`** — deletes `if`/`then`/`else`/`dependencies` keywords before `json-schema-to-typescript`. AdCP 3.1+ uses these for response-shape gating (`unchanged: true ⇒ products omitted`) and request-shape gating (`if_pricing_version requires if_wholesale_feed_version`). jsts produces unusable union expansions; Ajv enforces the conditionals at runtime, so the TS surface collapses to all-optional. Memory: `feedback_strip_if_then_before_jsts`.
 - **`reseatLocalRefs`** — rewrites intra-schema `$ref` paths (`#/oneOf/0/...`, `#/definitions/<inner>`) to `#/definitions/<WrapperName>/oneOf/0/...` before bundling into the mega-schema. Required for any schema that self-references inside its own tree (e.g., `brand/get-brand-identity-response.json`, `brand/verify-brand-claims-request.json`).
@@ -492,7 +503,7 @@ The runtime loader already handles release-precision pins via `resolveSchemaRoot
 `scripts/sync-version.ts` carries the `COMPATIBLE_PREFIX` constant. Add the new prerelease to it:
 
 ```ts
-const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3', '3.0.0-beta.1', '3.0.0-beta.3', '3.1.0-beta.1', ...] as const;
+const COMPATIBLE_PREFIX = ['v2.5', 'v2.6', 'v3', '<exact-newer-preview>'] as const;
 ```
 
 The major/minor gate in `buildCompatibleVersions` **stays closed** for primary-pin moves — opt-in betas land in the prefix list, GA bumps to a new minor still require an explicit range extension (intentional: a primary-pin move likely also moves the compat surface non-mechanically).
@@ -515,7 +526,7 @@ And the matching `typesVersions` entry.
 
 ### 6. Test the runtime path
 
-Add a test to `test/lib/schema-loader-per-version.test.js` that compiles `getValidator('<some_tool>', 'request', '<your_version>')` and validates a payload exercising at least one new field. The 3.1-beta test (test name `'3.1.0-beta.1 opt-in bundle compiles and accepts wholesale feed request fields'`) is the precedent. Without this, the type surface ships green but a runtime-validator regression can slip in.
+Add a test to `test/lib/schema-loader-per-version.test.js` that compiles `getValidator('<some_tool>', 'request', '<your_version>')` and validates a payload exercising at least one new field. Without this, the type surface can ship green while the runtime validator regresses.
 
 ### 7. Changeset + PR
 
@@ -528,7 +539,11 @@ Use `'X.Y-beta'` (release-precision) as the canonical pin in adopter-facing exam
 - Run `npm run sync-schemas:<version> && npm run generate-types:<version>`.
 - Commit the regenerated types.
 
-When the spec GAs (e.g., `3.1.0`), the side-bundle pattern retires — the next SDK release bumps `ADCP_VERSION` to the GA value and the side-bundle gets removed in the same PR.
+As soon as the primary `ADCP_VERSION` pin reaches or passes the preview line,
+the side-bundle pattern retires. Remove its sync/codegen scripts, generated
+types, package subpath, advertised compatibility aliases, and cached compliance
+artifacts in the same prerelease train. The publish audit permits only the exact
+current prerelease plus maintained stable compatibility bundles.
 
 ## N=1 vs N×M
 

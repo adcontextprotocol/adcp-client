@@ -29,7 +29,7 @@ import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import type { CanonicalFormatKind, V1FormatId } from './types';
 import { AAO_CANONICAL_AGENT_URL } from './constants';
-import { BETA_VERSIONS_TO_TRY } from './cache-versions';
+import { SCHEMA_VERSIONS_TO_TRY } from './cache-versions';
 
 interface RegistryEntryV1Pattern {
   format_id_glob?: string;
@@ -70,7 +70,7 @@ let cached: CanonicalMappingRegistry | null = null;
  *      to the loader's source location. Used when running from a source
  *      checkout (e.g. `tsx`, vitest) before `build:lib`.
  *
- * Within (2) and (3), versions are tried in `BETA_VERSIONS_TO_TRY` order
+ * Within (2) and (3), versions are tried in `SCHEMA_VERSIONS_TO_TRY` order
  * — current pin/bundle wins; older prereleases survive for adopters who
  * haven't synced; `latest` is last-resort.
  *
@@ -81,10 +81,10 @@ export function loadRegistry(cacheRoot?: string): CanonicalMappingRegistry {
   const candidates = cacheRoot
     ? [path.join(cacheRoot, 'registries', 'v1-canonical-mapping.json')]
     : [
-        ...BETA_VERSIONS_TO_TRY.map(v =>
+        ...SCHEMA_VERSIONS_TO_TRY.map(v =>
           path.join(__dirname, '..', '..', 'schemas-data', v, 'registries', 'v1-canonical-mapping.json')
         ),
-        ...BETA_VERSIONS_TO_TRY.map(v =>
+        ...SCHEMA_VERSIONS_TO_TRY.map(v =>
           path.join(__dirname, '..', '..', '..', '..', 'schemas', 'cache', v, 'registries', 'v1-canonical-mapping.json')
         ),
       ];

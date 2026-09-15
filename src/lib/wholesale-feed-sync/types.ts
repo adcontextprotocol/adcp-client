@@ -1,5 +1,6 @@
 import type { SingleAgentClient } from '../core/SingleAgentClient';
-import type * as V31Beta from '../types/v3-1-beta';
+import type { AccountReference } from '../types';
+import type { LegacyWholesaleFeedEvent } from './protocol-types';
 
 /**
  * Operating mode for a {@link WholesaleFeedSync} instance, resolved from the
@@ -38,7 +39,7 @@ export interface WholesaleFeedSyncClient {
 /**
  * Configuration for a {@link WholesaleFeedSync} instance.
  *
- * The SDK's primary version pin (`ADCP_VERSION`) stays at GA; the wholesale
+ * The SDK's primary version pin (`ADCP_VERSION`) provides the wholesale
  * feed surfaces activate when the agent declares `wholesale_feed_versioning`
  * and/or `wholesale_feed_webhooks` in its `get_adcp_capabilities` response.
  * Against pre-3.1 agents the sync still works in `'manual'` mode — bootstrap
@@ -49,12 +50,12 @@ export interface WholesaleFeedSyncConfig {
   client: WholesaleFeedSyncClient;
 
   /**
-   * Account scope for wholesale product/signal reads. Beta 3 wholesale-feed
+   * Account scope for wholesale product/signal reads. Wholesale-feed
    * webhooks are account-anchored; pass the same account used when registering
    * `notification_configs[]` so repair reads reconcile the correct public or
    * account overlay.
    */
-  account?: V31Beta.AccountReference;
+  account?: AccountReference;
 
   /**
    * Expected inbound webhook subscription scope. Set this when routing a
@@ -154,16 +155,16 @@ export interface WholesaleFeedSyncEvents {
   // can read `event_id`, `created_at`, and the discriminated `payload`.
   // `synthetic: true` flags events emitted from refresh() or auto-poll
   // diff computation (not from the agent's feed).
-  event: [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'product.created': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'product.updated': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'product.priced': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'product.removed': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'signal.created': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'signal.updated': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'signal.priced': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'signal.removed': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
-  'wholesale_feed.bulk_change': [{ event: V31Beta.WholesaleFeedEvent; synthetic?: boolean }];
+  event: [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'product.created': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'product.updated': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'product.priced': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'product.removed': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'signal.created': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'signal.updated': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'signal.priced': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'signal.removed': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
+  'wholesale_feed.bulk_change': [{ event: LegacyWholesaleFeedEvent; synthetic?: boolean }];
 }
 
 /**

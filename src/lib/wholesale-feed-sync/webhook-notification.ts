@@ -1,9 +1,9 @@
 import { ADCPError } from '../errors';
-import type * as V31Beta from '../types/v3-1-beta';
+import type { LegacyWholesaleFeedEvent, LegacyWholesaleFeedWebhook } from './protocol-types';
 
-export type WholesaleFeedWebhookNotificationType = V31Beta.WholesaleFeedWebhook['notification_type'];
+export type WholesaleFeedWebhookNotificationType = LegacyWholesaleFeedWebhook['notification_type'];
 export type WholesaleFeedWebhookAffectedEntityType = 'product' | 'signal';
-export type WholesaleFeedWebhookCacheScope = V31Beta.WholesaleFeedWebhook['cache_scope'];
+export type WholesaleFeedWebhookCacheScope = LegacyWholesaleFeedWebhook['cache_scope'];
 
 export type WholesaleFeedWebhookNotificationErrorCode =
   | 'wholesale_feed_webhook_body_malformed'
@@ -59,8 +59,8 @@ export interface NormalizedWholesaleFeedWebhookNotification {
   eventCreatedAt: string;
   /** Present for `wholesale_feed.bulk_change` notifications. */
   affectedEntityType?: WholesaleFeedWebhookAffectedEntityType;
-  event: V31Beta.WholesaleFeedEvent;
-  webhook: V31Beta.WholesaleFeedWebhook;
+  event: LegacyWholesaleFeedEvent;
+  webhook: LegacyWholesaleFeedWebhook;
 }
 
 const WHOLESALE_FEED_NOTIFICATION_TYPES = new Set<WholesaleFeedWebhookNotificationType>([
@@ -97,6 +97,7 @@ export function parseWholesaleFeedWebhookNotification(input: unknown): Normalize
   const wholesaleFeedVersion = readRequiredString(webhook, 'wholesale_feed_version');
   const previousWholesaleFeedVersion = readOptionalString(webhook, 'previous_wholesale_feed_version');
   const cacheScope = readCacheScope(readRequiredString(webhook, 'cache_scope'), 'cache_scope');
+  assertLegacyWholesaleFeedRepresentation(webhook);
 
   const eventId = readRequiredString(event, 'event.event_id');
   if (notificationId !== eventId) {
@@ -149,8 +150,8 @@ export function parseWholesaleFeedWebhookNotification(input: unknown): Normalize
     entityId,
     eventCreatedAt,
     ...(affectedEntityType !== undefined && { affectedEntityType }),
-    event: event as V31Beta.WholesaleFeedEvent,
-    webhook: webhook as unknown as V31Beta.WholesaleFeedWebhook,
+    event: event as LegacyWholesaleFeedEvent,
+    webhook: webhook as unknown as LegacyWholesaleFeedWebhook,
   };
 }
 
@@ -299,11 +300,13 @@ function validatePayloadForEvent(
     case 'product.created':
     case 'product.updated': {
       assertEntityIdMatchesPayload(entityId, readRequiredString(payload, 'event.payload.product_id'), 'product_id');
+      rejectCanonicalPayloadField(payload, 'canonical_product');
       readRequiredRecord(payload, 'event.payload.product');
       return undefined;
     }
     case 'product.priced': {
       assertEntityIdMatchesPayload(entityId, readRequiredString(payload, 'event.payload.product_id'), 'product_id');
+      rejectCanonicalPayloadField(payload, 'canonical_pricing_options');
       readRequiredNonEmptyArray(payload, 'event.payload.pricing_options');
       return undefined;
     }
@@ -343,6 +346,62 @@ function validatePayloadForEvent(
       readRequiredPositiveInteger(payload, 'event.payload.affected_count');
       return readBulkChangeAffectedEntityType(payload);
   }
+}
+
+function assertLegacyProductPayloadView(
+  notificationType: WholesaleFeedWebhookNotificationType,
+  productPayloadView: string | undefined
+): void {
+  const isProductEvent = notificationType.startsWith('product.');
+  if (isProductEvent && (productPayloadView === undefined || productPayloadView === 'legacy')) return;
+  if (!isProductEvent && productPayloadView === undefined) return;
+
+  throw new WholesaleFeedWebhookNotificationError(
+    'wholesale_feed_webhook_field_invalid',
+    isProductEvent
+      ? 'WholesaleFeedSync supports only product_payload_view "legacy".'
+      : 'Non-product wholesale-feed webhooks must omit product_payload_view.',
+    {
+      field: 'product_payload_view',
+      expected: isProductEvent ? ['legacy'] : ['absent'],
+      actual: productPayloadView,
+    }
+  );
+}
+
+/** Validate only the product representation contract, without consuming dedupe state. */
+export function assertLegacyWholesaleFeedRepresentation(webhook: Record<string, unknown>): void {
+  const notificationType = webhook.notification_type;
+  if (
+    typeof notificationType !== 'string' ||
+    !WHOLESALE_FEED_NOTIFICATION_TYPES.has(notificationType as WholesaleFeedWebhookNotificationType)
+  )
+    return;
+
+  const productPayloadView = readOptionalString(webhook, 'product_payload_view');
+  assertLegacyProductPayloadView(notificationType as WholesaleFeedWebhookNotificationType, productPayloadView);
+
+  if (!notificationType.startsWith('product.')) return;
+  const event = webhook.event;
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return;
+  const payload = (event as Record<string, unknown>).payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+
+  const payloadRecord = payload as Record<string, unknown>;
+  if (notificationType === 'product.created' || notificationType === 'product.updated') {
+    rejectCanonicalPayloadField(payloadRecord, 'canonical_product');
+  } else if (notificationType === 'product.priced') {
+    rejectCanonicalPayloadField(payloadRecord, 'canonical_pricing_options');
+  }
+}
+
+function rejectCanonicalPayloadField(payload: Record<string, unknown>, field: string): void {
+  if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
+  throw new WholesaleFeedWebhookNotificationError(
+    'wholesale_feed_webhook_field_invalid',
+    `WholesaleFeedSync legacy product view does not accept event.payload.${field}.`,
+    { field: `event.payload.${field}`, expected: 'absent', actual: payload[field] }
+  );
 }
 
 function assertEntityIdMatchesPayload(entityId: string, payloadEntityId: string, payloadField: string): void {

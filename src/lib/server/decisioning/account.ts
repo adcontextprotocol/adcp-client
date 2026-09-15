@@ -215,7 +215,7 @@ export interface Account<TCtxMeta = Record<string, unknown>> {
 
   /**
    * Account-level webhook subscriptions registered through `sync_accounts`.
-   * Beta 3 adds wholesale product/signal feed webhooks here. The framework
+   * Wholesale product/signal feed webhooks are registered here. The framework
    * strips legacy `authentication.credentials` before emitting accounts on
    * `list_accounts`; adopters must still persist credentials server-side if
    * they accept legacy webhook auth.

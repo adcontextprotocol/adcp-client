@@ -81,16 +81,6 @@
         "default": "./dist/lib/types/v2-5/index.js"
       }
     },
-    "./types/v3-1-beta": {
-      "import": {
-        "types": "./dist/lib/types/v3-1-beta/index.d.mts",
-        "default": "./dist/lib/types/v3-1-beta/index.mjs"
-      },
-      "require": {
-        "types": "./dist/lib/types/v3-1-beta/index.d.ts",
-        "default": "./dist/lib/types/v3-1-beta/index.js"
-      }
-    },
     "./types/*": {
       "types": "./dist/lib/types/*.d.ts"
     },
@@ -408,9 +398,6 @@
       "types/v2-5": [
         "dist/lib/types/v2-5/index.d.ts"
       ],
-      "types/v3-1-beta": [
-        "dist/lib/types/v3-1-beta/index.d.ts"
-      ],
       "wholesale-feed-sync": [
         "dist/lib/wholesale-feed-sync/index.d.ts"
       ],
@@ -516,13 +503,9 @@
     "bin/**/*.js",
     "skills/**/*",
     ".claude-plugin/**/*",
-    "compliance/cache/**/*",
-    "!compliance/cache/*.previous/**/*",
-    "!compliance/cache/3.2.0-beta.0/**/*",
-    "!compliance/cache/3.2.0-beta.1/**/*",
-    "!compliance/cache/3.2.0-beta.8/**/*",
-    "!compliance/cache/3.2.0-rc.1/**/*",
-    "!compliance/cache/3.2.0-rc.2/**/*",
+    "compliance/cache/3.0.25/**/*",
+    "compliance/cache/3.1.18/**/*",
+    "compliance/cache/3.2.0-rc.3/**/*",
     "ADCP_VERSION",
     "docs/README.md",
     "docs/TYPE-SUMMARY.md",
@@ -567,7 +550,7 @@
   "scripts": {
     "prepare": "node scripts/install-hooks.js 2>/dev/null || true",
     "sync:agents": "node scripts/import-claude-agents.mjs",
-    "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
+    "prepublishOnly": "npm run clean && npm run sync-schemas:all && (test -f src/lib/types/tools.generated.ts || npm run generate-types) && npm run build:lib && npm run check:publish-protocol-artifacts && node --test-timeout=60000 --test-force-exit --test test/lib/adcp-client.test.js test/lib/validation.test.js test/lib/zod-schemas.test.js",
     "build": "npm run build:lib",
     "build:lib": "npm run sync-version && npm run schemas:ensure && tsx scripts/generate-wire-spec-fields.ts && tsup && node --max-old-space-size=8192 ./node_modules/typescript/bin/tsc --project tsconfig.lib.json --emitDeclarationOnly && tsx scripts/copy-schemas-to-dist.ts && tsx scripts/copy-reporting-source-schemas.ts && tsx scripts/copy-reporting-consumer-status-fixtures.ts && tsx scripts/sync-canonical-storyboard-fixtures.ts --copy-dist && tsx scripts/copy-v2-projection-catalog.ts && tsx scripts/generate-per-tool-types.ts && tsx scripts/generate-dmts-declarations.ts",
     "build:test-agents": "npm run build:lib && tsc -p test-agents/tsconfig.json --rootDir test-agents",
@@ -598,8 +581,7 @@
     "test:status-report": "node test/utils/final-status-report.js",
     "sync-schemas": "tsx scripts/sync-schemas.ts",
     "sync-schemas:v2.5": "tsx scripts/sync-v2-5-schemas.ts",
-    "sync-schemas:3.1-beta": "tsx scripts/sync-3-1-beta-schemas.ts",
-    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.18 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5 && npm run sync-schemas:3.1-beta",
+    "sync-schemas:all": "npm run sync-schemas && npm run sync-schemas -- 3.1.18 && npm run sync-schemas -- 3.0.25 && npm run sync-schemas:v2.5",
     "sync:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --update",
     "check:canonical-storyboard-fixtures": "tsx scripts/sync-canonical-storyboard-fixtures.ts --check",
     "sync-registry-schemas": "tsx scripts/generate-registry-types.ts --sync",
@@ -609,8 +591,7 @@
     "generate-manifest-derived": "tsx scripts/generate-manifest-derived.ts",
     "generate-entity-hydration": "tsx scripts/generate-entity-hydration.ts",
     "generate-types:v2.5": "tsx scripts/generate-v2-5-types.ts",
-    "generate-types:3.1-beta": "tsx scripts/generate-3-1-beta-types.ts",
-    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5 && npm run generate-types:3.1-beta",
+    "generate-types:all": "npm run generate-types && npm run generate-types:v2.5",
     "generate-registry-types": "tsx scripts/generate-registry-types.ts",
     "generate-enum-arrays": "tsx scripts/generate-enum-arrays.ts",
     "generate-inline-enum-arrays": "tsx scripts/generate-inline-enum-arrays.ts",
@@ -621,10 +602,11 @@
     "compliance:fork-matrix": "node --test --test-timeout=300000 'test/examples/hello-*.test.js' test/examples/proxy-seller-snap.test.js",
     "typecheck:skill-examples": "tsx scripts/typecheck-skill-examples.ts",
     "check:skill-sync": "tsx scripts/check-skill-sync.ts",
-    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json",
+    "check:package": "npm run check:runtime-compat && npm run check:packed-artifact && npm run check:publish-protocol-artifacts && npm run typecheck:examples && publint --strict && node --max-old-space-size=8192 ./node_modules/@arethetypeswrong/cli/dist/index.js --pack . --exclude-entrypoints compliance-fixtures/reporting-consumer-status-v1.json compliance-fixtures/principal.yaml compliance-fixtures/reporting-core.yaml compliance-fixtures/canonical-storyboards-provenance.json",
     "check:packed-artifact": "node scripts/check-packed-artifact.mjs",
     "check:runtime-compat": "node scripts/check-runtime-compat.mjs",
     "check:package-size": "node scripts/check-package-size.mjs",
+    "check:publish-protocol-artifacts": "node scripts/check-publish-protocol-artifacts.mjs",
     "verify:package": "node scripts/verify-package.mjs",
     "check:adopter-types": "tsx scripts/check-adopter-types.ts",
     "check:adopter-types-narrow": "tsx scripts/check-adopter-types-narrow.ts",

@@ -145,7 +145,7 @@ function makeStubClient(opts = {}) {
   return { client, calls };
 }
 
-describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
+describe('WholesaleFeedSync legacy-view wholesale feed flow', () => {
   const account = { account_id: 'acc_acme' };
 
   test('resolves auto-poll from wholesale_feed_versioning and records webhook event types', async () => {
@@ -405,6 +405,55 @@ describe('WholesaleFeedSync beta 3 wholesale feed flow', () => {
     ]);
     assert.deepStrictEqual(typed, ['product.updated', 'signal.priced']);
     assert.deepStrictEqual(wildcard, ['product.updated', 'signal.priced']);
+    sync.stop();
+  });
+
+  test('applyWebhook rejects canonical product payloads before mirror, version, or dedupe mutation', async () => {
+    const { client } = makeStubClient({
+      capabilities: { wholesale_feed_versioning: { supported: true } },
+      getProducts: () => makeProductsResult([makeProduct('p1')], { wholesale_feed_version: 'v1' }),
+    });
+    const sync = new WholesaleFeedSync({ client, account });
+    const emitted = [];
+    sync.on('event', ({ event }) => emitted.push(event.event_type));
+    await sync.start();
+
+    const canonicalEvent = makeEvent('product.updated', 'product', 'p1', {
+      product_id: 'p1',
+      canonical_product: {},
+      applies_to: { scope: 'public' },
+    });
+    const canonicalWebhook = {
+      ...makeWebhook(canonicalEvent, { version: 'v2', previous: 'v1' }),
+      product_payload_view: 'canonical',
+    };
+
+    await assert.rejects(
+      () => sync.applyWebhook(canonicalWebhook),
+      err => {
+        assert.strictEqual(err.code, 'wholesale_feed_webhook_field_invalid');
+        assert.strictEqual(err.field, 'product_payload_view');
+        return true;
+      }
+    );
+    assert.strictEqual(sync.products.get('p1').name, 'Product p1');
+    assert.deepStrictEqual(emitted, []);
+
+    const legacyWebhook = {
+      ...canonicalWebhook,
+      product_payload_view: 'legacy',
+      event: {
+        ...canonicalEvent,
+        payload: {
+          product_id: 'p1',
+          product: makeProduct('p1', { name: 'Applied after rejection' }),
+          applies_to: { scope: 'public' },
+        },
+      },
+    };
+    await sync.applyWebhook(legacyWebhook);
+    assert.strictEqual(sync.products.get('p1').name, 'Applied after rejection');
+    assert.deepStrictEqual(emitted, ['product.updated']);
     sync.stop();
   });
 

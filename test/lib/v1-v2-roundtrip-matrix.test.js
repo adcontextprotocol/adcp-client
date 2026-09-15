@@ -39,21 +39,16 @@ const { projectV2ProductToV1 } = require('../../dist/lib/v2/projection/v2-to-v1.
 
 const FIXTURE_DIR = path.join(__dirname, 'v2-projection-fixtures');
 const CATALOG_PATH = path.join(FIXTURE_DIR, 'aao-reference-formats.json');
-const REGISTRY_PATH = path.join(
-  __dirname,
-  '..',
-  '..',
-  'schemas',
-  'cache',
-  '3.1.0-beta.1',
-  'registries',
-  'v1-canonical-mapping.json'
-);
+const SCHEMAS_CACHE_ROOT = path.join(__dirname, '..', '..', 'schemas', 'cache');
+const CURRENT_VERSION = readFileSync(path.join(__dirname, '..', '..', 'ADCP_VERSION'), 'utf8').trim();
+const REGISTRY_PATH = ['3.1.18', CURRENT_VERSION, 'latest']
+  .map(version => path.join(SCHEMAS_CACHE_ROOT, version, 'registries', 'v1-canonical-mapping.json'))
+  .find(candidate => existsSync(candidate));
 
 const SKIP_REASON =
-  existsSync(CATALOG_PATH) && existsSync(REGISTRY_PATH)
+  existsSync(CATALOG_PATH) && REGISTRY_PATH
     ? false
-    : 'requires schemas/cache/3.1.0-beta.1/ + vendored aao-reference-formats.json';
+    : 'requires a maintained 3.1+ schema cache and vendored aao-reference-formats.json';
 
 function loadCatalog() {
   return JSON.parse(readFileSync(CATALOG_PATH, 'utf-8'));

@@ -10,10 +10,11 @@
  *   autocomplete in `switch` blocks, typed override keys on
  *   `BuyerRetryPolicy`, exhaustive `Record<ErrorCode, …>` tables. It is NOT
  *   a wire-validity claim.
- * - In a dual-mode line (primary pin at 3.0.x GA while 3.1 ships as opt-in
- *   types under `src/lib/types/v3-1-beta/`), buyer agents will receive
- *   3.1-introduced codes from forward-rolled sellers _before_ the SDK's GA
- *   pin moves. The overlay names those codes so the SDK has a defined
+ * - When buyer agents meet forward-rolled sellers, they can receive
+ *   newer codes _before_ the SDK's primary pin advances. The overlay lets
+ *   current generated types remain authoritative without shipping a stale
+ *   preview side-bundle.
+ *   The overlay names those codes so the SDK has a defined
  *   retry policy and a typed-error class for each, regardless of which
  *   wire version the peer speaks.
  *
@@ -53,8 +54,8 @@ export interface ForwardCompatErrorCodeInfo extends StandardErrorCodeInfo {
  * `error-codes.ts` fails closed if a code returns to this map after the
  * manifest already declares it.
  *
- * Future codes that 3.1.0-beta.N+1 publishes go here ahead of the next
- * pin advance — same pattern as #1883 originally introduced.
+ * Future codes published ahead of the next pin advance go here — the same
+ * pattern as #1883 originally introduced.
  */
 export const FORWARD_COMPAT_ERROR_CODES = {} as const satisfies Record<string, ForwardCompatErrorCodeInfo>;
 
