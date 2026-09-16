@@ -10181,7 +10181,7 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
     geo_countries_exclude?: GeoCountriesExclude | null;
     geo_regions?: GeoRegions | null;
     geo_regions_exclude?: GeoRegionsExclude | null;
-    geo_metros?: TargetingGeoMetros;
+    geo_metros?: TargetingGeoMetrosInput;
     geo_metros_exclude?: GeoMetrosExclude | null;
     geo_postal_areas?: GeoPostalAreas | null;
     geo_postal_areas_exclude?: GeoPostalAreasExclude | null;
@@ -10209,17 +10209,17 @@ export type TargetingOverlayInput = TargetingUnknownAgeEligibilityConstraint &
     placement_selection?: PlacementSelection | null;
     collection_selection?: TargetingCollectionSelection | null;
     age_restriction?: AgeRestriction | null;
-    device_platform?: [DevicePlatform, ...DevicePlatform[]] | null;
+    device_platform?: TargetingDevicePlatformsInput | null;
     device_platform_exclude?: DevicePlatformExclude | null;
-    device_type?: [DeviceType, ...DeviceType[]] | null;
+    device_type?: TargetingDeviceTypesInput | null;
     device_type_exclude?: DeviceTypeExclude | null;
     browser?: Browser | null;
     browser_exclude?: BrowserExclude | null;
     store_catchments?: StoreCatchments | null;
     geo_proximity?: GeoProximity | null;
-    language?: TargetingLanguages;
-    keyword_targets?: TargetingKeywords;
-    negative_keywords?: TargetingNegativeKeywords;
+    language?: TargetingLanguagesInput;
+    keyword_targets?: TargetingKeywordsInput;
+    negative_keywords?: TargetingNegativeKeywordsInput;
   };
 /**
  * Restrict delivery to specific countries. ISO 3166-1 alpha-2 codes (e.g., 'US', 'GB', 'DE').
@@ -10245,6 +10245,12 @@ export type GeoRegions = [string, ...string[]];
  * @minItems 1
  */
 export type GeoRegionsExclude = [string, ...string[]];
+/**
+ * Restrict delivery to specific metro areas. Each entry specifies the classification system and target values. Seller must declare supported systems in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingGeoMetrosInput = [GeoMetro, ...GeoMetro[]] | null;
 /**
  * Exclude specific metro areas from delivery. Each entry specifies the classification system and excluded values. Seller must declare supported systems in get_adcp_capabilities.
  *
@@ -10313,11 +10319,23 @@ export type AudienceInclude = [string, ...string[]];
  */
 export type AudienceExclude = [string, ...string[]];
 /**
+ * Restrict to specific platforms. Use for technical compatibility (app only works on iOS). Values from Sec-CH-UA-Platform standard, extended for CTV.
+ *
+ * @minItems 1
+ */
+export type TargetingDevicePlatformsInput = [DevicePlatform, ...DevicePlatform[]];
+/**
  * Exclude specific operating-system platforms from delivery. When a platform appears in both device_platform and device_platform_exclude, exclusion wins. Sellers MUST reject a request they cannot enforce rather than silently dropping the exclusion.
  *
  * @minItems 1
  */
 export type DevicePlatformExclude = [DevicePlatform, ...DevicePlatform[]];
+/**
+ * Restrict to specific device form factors. Use for campaigns targeting hardware categories rather than operating systems (e.g., mobile-only promotions, CTV campaigns).
+ *
+ * @minItems 1
+ */
+export type TargetingDeviceTypesInput = [DeviceType, ...DeviceType[]];
 /**
  * Exclude specific device form factors from delivery (e.g., exclude CTV for app-install campaigns).
  *
@@ -10379,6 +10397,49 @@ export type StoreCatchments = [
     catchment_ids?: [string, ...string[]];
   }[]
 ];
+/**
+ * Restrict to users with specific language preferences using canonical BCP 47 language ranges. Each buyer range is evaluated against a user's language-preference tag with RFC 4647 section 3.3.1 Basic Filtering: 'fr' matches 'fr', 'fr-CA', and 'fr-FR', while 'fr-CA' matches 'fr-CA' and more-specific descendants but not 'fr' or 'fr-FR'. Values use OR logic.
+ *
+ * @minItems 1
+ */
+export type TargetingLanguagesInput = [LanguageTag, ...LanguageTag[]] | null;
+/**
+ * Keyword targeting for search and retail media platforms. Restricts delivery to queries matching the specified keywords. Each keyword is identified by the tuple (keyword, match_type) — the same keyword string with different match types are distinct targets. Sellers SHOULD reject duplicate (keyword, match_type) pairs within a single request. Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingKeywordsInput =
+  | [
+      {
+        /**
+         * The keyword to target
+         */
+        keyword: string;
+        match_type: MatchType;
+        /**
+         * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+         */
+        bid_price?: number;
+      },
+      ...{
+        /**
+         * The keyword to target
+         */
+        keyword: string;
+        match_type: MatchType;
+        /**
+         * Per-keyword bid price, denominated in the same currency as the package's pricing option. Overrides the package-level bid_price for this keyword. Inherits the max_bid interpretation from the pricing option: when max_bid is true, this is the keyword's bid ceiling; when false, this is the exact bid. If omitted, the package bid_price applies.
+         */
+        bid_price?: number;
+      }[]
+    ]
+  | null;
+/**
+ * Keywords to exclude from delivery. Queries matching these keywords will not trigger the ad. Each negative keyword is identified by the tuple (keyword, match_type). Seller must declare support in get_adcp_capabilities.
+ *
+ * @minItems 1
+ */
+export type TargetingNegativeKeywordsInput = [NegativeKeyword, ...NegativeKeyword[]] | null;
 /**
  * @minItems 1
  */

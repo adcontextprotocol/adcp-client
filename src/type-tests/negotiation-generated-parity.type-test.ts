@@ -1,3 +1,5 @@
+import type { BuyProductsRequest } from '../lib/types';
+import type { TargetingOverlay as ToolTargetingOverlay } from '../lib/types/tools.generated';
 import type {
   AcceptanceContext as RootAcceptanceContext,
   CanonicalDeliveryForecast as RootCanonicalDeliveryForecast,
@@ -113,3 +115,51 @@ void removeOnlyRevision;
 void invalidRemoveRevision;
 void forecast;
 void budgetGuidance;
+
+// Request targeting and effective snapshots are distinct on newer pins. Removing only top-level clear commands must recover the same
+// known dimension shapes; nested input values must not be weakened.
+type RequestTargeting = NonNullable<BuyProductsRequest['purchases'][number]['targeting_overlay']>;
+type SnapshotTargeting = NonNullable<ProposalPurchase['targeting_overlay']>;
+type KnownDimensions<T> = {
+  [K in keyof T as string extends K ? never : number extends K ? never : K]: Exclude<T[K], null>;
+};
+type _ResolvedInputFitsSnapshot = AssertAssignable<SnapshotTargeting, KnownDimensions<RequestTargeting>>;
+type _SnapshotFitsInput = AssertAssignable<RequestTargeting, SnapshotTargeting>;
+type _SameResolvedDimensions = Assert<Equal<KnownDimensions<RequestTargeting>, KnownDimensions<SnapshotTargeting>>>;
+
+type _ToolAndCoreTargetingAgree = Assert<
+  Equal<KnownDimensions<ToolTargetingOverlay>, KnownDimensions<SnapshotTargeting>>
+>;
+
+type DimensionKeys = keyof KnownDimensions<SnapshotTargeting>;
+type _SnapshotHasNoClearCommands = Assert<
+  Equal<
+    {
+      [K in DimensionKeys]-?: null extends SnapshotTargeting[K] ? K : never;
+    }[DimensionKeys],
+    never
+  >
+>;
+type _InputClearCommandsAreUniform = Assert<
+  Equal<
+    {
+      [K in DimensionKeys]-?: null extends RequestTargeting[K] ? true : false;
+    }[DimensionKeys],
+    null extends RequestTargeting['geo_countries'] ? true : false
+  >
+>;
+
+const omittedTargeting: SnapshotTargeting = {};
+const nonemptyTargeting: SnapshotTargeting = { geo_countries: ['US', 'GB'] };
+// @ts-expect-error A clear command is not effective targeting.
+const clearSnapshot: SnapshotTargeting = { geo_countries: null };
+// @ts-expect-error The schema requires at least one country.
+const emptyCountries: SnapshotTargeting = { geo_countries: [] };
+// @ts-expect-error Country elements must be strings.
+const invalidCountry: RequestTargeting = { geo_countries: [42] };
+
+void omittedTargeting;
+void nonemptyTargeting;
+void clearSnapshot;
+void emptyCountries;
+void invalidCountry;
