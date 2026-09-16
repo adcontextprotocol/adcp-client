@@ -183,6 +183,9 @@ const INLINE_NO_CLAIMS_OFFSET_V1 = -1;
 // Evidence envelopes and cells carry a fixed, small field set. Both are checked against
 // these lists before any descriptor is observed.
 const INLINE_MAX_EVIDENCE_OBJECT_KEYS_V1 = 16;
+// Comfortably above the longest evidence field the schema admits (a 512 character
+// reason), so every valid value passes and an unbounded one is refused before validation.
+const INLINE_MAX_EVIDENCE_FIELD_CHARS_V1 = 1_024;
 const INLINE_EVIDENCE_ENVELOPE_KEYS_V1 = ['version', 'cells'] as const;
 const INLINE_EVIDENCE_CELL_KEYS_V1 = ['constituent_id', 'metric', 'status', 'reason', 'data_through'] as const;
 const INLINE_UNAVAILABLE_ROW_STATUSES_V1 = [
@@ -499,49 +502,54 @@ async function executeAndSeal(
   if (responseStatus === 'unavailable') {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch reported unavailable data');
   }
-  // Every remaining response field is observed once, here, and only this capture is
-  // validated. Reading a field twice let a stateful response answer differently per
-  // observation: a `currency` naming a foreign currency when its presence was tested and
-  // the frozen currency when it was compared passed a check it should have failed, and a
-  // `reporting_period` could prove its start from one object and its end from another.
-  let response: DeliveryResponseSnapshotV1;
-  try {
-    response = captureDeliveryResponse(fetchedRecord);
-  } catch {
-    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
-  }
-  if (
-    !isRows(fetched) &&
-    (['working', 'submitted', 'input_required', 'deferred', 'reporting_delayed', 'not_ready', 'pending'].includes(
-      responseStatus ?? ''
-    ) ||
-      (request.publicationClass === 'AUTHORITATIVE' && response.isFinal === false))
-  ) {
-    return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
-  }
-  if (
-    request.publicationClass === 'AUTHORITATIVE' &&
-    (isRows(fetched) ||
-      (response.isFinal !== true &&
-        !['final', 'adjusted'].includes((response.notificationType as string | undefined) ?? '')))
-  ) {
-    return failure('NOT_READY', 'retryable', 'Authoritative inline reporting requires source finality evidence');
-  }
-  if (
-    !isRows(fetched) &&
-    (Boolean(response.partialData) ||
-      ((response.unavailableCount as number | undefined) ?? 0) > 0 ||
-      ((response.errorsLength as number | undefined) ?? 0) > 0)
-  ) {
-    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned partial data');
-  }
-  if (
-    !isRows(fetched) &&
-    response.paginationPresent &&
-    (response.paginationHasMore !== false || Boolean(response.paginationNextCursor))
-  ) {
-    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned unfinished pagination');
-  }
+  // Each remaining response field is observed at most once, and only when a check needs
+  // it. Reading a field twice let a stateful response answer differently per observation
+  // -- a `currency` naming a foreign currency when its presence was tested and the frozen
+  // currency when it was compared, or a `reporting_period` proving its start from one
+  // object and its end from another -- and reading every field up front let a field no
+  // check would have reached decide the outcome: a response reporting `working` beside a
+  // throwing `reporting_period` came back terminal instead of retryable.
+  const readResponseField = createResponseFieldReader(fetchedRecord);
+  const scalarFailure = ((): ReportingSourceExecutorResultV1 | undefined => {
+    try {
+      if (
+        !isRows(fetched) &&
+        (['working', 'submitted', 'input_required', 'deferred', 'reporting_delayed', 'not_ready', 'pending'].includes(
+          responseStatus ?? ''
+        ) ||
+          (request.publicationClass === 'AUTHORITATIVE' && readResponseField('is_final') === false))
+      ) {
+        return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
+      }
+      if (
+        request.publicationClass === 'AUTHORITATIVE' &&
+        (isRows(fetched) ||
+          (readResponseField('is_final') !== true &&
+            !['final', 'adjusted'].includes(asStringOrUndefined(readResponseField('notification_type')) ?? '')))
+      ) {
+        return failure('NOT_READY', 'retryable', 'Authoritative inline reporting requires source finality evidence');
+      }
+      if (
+        !isRows(fetched) &&
+        (Boolean(readResponseField('partial_data')) ||
+          looseCount(readResponseField('unavailable_count')) > 0 ||
+          looseCount(lengthOfUnknown(readResponseField('errors'))) > 0)
+      ) {
+        return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned partial data');
+      }
+      const pagination = readResponseField('pagination');
+      if (!isRows(fetched) && fetchedRecord !== undefined && pagination !== undefined) {
+        const paginationRecord = asRowRecord(pagination);
+        if (paginationRecord?.has_more !== false || Boolean(paginationRecord?.next_cursor)) {
+          return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned unfinished pagination');
+        }
+      }
+      return undefined;
+    } catch {
+      return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
+    }
+  })();
+  if (scalarFailure) return scalarFailure;
   // Only now are the row collections read. Every failure the response's own status and
   // control fields decide has already been settled, so a response reporting `working`
   // beside a collection that throws on access stays retryable rather than being turned
@@ -594,15 +602,33 @@ async function executeAndSeal(
   if (!isRows(fetched) && reportingRows === undefined && mediaBuyDeliveries === undefined) {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch omitted its row collection');
   }
+  let responsePeriod: { readonly present: boolean; readonly start: unknown; readonly end: unknown };
+  let responseCurrency: unknown;
+  try {
+    // Each boundary is observed once and only that observation is validated: reading a
+    // boundary for presence, then for type, then for value let a getter answer with
+    // rubbish twice and the requested date on the third read.
+    const period = asRowRecord(readResponseField('reporting_period'));
+    const periodStart = period?.start;
+    const periodEnd = period?.end;
+    responsePeriod = {
+      present: period !== undefined && periodStart !== undefined && periodEnd !== undefined,
+      start: periodStart,
+      end: periodEnd,
+    };
+    responseCurrency = readResponseField('currency');
+  } catch {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
+  }
   if (
     !isRows(fetched) &&
-    (!response.periodPresent ||
-      !deliveryPeriodBoundaryMatches(response.periodStart, deliveryDates.start, request.period.start) ||
-      !deliveryPeriodBoundaryMatches(response.periodEnd, deliveryDates.end, request.period.end))
+    (!responsePeriod.present ||
+      !deliveryPeriodBoundaryMatches(responsePeriod.start, deliveryDates.start, request.period.start) ||
+      !deliveryPeriodBoundaryMatches(responsePeriod.end, deliveryDates.end, request.period.end))
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch did not prove the requested half-open period');
   }
-  if (!isRows(fetched) && response.currency !== undefined && response.currency !== request.sourceSettings.currency) {
+  if (!isRows(fetched) && responseCurrency !== undefined && responseCurrency !== request.sourceSettings.currency) {
     return failure(
       'INTEGRITY_FAILED',
       'terminal',
@@ -697,8 +723,9 @@ async function executeAndSeal(
     for (const row of rows) {
       const reserved = beginRowReserved(row);
       captured.push(reserved);
-      // Stop at the first row that settles the outcome: nothing after it is read.
-      if (reserved !== undefined && reservedRowStatusIsUnavailable(reserved)) {
+      // Stop at the first row that settles the outcome: nothing after it is read, and
+      // within the row `partial_data` is only observed if the status did not settle it.
+      if (reserved !== undefined && (rowStatusIsUnavailable(reserved) || rowDeclaresPartialData(reserved))) {
         return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
       }
     }
@@ -858,7 +885,9 @@ async function executeAndSeal(
   const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
   if (
     readsPartialPeriod &&
-    (isRows(fetched) || response.dataThrough === undefined || response.observedAt === undefined)
+    (isRows(fetched) ||
+      readResponseField('data_through') === undefined ||
+      readResponseField('observed_at') === undefined)
   ) {
     return failure(
       'PARTIAL_RESULT',
@@ -868,7 +897,11 @@ async function executeAndSeal(
   }
   const observedAt = isRows(fetched)
     ? request.period.sourceReadCutoffAt
-    : normalizeDeliveryInstant(response.observedAt ?? request.period.sourceReadCutoffAt, deliveryDates, request.period);
+    : normalizeDeliveryInstant(
+        readResponseField('observed_at') ?? request.period.sourceReadCutoffAt,
+        deliveryDates,
+        request.period
+      );
   const defaultDataThrough =
     request.publicationClass === 'AUTHORITATIVE'
       ? request.period.end
@@ -877,7 +910,7 @@ async function executeAndSeal(
         : request.period.end;
   const dataThrough = isRows(fetched)
     ? defaultDataThrough
-    : normalizeDeliveryInstant(response.dataThrough ?? defaultDataThrough, deliveryDates, request.period);
+    : normalizeDeliveryInstant(readResponseField('data_through') ?? defaultDataThrough, deliveryDates, request.period);
   const acquiredAt = new Date().toISOString();
   const startMs = Date.parse(request.period.start);
   const endMs = Date.parse(request.period.end);
@@ -1132,7 +1165,8 @@ const CLAIM_DISAGREE_V1 = 1 << 6;
 type RowReservedV1 = {
   readonly record: Record<string, unknown>;
   readonly status: unknown;
-  readonly partialData: unknown;
+  /** Filled by `rowDeclaresPartialData`, once, only if status did not settle the row. */
+  partialData?: unknown;
   /** Filled by `readRowCurrency`, once, after every row's status has been settled. */
   currency?: unknown;
   /** Filled by `readRowIdentityAndTotals`, once, when claims are captured. */
@@ -1146,11 +1180,23 @@ const INLINE_RESERVED_ROW_FIELDS_V1 = ['media_buy_id', 'currency', 'status', 'pa
 function beginRowReserved(row: unknown): RowReservedV1 | undefined {
   const record = asRowRecord(row);
   if (!record) return undefined;
-  return {
-    record,
-    status: ownDataValue(record, 'status'),
-    partialData: ownDataValue(record, 'partial_data'),
-  };
+  return { record, status: ownDataValue(record, 'status') };
+}
+
+/** True when the row's own status already settles it as unavailable. */
+function rowStatusIsUnavailable(reserved: RowReservedV1): boolean {
+  const status = boundedLowerCaseStatus(reserved.status);
+  return status !== undefined && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status);
+}
+
+/**
+ * Observe `partial_data`, once, only after the row's status has failed to settle it. A
+ * failed row whose `partial_data` descriptor throws used to be turned from a retryable
+ * partial result into a terminal one by a read nothing needed.
+ */
+function rowDeclaresPartialData(reserved: RowReservedV1): boolean {
+  reserved.partialData = ownDataValue(reserved.record, 'partial_data');
+  return reserved.partialData === true;
 }
 
 function readRowCurrency(reserved: RowReservedV1): void {
@@ -1175,11 +1221,6 @@ function reservedFieldValue(reserved: RowReservedV1, field: string): unknown {
     default:
       return reserved.totals;
   }
-}
-
-function reservedRowStatusIsUnavailable(reserved: RowReservedV1): boolean {
-  const status = boundedLowerCaseStatus(reserved.status);
-  return (status !== undefined && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status)) || reserved.partialData === true;
 }
 
 /**
@@ -1957,67 +1998,51 @@ function snapshotOwnDataObject(
   for (const key of keys as string[]) {
     const descriptor = Object.getOwnPropertyDescriptor(record, key);
     if (!descriptor || !('value' in descriptor)) throw new TypeError('Availability evidence field is not readable');
+    // Bound the field before the schema ever sees it. Every evidence field is a short
+    // identifier, name, reason or timestamp, and a validator that rejects an over-long
+    // value may still walk it first -- so an unbounded string could allocate an unbounded
+    // array during validation. `length` is O(1), so this refuses before anything scans.
+    if (typeof descriptor.value === 'string' && descriptor.value.length > INLINE_MAX_EVIDENCE_FIELD_CHARS_V1) {
+      throw new TypeError('Availability evidence field exceeds its bounded length');
+    }
     snapshot[key] = descriptor.value;
   }
   return snapshot;
 }
 
 /**
- * Every delivery-response field this adapter consults, observed once.
+ * Read a delivery-response field at most once, on first use.
  *
- * Reading a response field more than once let a stateful response answer differently per
- * observation. Validating only this capture closes that: the value a check admits is the
- * value the next check sees.
+ * Memoizing gives the exactly-once guarantee the checks depend on, and reading lazily
+ * keeps the order of observation the same as the order of decision: a field no check
+ * reaches is never observed, so it cannot turn a verdict that was already settled into
+ * something else.
  */
-type DeliveryResponseSnapshotV1 = {
-  readonly isFinal: unknown;
-  readonly notificationType: unknown;
-  readonly partialData: unknown;
-  readonly unavailableCount: unknown;
-  readonly errorsLength: unknown;
-  readonly paginationPresent: boolean;
-  readonly paginationHasMore: unknown;
-  readonly paginationNextCursor: unknown;
-  readonly periodPresent: boolean;
-  readonly periodStart: unknown;
-  readonly periodEnd: unknown;
-  readonly currency: unknown;
-  readonly dataThrough: unknown;
-  readonly observedAt: unknown;
-};
-
-function captureDeliveryResponse(record: Record<string, unknown> | undefined): DeliveryResponseSnapshotV1 {
-  const period = record?.reporting_period;
-  const periodRecord = typeof period === 'object' && period !== null ? (period as Record<string, unknown>) : undefined;
-  // Each boundary is observed once and only that observation is validated and retained.
-  // Reading a boundary for presence, then for its type, then for its value let a getter
-  // answer with rubbish twice and the requested date on the third read.
-  const periodStart = periodRecord?.start;
-  const periodEnd = periodRecord?.end;
-  const pagination = record?.pagination;
-  const paginationRecord =
-    typeof pagination === 'object' && pagination !== null ? (pagination as Record<string, unknown>) : undefined;
-  // Control fields are kept exactly as observed. Narrowing a present-but-malformed value
-  // to its absent form admitted responses that used to fail closed: `unavailable_count:
-  // '5'` and `errors: 'boom'` are partial data, and a non-string watermark is invalid
-  // temporal evidence rather than a missing one.
-  const errors = record?.errors;
-  return {
-    isFinal: record?.is_final,
-    notificationType: record?.notification_type,
-    partialData: record?.partial_data,
-    unavailableCount: record?.unavailable_count,
-    errorsLength: (errors as { length?: unknown } | undefined)?.length,
-    paginationPresent: record !== undefined && pagination !== undefined,
-    paginationHasMore: paginationRecord?.has_more,
-    paginationNextCursor: paginationRecord?.next_cursor,
-    periodPresent: periodRecord !== undefined && periodStart !== undefined && periodEnd !== undefined,
-    periodStart,
-    periodEnd,
-    currency: record?.currency,
-    dataThrough: record?.data_through,
-    observedAt: record?.observed_at,
+function createResponseFieldReader(record: Record<string, unknown> | undefined): (field: string) => unknown {
+  const observed = new Map<string, unknown>();
+  return (field: string): unknown => {
+    if (observed.has(field)) return observed.get(field);
+    const value = record?.[field];
+    observed.set(field, value);
+    return value;
   };
+}
+
+function asStringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Control-field comparison that keeps the loose coercion these checks have always used,
+ * so a present-but-malformed signal reads as the partial evidence it is rather than being
+ * narrowed into an absent one.
+ */
+function looseCount(value: unknown): number {
+  return (value as number | undefined) ?? 0;
+}
+
+function lengthOfUnknown(value: unknown): unknown {
+  return (value as { length?: unknown } | undefined)?.length;
 }
 
 /** Single `length` observation, or undefined when the collection does not declare one. */

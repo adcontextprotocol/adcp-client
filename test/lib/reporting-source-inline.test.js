@@ -1968,6 +1968,178 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('does not read response fields a settled status never reaches', async () => {
+    // `working` is a retryable not-ready verdict, decided from the status alone. Reading
+    // every response field up front let a field no check would have reached -- a throwing
+    // `reporting_period` -- turn that verdict terminal.
+    let periodReads = 0;
+    const source = createInlineReportingSourceExecutor(() => {
+      const response = { status: 'working', currency: 'USD', reporting_rows: [] };
+      Object.defineProperty(response, 'reporting_period', {
+        enumerable: true,
+        get: () => {
+          periodReads += 1;
+          throw new Error('reporting period is not readable');
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-working-period-unread'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'NOT_READY').code, 'NOT_READY');
+    assert.equal(periodReads, 0, 'a field no check reaches is never observed');
+
+    // The same holds for `notification_type`, which the finality check only consults when
+    // `is_final` has not already proven finality.
+    let notificationReads = 0;
+    const { cadence, ...offeringBase } = redactedReportingSourceOfferingV1;
+    const authoritativeOffering = {
+      ...offeringBase,
+      publicationClass: 'AUTHORITATIVE',
+      revisionSemantics: 'official_with_declared_correction_policy',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '00:00', daysAfterPeriodEnd: 1 },
+        expectedAvailabilityLag: 'PT1H',
+        worstCaseAvailabilityLag: 'P1D',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P1D',
+        correctionPolicy: 'none',
+      },
+    };
+    const finalSource = createInlineReportingSourceExecutor(input => {
+      const response = {
+        is_final: true,
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        data_through: input.end_date,
+        observed_at: input.end_date,
+      };
+      Object.defineProperty(response, 'notification_type', {
+        enumerable: true,
+        get: () => {
+          notificationReads += 1;
+          throw new Error('notification type is not readable');
+        },
+      });
+      return response;
+    }, authoritativeOffering);
+    const authoritative = request('fixture-inline-final-notification-unread');
+    authoritative.publicationClass = 'AUTHORITATIVE';
+    authoritative.finality = { revisionKind: 'authoritative' };
+    const sealed = await finalSource.execute(authoritative, context());
+    assert.equal(sealed.ok, true);
+    assert.equal(notificationReads, 0, 'notification_type is not read once is_final proves finality');
+  });
+
+  test('settles a row from its status before reading partial_data', async () => {
+    // A failed row is a retryable partial result decided by its status alone. Reading
+    // `partial_data` in the same breath let a throwing descriptor make it terminal.
+    let partialDataReads = 0;
+    const source = createInlineReportingSourceExecutor(
+      () => [
+        new Proxy(
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', status: 'failed' },
+          {
+            getOwnPropertyDescriptor(target, property) {
+              if (property !== 'partial_data') return Reflect.getOwnPropertyDescriptor(target, property);
+              partialDataReads += 1;
+              throw new Error('partial_data is not readable');
+            },
+          }
+        ),
+      ],
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-failed-row-partial-data'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    assert.equal(partialDataReads, 0, 'a row settled by its status is not read further');
+
+    // A row that its status does not settle is still checked for partial_data.
+    const partialSource = createInlineReportingSourceExecutor(
+      () => [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', partial_data: true }],
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await partialSource.execute(request('fixture-inline-row-partial-data-flag'), context()),
+        'PARTIAL_RESULT'
+      ).code,
+      'PARTIAL_RESULT'
+    );
+  });
+
+  test('bounds evidence field length before validating it', async () => {
+    // Evidence strings reached the schema unbounded, and a validator whose checks all run
+    // still walks a value its length check has already rejected -- so an over-long
+    // identifier was split into a code point array before anything refused it.
+    const oversized = `fixture-${'c'.repeat(20_000_000)}`;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: {
+          version: '1.0',
+          cells: input.requested_metrics.map(metric => ({
+            constituent_id: oversized,
+            metric,
+            status: 'present',
+            data_through: input.end_date,
+          })),
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    // The value is built before the window so only the executor's own work is measured.
+    const readPeak = peakHeapWatcher();
+    const started = process.hrtime.bigint();
+    const result = await source.execute(request('fixture-inline-oversized-evidence-field'), context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    const peakMiB = readPeak();
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    // Measured at 782 ms and 172 MiB when the value was split into a code point array,
+    // and 6 ms and 0.5 MiB once the length gate refuses it first.
+    assert.ok(elapsedMs < 250, `oversized evidence field refusal took ${elapsedMs.toFixed(1)}ms`);
+    assert.ok(peakMiB < 40, `oversized evidence field refusal peaked at ${peakMiB.toFixed(1)} MiB`);
+
+    // A value just past the schema's own limit is refused without being walked, and a
+    // value inside it still validates.
+    const boundary = length =>
+      createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+          availability_evidence: {
+            version: '1.0',
+            cells: input.requested_metrics.map(metric => ({
+              constituent_id: `c${'x'.repeat(length - 1)}`,
+              metric,
+              status: 'present',
+              data_through: input.end_date,
+            })),
+          },
+        }),
+        redactedReportingSourceOfferingV1
+      );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await boundary(256).execute(request('fixture-inline-evidence-field-256'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+    // Within the schema limit the identifier is well formed but is not a requested
+    // constituent, so it is refused as out of scope rather than as malformed.
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await boundary(255).execute(request('fixture-inline-evidence-field-255'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+  });
+
   test('fails closed on a malformed response status', async () => {
     // A status that is present but not a string is an unreadable response, not an absent
     // status. Narrowing it to absent let `status: 7` seal alongside otherwise valid rows.
