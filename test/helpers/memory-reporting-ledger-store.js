@@ -32,6 +32,8 @@ class MemoryLedgerStore {
   transitions = new Map();
   snapshots = new Map();
   leases = new Map();
+  /** Counts pre-SDK-14 baseline reconstructions so tests can prove it runs once. */
+  finalityBaselineReconstructions = 0;
 
   async putConfiguration(value) {
     const existing = [...this.configurations.values()].find(
@@ -174,24 +176,33 @@ class MemoryLedgerStore {
     if (inserted) this.transitions.set(value.transitionId, structuredClone(value));
     return { inserted };
   }
+  /**
+   * Mirrors the PostgreSQL store: reconstruct a pre-SDK-14 baseline at most once
+   * from the revision record's own application-clock `createdAt`, persist it on
+   * the transition row, and serve every later read from that committed value.
+   */
+  async resolveTransitionFinalityBaseline(obligationId) {
+    const latest = (await this.listTransitions(obligationId)).at(-1);
+    if (!latest) return 'none';
+    if (latest.finality) return latest.finality;
+    const occurredAt = Date.parse(latest.occurredAt);
+    const visible = (await this.listRevisions(obligationId)).filter(value => Date.parse(value.createdAt) <= occurredAt);
+    const finality = visible.some(value => value.finality === 'official')
+      ? 'official'
+      : visible.length
+        ? 'snapshot'
+        : 'none';
+    this.finalityBaselineReconstructions += 1;
+    this.transitions.set(latest.transitionId, { ...this.transitions.get(latest.transitionId), finality });
+    return finality;
+  }
   async applyLifecycleProjection(input) {
     const revisionIds = (await this.listRevisions(input.reporting_obligation_id)).map(
       value => value.reporting_revision_id
     );
     const latest = (await this.listTransitions(input.reporting_obligation_id)).at(-1);
     const obligation = await this.getObligation(input.reporting_obligation_id);
-    const visibleBeforeLatest = latest
-      ? (await this.listRevisions(input.reporting_obligation_id)).filter(
-          value => Date.parse(value.createdAt) <= Date.parse(latest.occurredAt)
-        )
-      : [];
-    const previousFinality =
-      latest?.finality ??
-      (visibleBeforeLatest.some(value => value.finality === 'official')
-        ? 'official'
-        : visibleBeforeLatest.length
-          ? 'snapshot'
-          : 'none');
+    const previousFinality = await this.resolveTransitionFinalityBaseline(input.reporting_obligation_id);
     if (
       !obligation ||
       obligation.state !== input.expectedObligationState ||

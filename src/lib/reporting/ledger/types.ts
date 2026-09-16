@@ -525,6 +525,23 @@ export interface ReportingLedgerStore {
    * Such stores must atomically stamp `notifiedAt` as the durable handoff marker.
    */
   readonly transactionalNotificationActivity?: boolean;
+  /**
+   * Resolves the authoritative observed finality of the obligation's latest
+   * transition.
+   *
+   * Transitions written from SDK 14 onward carry their own `finality`, so the
+   * baseline is read straight back off the committed row. Pre-SDK-14 rows carry
+   * none; a store that reconstructs their baseline MUST derive it once and
+   * persist it here so `applyLifecycleProjection` compares against the same
+   * committed value the lifecycle decision used. Reconstructing the baseline
+   * independently on each side is unsafe when the two derivations read
+   * different clocks — insert latency or clock skew makes them disagree and
+   * wedges the lifecycle compare-and-set permanently.
+   *
+   * Optional for stores compiled against the pre-finality lifecycle port; such
+   * stores must also ignore `expectedPreviousFinality`.
+   */
+  resolveTransitionFinalityBaseline?(reporting_obligation_id: string): Promise<ReportingObservedFinalityV1>;
   putConfiguration(
     configuration: ReportingLedgerConfigurationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConfigurationV1 }>;
@@ -581,7 +598,12 @@ export interface ReportingLedgerStore {
     reporting_obligation_id: string;
     expectedRevisionIds: string[];
     expectedPreviousHealth: ReportingHealthV1;
-    /** Optional for callers compiled against the pre-finality lifecycle port. */
+    /**
+     * Baseline observed finality the caller decided against, as returned by
+     * `resolveTransitionFinalityBaseline`. Stores must compare it against that
+     * same committed baseline and never against a freshly reconstructed one.
+     * Optional for callers compiled against the pre-finality lifecycle port.
+     */
     expectedPreviousFinality?: ReportingObservedFinalityV1;
     expectedObligationState: ReportingLedgerObligationV1['state'];
     expectedAttemptCount: number;

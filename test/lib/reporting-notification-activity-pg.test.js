@@ -381,6 +381,98 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     );
   });
 
+  test('progresses a pre-v14 obligation whose stored insert clock is skewed from the ledger clock', async () => {
+    const obligation = await putObligation('finality-clock-skew', 'account-b');
+    const obligationId = obligation.reporting_obligation_id;
+    // The database insert clock runs eight hours ahead of the application clock
+    // the revision payloads carry. A baseline reconstructed from the `created_at`
+    // insert column would therefore see nothing visible at the legacy
+    // transition, disagree with the lifecycle decision on every pass, and wedge
+    // the compare-and-set forever.
+    await insertSkewedRevision({
+      obligationId,
+      revisionId: 'rrev_clock_skew_snapshot',
+      revisionNumber: 1,
+      finality: 'snapshot',
+      createdAt: '2026-09-02T01:05:00.000Z',
+      insertedAt: '2026-09-02T09:05:00.000Z',
+    });
+    await pool.query(
+      `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
+       VALUES ($1, $2, $3::jsonb, $4)`,
+      [
+        'rst_clock_skew_pre_v14',
+        obligationId,
+        JSON.stringify({
+          transitionId: 'rst_clock_skew_pre_v14',
+          reporting_obligation_id: obligationId,
+          previousHealth: 'waiting',
+          health: 'delayed',
+          issueIds: [],
+          occurredAt: '2026-09-02T01:10:00.000Z',
+          notifiedAt: '2026-09-02T01:10:00.000Z',
+        }),
+        '2026-09-02T01:10:00.000Z',
+      ]
+    );
+    await insertSkewedRevision({
+      obligationId,
+      revisionId: 'rrev_clock_skew_official',
+      revisionNumber: 2,
+      finality: 'official',
+      supersedesRevisionId: 'rrev_clock_skew_snapshot',
+      createdAt: '2026-09-02T01:20:00.000Z',
+      insertedAt: '2026-09-02T09:20:00.000Z',
+    });
+
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligationId,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition, 'lifecycle progresses instead of wedging on a two-clock baseline');
+    assert.deepEqual(
+      [transition.previousHealth, transition.health, transition.previousFinality, transition.finality],
+      ['delayed', 'complete', 'snapshot', 'official']
+    );
+    // The reconstructed baseline is committed onto the legacy row, so no later
+    // pass — and no other clock — can derive a different one.
+    const stored = await store.listTransitions(obligationId);
+    assert.deepEqual(
+      stored.map(value => [value.transitionId, value.finality]),
+      [
+        ['rst_clock_skew_pre_v14', 'snapshot'],
+        [transition.transitionId, 'official'],
+      ]
+    );
+
+    const projected = await activity.recoverOnce({ ownerToken: 'clock-skew-worker' });
+    assert.equal(projected.projected, 1);
+    const delivered = () => fetchCalls.filter(value => value.body.notification_id === transition.transitionId);
+    assert.equal(delivered().length, 1);
+
+    // Replaying the reconciler reads the committed baseline, so it neither
+    // re-transitions nor re-notifies.
+    assert.equal(
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store,
+        reporting_obligation_id: obligationId,
+        ledgerAsOf: '2026-09-02T01:45:00.000Z',
+      }),
+      null
+    );
+    assert.deepEqual(await activity.recoverOnce({ ownerToken: 'clock-skew-replay-worker' }), {
+      claimed: 0,
+      matched: 0,
+      projected: 0,
+      retried: 0,
+      leaseLost: 0,
+    });
+    assert.equal(delivered().length, 1, 'notification stays exactly-once across the replay');
+    const page = await activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b' });
+    assert.equal(page.activities.filter(value => value.transitionId === transition.transitionId).length, 1);
+  });
+
   test('claims rows incrementally so a slow batch cannot expire later leases', async () => {
     const obligations = await Promise.all([
       putObligation('slow-batch-a', 'account-a'),
@@ -660,6 +752,37 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       issueIds: [],
       occurredAt: '2026-09-02T02:00:00.000Z',
     };
+  }
+
+  /**
+   * Inserts a revision whose payload `createdAt` (application clock) and
+   * `created_at` insert column (database clock) deliberately disagree.
+   */
+  async function insertSkewedRevision(input) {
+    await pool.query(
+      `INSERT INTO adcp_reporting_revisions
+         (revision_id, obligation_id, revision_number, finality, kind, supersedes_revision_id,
+          content_sha256, data, created_at)
+       VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8)`,
+      [
+        input.revisionId,
+        input.obligationId,
+        input.revisionNumber,
+        input.finality,
+        input.supersedesRevisionId ?? null,
+        `sha256:${input.revisionId}`,
+        JSON.stringify({
+          reporting_revision_id: input.revisionId,
+          reporting_obligation_id: input.obligationId,
+          revisionNumber: input.revisionNumber,
+          finality: input.finality,
+          kind: input.finality,
+          createdAt: input.createdAt,
+          ...(input.supersedesRevisionId ? { supersedes_reporting_revision_id: input.supersedesRevisionId } : {}),
+        }),
+        input.insertedAt,
+      ]
+    );
   }
 
   async function putObligation(suffix, accountId) {

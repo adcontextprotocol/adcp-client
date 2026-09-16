@@ -49,10 +49,12 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   if (latest && Date.parse(input.ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
   const previousHealth = latest?.health ?? 'waiting';
   const finality = observedFinality(revisions);
-  // Pre-SDK-14 transition rows have no finality. Treat the currently visible
-  // finality as their baseline so an upgrade does not invent a historical
-  // finality-only event. Every newly written row carries the exact value.
-  const previousFinality = latest?.finality ?? (latest ? observedFinality(revisions, latest.occurredAt) : 'none');
+  const previousFinality = await resolveFinalityBaseline(
+    input.store,
+    obligation.reporting_obligation_id,
+    revisions,
+    latest
+  );
   const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
   const transition: ReportingLedgerStatusTransitionV1 | undefined =
     previousHealth === projection.health && previousFinality === finality
@@ -100,6 +102,37 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
   if (notified) await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
   return notified ? { ...transition, notifiedAt: input.ledgerAsOf } : transition;
+}
+
+/**
+ * Resolves the one authoritative finality baseline the transition decision and
+ * the store's compare-and-set must both use.
+ *
+ * Transitions written from SDK 14 onward carry their own `finality`, so the
+ * baseline is the committed value. Pre-SDK-14 rows carry none, and their
+ * baseline has to be reconstructed from the revisions that were visible when
+ * they occurred. That reconstruction is delegated to the store, which derives
+ * it once and persists it, because recomputing it independently here and inside
+ * the store's transaction is only safe while both derivations read the same
+ * clock: the revision record's `createdAt` is the application clock, a store's
+ * insert timestamp is the database clock, and insert latency or skew between
+ * them silently wedges the lifecycle compare-and-set forever.
+ */
+async function resolveFinalityBaseline(
+  store: ReportingLedgerStore,
+  reporting_obligation_id: string,
+  revisions: readonly Pick<ReportingLedgerRevisionV1, 'finality' | 'createdAt'>[],
+  latest: ReportingLedgerStatusTransitionV1 | undefined
+): Promise<ReportingObservedFinalityV1> {
+  if (!latest) return 'none';
+  if (latest.finality) return latest.finality;
+  if (store.resolveTransitionFinalityBaseline) {
+    return store.resolveTransitionFinalityBaseline(reporting_obligation_id);
+  }
+  // Stores compiled against the pre-finality port cannot persist a baseline and
+  // must therefore ignore `expectedPreviousFinality`; reconstruct locally from
+  // the revision record's own application-clock `createdAt`.
+  return observedFinality(revisions, latest.occurredAt);
 }
 
 function observedFinality(

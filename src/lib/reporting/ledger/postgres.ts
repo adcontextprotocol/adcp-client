@@ -1213,6 +1213,18 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     return result.rows.map(row => clone(row.data));
   }
 
+  /**
+   * Resolves — and for pre-SDK-14 rows persists — the observed finality baseline
+   * of the obligation's latest transition, so the lifecycle decision and this
+   * store's compare-and-set read one committed value.
+   */
+  async resolveTransitionFinalityBaseline(obligationId: string): Promise<ReportingObservedFinalityV1> {
+    const lock = await this.accountLockForObligation(obligationId);
+    return this.transaction(client => resolveStoredFinalityBaseline(client, obligationId), {
+      preBeginAdvisoryLock: lock,
+    });
+  }
+
   async appendTransition(transition: ReportingLedgerStatusTransitionV1): Promise<{ inserted: boolean }> {
     const lock = await this.accountLockForObligation(transition.reporting_obligation_id);
     return this.transaction(
@@ -1220,38 +1232,14 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         if (this.notificationActivityPort) {
           await assertNoLegacyPendingTransitions(client, transition.reporting_obligation_id);
         }
-        const latest = await client.query<
-          QueryResultRow & {
-            health: string;
-            finality: ReportingObservedFinalityV1 | null;
-            occurred_at: Date | string;
-          }
-        >(
-          `SELECT data->>'health' AS health, data->>'finality' AS finality, occurred_at
-             FROM adcp_reporting_transitions
+        const previousFinality = await resolveStoredFinalityBaseline(client, transition.reporting_obligation_id);
+        const latest = await client.query<QueryResultRow & { health: string }>(
+          `SELECT data->>'health' AS health FROM adcp_reporting_transitions
             WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1`,
           [transition.reporting_obligation_id]
         );
-        const previous = latest.rows[0];
-        let previousFinality: ReportingObservedFinalityV1 = 'none';
-        if (previous?.finality) {
-          previousFinality = previous.finality;
-        } else if (previous) {
-          const revisions = await client.query<
-            QueryResultRow & { finality: ReportingObservedFinalityV1; created_at: Date | string }
-          >(
-            `SELECT finality, created_at FROM adcp_reporting_revisions
-              WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
-            [transition.reporting_obligation_id]
-          );
-          previousFinality = observedStoredFinality(
-            revisions.rows.filter(
-              revision => instantMilliseconds(revision.created_at) <= instantMilliseconds(previous.occurred_at)
-            )
-          );
-        }
         if (
-          (previous?.health ?? 'waiting') !== transition.previousHealth ||
+          (latest.rows[0]?.health ?? 'waiting') !== transition.previousHealth ||
           (transition.previousFinality !== undefined && previousFinality !== transition.previousFinality)
         ) {
           return { inserted: false };
@@ -1308,42 +1296,20 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         if (this.notificationActivityPort) {
           await assertNoLegacyPendingTransitions(client, input.reporting_obligation_id);
         }
-        const revisions = await client.query<
-          QueryResultRow & {
-            revision_id: string;
-            finality: ReportingObservedFinalityV1;
-            created_at: Date | string;
-          }
-        >(
-          `SELECT revision_id, finality, created_at FROM adcp_reporting_revisions
+        const previousFinality = await resolveStoredFinalityBaseline(client, input.reporting_obligation_id);
+        const revisions = await client.query<QueryResultRow & { revision_id: string }>(
+          `SELECT revision_id FROM adcp_reporting_revisions
             WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
           [input.reporting_obligation_id]
         );
-        const latest = await client.query<
-          QueryResultRow & {
-            health: string;
-            finality: ReportingObservedFinalityV1 | null;
-            occurred_at: Date | string;
-          }
-        >(
-          `SELECT data->>'health' AS health, data->>'finality' AS finality, occurred_at
-             FROM adcp_reporting_transitions
+        const latest = await client.query<QueryResultRow & { health: string }>(
+          `SELECT data->>'health' AS health FROM adcp_reporting_transitions
             WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1`,
           [input.reporting_obligation_id]
         );
         const revisionIds = revisions.rows.map(value => value.revision_id);
         const previousHealth = latest.rows[0]?.health ?? 'waiting';
         const obligation = obligations.rows[0]?.data;
-        const previousFinality =
-          latest.rows[0]?.finality ??
-          (latest.rows[0]
-            ? observedStoredFinality(
-                revisions.rows.filter(
-                  revision =>
-                    instantMilliseconds(revision.created_at) <= instantMilliseconds(latest.rows[0]!.occurred_at)
-                )
-              )
-            : 'none');
         if (
           !obligation ||
           obligation.state !== input.expectedObligationState ||
@@ -2248,6 +2214,65 @@ function observedStoredFinality(
   return revisions.length > 0 ? 'snapshot' : 'none';
 }
 
+/**
+ * Resolves the committed observed-finality baseline of the latest transition,
+ * backfilling it once for pre-SDK-14 rows.
+ *
+ * Transitions written from SDK 14 onward carry `finality` in their own row, so
+ * the baseline is simply read back. Pre-SDK-14 rows carry none, so the baseline
+ * is reconstructed from the revisions visible when they occurred and then
+ * written onto the row under the caller's account advisory lock — every later
+ * read, here and in the lifecycle projection, returns that one committed value.
+ *
+ * Reconstruction compares the revision record's own `createdAt` against the
+ * transition's own `occurredAt`; both are application-clock instants from the
+ * committed payloads. The `created_at` column is the database insert clock and
+ * must never take part: mixing the two clocks lets this store and the lifecycle
+ * decision disagree under insert latency or skew, which fails the lifecycle
+ * compare-and-set on every pass and wedges the obligation forever.
+ */
+async function resolveStoredFinalityBaseline(
+  transaction: ReportingPgClient,
+  obligationId: string
+): Promise<ReportingObservedFinalityV1> {
+  const latest = await transaction.query<
+    QueryResultRow & {
+      transition_id: string;
+      finality: ReportingObservedFinalityV1 | null;
+      occurred_at_instant: string | null;
+    }
+  >(
+    `SELECT transition_id, data->>'finality' AS finality, data->>'occurredAt' AS occurred_at_instant
+       FROM adcp_reporting_transitions
+      WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1
+      FOR UPDATE`,
+    [obligationId]
+  );
+  const previous = latest.rows[0];
+  if (!previous) return 'none';
+  if (previous.finality) return previous.finality;
+  const revisions = await transaction.query<
+    QueryResultRow & { finality: ReportingObservedFinalityV1; created_at_instant: string | null }
+  >(
+    `SELECT finality, data->>'createdAt' AS created_at_instant FROM adcp_reporting_revisions
+      WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
+    [obligationId]
+  );
+  const occurredAt = recordedInstantMilliseconds(previous.occurred_at_instant, 'transition occurredAt');
+  const baseline = observedStoredFinality(
+    revisions.rows.filter(
+      revision => recordedInstantMilliseconds(revision.created_at_instant, 'revision createdAt') <= occurredAt
+    )
+  );
+  await transaction.query(
+    `UPDATE adcp_reporting_transitions
+        SET data = data || jsonb_build_object('finality', $2::text)
+      WHERE transition_id = $1 AND NOT (data ? 'finality')`,
+    [previous.transition_id, baseline]
+  );
+  return baseline;
+}
+
 async function assertNoLegacyPendingTransitions(
   transaction: ReportingLedgerTransactionV1,
   obligationId: string
@@ -2265,8 +2290,10 @@ async function assertNoLegacyPendingTransitions(
   }
 }
 
-function instantMilliseconds(value: Date | string): number {
-  return value instanceof Date ? value.getTime() : Date.parse(value);
+function recordedInstantMilliseconds(value: string | null, field: string): number {
+  const parsed = Date.parse(value ?? '');
+  if (!Number.isFinite(parsed)) throw new Error(`Reporting ledger ${field} is not an RFC 3339 instant`);
+  return parsed;
 }
 
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {

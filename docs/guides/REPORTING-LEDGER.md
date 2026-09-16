@@ -188,9 +188,25 @@ authority transaction. Their `applyLifecycleProjection` equivalent must call
 `recordTransition({ transition, obligation }, tx)` after its compare/lock and
 before commit, and must roll back the authoritative transition if the port
 fails. In the same transaction they must stamp `notifiedAt` as the durable
-handoff marker. Stores must also compare `expectedPreviousFinality` with the latest
-stored transition before applying a finality-only projection; this field is
-optional only so pre-v14 implementations continue to compile during migration.
+handoff marker. Stores must also compare `expectedPreviousFinality` with the
+latest stored transition before applying a finality-only projection; this field
+is optional only so pre-v14 implementations continue to compile during
+migration.
+
+That comparison must read **one** committed baseline, never a freshly
+recomputed one. Transitions written from SDK 14 onward carry their own
+`finality`, so the baseline is read straight back off the row. Pre-v14 rows
+carry none, so the store reconstructs their baseline once — from the revision
+record's own application-clock `createdAt` against the transition's own
+`occurredAt`, never from a database insert timestamp — and persists it via
+`resolveTransitionFinalityBaseline(reporting_obligation_id)`, which
+`reconcileReportingStatusLifecycleV1` calls before deciding the transition.
+Deriving the baseline independently on both sides is unsafe: when the two
+derivations read different clocks, insert latency or clock skew makes them
+disagree, every lifecycle compare-and-set then fails, and the obligation is
+wedged with no error. Implementing `resolveTransitionFinalityBaseline` is
+therefore required of any store that honours `expectedPreviousFinality`; a
+store that omits it must also ignore `expectedPreviousFinality`.
 The transaction argument must be one BEGIN/COMMIT-bound connection, never a
 pool or autocommit queryable; the per-tenant advisory transaction lock provides
 capacity serialization under READ COMMITTED. Never call the port in a

@@ -293,6 +293,89 @@ describe('seller reporting ledger', () => {
     assert.equal(notifications, 0);
   });
 
+  test('derives a pre-v14 finality baseline once and reuses the committed value', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.revisions.set('revision-baseline-snapshot', {
+      reporting_revision_id: 'revision-baseline-snapshot',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      createdAt: '2026-09-02T01:15:00.000Z',
+    });
+    store.transitions.set('transition-before-v14', {
+      transitionId: 'transition-before-v14',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      issueIds: [],
+      occurredAt: '2026-09-02T01:20:00.000Z',
+      notifiedAt: '2026-09-02T01:20:00.000Z',
+    });
+    store.revisions.set('revision-baseline-official', {
+      reporting_revision_id: 'revision-baseline-official',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 2,
+      finality: 'official',
+      createdAt: '2026-09-02T01:45:00.000Z',
+    });
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:00:00.000Z',
+    });
+    assert.equal(transition.previousHealth, 'delayed');
+    assert.equal(transition.health, 'complete');
+    assert.equal(transition.previousFinality, 'snapshot');
+    assert.equal(transition.finality, 'official');
+    assert.equal(store.finalityBaselineReconstructions, 1, 'the baseline is reconstructed once, not once per reader');
+    assert.equal(store.transitions.get('transition-before-v14').finality, 'snapshot');
+    assert.equal(
+      await reconcileReportingStatusLifecycleV1({
+        store,
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T02:15:00.000Z',
+      }),
+      null
+    );
+    assert.equal(store.finalityBaselineReconstructions, 1);
+  });
+
+  test('defers to the committed store baseline instead of recomputing it locally', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.revisions.set('revision-authority-snapshot', {
+      reporting_revision_id: 'revision-authority-snapshot',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      createdAt: '2026-09-02T01:15:00.000Z',
+    });
+    store.transitions.set('transition-before-v14', {
+      transitionId: 'transition-before-v14',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'complete',
+      issueIds: [],
+      occurredAt: '2026-09-02T01:30:00.000Z',
+      notifiedAt: '2026-09-02T01:30:00.000Z',
+    });
+    // The revision timestamps read locally imply 'snapshot'. The store's own
+    // committed baseline must still decide, because two independent derivations
+    // are exactly what a clock difference turns into a permanent CAS wedge.
+    store.resolveTransitionFinalityBaseline = async () => 'none';
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:00:00.000Z',
+    });
+    assert.equal(transition.previousFinality, 'none');
+    assert.equal(transition.finality, 'snapshot');
+    assert.equal(transition.previousHealth, transition.health);
+  });
+
   test('treats a legacy transition with no configured recipient as disposition complete', async () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();
