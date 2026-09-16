@@ -43,6 +43,69 @@ Official configurations also pin a `finalityPolicy` (`policyId` plus `source_fin
 
 Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and exact decimal control totals for requested numeric metrics. A revision number and obligation are immutable. Official revisions are terminal; later source corrections are immutable adjustments bound to the official revision, never superseding revisions. Status snapshots omit row payloads, are capped at 8 MiB, expire after 15 minutes, and keep cursor pages stable over the flat obligation/revision/adjustment union. A periods response returns an opaque `changes_checkpoint`; echo that value verbatim as `changes_after` rather than supplying a timestamp. Account-scoped write/snapshot locks make those checkpoints gap-free for SDK store writes. The default table set is deployment-wide; use a dedicated database/schema and acknowledge that boundary explicitly. `sourceScope` must contain opaque routing identities only—never credentials or bearer tokens—because it is retained with the obligation.
 
+## Managed Delivery and Reconciled Billing
+
+Core remains the default and has no destination, external-resource, or receipt dependency. To opt into the higher tiers, apply `REPORTING_MANAGED_DELIVERY_MIGRATION` **after** `REPORTING_LEDGER_MIGRATION`, explicitly construct the Core store with `managedDelivery: true`, create a `PostgresReportingManagedDeliveryStore`, and pass both stores with a destination adapter to `createReportingManagedDeliveryRuntime`. The async factory proves the stores share one authority and validates the RC3 tier wiring before returning it. It advertises `managed_delivery` only when an immutable binding, delivery, bounded resource reading, generation-fenced revocation, and at least one verification profile are installed. The advertised automated recovery window must equal every installed managed Core configuration's recovery window. It advertises `reconciled_billing` and `receipt_task` only when an authenticated consumer resolver and canonical-digest verification are also installed.
+
+```ts
+import {
+  PostgresReportingLedgerStore,
+  PostgresReportingManagedDeliveryStore,
+  REPORTING_MANAGED_DELIVERY_MIGRATION,
+  createReportingManagedDeliveryRuntime,
+  reportingManagedDeliveryBindingV1,
+} from '@adcp/sdk/reporting/ledger';
+
+await pool.query(REPORTING_MANAGED_DELIVERY_MIGRATION);
+const managedStore = new PostgresReportingManagedDeliveryStore(pool);
+const managedCoreStore = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  managedDelivery: true,
+});
+await managedStore.authorizeDestination({
+  account_id: internalAccountId,
+  destination_ref: destinationRef,
+  generation: 1,
+  authorized_at: new Date().toISOString(),
+});
+await managedStore.installBinding(
+  reportingManagedDeliveryBindingV1({
+    ...bindingForInstalledCoreConfiguration,
+    account_id: internalAccountId,
+    destination_ref: destinationRef,
+    authorization_generation: 1,
+  })
+);
+
+type SellerContext = { account?: unknown; agent: { agent_url: string } };
+const managed = await createReportingManagedDeliveryRuntime<SellerContext>({
+  coreStore: managedCoreStore,
+  store: managedStore,
+  adapter: destinationAdapter,
+  offerings: reportingDeliveryOfferings,
+  resolveConsumerId: context => context.agent.agent_url,
+  automatedRecoveryWindowSeconds: 3600,
+  statusRetentionDays: 90,
+  resourceRetentionDays: 30,
+  authorizationRevocationSeconds: 60,
+});
+
+// Supply these to the matching server slots/capability document.
+const { getReportingStatus, getMediaBuyDelivery, syncReportingReceipts } = managed;
+const reportingDelivery = managed.reportingDeliveryCapabilities;
+
+// Run from a durable scheduler; replicas safely share SKIP LOCKED leases.
+await managed.runWorker({ maxIterations: 100 });
+```
+
+Authorize a destination generation and install its immutable binding before creating any obligation for that Core configuration. Once an obligation is observable, only an exact idempotent replay of the existing binding is accepted, so the managed tier cannot appear outside the Core changes checkpoint. Build the binding with `reportingManagedDeliveryBindingV1`, which binds the exact internal account, Core configuration generation, destination authorization generation, feed purpose, method, verification profile, reconciliation mode, and resource-retention promise. Revocation commits the durable deny first, fails queued work, and makes resource reads and receipt submission fail closed; provider-side grant cleanup is a separately leased worker action. Reauthorization uses a strictly greater generation and a new Core configuration generation. It never re-enables an old binding.
+
+The worker claims and commits through short PostgreSQL transactions but performs destination I/O outside them. Delivery, revocation, and resource reads have hard SDK deadlines even when an adapter ignores cancellation; resource descriptors are limited to 1 MiB and resource bodies to 64 MiB by default. Adapters must advertise `revocationFencesDeliveryGenerations: true`, make the logical `(configuration generation, revision, destination generation)` write idempotent, and install a provider-side generation tombstone before `revoke()` returns. Every delivery must be keyed by that generation and refuse a tombstoned generation, including a late provider write that completes after the SDK timed out. A successful commit requires the lease generation and unexpired lease, current authorization, exact Core row count and control totals, all evidence required by the selected verification profile, the official canonical digest when required, an immutable native version reference when applicable, and an `expires_at` satisfying the configured retention window.
+
+`sync_reporting_receipts` derives both account and consumer from authenticated context. Its PostgreSQL implementation serializes each caller namespace, stores original batch results for exact idempotency replay, and exposes append-only histories only to that consumer. Revision receipts must name the exact official revision, obligation, successful materialization, current authorization, and verification evidence. Accepted leaves are terminal; a rejected leaf may be repaired only by an exact `supersedes_reporting_receipt_id`. Later source corrections remain Core adjustments and receive separate append-only adjustment receipts—neither official revisions nor earlier receipts are rewritten. Lookup failures intentionally share one generic error so the task cannot probe another account's retained objects.
+
+The managed tables are additive and do not alter the Core tables. This is the schema boundary coordinated with #2943: that work owns transactional reporting notification/activity intent and the existing webhook delivery/credential plane. Managed Delivery does not create a second webhook sender, outbox, credential store, or subscriber model. Apply both feature migrations after the Core migration in either order; each owns separate tables and both reuse the Core authority.
+
 `planObligations()` creates at most 1,000 obligations per call by default. Use its `account_id` and `maxObligations` options from a resumable scheduler when catching up dense or old schedules. Source executions are bounded to 10,000 objects, 1,000,000 rows, and 64 MiB per revision.
 
 When `get_reporting_status` omits a period, the operational default horizon is the 24 hours ending at `ledger_as_of`. The `health` and `finality` arrays filter periods-view output only; they do not rewrite summary health or the underlying obligation projection.

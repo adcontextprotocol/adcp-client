@@ -1,7 +1,10 @@
 import type {
   GetReportingStatusResponse,
   ReportingAdjustment,
+  ReportingAdjustmentReceipt,
   ReportingConsumerStatus,
+  ReportingMaterialization,
+  ReportingReceipt,
   ReportingRevision,
 } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
@@ -13,6 +16,19 @@ import type {
   ReportingSourceStagedObjectReaderV1,
   SourceBatchManifestReferenceV1,
 } from '../source';
+
+/**
+ * Private-by-convention identity used to prove Core and Managed stores share
+ * one reporting authority. Store implementations may expose their own stable
+ * authority identity through this symbol; it is never serialized.
+ */
+export const REPORTING_LEDGER_AUTHORITY = Symbol.for('@adcp/sdk/reporting-ledger-authority');
+
+/** Shared identity used by separately constructed Core and opt-in reporting stores. */
+export interface ReportingLedgerAuthorityV1 {
+  readonly substrate: unknown;
+  readonly managedDelivery: boolean;
+}
 
 export type ReportingHealthV1 = 'waiting' | 'healthy' | 'delayed' | 'action_required' | 'complete';
 export type ReportingFinalityV1 = 'snapshot' | 'official';
@@ -446,6 +462,17 @@ export interface ReportingLedgerSnapshotV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  /** Present only when the opt-in Managed Delivery migration is installed. */
+  managedBindings?: ReportingManagedDeliveryBindingV1[];
+  materializations?: ReportingMaterialization[];
+  /** Full immutable history; separate from authorization-aware health projection. */
+  materializationHistoryProjection?: ReportingMaterialization[];
+  materializationProjection?: ReportingMaterialization[];
+  /** Authenticated caller's receipts only; another consumer is never projected. */
+  receipts?: ReportingReceipt[];
+  receiptProjection?: ReportingReceipt[];
+  adjustmentReceipts?: ReportingAdjustmentReceipt[];
+  adjustmentReceiptProjection?: ReportingAdjustmentReceipt[];
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   /** Full scoped histories retained across changes_after for complete counts and current-leaf projection. */
   consumerStatusProjection?: ReportingLedgerConsumerStatementV1[];
@@ -457,12 +484,37 @@ export interface ReportingLedgerPageV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  materializations?: ReportingMaterialization[];
+  receipts?: ReportingReceipt[];
+  adjustmentReceipts?: ReportingAdjustmentReceipt[];
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   totalCount: number;
   offset: number;
   limit: number;
   hasMore: boolean;
   nextCursor?: string;
+}
+
+/**
+ * Immutable opt-in binding between one Core configuration generation and one
+ * caller-owned destination authorization generation. Core configurations do
+ * not carry this shape and remain API-delivered.
+ */
+export interface ReportingManagedDeliveryBindingV1 {
+  configurationId: string;
+  account_id: string;
+  delivery_config_id: string;
+  delivery_config_version: number;
+  destination_ref: string;
+  authorization_generation: number;
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+  method: ReportingMaterialization['method'];
+  transport?: string;
+  verification_profile: NonNullable<ReportingMaterialization['verification']>['verification_profile'];
+  reconciliation_mode: 'delivery_only' | 'consumer_receipt';
+  resource_retention_days: number;
+  created_at: string;
+  semantic_fingerprint: string;
 }
 
 export interface ReportingLedgerLeaseV1 {
@@ -491,6 +543,8 @@ export class ReportingConsumerStatusConflictError extends Error {
 }
 
 export interface ReportingLedgerStore {
+  /** Optional substrate identity for an add-on store that must prove shared authority. */
+  readonly [REPORTING_LEDGER_AUTHORITY]?: ReportingLedgerAuthorityV1;
   putConfiguration(
     configuration: ReportingLedgerConfigurationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConfigurationV1 }>;

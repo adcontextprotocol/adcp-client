@@ -7,3 +7,5 @@ export * from './producer';
 export * from './handler';
 export * from './status-ingest';
 export * from './consumer-status-identity';
+export * from './managed';
+export * from './managed-postgres';

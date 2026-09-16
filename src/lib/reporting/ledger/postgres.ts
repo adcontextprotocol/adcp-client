@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { canonicalize } from '../../utils/jcs';
+import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '../../types';
 import { DEFAULT_UNKNOWN_ERROR_RECOVERY, getErrorRecovery, type ErrorRecovery } from '../../types/error-codes';
 import { canonicalJsonV1 } from '../source';
 import { isWellFormedUnicodeString } from '../../utils/well-formed-unicode';
@@ -20,6 +21,7 @@ import {
   REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_ERROR_MESSAGE_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_MAX_BYTES,
+  REPORTING_LEDGER_AUTHORITY,
   ReportingLedgerSnapshotUnavailableError,
 } from './types';
 import type {
@@ -42,9 +44,12 @@ import type {
   ReportingConsumerStatusBatchResultV1,
   ReportingConsumerStatusReplayInputV1,
   ReportingLedgerRevisionMetadataV1,
+  ReportingManagedDeliveryBindingV1,
+  ReportingLedgerAuthorityV1,
 } from './types';
 import { ReportingConsumerStatusConflictError } from './types';
 import type { ReportingConsumerMismatchEscalationV1 } from './types';
+import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import {
   normalizeReportingConsumerStatusIdsV1,
   reportingConsumerStatusChainKeyFromIdentityV1,
@@ -310,6 +315,8 @@ export interface PostgresReportingLedgerStoreOptions {
    * the unfiltered read shows.
    */
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  /** Explicitly opt this Core store into projecting the additive #2944 tables. */
+  managedDelivery?: boolean;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -371,11 +378,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
    * contradict the summary.
    */
   readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  readonly [REPORTING_LEDGER_AUTHORITY]: ReportingLedgerAuthorityV1;
+  private readonly managedDelivery: boolean;
 
   constructor(
     private readonly pool: ReportingPgPool,
     options: PostgresReportingLedgerStoreOptions = {}
   ) {
+    this.managedDelivery = options.managedDelivery === true;
+    this[REPORTING_LEDGER_AUTHORITY] = { substrate: pool, managedDelivery: this.managedDelivery };
     const development = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
     if (!development && !options.acknowledgeIsolatedDatabase) {
       throw new Error(
@@ -1386,11 +1397,33 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         const changesAfter = query.changes_after
           ? await this.resolveChangesCheckpoint(client, query, query.changes_after)
           : undefined;
+        const managedInstalled = this.managedDelivery && (await this.managedTablesInstalled(client));
         const configurations = await this.listSnapshotConfigurations(client, query, ledgerAsOf);
         if (configurations.length > MAX_SNAPSHOT_ITEMS) {
           throw new Error('Reporting ledger snapshot exceeds the configuration limit');
         }
         let obligations = await this.listSnapshotObligations(client, query, ledgerAsOf, changesAfter);
+        if (managedInstalled && changesAfter) {
+          const managedChangedIds = await this.listManagedChangedObligationIds(client, query, ledgerAsOf, changesAfter);
+          if (managedChangedIds.size) {
+            const fullScope = await this.listSnapshotObligations(
+              client,
+              { ...query, changes_after: undefined, health: undefined },
+              ledgerAsOf
+            );
+            const byId = new Map(obligations.map(value => [value.reporting_obligation_id, value]));
+            for (const obligation of fullScope) {
+              if (managedChangedIds.has(obligation.reporting_obligation_id)) {
+                byId.set(obligation.reporting_obligation_id, obligation);
+              }
+            }
+            obligations = [...byId.values()].sort(
+              (left, right) =>
+                left.period.start.localeCompare(right.period.start) ||
+                left.reporting_obligation_id.localeCompare(right.reporting_obligation_id)
+            );
+          }
+        }
         if (obligations.length > MAX_SNAPSHOT_ITEMS) {
           throw new Error('Reporting ledger snapshot exceeds the item limit');
         }
@@ -1454,7 +1487,61 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           throw new Error('Reporting ledger snapshot exceeds the item limit');
         }
         let issues = await this.listSnapshotIssues(client, obligationIds, MAX_SNAPSHOT_ITEMS + 1);
+        const managedBindings = managedInstalled
+          ? await this.listSnapshotManagedBindings(
+              client,
+              configurations.map(value => value.configurationId)
+            )
+          : [];
+        let materializations = managedInstalled
+          ? await this.listSnapshotMaterializations(client, obligationIds, ledgerAsOf, changesAfter)
+          : [];
+        let receipts =
+          managedInstalled && query.consumer_id
+            ? await this.listSnapshotReceipts(client, query, obligationIds, ledgerAsOf, changesAfter, 'revision')
+            : [];
+        let adjustmentReceipts =
+          managedInstalled && query.consumer_id
+            ? await this.listSnapshotReceipts(client, query, obligationIds, ledgerAsOf, changesAfter, 'adjustment')
+            : [];
+        const materializationProjection = managedInstalled
+          ? await this.listSnapshotMaterializationProjection(client, obligationIds, ledgerAsOf)
+          : [];
+        const materializationHistoryProjection =
+          managedInstalled && changesAfter
+            ? await this.listSnapshotMaterializations(client, obligationIds, ledgerAsOf)
+            : materializations;
+        const receiptProjection =
+          managedInstalled && query.consumer_id && changesAfter
+            ? await this.listSnapshotReceipts(client, query, obligationIds, ledgerAsOf, undefined, 'revision')
+            : receipts;
+        const adjustmentReceiptProjection =
+          managedInstalled && query.consumer_id && changesAfter
+            ? await this.listSnapshotReceipts(client, query, obligationIds, ledgerAsOf, undefined, 'adjustment')
+            : adjustmentReceipts;
+        if (
+          materializationProjection.length > MAX_SNAPSHOT_ITEMS ||
+          materializationHistoryProjection.length > MAX_SNAPSHOT_ITEMS ||
+          receiptProjection.length > MAX_SNAPSHOT_ITEMS ||
+          adjustmentReceiptProjection.length > MAX_SNAPSHOT_ITEMS
+        ) {
+          throw new Error('Reporting ledger snapshot exceeds the managed projection limit');
+        }
+        if (
+          obligations.length +
+            revisions.length +
+            adjustments.length +
+            consumerStatuses.length +
+            materializations.length +
+            receipts.length +
+            adjustmentReceipts.length >
+          MAX_SNAPSHOT_ITEMS
+        ) {
+          throw new Error('Reporting ledger snapshot exceeds the item limit');
+        }
         if (issues.length > MAX_SNAPSHOT_ITEMS) throw new Error('Reporting ledger snapshot exceeds the issue limit');
+        // Filter the same composite health that the handler emits so cursor
+        // counts and pages remain truthful for both Core and Managed stores.
         if (query.view === 'periods' && query.health) {
           const scopedObligations = obligations;
           const accepted = new Set(
@@ -1486,7 +1573,32 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                   ledgerAsOf,
                   this.consumerMismatchEscalation
                 );
-                return query.health!.includes(mismatch?.health ?? sellerHealth);
+                const baseProjection = projectReportingObligationHealthV1(
+                  value,
+                  obligationRevisions,
+                  ledgerAsOf,
+                  reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
+                );
+                const managed = projectManagedDelivery(
+                  value,
+                  managedBindings.find(binding => binding.configurationId === value.configurationId),
+                  obligationRevisions,
+                  adjustments.filter(item => item.reporting_obligation_id === value.reporting_obligation_id),
+                  materializationProjection.filter(
+                    item => item.reporting_obligation_id === value.reporting_obligation_id
+                  ),
+                  materializationHistoryProjection.filter(
+                    item => item.reporting_obligation_id === value.reporting_obligation_id
+                  ),
+                  receiptProjection,
+                  adjustmentReceiptProjection,
+                  baseProjection,
+                  ledgerAsOf
+                );
+                const health = mismatch
+                  ? moreSevereReportingHealthV1(managed?.projection.health ?? sellerHealth, mismatch.health)
+                  : (managed?.projection.health ?? sellerHealth);
+                return query.health!.includes(health);
               })
               .map(value => value.reporting_obligation_id)
           );
@@ -1503,6 +1615,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           obligations = obligations.filter(value => accepted.has(value.reporting_obligation_id));
           revisions = revisions.filter(value => accepted.has(value.reporting_obligation_id));
           adjustments = adjustments.filter(value => accepted.has(value.reporting_obligation_id));
+          materializations = materializations.filter(value => accepted.has(value.reporting_obligation_id));
+          const acceptedRevisionIds = new Set(revisions.map(value => value.reporting_revision_id));
+          const acceptedAdjustmentIds = new Set(adjustments.map(value => value.reporting_adjustment_id));
+          receipts = receipts.filter(value => acceptedRevisionIds.has(value.reporting_revision_id));
+          adjustmentReceipts = adjustmentReceipts.filter(value =>
+            acceptedAdjustmentIds.has(value.reporting_adjustment_id)
+          );
           consumerStatuses = consumerStatuses.filter(value => {
             const key = reportingConsumerStatusChainKeyV1(value);
             const matchingObligation = obligationsByConsumerStatusChain.get(key);
@@ -1527,6 +1646,18 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           obligations,
           revisions,
           adjustments,
+          ...(managedInstalled
+            ? {
+                managedBindings,
+                materializations,
+                materializationHistoryProjection,
+                materializationProjection,
+                receipts,
+                receiptProjection,
+                adjustmentReceipts,
+                adjustmentReceiptProjection,
+              }
+            : {}),
           consumerStatuses,
           consumerStatusProjection,
           issues,
@@ -1611,6 +1742,21 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           value.kind === 'consumer_status'
       )
       .map(value => value.value);
+    const materializations = selected
+      .filter(
+        (value): value is Extract<(typeof items)[number], { kind: 'materialization' }> =>
+          value.kind === 'materialization'
+      )
+      .map(value => value.value);
+    const receipts = selected
+      .filter((value): value is Extract<(typeof items)[number], { kind: 'receipt' }> => value.kind === 'receipt')
+      .map(value => value.value);
+    const adjustmentReceipts = selected
+      .filter(
+        (value): value is Extract<(typeof items)[number], { kind: 'adjustment_receipt' }> =>
+          value.kind === 'adjustment_receipt'
+      )
+      .map(value => value.value);
     const nextOffset = offset + selected.length;
     const hasMore = nextOffset < items.length;
     return {
@@ -1618,6 +1764,9 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       obligations,
       revisions,
       adjustments,
+      materializations,
+      receipts,
+      adjustmentReceipts,
       consumerStatuses,
       totalCount: items.length,
       offset,
@@ -1843,6 +1992,166 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     return result.rows.map(row => row.data);
   }
 
+  private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {
+    const result = await client.query<QueryResultRow & { ready: boolean }>(
+      `SELECT to_regclass('adcp_reporting_managed_bindings') IS NOT NULL
+          AND to_regclass('adcp_reporting_materializations') IS NOT NULL
+          AND to_regclass('adcp_reporting_receipts') IS NOT NULL AS ready`
+    );
+    return result.rows[0]?.ready === true;
+  }
+
+  private async listManagedChangedObligationIds(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    ledgerAsOf: string,
+    changesAfter: string
+  ): Promise<Set<string>> {
+    const result = await client.query<QueryResultRow & { obligation_id: string }>(
+      `SELECT DISTINCT changed.obligation_id FROM (
+         SELECT materialization.obligation_id
+           FROM adcp_reporting_materializations materialization
+          WHERE materialization.account_id = $1
+            AND GREATEST(materialization.recorded_at, materialization.changed_at) > $3
+            AND GREATEST(materialization.recorded_at, materialization.changed_at) <= $2
+         UNION ALL
+         SELECT COALESCE(revision.obligation_id, adjustment.obligation_id) AS obligation_id
+           FROM adcp_reporting_receipts receipt
+      LEFT JOIN adcp_reporting_revisions revision
+             ON receipt.receipt_kind = 'revision' AND revision.revision_id = receipt.subject_id
+      LEFT JOIN adcp_reporting_adjustments adjustment
+             ON receipt.receipt_kind = 'adjustment' AND adjustment.adjustment_id = receipt.subject_id
+          WHERE receipt.account_id = $1 AND receipt.consumer_id = $4
+            AND receipt.recorded_at > $3 AND receipt.recorded_at <= $2
+         UNION ALL
+         SELECT obligation.obligation_id
+           FROM adcp_reporting_destination_authorizations authz
+           JOIN adcp_reporting_managed_bindings binding
+             ON binding.account_id = authz.account_id
+            AND binding.destination_ref = authz.destination_ref
+            AND binding.authorization_generation = authz.generation
+           JOIN adcp_reporting_obligations obligation ON obligation.configuration_id = binding.configuration_id
+          WHERE authz.account_id = $1 AND authz.revoked_at IS NOT NULL
+            AND authz.changed_at > $3 AND authz.changed_at <= $2
+       ) changed WHERE changed.obligation_id IS NOT NULL`,
+      [query.account_id, ledgerAsOf, changesAfter, query.consumer_id ?? null]
+    );
+    return new Set(result.rows.map(row => row.obligation_id));
+  }
+
+  private async listSnapshotManagedBindings(
+    client: ReportingPgClient,
+    configurationIds: string[]
+  ): Promise<ReportingManagedDeliveryBindingV1[]> {
+    if (!configurationIds.length) return [];
+    const result = await client.query<JsonRow<ReportingManagedDeliveryBindingV1>>(
+      `SELECT data FROM adcp_reporting_managed_bindings
+        WHERE configuration_id = ANY($1::text[]) ORDER BY configuration_id`,
+      [configurationIds]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async listSnapshotMaterializations(
+    client: ReportingPgClient,
+    obligationIds: string[],
+    ledgerAsOf: string,
+    changesAfter?: string
+  ): Promise<ReportingMaterialization[]> {
+    if (!obligationIds.length) return [];
+    const result = await client.query<JsonRow<ReportingMaterialization>>(
+      `SELECT data FROM adcp_reporting_materializations
+        WHERE obligation_id = ANY($1::text[])
+          AND recorded_at <= $2
+          AND ($3::timestamptz IS NULL OR GREATEST(recorded_at, changed_at) > $3)
+        ORDER BY obligation_id, attempt, materialization_id
+        LIMIT $4`,
+      [obligationIds, ledgerAsOf, changesAfter ?? null, MAX_SNAPSHOT_ITEMS + 1]
+    );
+    return result.rows.map(row => row.data);
+  }
+
+  private async listSnapshotMaterializationProjection(
+    client: ReportingPgClient,
+    obligationIds: string[],
+    ledgerAsOf: string
+  ): Promise<ReportingMaterialization[]> {
+    if (!obligationIds.length) return [];
+    const result = await client.query<JsonRow<ReportingMaterialization> & { revoked_at: Date | null }>(
+      `SELECT materialization.data, authz.revoked_at
+         FROM adcp_reporting_materializations materialization
+         JOIN adcp_reporting_destination_authorizations authz
+           ON authz.account_id = materialization.account_id
+          AND authz.destination_ref = materialization.destination_ref
+          AND authz.generation = materialization.authorization_generation
+        WHERE materialization.obligation_id = ANY($1::text[])
+          AND materialization.recorded_at <= $2
+        ORDER BY materialization.obligation_id, materialization.attempt, materialization.materialization_id
+        LIMIT $3`,
+      [obligationIds, ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+    );
+    return result.rows.map(row => {
+      if (!row.revoked_at || (row.data.status !== 'available' && row.data.status !== 'delivered')) return row.data;
+      return {
+        ...row.data,
+        status: 'failed',
+        failed_at: row.revoked_at.toISOString(),
+        failure_code: 'AUTHORIZATION_REVOKED',
+      };
+    });
+  }
+
+  private async listSnapshotReceipts(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    obligationIds: string[],
+    ledgerAsOf: string,
+    changesAfter: string | undefined,
+    kind: 'revision'
+  ): Promise<ReportingReceipt[]>;
+  private async listSnapshotReceipts(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    obligationIds: string[],
+    ledgerAsOf: string,
+    changesAfter: string | undefined,
+    kind: 'adjustment'
+  ): Promise<ReportingAdjustmentReceipt[]>;
+  private async listSnapshotReceipts(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    obligationIds: string[],
+    ledgerAsOf: string,
+    changesAfter: string | undefined,
+    kind: 'revision' | 'adjustment'
+  ): Promise<Array<ReportingReceipt | ReportingAdjustmentReceipt>> {
+    if (!obligationIds.length || !query.consumer_id) return [];
+    const join =
+      kind === 'revision'
+        ? 'JOIN adcp_reporting_revisions subject ON subject.revision_id = receipt.subject_id'
+        : 'JOIN adcp_reporting_adjustments subject ON subject.adjustment_id = receipt.subject_id';
+    const result = await client.query<JsonRow<ReportingReceipt | ReportingAdjustmentReceipt>>(
+      `SELECT receipt.data FROM adcp_reporting_receipts receipt
+        ${join}
+        WHERE receipt.account_id = $1 AND receipt.consumer_id = $2
+          AND receipt.receipt_kind = $3 AND subject.obligation_id = ANY($4::text[])
+          AND receipt.recorded_at <= $5
+          AND ($6::timestamptz IS NULL OR receipt.recorded_at > $6)
+        ORDER BY subject.obligation_id, receipt.recorded_at, receipt.reporting_receipt_id
+        LIMIT $7`,
+      [
+        query.account_id,
+        query.consumer_id,
+        kind,
+        obligationIds,
+        ledgerAsOf,
+        changesAfter ?? null,
+        MAX_SNAPSHOT_ITEMS + 1,
+      ]
+    );
+    return result.rows.map(row => row.data);
+  }
+
   private async one<T>(sql: string, params: unknown[]): Promise<T | null> {
     const result = await this.query<JsonRow<T>>(sql, params);
     return result.rows[0] ? clone(result.rows[0].data) : null;
@@ -2005,6 +2314,34 @@ function snapshotItems(snapshot: ReportingLedgerSnapshotV1) {
     values.push(adjustment);
     adjustments.set(adjustment.reporting_obligation_id, values);
   }
+  const obligationByRevision = new Map(
+    snapshot.revisions.map(value => [value.reporting_revision_id, value.reporting_obligation_id])
+  );
+  const obligationByAdjustment = new Map(
+    snapshot.adjustments.map(value => [value.reporting_adjustment_id, value.reporting_obligation_id])
+  );
+  const materializations = new Map<string, ReportingMaterialization[]>();
+  for (const materialization of snapshot.materializations ?? []) {
+    const values = materializations.get(materialization.reporting_obligation_id) ?? [];
+    values.push(materialization);
+    materializations.set(materialization.reporting_obligation_id, values);
+  }
+  const receipts = new Map<string, ReportingReceipt[]>();
+  for (const receipt of snapshot.receipts ?? []) {
+    const obligationId = obligationByRevision.get(receipt.reporting_revision_id);
+    if (!obligationId) continue;
+    const values = receipts.get(obligationId) ?? [];
+    values.push(receipt);
+    receipts.set(obligationId, values);
+  }
+  const adjustmentReceipts = new Map<string, ReportingAdjustmentReceipt[]>();
+  for (const receipt of snapshot.adjustmentReceipts ?? []) {
+    const obligationId = obligationByAdjustment.get(receipt.reporting_adjustment_id);
+    if (!obligationId) continue;
+    const values = adjustmentReceipts.get(obligationId) ?? [];
+    values.push(receipt);
+    adjustmentReceipts.set(obligationId, values);
+  }
   return [
     ...snapshot.obligations.flatMap(obligation => [
       ...(snapshot.query.view === 'revision' ? [] : [{ kind: 'obligation' as const, value: obligation }]),
@@ -2014,6 +2351,18 @@ function snapshotItems(snapshot: ReportingLedgerSnapshotV1) {
       })),
       ...(adjustments.get(obligation.reporting_obligation_id) ?? []).map(value => ({
         kind: 'adjustment' as const,
+        value,
+      })),
+      ...(materializations.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+        kind: 'materialization' as const,
+        value,
+      })),
+      ...(receipts.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+        kind: 'receipt' as const,
+        value,
+      })),
+      ...(adjustmentReceipts.get(obligation.reporting_obligation_id) ?? []).map(value => ({
+        kind: 'adjustment_receipt' as const,
         value,
       })),
     ]),

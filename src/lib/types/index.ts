@@ -121,12 +121,17 @@ export type {
   SyncReportingReceiptsResponse,
   ReportingCanonicalContentDigest,
   ReportingAdjustment,
+  ReportingAdjustmentReceipt,
   ReportingConsumerStatus,
   ReportingControlTotal,
+  ReportingDeliveryCapabilities,
   ReportingMaterialization,
+  ReportingResource,
   ReportingObligation,
   ReportingReceipt,
   ReportingRevision,
+  ReportingVerification,
+  ReportingVerificationProfile,
 } from './tools.generated';
 
 // Capabilities

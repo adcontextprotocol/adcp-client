@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
 import { AdcpError } from '../../server/decisioning/async-outcome';
 import type { GetReportingStatusResponse } from '../../types';
+import type { ReportingAdjustmentReceipt, ReportingMaterialization, ReportingReceipt } from '../../types';
 import { canonicalJsonV1 } from '../source';
 import {
   evaluateReportingLedgerCoverageV1,
@@ -23,12 +24,15 @@ import type {
   ReportingConsumerMismatchEscalationV1,
   ReportingHealthV1,
   ReportingLedgerConfigurationV1,
+  ReportingLedgerAdjustmentSnapshotV1,
   ReportingLedgerConsumerStatementV1,
   ReportingLedgerCoverageV1,
   ReportingLedgerIssueV1,
   ReportingLedgerObligationV1,
+  ReportingLedgerRevisionSnapshotV1,
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerStore,
+  ReportingManagedDeliveryBindingV1,
   ReportingDeliveryHandlerV1,
   ReportingStatusHandlerV1,
 } from './types';
@@ -242,6 +246,28 @@ export function createReportingStatusHandler<TContext = unknown>(
           // Strictly after: the duty is to post "no later than" the deadline, so
           // a buyer that posts at exactly that instant has met it.
           compareReportingInstants(page.snapshot.ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
+        const baseProjection = {
+          ...projection,
+          issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
+        };
+        const managed = projectManagedDelivery(
+          obligation,
+          page.snapshot.managedBindings?.find(value => value.configurationId === obligation.configurationId),
+          revisions,
+          page.snapshot.adjustments.filter(
+            value => value.reporting_obligation_id === obligation.reporting_obligation_id
+          ),
+          (page.snapshot.materializationProjection ?? page.snapshot.materializations ?? []).filter(
+            value => value.reporting_obligation_id === obligation.reporting_obligation_id
+          ),
+          (page.snapshot.materializationHistoryProjection ?? page.snapshot.materializations ?? []).filter(
+            value => value.reporting_obligation_id === obligation.reporting_obligation_id
+          ),
+          page.snapshot.receiptProjection ?? page.snapshot.receipts ?? [],
+          page.snapshot.adjustmentReceiptProjection ?? page.snapshot.adjustmentReceipts ?? [],
+          baseProjection,
+          page.snapshot.ledgerAsOf
+        );
         return {
           obligation,
           revisions,
@@ -250,10 +276,17 @@ export function createReportingStatusHandler<TContext = unknown>(
           currentConsumerStatus,
           consumerStatusPending,
           projection: {
-            ...projection,
-            ...(mismatch ? { health: mismatch.health } : {}),
-            issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
+            ...(managed?.projection ?? baseProjection),
+            ...(mismatch
+              ? {
+                  health: moreSevereReportingHealthV1(
+                    managed?.projection.health ?? baseProjection.health,
+                    mismatch.health
+                  ),
+                }
+              : {}),
           },
+          managed,
         };
       });
       const healthFilter = view === 'periods' && query.health ? new Set(query.health) : undefined;
@@ -297,9 +330,13 @@ export function createReportingStatusHandler<TContext = unknown>(
             .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
             .map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
-          adjustment_receipts: [],
-          materializations: [],
-          receipts: [],
+          materializations: (page.materializations ?? []).filter(
+            value => value.reporting_revision_id === revision.reporting_revision_id
+          ),
+          receipts: (page.receipts ?? []).filter(
+            value => value.reporting_revision_id === revision.reporting_revision_id
+          ),
+          adjustment_receipts: page.adjustmentReceipts ?? [],
           errors: [],
           pagination: {
             has_more: page.hasMore,
@@ -312,6 +349,7 @@ export function createReportingStatusHandler<TContext = unknown>(
       if (view === 'periods') {
         const pageIds = new Set(page.obligations.map(value => value.reporting_obligation_id));
         const pageProjected = selected.filter(value => pageIds.has(value.obligation.reporting_obligation_id));
+        const selectedPageIds = new Set(selected.map(value => value.obligation.reporting_obligation_id));
         return {
           ...base,
           view: 'periods',
@@ -329,17 +367,26 @@ export function createReportingStatusHandler<TContext = unknown>(
               ).length,
               value.projection,
               value.currentConsumerStatus,
-              consumerId ? value.consumerStatusProjection.length : undefined
+              consumerId ? value.consumerStatusProjection.length : undefined,
+              value.managed
             )
           ),
           revisions: page.revisions
-            .filter(value => !query.finality || query.finality.includes(value.finality))
+            .filter(
+              value =>
+                selectedPageIds.has(value.reporting_obligation_id) &&
+                (!query.finality || query.finality.includes(value.finality))
+            )
             .map(value => value.wireRevision),
-          adjustments: page.adjustments.map(value => value.wireAdjustment),
+          adjustments: page.adjustments
+            .filter(value => selectedPageIds.has(value.reporting_obligation_id))
+            .map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
-          adjustment_receipts: [],
-          materializations: [],
-          receipts: [],
+          adjustment_receipts: page.adjustmentReceipts ?? [],
+          materializations: (page.materializations ?? []).filter(value =>
+            selectedPageIds.has(value.reporting_obligation_id)
+          ),
+          receipts: page.receipts ?? [],
           pagination: {
             has_more: page.hasMore,
             total_count: page.totalCount,
@@ -517,7 +564,8 @@ function wireObligation(
   adjustmentCount: number,
   projection: ReturnType<typeof projectReportingObligationHealthV1>,
   currentConsumerStatus?: ReportingLedgerConsumerStatementV1,
-  consumerStatusCount?: number
+  consumerStatusCount?: number,
+  managed?: ReturnType<typeof projectManagedDelivery>
 ) {
   return {
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -544,12 +592,29 @@ function wireObligation(
       delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
     },
     required_finality: obligation.requiredFinality,
-    reconciliation_mode: 'delivery_only',
-    reconciliation_status: 'not_required',
+    reconciliation_mode: managed?.binding.reconciliation_mode ?? 'delivery_only',
+    reconciliation_status: managed?.reconciliationStatus ?? 'not_required',
     health: projection.health,
     production_status: projection.productionStatus,
     revision_count: revisionCount,
     adjustment_count: adjustmentCount,
+    ...(managed
+      ? {
+          destination_ref: managed.binding.destination_ref,
+          materialization_count: managed.materializationCount,
+          successful_materialization_count: managed.successfulMaterializationCount,
+          ...(managed.resourceRetainedUntil ? { resource_retained_until: managed.resourceRetainedUntil } : {}),
+          ...(managed.binding.reconciliation_mode === 'consumer_receipt'
+            ? {
+                receipt_count: managed.receiptCount,
+                accepted_receipt_count: managed.acceptedReceiptCount,
+                adjustment_receipt_count: managed.adjustmentReceiptCount,
+                accepted_adjustment_receipt_count: managed.acceptedAdjustmentReceiptCount,
+                pending_adjustment_count: managed.pendingAdjustmentReceiptCount,
+              }
+            : {}),
+        }
+      : {}),
     ...(consumerStatusCount !== undefined
       ? {
           consumer_status_count: consumerStatusCount,
@@ -558,6 +623,162 @@ function wireObligation(
       : {}),
     issues: projection.issues.map(wireIssue),
   };
+}
+
+export function projectManagedDelivery(
+  obligation: ReportingLedgerObligationV1,
+  binding: ReportingManagedDeliveryBindingV1 | undefined,
+  revisions: ReportingLedgerRevisionSnapshotV1[],
+  adjustments: ReportingLedgerAdjustmentSnapshotV1[],
+  materializations: ReportingMaterialization[],
+  materializationHistory: ReportingMaterialization[],
+  receipts: ReportingReceipt[],
+  adjustmentReceipts: ReportingAdjustmentReceipt[],
+  base: ReturnType<typeof projectReportingObligationHealthV1>,
+  ledgerAsOf: string
+) {
+  if (!binding) return undefined;
+  const supersededRevisionIds = new Set(
+    revisions.map(value => value.supersedes_reporting_revision_id).filter((value): value is string => Boolean(value))
+  );
+  const requiredRevision = revisions
+    .filter(value => !supersededRevisionIds.has(value.reporting_revision_id))
+    .filter(value => obligation.requiredFinality !== 'official' || value.finality === 'official')
+    .sort((left, right) => left.revisionNumber - right.revisionNumber)
+    .at(-1);
+  const successful = materializations.filter(
+    value =>
+      value.reporting_revision_id === requiredRevision?.reporting_revision_id &&
+      (value.status === 'available' || value.status === 'delivered') &&
+      value.resource !== undefined &&
+      value.verification !== undefined
+  );
+  const readable = successful.filter(
+    value => value.resource && compareReportingInstants(value.resource.expires_at, ledgerAsOf) > 0
+  );
+  const failed = materializations.filter(value => value.status === 'failed');
+  let projection = base;
+  if (requiredRevision && !readable.length) {
+    const afterExpected = compareReportingInstants(ledgerAsOf, obligation.expectedAt) >= 0;
+    const afterRecovery = compareReportingInstants(ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
+    const issue: ReportingLedgerIssueV1 = {
+      issueId: `reporting-issue.managed-delivery.${obligation.reporting_obligation_id}`,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      code: failed.length ? 'DELIVERY_FAILED' : successful.length ? 'RESOURCE_EXPIRED' : 'REPORT_OVERDUE',
+      severity: afterRecovery ? 'action_required' : 'delayed',
+      responsibleParty: 'seller',
+      recommendedAction: afterRecovery ? 'contact_seller' : 'wait_for_retry',
+      openedAt: successful[0]?.resource?.expires_at ?? failed[0]?.failed_at ?? obligation.expectedAt,
+      observedAt: ledgerAsOf,
+    };
+    projection = {
+      ...base,
+      health: afterExpected ? (afterRecovery ? 'action_required' : 'delayed') : 'waiting',
+      satisfied: false,
+      issues: afterExpected ? uniqueIssues([...base.issues, issue]) : base.issues,
+    };
+  }
+
+  const relevantReceipts = requiredRevision
+    ? receipts.filter(value => value.reporting_revision_id === requiredRevision.reporting_revision_id)
+    : [];
+  const revisionLeaf = currentReceiptLeaf(relevantReceipts);
+  const adjustmentLeaves = adjustments.map(adjustment =>
+    currentAdjustmentReceiptLeaf(
+      adjustmentReceipts.filter(value => value.reporting_adjustment_id === adjustment.reporting_adjustment_id)
+    )
+  );
+  let reconciliationStatus: 'not_required' | 'pending' | 'accepted' | 'rejected' = 'not_required';
+  if (binding.reconciliation_mode === 'consumer_receipt' && requiredRevision) {
+    const missingAdjustment = adjustmentLeaves.some(value => value === undefined);
+    const rejectedAdjustment = adjustmentLeaves.some(value => value?.status === 'rejected');
+    if (!successful.length) reconciliationStatus = 'pending';
+    else if (revisionLeaf?.status === 'rejected' || rejectedAdjustment) reconciliationStatus = 'rejected';
+    else if (revisionLeaf?.status !== 'accepted' || missingAdjustment) reconciliationStatus = 'pending';
+    else reconciliationStatus = 'accepted';
+    if (reconciliationStatus !== 'accepted') {
+      const revisionRejected = revisionLeaf?.status === 'rejected';
+      const code = revisionRejected
+        ? 'RECEIPT_REJECTED'
+        : rejectedAdjustment
+          ? 'ADJUSTMENT_RECEIPT_REJECTED'
+          : revisionLeaf?.status !== 'accepted'
+            ? 'RECEIPT_REQUIRED'
+            : 'ADJUSTMENT_RECEIPT_REQUIRED';
+      const sellerAction = code === 'RECEIPT_REJECTED' || code === 'ADJUSTMENT_RECEIPT_REJECTED';
+      const issue: ReportingLedgerIssueV1 = {
+        issueId: `reporting-issue.${code.toLowerCase().replaceAll('_', '-')}.${obligation.reporting_obligation_id}`,
+        reporting_obligation_id: obligation.reporting_obligation_id,
+        code,
+        severity: 'action_required',
+        responsibleParty: sellerAction ? 'seller' : 'buyer',
+        recommendedAction: sellerAction ? 'contact_seller' : 'contact_buyer',
+        openedAt:
+          revisionLeaf?.received_at ??
+          adjustmentLeaves.find(value => value?.status === 'rejected')?.received_at ??
+          successful[0]?.ready_at ??
+          obligation.expectedAt,
+        observedAt: ledgerAsOf,
+      };
+      projection = {
+        ...projection,
+        health: 'action_required',
+        satisfied: false,
+        issues: uniqueIssues([...projection.issues, issue]),
+      };
+    }
+  }
+
+  return {
+    binding,
+    projection,
+    reconciliationStatus,
+    materializationCount: materializationHistory.length,
+    successfulMaterializationCount: materializationHistory.filter(
+      value => value.status === 'available' || value.status === 'delivered'
+    ).length,
+    resourceRetainedUntil: readable
+      .map(value => value.resource!.expires_at)
+      .sort(compareReportingInstants)
+      .at(-1),
+    receiptCount: relevantReceipts.length,
+    acceptedReceiptCount: relevantReceipts.filter(value => value.status === 'accepted').length,
+    adjustmentReceiptCount: adjustmentReceipts.filter(value =>
+      adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
+    ).length,
+    acceptedAdjustmentReceiptCount: adjustmentReceipts.filter(
+      value =>
+        value.status === 'accepted' &&
+        adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
+    ).length,
+    pendingAdjustmentReceiptCount: adjustmentLeaves.filter(value => value?.status !== 'accepted').length,
+  };
+}
+
+function currentReceiptLeaf(receipts: ReportingReceipt[]): ReportingReceipt | undefined {
+  const superseded = new Set(
+    receipts.map(value => value.supersedes_reporting_receipt_id).filter((value): value is string => Boolean(value))
+  );
+  return receipts.find(value => !superseded.has(value.reporting_receipt_id));
+}
+
+function currentAdjustmentReceiptLeaf(receipts: ReportingAdjustmentReceipt[]): ReportingAdjustmentReceipt | undefined {
+  const superseded = new Set(
+    receipts.map(value => value.supersedes_reporting_receipt_id).filter((value): value is string => Boolean(value))
+  );
+  return receipts.find(value => !superseded.has(value.reporting_receipt_id));
+}
+
+/** Combines independent seller/consumer degradation without allowing one to hide the other. */
+export function moreSevereReportingHealthV1(left: ReportingHealthV1, right: ReportingHealthV1): ReportingHealthV1 {
+  const severity: Record<ReportingHealthV1, number> = {
+    complete: 0,
+    healthy: 0,
+    waiting: 1,
+    delayed: 2,
+    action_required: 3,
+  };
+  return severity[left] >= severity[right] ? left : right;
 }
 
 function consumerStatusMatchesObligation(

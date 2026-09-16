@@ -1,0 +1,978 @@
+import { createHash, randomUUID } from 'node:crypto';
+
+import type {
+  ReportingAdjustmentReceipt,
+  ReportingMaterialization,
+  ReportingReceipt,
+  SyncReportingReceiptsResponse,
+} from '../../types';
+import { canonicalize } from '../../utils/jcs';
+import { isReportingAdjustmentReceiptEvidence, isReportingReceiptEvidence } from '../evidence';
+import type { ReportingPgPool } from './postgres';
+import type {
+  ReportingLedgerAdjustmentV1,
+  ReportingLedgerObligationV1,
+  ReportingLedgerRevisionV1,
+  ReportingManagedDeliveryBindingV1,
+  ReportingLedgerStore,
+} from './types';
+import { REPORTING_LEDGER_AUTHORITY } from './types';
+import {
+  adjustmentReceiptEvidenceMatches,
+  receiptEvidenceMatches,
+  type ReportingDestinationAuthorizationV1,
+  type ReportingDestinationRevocationLeaseV1,
+  type ReportingManagedDeliveryLeaseV1,
+  type ReportingManagedDeliveryStore,
+  type ReportingReceiptBatchEntryV1,
+  type ReportingReceiptBatchInputV1,
+} from './managed';
+
+type QueryRow = Record<string, unknown>;
+interface PgResult<Row extends QueryRow> {
+  rows: Row[];
+  rowCount: number | null;
+}
+interface PgClient {
+  query<Row extends QueryRow = QueryRow>(sql: string, values?: unknown[]): Promise<PgResult<Row>>;
+  release(error?: Error): void;
+}
+
+/**
+ * Additive migration owned by #2944. It intentionally does not alter the Core
+ * tables so the #2943 notification/activity bridge can evolve that schema
+ * independently. Apply after REPORTING_LEDGER_MIGRATION in the same schema.
+ */
+export const REPORTING_MANAGED_DELIVERY_MIGRATION = `
+CREATE TABLE IF NOT EXISTS adcp_reporting_destination_authorizations (
+  account_id TEXT NOT NULL,
+  destination_ref TEXT NOT NULL,
+  generation BIGINT NOT NULL,
+  authorized_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  cleanup_completed_at TIMESTAMPTZ,
+  cleanup_lease_owner TEXT,
+  cleanup_lease_generation BIGINT NOT NULL DEFAULT 0,
+  cleanup_lease_expires_at TIMESTAMPTZ,
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  data JSONB NOT NULL,
+  PRIMARY KEY (account_id, destination_ref, generation),
+  CHECK (generation > 0),
+  CHECK (revoked_at IS NULL OR revoked_at >= authorized_at)
+);
+ALTER TABLE adcp_reporting_destination_authorizations
+  ADD COLUMN IF NOT EXISTS changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp();
+CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_destination_authorizations_current
+  ON adcp_reporting_destination_authorizations (account_id, destination_ref)
+  WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS adcp_reporting_destination_authorizations_cleanup
+  ON adcp_reporting_destination_authorizations (revoked_at, account_id, destination_ref)
+  WHERE revoked_at IS NOT NULL AND cleanup_completed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_managed_bindings (
+  configuration_id TEXT PRIMARY KEY REFERENCES adcp_reporting_configurations(configuration_id),
+  account_id TEXT NOT NULL,
+  delivery_config_id TEXT NOT NULL,
+  delivery_config_version INTEGER NOT NULL,
+  destination_ref TEXT NOT NULL,
+  authorization_generation BIGINT NOT NULL,
+  semantic_fingerprint TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  FOREIGN KEY (account_id, destination_ref, authorization_generation)
+    REFERENCES adcp_reporting_destination_authorizations(account_id, destination_ref, generation),
+  UNIQUE (account_id, delivery_config_id, delivery_config_version)
+);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_materializations (
+  materialization_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  configuration_id TEXT NOT NULL REFERENCES adcp_reporting_managed_bindings(configuration_id),
+  obligation_id TEXT NOT NULL REFERENCES adcp_reporting_obligations(obligation_id),
+  revision_id TEXT NOT NULL REFERENCES adcp_reporting_revisions(revision_id),
+  destination_ref TEXT NOT NULL,
+  authorization_generation BIGINT NOT NULL,
+  attempt INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  data JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  lease_owner TEXT,
+  lease_generation BIGINT NOT NULL DEFAULT 0,
+  lease_expires_at TIMESTAMPTZ,
+  UNIQUE (configuration_id, revision_id, attempt),
+  CHECK (attempt > 0),
+  CHECK (status IN ('pending', 'available', 'delivered', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_materializations_claim
+  ON adcp_reporting_materializations (created_at, materialization_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS adcp_reporting_materializations_obligation
+  ON adcp_reporting_materializations (obligation_id, recorded_at, materialization_id);
+CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_materializations_success
+  ON adcp_reporting_materializations (configuration_id, revision_id)
+  WHERE status IN ('available', 'delivered');
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_receipts (
+  account_id TEXT NOT NULL,
+  consumer_id TEXT NOT NULL,
+  reporting_receipt_id TEXT NOT NULL,
+  receipt_kind TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  supersedes_receipt_id TEXT,
+  is_current BOOLEAN NOT NULL,
+  semantic_fingerprint TEXT NOT NULL,
+  data JSONB NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (account_id, consumer_id, reporting_receipt_id),
+  CHECK (receipt_kind IN ('revision', 'adjustment'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_receipts_current
+  ON adcp_reporting_receipts (account_id, consumer_id, receipt_kind, subject_id) WHERE is_current;
+CREATE INDEX IF NOT EXISTS adcp_reporting_receipts_readback
+  ON adcp_reporting_receipts (account_id, consumer_id, recorded_at, reporting_receipt_id);
+
+CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_batches (
+  account_id TEXT NOT NULL,
+  consumer_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  results JSONB NOT NULL,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (account_id, consumer_id, idempotency_key)
+);
+`.trim();
+
+const GENERIC_RECEIPT_MESSAGE = 'Receipt does not match authorized current reporting evidence';
+const MAX_PLAN = 1_000;
+const MAX_MATERIALIZATIONS_PER_ACCOUNT = 100_000;
+const MAX_RECEIPT_BATCHES_PER_CONSUMER = 10_000;
+const MAX_RECEIPTS_PER_CONSUMER = 100_000;
+const MAX_MATERIALIZATION_ATTEMPTS = 5;
+
+type StoredBatch = { results: SyncReportingReceiptsResponse['results']; request_fingerprint: string };
+
+export class PostgresReportingManagedDeliveryStore implements ReportingManagedDeliveryStore {
+  constructor(private readonly pool: ReportingPgPool) {}
+
+  async probe(coreStore: ReportingLedgerStore): Promise<boolean> {
+    const authority = coreStore[REPORTING_LEDGER_AUTHORITY];
+    if (!authority) {
+      throw new Error('Managed reporting requires a Core store that exposes REPORTING_LEDGER_AUTHORITY');
+    }
+    if (authority.substrate !== this.pool) {
+      throw new Error('Managed reporting Core and add-on stores must share the same PostgreSQL pool');
+    }
+    if (authority.managedDelivery !== true) {
+      throw new Error('Managed reporting requires PostgresReportingLedgerStore({ managedDelivery: true })');
+    }
+    const result = await this.query<QueryRow & { ready: boolean }>(
+      `SELECT to_regclass('adcp_reporting_managed_bindings') IS NOT NULL
+          AND to_regclass('adcp_reporting_materializations') IS NOT NULL
+          AND to_regclass('adcp_reporting_receipts') IS NOT NULL AS ready`
+    );
+    if (result.rows[0]?.ready !== true) {
+      throw new Error(
+        'Managed reporting schema is unavailable; apply REPORTING_MANAGED_DELIVERY_MIGRATION after REPORTING_LEDGER_MIGRATION'
+      );
+    }
+    return true;
+  }
+
+  async listInstalledRecoveryWindowSeconds(): Promise<number[]> {
+    const result = await this.query<QueryRow & { milliseconds: string }>(
+      `SELECT DISTINCT configuration.data->'schedule'->>'recoveryWindowMilliseconds' AS milliseconds
+         FROM adcp_reporting_managed_bindings binding
+         JOIN adcp_reporting_configurations configuration
+           ON configuration.configuration_id = binding.configuration_id
+        ORDER BY milliseconds`
+    );
+    return result.rows.map(row => {
+      const milliseconds = Number(row.milliseconds);
+      if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || milliseconds % 1_000 !== 0) {
+        throw new Error('Installed managed Core recovery windows must be non-negative whole seconds');
+      }
+      return milliseconds / 1_000;
+    });
+  }
+
+  async authorizeDestination(
+    input: Omit<ReportingDestinationAuthorizationV1, 'revoked_at' | 'cleanup_completed_at'>
+  ): Promise<void> {
+    positiveInteger(input.generation, 'generation');
+    await this.transaction(async client => {
+      await advisoryLock(client, accountLock(input.account_id));
+      await advisoryLock(client, authLock(input.account_id, input.destination_ref));
+      const current = await client.query<QueryRow & { generation: string }>(
+        `SELECT generation::text FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2 AND revoked_at IS NULL`,
+        [input.account_id, input.destination_ref]
+      );
+      if (current.rowCount) {
+        if (Number(current.rows[0]!.generation) === input.generation) return;
+        throw new Error('A destination authorization generation is already current');
+      }
+      const latest = await client.query<QueryRow & { generation: string | null }>(
+        `SELECT MAX(generation)::text AS generation FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2`,
+        [input.account_id, input.destination_ref]
+      );
+      if (input.generation <= Number(latest.rows[0]?.generation ?? 0)) {
+        throw new Error('Destination authorization generation must increase after revocation');
+      }
+      await client.query(
+        `INSERT INTO adcp_reporting_destination_authorizations
+          (account_id, destination_ref, generation, authorized_at, data)
+         VALUES ($1, $2, $3, $4, $5::jsonb)`,
+        [input.account_id, input.destination_ref, input.generation, input.authorized_at, JSON.stringify(input)]
+      );
+    });
+  }
+
+  async revokeDestination(input: {
+    account_id: string;
+    destination_ref: string;
+    generation: number;
+    revoked_at: string;
+  }): Promise<boolean> {
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(input.account_id));
+      await advisoryLock(client, authLock(input.account_id, input.destination_ref));
+      const updated = await client.query(
+        `UPDATE adcp_reporting_destination_authorizations
+            SET revoked_at = $4::timestamptz,
+                changed_at = clock_timestamp(),
+                data = data || jsonb_build_object('revoked_at', $4::text)
+          WHERE account_id = $1 AND destination_ref = $2 AND generation = $3
+            AND revoked_at IS NULL`,
+        [input.account_id, input.destination_ref, input.generation, input.revoked_at]
+      );
+      await client.query(
+        `UPDATE adcp_reporting_materializations SET
+            status = 'failed',
+            data = data || jsonb_build_object(
+              'status', 'failed', 'failed_at', $4::text, 'failure_code', 'AUTHORIZATION_REVOKED'
+            ),
+            changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
+          WHERE account_id = $1 AND destination_ref = $2 AND authorization_generation = $3
+            AND status = 'pending'`,
+        [input.account_id, input.destination_ref, input.generation, input.revoked_at]
+      );
+      return updated.rowCount === 1;
+    });
+  }
+
+  async installBinding(binding: ReportingManagedDeliveryBindingV1): Promise<{ inserted: boolean }> {
+    positiveInteger(binding.resource_retention_days, 'resource_retention_days');
+    if (binding.reconciliation_mode === 'consumer_receipt' && binding.verification_profile !== 'canonical_digest') {
+      throw new Error('Reconciled Billing bindings require canonical-digest verification');
+    }
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(binding.account_id));
+      await advisoryLock(client, `adcp-reporting-binding:${binding.account_id}:${binding.delivery_config_id}`);
+      const existing = await client.query<QueryRow & { semantic_fingerprint: string }>(
+        'SELECT semantic_fingerprint FROM adcp_reporting_managed_bindings WHERE configuration_id = $1',
+        [binding.configurationId]
+      );
+      if (existing.rowCount) {
+        if (existing.rows[0]?.semantic_fingerprint !== binding.semantic_fingerprint) {
+          throw new Error('Immutable managed binding identity names different content');
+        }
+        return { inserted: false };
+      }
+      const eligible = await client.query<
+        QueryRow & { configuration: { feedPurpose?: string; canonicalization?: unknown } }
+      >(
+        `SELECT configuration.data AS configuration FROM adcp_reporting_configurations configuration
+          JOIN adcp_reporting_destination_authorizations authz
+            ON authz.account_id = $2 AND authz.destination_ref = $5
+           AND authz.generation = $6 AND authz.revoked_at IS NULL
+         WHERE configuration.configuration_id = $1 AND configuration.account_id = $2
+           AND configuration.delivery_config_id = $3 AND configuration.delivery_config_version = $4
+           AND NOT EXISTS (
+             SELECT 1 FROM adcp_reporting_obligations obligation
+              WHERE obligation.configuration_id = configuration.configuration_id
+           )`,
+        [
+          binding.configurationId,
+          binding.account_id,
+          binding.delivery_config_id,
+          binding.delivery_config_version,
+          binding.destination_ref,
+          binding.authorization_generation,
+        ]
+      );
+      if (!eligible.rowCount) throw new Error('Managed binding is not authorized for the exact Core configuration');
+      const configuration = eligible.rows[0]!.configuration;
+      if (configuration.feedPurpose !== binding.feed_purpose) {
+        throw new Error('Managed binding feed purpose differs from the exact Core configuration');
+      }
+      if (binding.reconciliation_mode === 'consumer_receipt' && !configuration.canonicalization) {
+        throw new Error('Reconciled Billing requires a Core configuration with pinned canonicalization');
+      }
+      const expectedFingerprint = managedBindingFingerprint(binding);
+      if (binding.semantic_fingerprint !== expectedFingerprint) {
+        throw new Error('Managed binding semantic fingerprint does not match its immutable content');
+      }
+      const inserted = await client.query<QueryRow & { semantic_fingerprint: string }>(
+        `INSERT INTO adcp_reporting_managed_bindings
+          (configuration_id, account_id, delivery_config_id, delivery_config_version,
+           destination_ref, authorization_generation, semantic_fingerprint, data, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
+         ON CONFLICT DO NOTHING RETURNING semantic_fingerprint`,
+        [
+          binding.configurationId,
+          binding.account_id,
+          binding.delivery_config_id,
+          binding.delivery_config_version,
+          binding.destination_ref,
+          binding.authorization_generation,
+          binding.semantic_fingerprint,
+          JSON.stringify(binding),
+          binding.created_at,
+        ]
+      );
+      if (!inserted.rowCount) {
+        const raced = await client.query<QueryRow & { semantic_fingerprint: string }>(
+          'SELECT semantic_fingerprint FROM adcp_reporting_managed_bindings WHERE configuration_id = $1',
+          [binding.configurationId]
+        );
+        if (raced.rows[0]?.semantic_fingerprint !== binding.semantic_fingerprint) {
+          throw new Error('Immutable managed binding identity names different content');
+        }
+      }
+      return { inserted: inserted.rowCount === 1 };
+    });
+  }
+
+  async planMaterializations(input: { account_id?: string; limit?: number } = {}): Promise<number> {
+    const limit = input.limit ?? MAX_PLAN;
+    positiveInteger(limit, 'limit');
+    if (limit > MAX_PLAN) throw new RangeError(`limit must not exceed ${MAX_PLAN}`);
+    if (!input.account_id) {
+      const accounts = await this.query<QueryRow & { account_id: string }>(
+        'SELECT DISTINCT account_id FROM adcp_reporting_managed_bindings ORDER BY account_id'
+      );
+      let planned = 0;
+      for (const { account_id } of accounts.rows) {
+        if (planned >= limit) break;
+        planned += await this.planMaterializations({ account_id, limit: limit - planned });
+      }
+      return planned;
+    }
+    return this.transaction(async client => {
+      const accounts = await client.query<QueryRow & { account_id: string }>(
+        `SELECT DISTINCT account_id FROM adcp_reporting_managed_bindings
+          WHERE ($1::text IS NULL OR account_id = $1) ORDER BY account_id`,
+        [input.account_id ?? null]
+      );
+      for (const { account_id } of accounts.rows) await advisoryLock(client, accountLock(account_id));
+      const capacity = await client.query<QueryRow & { account_id: string; count: string }>(
+        `SELECT account_id, COUNT(*)::text AS count FROM adcp_reporting_materializations
+          WHERE ($1::text IS NULL OR account_id = $1) GROUP BY account_id`,
+        [input.account_id ?? null]
+      );
+      const remainingByAccount = new Map(
+        accounts.rows.map(({ account_id }) => [
+          account_id,
+          MAX_MATERIALIZATIONS_PER_ACCOUNT -
+            Number(capacity.rows.find(value => value.account_id === account_id)?.count ?? 0),
+        ])
+      );
+      const candidates = await client.query<
+        QueryRow & {
+          binding: ReportingManagedDeliveryBindingV1;
+          obligation: ReportingLedgerObligationV1;
+          revision: ReportingLedgerRevisionV1;
+          attempt: number;
+        }
+      >(
+        `SELECT binding.data AS binding, obligation.data AS obligation, revision.data AS revision,
+                COALESCE(MAX(existing.attempt), 0)::integer + 1 AS attempt
+           FROM adcp_reporting_managed_bindings binding
+           JOIN adcp_reporting_destination_authorizations authz
+             ON authz.account_id = binding.account_id
+            AND authz.destination_ref = binding.destination_ref
+            AND authz.generation = binding.authorization_generation
+            AND authz.revoked_at IS NULL
+           JOIN adcp_reporting_obligations obligation ON obligation.configuration_id = binding.configuration_id
+           JOIN adcp_reporting_revisions revision ON revision.obligation_id = obligation.obligation_id
+      LEFT JOIN adcp_reporting_materializations existing
+             ON existing.configuration_id = binding.configuration_id AND existing.revision_id = revision.revision_id
+          WHERE ($1::text IS NULL OR binding.account_id = $1)
+          GROUP BY binding.configuration_id, binding.data, obligation.obligation_id, obligation.data,
+                   revision.revision_id, revision.data
+         HAVING NOT COALESCE(BOOL_OR(existing.status IN ('pending','available','delivered')), false)
+            AND COALESCE(MAX(existing.attempt), 0) < ${MAX_MATERIALIZATION_ATTEMPTS}
+          ORDER BY MIN(revision.recorded_at), revision.revision_id
+          LIMIT $2`,
+        [input.account_id ?? null, limit]
+      );
+      let planned = 0;
+      for (const candidate of candidates.rows) {
+        const binding = candidate.binding;
+        const remaining = remainingByAccount.get(binding.account_id) ?? 0;
+        if (remaining <= 0) continue;
+        const obligation = candidate.obligation;
+        const revision = candidate.revision;
+        const created_at = new Date().toISOString();
+        const materialization: ReportingMaterialization = {
+          reporting_materialization_id: `rmat_${randomUUID()}`,
+          reporting_revision_id: revision.reporting_revision_id,
+          reporting_obligation_id: obligation.reporting_obligation_id,
+          delivery_config_id: binding.delivery_config_id,
+          delivery_config_version: binding.delivery_config_version,
+          destination_ref: binding.destination_ref,
+          feed_purpose: binding.feed_purpose,
+          method: binding.method,
+          ...(binding.transport ? { transport: binding.transport } : {}),
+          attempt: candidate.attempt,
+          status: 'pending',
+          created_at,
+        };
+        const inserted = await client.query(
+          `INSERT INTO adcp_reporting_materializations
+            (materialization_id, account_id, configuration_id, obligation_id, revision_id,
+             destination_ref, authorization_generation, attempt, status, data, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9::jsonb,$10)
+           ON CONFLICT DO NOTHING`,
+          [
+            materialization.reporting_materialization_id,
+            binding.account_id,
+            binding.configurationId,
+            obligation.reporting_obligation_id,
+            revision.reporting_revision_id,
+            binding.destination_ref,
+            binding.authorization_generation,
+            candidate.attempt,
+            JSON.stringify(materialization),
+            created_at,
+          ]
+        );
+        planned += inserted.rowCount ?? 0;
+        if (inserted.rowCount) remainingByAccount.set(binding.account_id, remaining - 1);
+      }
+      return planned;
+    });
+  }
+
+  async claimMaterialization(input: {
+    owner: string;
+    now: string;
+    lease_milliseconds: number;
+    account_id?: string;
+  }): Promise<ReportingManagedDeliveryLeaseV1 | null> {
+    positiveInteger(input.lease_milliseconds, 'lease_milliseconds');
+    return this.transaction(async client => {
+      const selected = await client.query<
+        QueryRow & {
+          materialization_id: string;
+          generation: string;
+          expires_at: Date;
+          materialization: ReportingMaterialization;
+          binding: ReportingManagedDeliveryBindingV1;
+          obligation: ReportingLedgerObligationV1;
+          revision: ReportingLedgerRevisionV1;
+        }
+      >(
+        `WITH candidate AS (
+           SELECT materialization.materialization_id
+             FROM adcp_reporting_materializations materialization
+             JOIN adcp_reporting_destination_authorizations authz
+               ON authz.account_id = materialization.account_id
+              AND authz.destination_ref = materialization.destination_ref
+              AND authz.generation = materialization.authorization_generation
+              AND authz.revoked_at IS NULL
+            WHERE materialization.status = 'pending'
+              AND ($1::text IS NULL OR materialization.account_id = $1)
+              AND (materialization.lease_expires_at IS NULL OR materialization.lease_expires_at <= $3)
+            ORDER BY materialization.created_at, materialization.materialization_id
+            FOR UPDATE OF materialization SKIP LOCKED LIMIT 1
+         ), claimed AS (
+           UPDATE adcp_reporting_materializations materialization
+              SET lease_owner = $2, lease_generation = lease_generation + 1,
+                  lease_expires_at = $3::timestamptz + ($4::bigint * INTERVAL '1 millisecond')
+             FROM candidate WHERE materialization.materialization_id = candidate.materialization_id
+         RETURNING materialization.*
+         )
+         SELECT claimed.materialization_id, claimed.lease_generation::text AS generation,
+                claimed.lease_expires_at AS expires_at, claimed.data AS materialization,
+                binding.data AS binding, obligation.data AS obligation, revision.data AS revision
+           FROM claimed
+           JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = claimed.configuration_id
+           JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = claimed.obligation_id
+           JOIN adcp_reporting_revisions revision ON revision.revision_id = claimed.revision_id`,
+        [input.account_id ?? null, input.owner, input.now, input.lease_milliseconds]
+      );
+      const row = selected.rows[0];
+      if (!row) return null;
+      return {
+        materialization: structuredClone(row.materialization),
+        binding: structuredClone(row.binding),
+        obligation: structuredClone(row.obligation),
+        revision: structuredClone(row.revision),
+        owner: input.owner,
+        generation: Number(row.generation),
+        expires_at: row.expires_at.toISOString(),
+      };
+    });
+  }
+
+  async settleMaterialization(input: {
+    lease: ReportingManagedDeliveryLeaseV1;
+    now: string;
+    outcome:
+      | {
+          status: 'available' | 'delivered';
+          resource: NonNullable<ReportingMaterialization['resource']>;
+          verification: NonNullable<ReportingMaterialization['verification']>;
+        }
+      | { status: 'failed'; failure_code: string };
+  }): Promise<boolean> {
+    return this.transaction(async client => {
+      const { lease } = input;
+      await advisoryLock(client, accountLock(lease.binding.account_id));
+      const authorized = await client.query(
+        `SELECT 1 FROM adcp_reporting_destination_authorizations
+          WHERE account_id = $1 AND destination_ref = $2 AND generation = $3 AND revoked_at IS NULL`,
+        [lease.binding.account_id, lease.binding.destination_ref, lease.binding.authorization_generation]
+      );
+      const outcome = authorized.rowCount
+        ? input.outcome
+        : { status: 'failed' as const, failure_code: 'AUTHORIZATION_REVOKED' };
+      const materialization: ReportingMaterialization = {
+        ...lease.materialization,
+        status: outcome.status,
+        ...(outcome.status === 'failed'
+          ? { failed_at: input.now, failure_code: outcome.failure_code }
+          : { ready_at: input.now, resource: outcome.resource, verification: outcome.verification }),
+      };
+      const updated = await client.query(
+        `UPDATE adcp_reporting_materializations SET status = $5, data = $6::jsonb,
+             changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
+          WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3
+            AND lease_expires_at > clock_timestamp() AND status = 'pending' AND authorization_generation = $4`,
+        [
+          lease.materialization.reporting_materialization_id,
+          lease.owner,
+          lease.generation,
+          lease.binding.authorization_generation,
+          outcome.status,
+          JSON.stringify(materialization),
+        ]
+      );
+      return updated.rowCount === 1 && authorized.rowCount === 1 && outcome.status !== 'failed';
+    });
+  }
+
+  async claimRevocation(input: {
+    owner: string;
+    now: string;
+    lease_milliseconds: number;
+    account_id?: string;
+  }): Promise<ReportingDestinationRevocationLeaseV1 | null> {
+    positiveInteger(input.lease_milliseconds, 'lease_milliseconds');
+    return this.transaction(async client => {
+      const result = await client.query<
+        QueryRow & { data: ReportingDestinationAuthorizationV1; generation: string; expires_at: Date }
+      >(
+        `WITH candidate AS (
+           SELECT account_id, destination_ref, generation
+             FROM adcp_reporting_destination_authorizations
+            WHERE revoked_at IS NOT NULL AND cleanup_completed_at IS NULL
+              AND (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at <= $2)
+              AND ($4::text IS NULL OR account_id = $4)
+            ORDER BY cleanup_lease_generation, revoked_at, account_id, destination_ref
+            FOR UPDATE SKIP LOCKED LIMIT 1
+         )
+         UPDATE adcp_reporting_destination_authorizations target SET
+           cleanup_lease_owner = $1, cleanup_lease_generation = target.cleanup_lease_generation + 1,
+           cleanup_lease_expires_at = $2::timestamptz + ($3::bigint * INTERVAL '1 millisecond')
+          FROM candidate
+         WHERE target.account_id = candidate.account_id AND target.destination_ref = candidate.destination_ref
+           AND target.generation = candidate.generation
+         RETURNING target.data, target.cleanup_lease_generation::text AS generation,
+                   target.cleanup_lease_expires_at AS expires_at`,
+        [input.owner, input.now, input.lease_milliseconds, input.account_id ?? null]
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      return {
+        authorization: structuredClone(row.data),
+        owner: input.owner,
+        generation: Number(row.generation),
+        expires_at: row.expires_at.toISOString(),
+      };
+    });
+  }
+
+  async completeRevocation(input: {
+    lease: ReportingDestinationRevocationLeaseV1;
+    completed_at: string;
+  }): Promise<boolean> {
+    const result = await this.query(
+      `UPDATE adcp_reporting_destination_authorizations SET cleanup_completed_at = $6::timestamptz,
+          cleanup_lease_owner = NULL, cleanup_lease_expires_at = NULL,
+          data = data || jsonb_build_object('cleanup_completed_at', $6::text)
+        WHERE account_id = $1 AND destination_ref = $2 AND generation = $3
+          AND cleanup_lease_owner = $4 AND cleanup_lease_generation = $5
+          AND cleanup_lease_expires_at > clock_timestamp()
+          AND revoked_at IS NOT NULL AND cleanup_completed_at IS NULL`,
+      [
+        input.lease.authorization.account_id,
+        input.lease.authorization.destination_ref,
+        input.lease.authorization.generation,
+        input.lease.owner,
+        input.lease.generation,
+        input.completed_at,
+      ]
+    );
+    return result.rowCount === 1;
+  }
+
+  async getReadableResource(input: { account_id: string; resource_ref: string }) {
+    const result = await this.query<
+      QueryRow & { materialization: ReportingMaterialization; binding: ReportingManagedDeliveryBindingV1 }
+    >(
+      `SELECT materialization.data AS materialization, binding.data AS binding
+         FROM adcp_reporting_materializations materialization
+         JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = materialization.configuration_id
+         JOIN adcp_reporting_destination_authorizations authz
+           ON authz.account_id = materialization.account_id
+          AND authz.destination_ref = materialization.destination_ref
+          AND authz.generation = materialization.authorization_generation
+          AND authz.revoked_at IS NULL
+        WHERE materialization.account_id = $1
+          AND materialization.status IN ('available','delivered')
+          AND materialization.data->'resource'->>'resource_ref' = $2
+          AND (materialization.data->'resource'->>'expires_at')::timestamptz > clock_timestamp()`,
+      [input.account_id, input.resource_ref]
+    );
+    const row = result.rows[0];
+    return row
+      ? { materialization: structuredClone(row.materialization), binding: structuredClone(row.binding) }
+      : null;
+  }
+
+  async isAuthorizationCurrent(input: { account_id: string; destination_ref: string; generation: number }) {
+    const result = await this.query(
+      `SELECT 1 FROM adcp_reporting_destination_authorizations
+        WHERE account_id = $1 AND destination_ref = $2 AND generation = $3 AND revoked_at IS NULL`,
+      [input.account_id, input.destination_ref, input.generation]
+    );
+    return result.rowCount === 1;
+  }
+
+  async syncReceiptBatch(input: ReportingReceiptBatchInputV1): Promise<SyncReportingReceiptsResponse['results']> {
+    if (
+      !/^[A-Za-z0-9_.:-]{16,255}$/.test(input.idempotency_key) ||
+      input.entries.length < 1 ||
+      input.entries.length > 100 ||
+      input.entries.some(
+        entry =>
+          (entry.kind === 'revision'
+            ? !isReportingReceiptEvidence(entry.receipt)
+            : !isReportingAdjustmentReceiptEvidence(entry.receipt)) ||
+          Buffer.byteLength(JSON.stringify(entry.receipt), 'utf8') > 64 * 1024
+      )
+    ) {
+      throw new Error('Reporting receipt transaction failed');
+    }
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(input.account_id));
+      await advisoryLock(client, `adcp-reporting-receipts:${input.account_id}:${input.consumer_id}`);
+      const authorization = await Promise.all(
+        input.entries.map(entry => this.loadReceiptEvidence(client, input.account_id, entry).then(Boolean))
+      );
+      const prior = await client.query<QueryRow & StoredBatch>(
+        `SELECT request_fingerprint, results FROM adcp_reporting_receipt_batches
+          WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
+        [input.account_id, input.consumer_id, input.idempotency_key]
+      );
+      if (prior.rows[0]) {
+        if (prior.rows[0].request_fingerprint !== input.request_fingerprint) {
+          return input.entries.map(entry => idempotencyConflict(entry.receipt.reporting_receipt_id));
+        }
+        return structuredClone(
+          prior.rows[0].results.map((result, index) =>
+            authorization[index] ? result : failed(input.entries[index]!.receipt.reporting_receipt_id)
+          )
+        );
+      }
+      const capacity = await client.query<QueryRow & { batches: string; receipts: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM adcp_reporting_receipt_batches
+             WHERE account_id = $1 AND consumer_id = $2)::text AS batches,
+           (SELECT COUNT(*) FROM adcp_reporting_receipts
+             WHERE account_id = $1 AND consumer_id = $2)::text AS receipts`,
+        [input.account_id, input.consumer_id]
+      );
+      if (Number(capacity.rows[0]?.batches ?? 0) >= MAX_RECEIPT_BATCHES_PER_CONSUMER) {
+        return input.entries.map(entry => failed(entry.receipt.reporting_receipt_id));
+      }
+      let remainingReceipts = MAX_RECEIPTS_PER_CONSUMER - Number(capacity.rows[0]?.receipts ?? 0);
+      const duplicateIds = duplicates(input.entries.map(entry => entry.receipt.reporting_receipt_id));
+      const duplicateSubjects = duplicates(input.entries.map(entry => subjectKey(entry)));
+      const results: SyncReportingReceiptsResponse['results'] = [];
+      for (const [index, entry] of input.entries.entries()) {
+        if (
+          !authorization[index] ||
+          remainingReceipts <= 0 ||
+          duplicateIds.has(entry.receipt.reporting_receipt_id) ||
+          duplicateSubjects.has(subjectKey(entry))
+        ) {
+          results.push(failed(entry.receipt.reporting_receipt_id));
+          continue;
+        }
+        const result = await this.recordReceipt(client, input, entry);
+        results.push(result);
+        if (result.result === 'recorded') remainingReceipts -= 1;
+      }
+      await client.query(
+        `INSERT INTO adcp_reporting_receipt_batches
+          (account_id, consumer_id, idempotency_key, request_fingerprint, results)
+         VALUES ($1,$2,$3,$4,$5::jsonb)`,
+        [input.account_id, input.consumer_id, input.idempotency_key, input.request_fingerprint, JSON.stringify(results)]
+      );
+      return results;
+    });
+  }
+
+  private async recordReceipt(
+    client: PgClient,
+    batch: ReportingReceiptBatchInputV1,
+    entry: ReportingReceiptBatchEntryV1
+  ): Promise<SyncReportingReceiptsResponse['results'][number]> {
+    const fingerprint = digest(entry.receipt);
+    const existing = await client.query<
+      QueryRow & { semantic_fingerprint: string; data: ReportingReceipt | ReportingAdjustmentReceipt }
+    >(
+      `SELECT semantic_fingerprint, data FROM adcp_reporting_receipts
+        WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = $3`,
+      [batch.account_id, batch.consumer_id, entry.receipt.reporting_receipt_id]
+    );
+    if (existing.rows[0]) {
+      if (existing.rows[0].semantic_fingerprint !== fingerprint) return failed(entry.receipt.reporting_receipt_id);
+      return unchanged(entry.kind, existing.rows[0].data);
+    }
+    const evidence = await this.loadReceiptEvidence(client, batch.account_id, entry);
+    if (!evidence) return failed(entry.receipt.reporting_receipt_id);
+    const matches =
+      entry.kind === 'revision'
+        ? receiptEvidenceMatches(entry.receipt, evidence.materialization!)
+        : adjustmentReceiptEvidenceMatches(entry.receipt, evidence.adjustment!);
+    if (entry.receipt.status === 'accepted' ? !matches : matches || !entry.receipt.rejection_codes?.length) {
+      return failed(entry.receipt.reporting_receipt_id);
+    }
+    const current = await client.query<QueryRow & { reporting_receipt_id: string; data: { status: string } }>(
+      `SELECT reporting_receipt_id, data FROM adcp_reporting_receipts
+        WHERE account_id = $1 AND consumer_id = $2 AND receipt_kind = $3 AND subject_id = $4 AND is_current`,
+      [batch.account_id, batch.consumer_id, entry.kind, evidence.subjectId]
+    );
+    const leaf = current.rows[0];
+    const supersedes = entry.receipt.supersedes_reporting_receipt_id;
+    if (
+      (leaf && (leaf.data.status === 'accepted' || supersedes !== leaf.reporting_receipt_id)) ||
+      (!leaf && supersedes !== undefined)
+    ) {
+      return failed(entry.receipt.reporting_receipt_id);
+    }
+    if (leaf) {
+      await client.query(
+        `UPDATE adcp_reporting_receipts SET is_current = false
+          WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = $3 AND is_current`,
+        [batch.account_id, batch.consumer_id, leaf.reporting_receipt_id]
+      );
+    }
+    const stored = { ...entry.receipt, received_at: batch.received_at };
+    await client.query(
+      `INSERT INTO adcp_reporting_receipts
+        (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+         supersedes_receipt_id, is_current, semantic_fingerprint, data, received_at)
+       VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8::jsonb,$9)`,
+      [
+        batch.account_id,
+        batch.consumer_id,
+        entry.receipt.reporting_receipt_id,
+        entry.kind,
+        evidence.subjectId,
+        supersedes ?? null,
+        fingerprint,
+        JSON.stringify(stored),
+        batch.received_at,
+      ]
+    );
+    return recorded(entry.kind, stored);
+  }
+
+  private async loadReceiptEvidence(
+    client: PgClient,
+    accountId: string,
+    entry: ReportingReceiptBatchEntryV1
+  ): Promise<{
+    subjectId: string;
+    materialization?: ReportingMaterialization;
+    adjustment?: ReportingLedgerAdjustmentV1;
+  } | null> {
+    if (entry.kind === 'revision') {
+      const receipt = entry.receipt;
+      const result = await client.query<QueryRow & { materialization: ReportingMaterialization }>(
+        `SELECT materialization.data AS materialization
+           FROM adcp_reporting_materializations materialization
+           JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = materialization.configuration_id
+           JOIN adcp_reporting_destination_authorizations authz
+             ON authz.account_id = materialization.account_id
+            AND authz.destination_ref = materialization.destination_ref
+            AND authz.generation = materialization.authorization_generation
+            AND authz.revoked_at IS NULL
+           JOIN adcp_reporting_revisions revision ON revision.revision_id = materialization.revision_id
+           JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = materialization.obligation_id
+          WHERE materialization.account_id = $1 AND materialization.materialization_id = $2
+            AND materialization.revision_id = $3 AND materialization.obligation_id = $4
+            AND materialization.status IN ('available','delivered')
+            AND revision.finality = 'official'
+            AND binding.data->>'reconciliation_mode' = 'consumer_receipt'`,
+        [
+          accountId,
+          receipt.reporting_materialization_id,
+          receipt.reporting_revision_id,
+          receipt.reporting_obligation_id,
+        ]
+      );
+      return result.rows[0]
+        ? { subjectId: receipt.reporting_revision_id, materialization: result.rows[0].materialization }
+        : null;
+    }
+    const receipt = entry.receipt;
+    const result = await client.query<QueryRow & { adjustment: ReportingLedgerAdjustmentV1 }>(
+      `SELECT adjustment.data AS adjustment
+         FROM adcp_reporting_adjustments adjustment
+         JOIN adcp_reporting_revisions revision ON revision.revision_id = adjustment.adjusts_revision_id
+         JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = adjustment.obligation_id
+         JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = obligation.configuration_id
+         JOIN adcp_reporting_destination_authorizations authz
+           ON authz.account_id = binding.account_id AND authz.destination_ref = binding.destination_ref
+          AND authz.generation = binding.authorization_generation AND authz.revoked_at IS NULL
+        WHERE binding.account_id = $1 AND adjustment.adjustment_id = $2
+          AND adjustment.adjusts_revision_id = $3 AND revision.finality = 'official'
+          AND binding.data->>'reconciliation_mode' = 'consumer_receipt'`,
+      [accountId, receipt.reporting_adjustment_id, receipt.adjusts_reporting_revision_id]
+    );
+    return result.rows[0]
+      ? { subjectId: receipt.reporting_adjustment_id, adjustment: result.rows[0].adjustment }
+      : null;
+  }
+
+  private async transaction<T>(body: (client: PgClient) => Promise<T>): Promise<T> {
+    let client: PgClient;
+    try {
+      client = (await this.pool.connect()) as PgClient;
+    } catch (cause) {
+      throw new Error('PostgresReportingManagedDeliveryStore database connection failed', { cause });
+    }
+    let releaseError: Error | undefined;
+    let transactionStarted = false;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const value = await body(client);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return value;
+    } catch (cause) {
+      if (transactionStarted) {
+        try {
+          await client.query('ROLLBACK');
+          transactionStarted = false;
+        } catch (rollbackCause) {
+          releaseError =
+            rollbackCause instanceof Error ? rollbackCause : new Error('Managed reporting rollback failed');
+        }
+      }
+      throw new Error('PostgresReportingManagedDeliveryStore transaction failed', { cause });
+    } finally {
+      client.release(releaseError);
+    }
+  }
+
+  private async query<Row extends QueryRow = QueryRow>(sql: string, values?: unknown[]): Promise<PgResult<Row>> {
+    try {
+      return await this.pool.query<Row>(sql, values);
+    } catch (cause) {
+      throw new Error('PostgresReportingManagedDeliveryStore database operation failed', { cause });
+    }
+  }
+}
+
+function recorded(kind: ReportingReceiptBatchEntryV1['kind'], data: ReportingReceipt | ReportingAdjustmentReceipt) {
+  return kind === 'revision'
+    ? ({ result: 'recorded', receipt: data as ReportingReceipt } as const)
+    : ({ result: 'recorded', adjustment_receipt: data as ReportingAdjustmentReceipt } as const);
+}
+
+function unchanged(kind: ReportingReceiptBatchEntryV1['kind'], data: ReportingReceipt | ReportingAdjustmentReceipt) {
+  return kind === 'revision'
+    ? ({ result: 'unchanged', receipt: data as ReportingReceipt } as const)
+    : ({ result: 'unchanged', adjustment_receipt: data as ReportingAdjustmentReceipt } as const);
+}
+
+function failed(reporting_receipt_id: string): SyncReportingReceiptsResponse['results'][number] {
+  return {
+    result: 'failed',
+    reporting_receipt_id,
+    errors: [{ code: 'INVALID_REQUEST', message: GENERIC_RECEIPT_MESSAGE, recovery: 'correctable' }],
+  };
+}
+
+function idempotencyConflict(reporting_receipt_id: string): SyncReportingReceiptsResponse['results'][number] {
+  return {
+    result: 'failed',
+    reporting_receipt_id,
+    errors: [
+      {
+        code: 'IDEMPOTENCY_CONFLICT',
+        message: 'Idempotency key was reused with different receipt content',
+        recovery: 'correctable',
+      },
+    ],
+  };
+}
+
+function subjectKey(entry: ReportingReceiptBatchEntryV1): string {
+  return entry.kind === 'revision'
+    ? `revision:${entry.receipt.reporting_revision_id}`
+    : `adjustment:${entry.receipt.reporting_adjustment_id}`;
+}
+
+function duplicates(values: string[]): Set<string> {
+  const seen = new Set<string>();
+  const duplicate = new Set<string>();
+  for (const value of values) (seen.has(value) ? duplicate : seen).add(value);
+  return duplicate;
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(canonicalize(value)).digest('hex');
+}
+
+function managedBindingFingerprint(binding: ReportingManagedDeliveryBindingV1): string {
+  const { created_at: _createdAt, semantic_fingerprint: _fingerprint, ...semantic } = binding;
+  return digest(semantic);
+}
+
+function positiveInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
+}
+
+async function advisoryLock(client: PgClient, key: string): Promise<void> {
+  await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [key]);
+}
+
+function authLock(accountId: string, destinationRef: string): string {
+  return `adcp-reporting-auth:${accountId}:${destinationRef}`;
+}
+
+function accountLock(accountId: string): string {
+  return `adcp-reporting-account:${accountId}`;
+}

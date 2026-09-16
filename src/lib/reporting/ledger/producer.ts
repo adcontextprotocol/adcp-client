@@ -669,7 +669,7 @@ function buildRevision(
     ...(previous.at(-1) ? { supersedes_reporting_revision_id: previous.at(-1)!.reporting_revision_id } : {}),
     row_count: rows.length,
     control_totals: controlTotals,
-    ...(obligation.feedPurpose === 'billing'
+    ...(obligation.canonicalization
       ? {
           canonical_content_digest: {
             algorithm: 'sha256',
@@ -808,6 +808,25 @@ function buildAdjustment(
         ]
       : [];
   });
+  const wireAdjustmentWithoutDigest = {
+    reporting_adjustment_id: adjustmentId,
+    adjusts_reporting_revision_id: official.reporting_revision_id,
+    reason_code: 'source_correction' as const,
+    accounting_period: { start: obligation.period.start, end: obligation.period.end },
+    control_total_deltas: [
+      {
+        name: 'row_count',
+        value: String(rows.length - effectiveRowCount(official.binding.rowCount, previous)),
+        value_type: 'integer' as const,
+      },
+      ...controlTotalDeltas,
+    ],
+    correction_observed_at: manifest.period.observedAt,
+    created_at: createdAt,
+  };
+  const canonicalAdjustmentSha256 = createHash('sha256')
+    .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+    .digest('hex');
   return {
     reporting_adjustment_id: adjustmentId,
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -822,20 +841,8 @@ function buildAdjustment(
     sourceReadCutoffAt: manifest.period.sourceReadCutoffAt,
     createdAt,
     wireAdjustment: ReportingAdjustmentSchema.parse({
-      reporting_adjustment_id: adjustmentId,
-      adjusts_reporting_revision_id: official.reporting_revision_id,
-      reason_code: 'source_correction',
-      accounting_period: { start: obligation.period.start, end: obligation.period.end },
-      control_total_deltas: [
-        {
-          name: 'row_count',
-          value: String(rows.length - effectiveRowCount(official.binding.rowCount, previous)),
-          value_type: 'integer',
-        },
-        ...controlTotalDeltas,
-      ],
-      correction_observed_at: manifest.period.observedAt,
-      created_at: createdAt,
+      ...wireAdjustmentWithoutDigest,
+      canonical_adjustment_sha256: canonicalAdjustmentSha256,
     }) as unknown as ReportingAdjustment,
   };
 }

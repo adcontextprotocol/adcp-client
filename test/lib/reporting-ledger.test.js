@@ -1088,6 +1088,8 @@ describe('seller reporting ledger', () => {
     assert.equal(adjustments.length, 1);
     assert.equal(adjustments[0].adjusts_reporting_revision_id, revisions[0].reporting_revision_id);
     assert.equal(adjustments[0].binding.rowCount, 1);
+    const { canonical_adjustment_sha256: adjustmentDigest, ...unsignedAdjustment } = adjustments[0].wireAdjustment;
+    assert.equal(adjustmentDigest, sha(unsignedAdjustment));
     assert.equal(
       adjustments[0].wireAdjustment.control_total_deltas.find(value => value.name === 'impressions').value,
       '1'
