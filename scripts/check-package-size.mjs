@@ -51,8 +51,12 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // not published. Retiring the v3.1 beta type bundle removes eight artifacts;
 // its current legacy-view wholesale type replacement adds four, for 6,107
 // published files. Byte budgets stay fixed.
-// Managed Delivery and Reconciled Billing add one public dual-format
-// runtime/declaration module set (+4 files), raising the file budget to 6,115.
+// Managed Delivery and Reconciled Billing add two public dual-format
+// runtime/declaration module sets — `reporting/ledger/managed` and
+// `reporting/ledger/managed-postgres`, each CJS + ESM + both declaration
+// flavours — for +8 files over the 6,107 baseline, so 6,115 published files.
+// Its remaining changes edit existing modules, and its guide edit and
+// PostgreSQL tests add no published files. Byte budgets stay fixed.
 const MAX_PACKED_FILE_COUNT = 6_115;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
