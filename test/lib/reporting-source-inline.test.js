@@ -1968,6 +1968,69 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('proves media_buy_id when it is a requested metric', async () => {
+    // `media_buy_id` needs no captured claim to serve as a dimension, but as a requested
+    // metric it does. Skipping it outright left the metric unproven, so a row that carried
+    // exactly what was asked for came back as a retryable partial result.
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.metrics.push({
+      ...offering.metrics[0],
+      name: 'media_buy_id',
+      semanticContractId: 'delivery.media_buy_id',
+    });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy' }],
+      }),
+      offering
+    );
+    const slice = request('fixture-inline-media-buy-id-metric');
+    slice.requestedMetrics = ['media_buy_id'];
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true, 'media_buy_id is proven as a requested metric');
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'media_buy_id').status, 'present');
+    assert.equal(manifest.objects[0].rowCount, 1);
+  });
+
+  test('admits a report the staging cap accepts', async () => {
+    // 100,000 rows over 32 short metrics write well inside the 32 MiB staging cap and
+    // spend 3,400,000 of the 5,000,000 validation work units. Holding the retained-bytes
+    // estimate to the per-scope staging limit refused it from a 33,600,000 byte estimate,
+    // rejecting a payload the cap it mirrors admits.
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    const metrics = [];
+    for (let index = 0; index < 32; index += 1) {
+      const name = `${String.fromCharCode(97 + Math.floor(index / 10))}${index % 10}`;
+      offering.metrics.push({ ...offering.metrics[0], name, semanticContractId: `delivery.${name}` });
+      metrics.push(name);
+    }
+    const slice = request('fixture-inline-staging-cap-admits');
+    slice.requestedMetrics = metrics;
+    const row = { media_buy_id: 'fixture-media-buy' };
+    for (const metric of metrics) row[metric] = '1';
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: 100_000 }, () => ({ ...row })),
+      }),
+      offering
+    );
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true, 'a report the staging cap admits is not refused for retained state');
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.objects[0].rowCount, 100_000);
+    assert.equal(manifest.coverage.status, 'full');
+    assert.ok(
+      manifest.objects[0].byteCount < 32 * 1024 * 1024,
+      `staged ${(manifest.objects[0].byteCount / 1048576).toFixed(1)} MiB, which the cap admits`
+    );
+  });
+
   test('does not read response fields a settled status never reaches', async () => {
     // `working` is a retryable not-ready verdict, decided from the status alone. Reading
     // every response field up front let a field no check would have reached -- a throwing
@@ -2583,39 +2646,26 @@ describe('createInlineReportingSourceExecutor', () => {
     // Rows that identify their media buy and nothing else retain nothing through
     // projection, so the staging budget is untouched and the response is rejected as
     // incomplete -- but the capture still has to hold every requested field of every row.
+    // 100,000 rows over 48 requested fields sits inside the work budget and is admitted;
+    // what it must not do is amplify. Per-field claim objects in a Map measured about
+    // 820 MiB here; one value array and one flag array shared by every row measure 83 MiB.
     const { offering, metrics, dimensions } = widenedOffering(24, 24);
-    const incompleteSource = rowCount =>
-      createInlineReportingSourceExecutor(
-        input => ({
-          reporting_period: { start: input.start_date, end: input.end_date },
-          currency: 'USD',
-          reporting_rows: Array.from({ length: rowCount }, () => ({ media_buy_id: 'fixture-media-buy' })),
-        }),
-        offering
-      );
-    const wideSlice = key => {
-      const slice = request(key);
-      slice.requestedMetrics = metrics;
-      slice.requestedDimensions = dimensions;
-      return slice;
-    };
-
-    // 100,000 rows over 48 requested fields sits inside the 5,000,000 unit work budget,
-    // but the claims would outlast what this caller could stage, so it is refused from
-    // counts alone rather than held. With per-field claim objects this shape allocated
-    // roughly 4,800,000 objects -- about 800 MiB measured -- before returning.
-    const readRefusedPeak = peakHeapWatcher();
-    const refused = await incompleteSource(100_000).execute(wideSlice('fixture-inline-retained-over'), context());
-    const refusedPeakMiB = readRefusedPeak();
-    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
-    assert.ok(refusedPeakMiB < 350, `refused capture peaked at ${refusedPeakMiB.toFixed(0)} MiB`);
-
-    // A shape inside the bound is still admitted, and holding it stays proportionate.
-    const readAdmittedPeak = peakHeapWatcher();
-    const incomplete = await incompleteSource(50_000).execute(wideSlice('fixture-inline-retained-under'), context());
-    const admittedPeakMiB = readAdmittedPeak();
-    assert.equal(validateReportingSourceFailureV1(incomplete, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
-    assert.ok(admittedPeakMiB < 200, `admitted capture peaked at ${admittedPeakMiB.toFixed(0)} MiB`);
+    const slice = request('fixture-inline-capture-footprint');
+    slice.requestedMetrics = metrics;
+    slice.requestedDimensions = dimensions;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: 100_000 }, () => ({ media_buy_id: 'fixture-media-buy' })),
+      }),
+      offering
+    );
+    const readPeak = peakHeapWatcher();
+    const result = await source.execute(slice, context());
+    const peakMiB = readPeak();
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    assert.ok(peakMiB < 300, `captured claims peaked at ${peakMiB.toFixed(0)} MiB`);
   });
 
   test('stops at the first unavailable row without transforming later statuses', async () => {

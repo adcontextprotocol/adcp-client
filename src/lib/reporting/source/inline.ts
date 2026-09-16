@@ -159,14 +159,20 @@ const INLINE_MAX_VALIDATION_WORK_UNITS_V1 = 5_000_000;
 // at the per-object staging ceiling: no response may be scanned more than a single
 // staged object's worth, however the claims are distributed across rows and metrics.
 const INLINE_MAX_VALIDATION_SCAN_BYTES_V1 = INLINE_MAX_OBJECT_BYTES_V1;
-// Retained validation state is held to the ceiling on what this caller could actually
-// stage: holding a response in memory may not cost more than writing it out would. Claims
-// are kept columnar -- one value slot and one flag byte per captured field -- so a shape
-// this bound admits is cheap to hold, and a shape it refuses could not have been staged
-// either. Per-field claim objects in a Map cost roughly twenty-five times as much, which
-// let a request inside every other limit hold most of a gigabyte before a completeness
-// check could reject it.
-const INLINE_MAX_VALIDATION_RETAINED_BYTES_V1 = INLINE_MAX_SCOPE_OBJECT_BYTES_V1;
+// Retained validation state is held to the per-object staging ceiling. Claims are kept
+// columnar -- one value slot and one flag byte per captured field, in arrays shared by
+// every row -- so what is held stays proportionate to what is staged; per-field claim
+// objects in a Map cost roughly twenty-five times as much, which let a request inside
+// every other limit hold most of a gigabyte before a completeness check could reject it.
+//
+// The ceiling is the per-object limit rather than the per-scope one because the estimate
+// below is an upper bound on held bytes while the scope limit governs written bytes. Held
+// against the scope limit it refused reports the staging cap admits: 100,000 rows over 32
+// short metrics estimate 33,600,000 held bytes against a 33,554,432 scope limit, yet
+// write 32,500,000 bytes, which that same limit accepts. With rows capped at 100,000 and
+// the work budget capped at 5,000,000 units the widest admissible request holds about
+// 48 MB, so this ceiling asserts that arithmetic rather than being a limit adopters meet.
+const INLINE_MAX_VALIDATION_RETAINED_BYTES_V1 = INLINE_MAX_OBJECT_BYTES_V1;
 // One shared value array and one shared flag array hold every row's claims, so a claim
 // costs one pointer slot plus one flag byte and a row costs only its snapshot handle and
 // its reserved capture. Per-row arrays cost their own headers instead, which made the
@@ -1132,8 +1138,14 @@ function captureLayoutFor(request: ReportingSourceSliceRequestV1): CaptureLayout
   const fields: string[] = [];
   const indexOf = new Map<string, number>();
   const reservedFields = new Set<string>();
+  // `media_buy_id` needs no slot to serve as a dimension -- the row identity proves it --
+  // but as a requested metric it does, and skipping it outright left the metric unproven
+  // and the report a retryable partial result. It resolves to the identity observation
+  // either way, so the slot costs no extra read.
+  const requestedAsMetric = new Set(request.requestedMetrics);
   for (const field of [...request.requestedMetrics, ...request.requestedDimensions]) {
-    if (field === 'media_buy_id' || indexOf.has(field)) continue;
+    if (indexOf.has(field)) continue;
+    if (field === 'media_buy_id' && !requestedAsMetric.has(field)) continue;
     indexOf.set(field, fields.length);
     fields.push(field);
     if ((INLINE_RESERVED_ROW_FIELDS_V1 as readonly string[]).includes(field)) reservedFields.add(field);
