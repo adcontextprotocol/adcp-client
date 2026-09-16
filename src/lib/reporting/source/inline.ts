@@ -151,6 +151,8 @@ const INLINE_MAX_TOTAL_OBJECT_BYTES_V1 = 256 * 1_024 * 1_024;
 const INLINE_MAX_SCOPE_OBJECT_BYTES_V1 = 32 * 1_024 * 1_024;
 const INLINE_MAX_ROWS_V1 = 100_000;
 const INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 = 5_000_000;
+const INLINE_MAX_PROTOTYPE_CHAIN_DEPTH_V1 = 64;
+const INLINE_MAX_DECIMAL_EXPONENT_V1 = 400;
 
 const InlineReportingMetricEvidenceV1Schema = z.discriminatedUnion('status', [
   z.strictObject({
@@ -434,13 +436,15 @@ async function executeAndSeal(
   const fetchedRecord = !isRows(fetched) ? (fetched as unknown as Record<string, unknown>) : undefined;
   const reportingRowsInput = fetchedRecord ? ownDataValue(fetchedRecord, 'reporting_rows') : undefined;
   const mediaBuyDeliveriesInput = fetchedRecord ? ownDataValue(fetchedRecord, 'media_buy_deliveries') : undefined;
-  const availabilityEvidenceInput = fetchedRecord ? ownDataValue(fetchedRecord, 'availability_evidence') : undefined;
-  // An evidence slot that is not an own data property reads as omitted, which would
-  // silently downgrade the response to legacy present inference. Refuse it instead,
-  // without reading the accessor.
-  const availabilityEvidenceIsUnreadable = fetchedRecord
-    ? hasNonDataSlot(fetchedRecord, 'availability_evidence')
-    : false;
+  // One bounded observation decides the evidence slot for the whole execution. A slot
+  // that is not an own data property reads as omitted, which would silently downgrade
+  // the response to legacy present inference, so it is refused here without reading the
+  // accessor. Observing the slot a second time would let a stateful proxy answer
+  // "accessor" once and "data" once, and that pair of answers reaches the same silent
+  // downgrade — so the captured snapshot below is the only answer anything consults.
+  const availabilityEvidenceSlot: OwnDataSlotV1 = fetchedRecord
+    ? resolveOwnDataSlot(fetchedRecord, 'availability_evidence')
+    : { kind: 'absent' };
   if (
     (reportingRowsInput !== undefined && !Array.isArray(reportingRowsInput)) ||
     (mediaBuyDeliveriesInput !== undefined && !Array.isArray(mediaBuyDeliveriesInput))
@@ -529,13 +533,14 @@ async function executeAndSeal(
   }
   const auxiliaryRowInputs = !isRows(fetched) && reportingRows !== undefined ? [...(mediaBuyDeliveries ?? [])] : [];
   let availabilityEvidence: z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> | undefined;
-  if (!isRows(fetched) && availabilityEvidenceIsUnreadable) {
+  if (!isRows(fetched) && availabilityEvidenceSlot.kind === 'unreadable') {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
   }
-  if (!isRows(fetched) && availabilityEvidenceInput !== undefined) {
+  if (!isRows(fetched) && availabilityEvidenceSlot.kind === 'data') {
     try {
+      // Parse the captured value, never a re-read of the adopter slot.
       availabilityEvidence = parseInlineAvailabilityEvidence(
-        availabilityEvidenceInput as InlineReportingAvailabilityEvidenceV1,
+        availabilityEvidenceSlot.value as InlineReportingAvailabilityEvidenceV1,
         request
       );
     } catch {
@@ -1229,14 +1234,49 @@ function metricClaimsAgree(direct: unknown, nested: unknown): boolean {
   return canonical !== undefined && canonical === canonicalDecimalEvidence(nested);
 }
 
+/**
+ * Exact plain-decimal canonical form, or undefined when the claim is not a decimal
+ * quantity. A number is canonicalized from its shortest round-trip digits, so exponent
+ * notation reaches the same form as the equivalent plain decimal — `1e-7` and
+ * `'0.0000001'` are one quantity, not a contradiction. A string is read literally and is
+ * never coerced through Number, which would round away the very digits a contradiction
+ * check depends on: `'1000000000000000000001'` stays distinct from `1e21`.
+ */
 function canonicalDecimalEvidence(value: string | number): string | undefined {
-  const raw = typeof value === 'number' ? String(value) : value.trim();
+  let raw: string;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return undefined;
+    raw = plainDecimalNumberEvidence(value);
+  } else {
+    raw = value.trim();
+  }
   const parts = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw);
   if (!parts) return undefined;
   const integer = (parts[2] ?? '').replace(/^0+(?=\d)/, '');
   const fraction = (parts[3] ?? '').replace(/0+$/, '');
   const magnitude = fraction ? `${integer}.${fraction}` : integer;
   return magnitude === '0' ? '0' : `${parts[1] ?? ''}${magnitude}`;
+}
+
+/**
+ * Expand the exponent notation `String` emits outside 1e-6..1e21 into plain decimal by
+ * shifting the decimal point across the printed digits. The digits are moved, never
+ * recomputed, so nothing is rounded. An already-plain form is returned unchanged, as is
+ * an exponent beyond what `String` can emit for a finite number — that form then fails
+ * the plain-decimal match above and reads as not comparable rather than as agreement.
+ */
+function plainDecimalNumberEvidence(value: number): string {
+  const raw = String(value);
+  const parts = /^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(raw);
+  if (!parts) return raw;
+  const exponent = Number(parts[4]);
+  if (!Number.isInteger(exponent) || Math.abs(exponent) > INLINE_MAX_DECIMAL_EXPONENT_V1) return raw;
+  const sign = parts[1] ?? '';
+  const digits = `${parts[2] ?? ''}${parts[3] ?? ''}`;
+  const pointIndex = (parts[2] ?? '').length + exponent;
+  if (pointIndex <= 0) return `${sign}0.${'0'.repeat(-pointIndex)}${digits}`;
+  if (pointIndex >= digits.length) return `${sign}${digits}${'0'.repeat(pointIndex - digits.length)}`;
+  return `${sign}${digits.slice(0, pointIndex)}.${digits.slice(pointIndex)}`;
 }
 
 function isZeroEvidenceValue(value: string | number): boolean {
@@ -1263,22 +1303,46 @@ function ownDataClaim(record: Record<string, unknown>, field: string): { claimed
     : { claimed: false };
 }
 
+/** One bounded observation of an own data slot. */
+type OwnDataSlotV1 =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'data'; readonly value: unknown }
+  | { readonly kind: 'unreadable' };
+
 /**
- * True when `field` is reachable on `record` but is not an own data property:
- * an accessor anywhere on the chain, or an inherited value. Never invokes a getter.
+ * Resolve `field` from a single descriptor observation per prototype level.
+ *
+ * `data` carries the captured own value; callers must use that value rather than
+ * re-reading the slot, so a stateful proxy cannot answer one way when the slot is
+ * classified and another way when it is parsed. `unreadable` covers every slot that is
+ * reachable but is not an own data property — an accessor anywhere on the chain, an
+ * inherited value, a trap that throws, or a chain that cannot be bounded — so such a
+ * slot fails closed instead of reading as omitted. Getters are never invoked, and the
+ * walk is bounded by both prototype identity and depth so that a cyclic or endlessly
+ * regenerated proxy chain terminates instead of spinning the event loop.
  */
-function hasNonDataSlot(record: Record<string, unknown>, field: string): boolean {
-  for (
-    let current: object | null = record;
-    current !== null;
-    current = Object.getPrototypeOf(current) as object | null
-  ) {
-    const descriptor = Object.getOwnPropertyDescriptor(current, field);
-    if (!descriptor) continue;
-    if (!('value' in descriptor)) return true;
-    return current !== record && descriptor.value !== undefined;
+function resolveOwnDataSlot(record: Record<string, unknown>, field: string): OwnDataSlotV1 {
+  const visited = new Set<object>();
+  let current: object | null = record;
+  for (let depth = 0; current !== null; depth += 1) {
+    if (depth >= INLINE_MAX_PROTOTYPE_CHAIN_DEPTH_V1 || visited.has(current)) return { kind: 'unreadable' };
+    visited.add(current);
+    let descriptor: PropertyDescriptor | undefined;
+    let prototype: object | null = null;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(current, field);
+      if (!descriptor) prototype = Object.getPrototypeOf(current) as object | null;
+    } catch {
+      return { kind: 'unreadable' };
+    }
+    if (descriptor) {
+      if (!('value' in descriptor)) return { kind: 'unreadable' };
+      if (descriptor.value === undefined) return { kind: 'absent' };
+      return current === record ? { kind: 'data', value: descriptor.value } : { kind: 'unreadable' };
+    }
+    current = prototype;
   }
-  return false;
+  return { kind: 'absent' };
 }
 
 function rowCurrency(row: unknown): string | undefined {

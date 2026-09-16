@@ -598,6 +598,220 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('decides the evidence slot from one descriptor observation', async () => {
+    // A stateful slot that answers "accessor" once and "data" once used to be read
+    // twice: the first answer suppressed the value, the second answer cleared the
+    // accessor refusal, and the response fell through to legacy present inference --
+    // sealing a row-carried spend that the evidence declared missing.
+    let observations = 0;
+    let reads = 0;
+    const accessorFirst = createInlineReportingSourceExecutor(input => {
+      const evidence = {
+        version: '1.0',
+        cells: [
+          {
+            constituent_id: input.constituents[0].constituent_id,
+            metric: 'impressions',
+            status: 'present',
+            data_through: input.end_date,
+          },
+          {
+            constituent_id: input.constituents[0].constituent_id,
+            metric: 'spend',
+            status: 'missing',
+            reason: 'Provider did not return spend',
+          },
+        ],
+      };
+      return new Proxy(
+        {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        },
+        {
+          getOwnPropertyDescriptor(target, property) {
+            if (property !== 'availability_evidence') return Reflect.getOwnPropertyDescriptor(target, property);
+            observations += 1;
+            return observations === 1
+              ? {
+                  configurable: true,
+                  enumerable: true,
+                  get: () => {
+                    reads += 1;
+                    return evidence;
+                  },
+                }
+              : { configurable: true, enumerable: true, writable: true, value: evidence };
+          },
+        }
+      );
+    }, redactedReportingSourceOfferingV1);
+    const refused = await accessorFirst.execute(request('fixture-inline-restated-evidence-slot'), context());
+    assert.equal(validateReportingSourceFailureV1(refused, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(observations, 1, 'the evidence slot is observed exactly once');
+    assert.equal(reads, 0, 'the executor never invokes an adopter evidence accessor');
+
+    // The mirrored ordering proves the captured value is what gets parsed: a later
+    // restatement of the slot as an accessor cannot revoke the evidence already read.
+    let dataObservations = 0;
+    const dataFirst = createInlineReportingSourceExecutor(input => {
+      const evidence = {
+        version: '1.0',
+        cells: [
+          {
+            constituent_id: input.constituents[0].constituent_id,
+            metric: 'impressions',
+            status: 'present',
+            data_through: input.end_date,
+          },
+          {
+            constituent_id: input.constituents[0].constituent_id,
+            metric: 'spend',
+            status: 'missing',
+            reason: 'Provider did not return spend',
+          },
+        ],
+      };
+      return new Proxy(
+        {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10 }],
+        },
+        {
+          getOwnPropertyDescriptor(target, property) {
+            if (property !== 'availability_evidence') return Reflect.getOwnPropertyDescriptor(target, property);
+            dataObservations += 1;
+            return dataObservations === 1
+              ? { configurable: true, enumerable: true, writable: true, value: evidence }
+              : { configurable: true, enumerable: true, get: () => evidence };
+          },
+        }
+      );
+    }, redactedReportingSourceOfferingV1);
+    const slice = request('fixture-inline-captured-evidence-slot');
+    slice.coverage.expected = 'partial';
+    const governed = await dataFirst.execute(slice, context());
+    assert.equal(governed.ok, true);
+    assert.equal(dataObservations, 1, 'the evidence slot is observed exactly once');
+    const manifest = parseVerifiedReportingSourceManifestV1(
+      governed.response.manifest,
+      governed.manifestBytes,
+      'basic'
+    );
+    assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'spend').status, 'missing');
+    assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'impressions').status, 'present');
+  });
+
+  test('bounds evidence slot resolution across hostile prototype chains', { timeout: 30_000 }, async () => {
+    // Neither chain can be walked to an end: one repeats an identity forever, the other
+    // never repeats one. An unbounded walk spins the event loop on either, so each trap
+    // self-limits far above the real bound -- a regression overruns the hop assertion
+    // below instead of hanging the suite.
+    const HOP_BUDGET = 10_000;
+    const rows = [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }];
+    const body = input => ({
+      reporting_period: { start: input.start_date, end: input.end_date },
+      currency: 'USD',
+      reporting_rows: rows,
+    });
+
+    let cyclicHops = 0;
+    let cyclic;
+    const cyclicSource = createInlineReportingSourceExecutor(input => {
+      cyclic = new Proxy(body(input), {
+        getPrototypeOf() {
+          cyclicHops += 1;
+          if (cyclicHops > HOP_BUDGET) throw new Error('unbounded prototype walk');
+          return cyclic;
+        },
+      });
+      return cyclic;
+    }, redactedReportingSourceOfferingV1);
+    const cyclicResult = await cyclicSource.execute(request('fixture-inline-cyclic-prototype'), context());
+    assert.equal(validateReportingSourceFailureV1(cyclicResult, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.ok(cyclicHops > 0 && cyclicHops <= 8, `identity cycle detected after ${cyclicHops} hops`);
+
+    // Every hop hands back a fresh prototype, so identity tracking alone never closes
+    // the walk -- only the depth bound does.
+    let regeneratedHops = 0;
+    const regenerating = {
+      getPrototypeOf() {
+        regeneratedHops += 1;
+        if (regeneratedHops > HOP_BUDGET) throw new Error('unbounded prototype walk');
+        return new Proxy({}, regenerating);
+      },
+    };
+    const regeneratingSource = createInlineReportingSourceExecutor(
+      input => new Proxy(body(input), regenerating),
+      redactedReportingSourceOfferingV1
+    );
+    const regeneratedResult = await regeneratingSource.execute(
+      request('fixture-inline-regenerating-prototype'),
+      context()
+    );
+    assert.equal(validateReportingSourceFailureV1(regeneratedResult, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.ok(
+      regeneratedHops > 0 && regeneratedHops <= 128,
+      `depth bound stopped the walk after ${regeneratedHops} hops`
+    );
+  });
+
+  test('reconciles exponent-form metric claims without coercing decimal strings', async () => {
+    const claimSource = (key, direct, totals) =>
+      createInlineReportingSourceExecutor(input => {
+        const availability_evidence = presentAvailability(input);
+        return {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            {
+              media_buy_id: 'fixture-media-buy',
+              impressions: 10,
+              spend: direct,
+              totals: { impressions: 10, spend: totals },
+            },
+          ],
+          availability_evidence,
+        };
+      }, redactedReportingSourceOfferingV1);
+
+    // String(number) switches to exponent notation outside 1e-6..1e21, which used to
+    // read as a contradiction against the identical plain-decimal totals claim.
+    for (const [index, item] of [
+      { direct: 1e-7, totals: '0.0000001' },
+      { direct: 1.5e-7, totals: '0.00000015' },
+      { direct: 1e-21, totals: '0.000000000000000000001' },
+      { direct: 1e21, totals: '1000000000000000000000' },
+      { direct: 1.5e21, totals: '1500000000000000000000' },
+      { direct: -1e-7, totals: '-0.0000001' },
+    ].entries()) {
+      const source = claimSource(`agree-${index}`, item.direct, item.totals);
+      const result = await source.execute(request(`fixture-inline-exponent-agree-${index}`), context());
+      assert.equal(result.ok, true, `${item.direct} agrees with ${item.totals}`);
+      const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+      assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'spend').status, 'present');
+    }
+
+    // Contradiction detection survives the normalization. The large case also pins that
+    // the totals string is read literally: coercing '...001' through Number would round
+    // it onto 1e21 and let a genuine disagreement seal.
+    for (const [index, item] of [
+      { direct: 1e-7, totals: '0.0000002' },
+      { direct: 1e21, totals: '1000000000000000000001' },
+      { direct: -1e-7, totals: '0.0000001' },
+    ].entries()) {
+      const source = claimSource(`contradict-${index}`, item.direct, item.totals);
+      const result = await source.execute(request(`fixture-inline-exponent-contradict-${index}`), context());
+      assert.equal(
+        validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code,
+        'INTEGRITY_FAILED',
+        `${item.direct} contradicts ${item.totals}`
+      );
+    }
+  });
+
   test('does not treat a present cell with missing row values as complete', async () => {
     const source = createInlineReportingSourceExecutor(
       input => ({
