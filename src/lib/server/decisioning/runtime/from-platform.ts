@@ -7155,13 +7155,15 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
         const requestedRevisionId = (params as { reporting_revision_id?: unknown }).reporting_revision_id;
-        const exactRevisionRequested = requestedRevisionId !== undefined;
-        // The raw-passthrough gate below must never rest on handler identity
-        // alone: an adopter may legitimately wire one function into both the
-        // sales and reporting delivery slots, and an unbound cumulative read
-        // would then inherit the exact-revision bypass. Require the exact-read
-        // request shape too — a present, non-empty revision id.
+        // One predicate decides routing, auth scope, and the raw-passthrough
+        // gate. Routing on mere presence sent `reporting_revision_id: null` to
+        // the ledger as if it were an exact read — where it is not one — so a
+        // cumulative request answered SERVICE_UNAVAILABLE wherever request
+        // validation is off. It also must not rest on handler identity alone:
+        // an adopter may wire one function into both the sales and reporting
+        // slots, and an unbound read would inherit the exact-revision bypass.
         const exactRevisionRead = typeof requestedRevisionId === 'string' && requestedRevisionId.length > 0;
+        const exactRevisionRequested = exactRevisionRead;
         const reportingRevisionRequested = exactRevisionRequested && reporting !== undefined;
         const reqCtx = reportingRevisionRequested
           ? reportingContext('get_media_buy_delivery', params, ctx)

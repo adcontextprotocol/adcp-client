@@ -312,7 +312,17 @@ export function createInlineReportingSourceExecutor(
             controller.signal,
             storage,
             key,
-            scopeKey
+            scopeKey,
+            // Only an explicit retention policy may trade replay for capacity;
+            // the default must never evict silently.
+            evictSettled
+              ? () => {
+                  const victim = planReclaim(executions, [], scopeKey);
+                  if (victim === undefined) return false;
+                  commitReclaim(executions, storage, victim);
+                  return true;
+                }
+              : undefined
           )
         )
         .then(result => ({ requestFingerprint, result }))
@@ -378,7 +388,8 @@ async function executeAndSeal(
     scopeBytes: Map<string, number>;
   },
   executionNamespace: string,
-  scopeKey: string
+  scopeKey: string,
+  reclaimForBytes?: () => boolean
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
   try {
@@ -538,26 +549,40 @@ async function executeAndSeal(
       );
     }
   }
-  const remainingCapacity = Math.min(
-    INLINE_MAX_OBJECT_BYTES_V1,
-    INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
-    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
-  );
-  let projectionBudget = remainingCapacity;
-  let rows: readonly Record<string, unknown>[];
-  try {
-    rows = sourceRows.map(row =>
-      projectEvidenceRow(row, request, upperBound => {
-        if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
-        projectionBudget -= upperBound;
-      })
+  // Reclamation was only ever driven by the execution-count ceilings, so a
+  // scope could exhaust its byte budget long before its 100th slice and then
+  // terminalize every retry with STAGING_FAILED. Under byte pressure, free
+  // settled executions the same way — the in-flight execution is pending and
+  // is never a candidate.
+  const capacity = (): number =>
+    Math.min(
+      INLINE_MAX_OBJECT_BYTES_V1,
+      INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
+      INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
     );
-  } catch (error) {
-    if (error instanceof RangeError) {
-      return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+  let remainingCapacity = capacity();
+  let projected: readonly Record<string, unknown>[] | undefined;
+  while (projected === undefined) {
+    let projectionBudget = remainingCapacity;
+    try {
+      projected = sourceRows.map(row =>
+        projectEvidenceRow(row, request, upperBound => {
+          if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
+          projectionBudget -= upperBound;
+        })
+      );
+    } catch (error) {
+      if (!(error instanceof RangeError)) {
+        return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+      }
+      // Capacity, not an oversized object: free settled evidence and retry.
+      if (!reclaimForBytes?.()) {
+        return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+      }
+      remainingCapacity = capacity();
     }
-    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
   }
+  const rows = projected;
   const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
   if (
     readsPartialPeriod &&
@@ -602,12 +627,18 @@ async function executeAndSeal(
   ) {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned invalid temporal evidence');
   }
-  let bytes: Uint8Array;
-  try {
-    bytes = encodeRows(rows, format.mediaType, remainingCapacity);
-  } catch {
-    return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+  let encoded: Uint8Array | undefined;
+  while (encoded === undefined) {
+    try {
+      encoded = encodeRows(rows, format.mediaType, remainingCapacity);
+    } catch {
+      if (!reclaimForBytes?.()) {
+        return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+      }
+      remainingCapacity = capacity();
+    }
   }
+  const bytes = encoded;
   const objectDigest = digest(bytes);
   const objectRef = `inline-${executionNamespace.slice(0, 32)}`;
   const generation = `sha256-${objectDigest}`;
@@ -969,7 +1000,11 @@ function commitReclaim(
   storage.objects.delete(objectRef);
   storage.totalBytes -= stored.bytes.byteLength;
   const remaining = (storage.scopeBytes.get(entry.scopeKey) ?? 0) - stored.bytes.byteLength;
-  storage.scopeBytes.set(entry.scopeKey, Math.max(0, remaining));
+  // Drop the accounting row rather than parking a zero. Executions stay
+  // bounded, but a stream of admissions across unique scopes would otherwise
+  // grow this map without limit.
+  if (remaining > 0) storage.scopeBytes.set(entry.scopeKey, remaining);
+  else storage.scopeBytes.delete(entry.scopeKey);
 }
 
 function sourceLocalMidnightDate(instant: string, timeZone: string): string {

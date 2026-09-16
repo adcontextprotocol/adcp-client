@@ -9,6 +9,7 @@ import {
   reportingIsoDurationMillisecondsV1,
   reportingCoverageDenominatorFingerprintV1,
   reportingScheduleOriginV1,
+  reportingUtcOffsetChangesV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
   validateReportingSourceExecutionV1,
   type ReportingSourceManifestV1,
@@ -24,6 +25,7 @@ import {
 import type {
   CreateReportingProducerOptionsV1,
   ReportingLedgerAdjustmentV1,
+  ReportingFinalityV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
@@ -1095,6 +1097,9 @@ function boundedDiagnostic(value: unknown): string {
     .slice(0, 64);
 }
 
+/** Periods the planner will generate before a configuration is revisited. */
+const OFFSET_HORIZON_MILLISECONDS = 400 * 86_400_000;
+
 /** Unparseable is simply "does not describe": a calendar duration such as P1M
  * has no fixed millisecond width, so it can never match these boundaries. */
 function identityDurationMilliseconds(value: string): number | undefined {
@@ -1113,7 +1118,8 @@ function identityDurationMilliseconds(value: string): number | undefined {
  */
 function assertScheduleIdentityMatchesBoundaries(
   schedule: ReportingLedgerConfigurationV1['schedule'],
-  sourceTimezone: string
+  sourceTimezone: string,
+  requiredFinality: ReportingFinalityV1
 ): void {
   if (schedule.periodDuration !== undefined) {
     if (identityDurationMilliseconds(schedule.periodDuration) !== schedule.periodMilliseconds) {
@@ -1121,8 +1127,16 @@ function assertScheduleIdentityMatchesBoundaries(
     }
   }
   if (schedule.deliverySlaDuration !== undefined) {
-    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== schedule.deliverySlaMilliseconds) {
-      throw new Error('Reporting deliverySlaDuration does not describe the configured delivery SLA');
+    // `expected_at` is period end plus this duration, and an official
+    // generation expects end + officialAfterMilliseconds. Publishing the
+    // nominal SLA instead would advertise PT2H while every obligation is due
+    // six hours after close.
+    const expectedOffset =
+      requiredFinality === 'official'
+        ? (schedule.officialAfterMilliseconds ?? schedule.deliverySlaMilliseconds)
+        : schedule.deliverySlaMilliseconds;
+    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== expectedOffset) {
+      throw new Error('Reporting deliverySlaDuration does not describe the offset its obligations expect');
     }
   }
   if (schedule.alignment === undefined) {
@@ -1161,6 +1175,15 @@ function assertScheduleIdentityMatchesBoundaries(
       `Reporting ${schedule.alignment} anchor is not on a period boundary derived from its protocol origin`
     );
   }
+  // Boundaries here advance by fixed milliseconds, while the spec advances
+  // calendar durations through local civil time. They agree only while the
+  // zone holds one offset: a P1D America/New_York generation anchored at
+  // 05:00Z keeps computing 05:00Z after the spring transition, where civil
+  // time says 04:00Z.
+  const horizonMs = Date.now() + OFFSET_HORIZON_MILLISECONDS;
+  if (reportingUtcOffsetChangesV1(sourceTimezone, anchorMs, Math.max(anchorMs, horizonMs))) {
+    throw new Error('Reporting source timezone changes its UTC offset; fixed-length periods cannot express its days');
+  }
 }
 
 function validateConfigurationAgainstOffering(
@@ -1197,7 +1220,11 @@ function validateConfigurationAgainstOffering(
   for (const offset of configuration.schedule.restatementMilliseconds ?? []) {
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
-  assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
+  assertScheduleIdentityMatchesBoundaries(
+    configuration.schedule,
+    configuration.sourceTimezone,
+    configuration.requiredFinality
+  );
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');

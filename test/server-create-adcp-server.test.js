@@ -1076,6 +1076,60 @@ describe('createAdcpServer', () => {
     });
   });
 
+  describe('caller-scoped reporting receipts', () => {
+    it("does not replay one caller's reporting receipt for another on the same account", async () => {
+      // An agent registry resolves several callers onto one account. Scoping
+      // replay by account alone let caller B's identical request return A's
+      // cached response before B's consumer was resolved, so B's receipt was
+      // never deposited.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        // An agent registry that resolves every caller on this account to the
+        // same principal — the shape that made the replay namespace collide.
+        resolveSessionKey: () => 'principal-account-shared',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            callers.push(ctx.authInfo?.credential?.key_id);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-shared' },
+        idempotency_key: 'reporting-status-shared-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-shared-0001' }],
+      };
+
+      for (const key_id of ['consumer-a', 'consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'api_key', key_id } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b'], 'each caller must reach the handler');
+
+      // The same caller repeating its own key still replays, so the namespace
+      // is narrowed by caller rather than simply disabled.
+      const replay = await callToolRaw(server, 'sync_reporting_status', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } },
+      });
+      assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
+      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b'], 'a caller replaying its own key must not re-run');
+    });
+  });
+
   describe('caller-scoped 3.2 mutations', () => {
     const capabilityChanges = {
       capabilities_version: 'caps-v1',

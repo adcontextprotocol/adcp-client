@@ -2082,6 +2082,217 @@ describe('ReliableReportingService', () => {
     assert.equal(billing.schedule.alignment, 'billing_cycle');
   });
 
+  test('reclaims settled evidence under byte pressure, not only at the count ceiling', async () => {
+    // A scope can exhaust its byte budget long before its 100th slice. Without
+    // byte-pressure reclamation every later slice terminalizes STAGING_FAILED
+    // while the execution count is still well under the ceiling.
+    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    const executor = options =>
+      createInlineReportingSourceExecutor(() => rows, structuredClone(redactedReportingSourceOfferingV1), options);
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `bytes-slice-${String(index).padStart(4, '0')}`;
+
+    const bounded = executor(undefined);
+    let boundedOk = 0;
+    let boundedFailure;
+    for (let index = 0; index < 90; index += 1) {
+      const result = await bounded.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }), ctx());
+      if (result.ok) boundedOk += 1;
+      else boundedFailure ??= { index, code: result.error.code };
+    }
+    assert.ok(boundedOk < 90, 'the scope byte budget is reached well before the 100-execution ceiling');
+    assert.equal(boundedFailure.code, 'STAGING_FAILED');
+    assert.ok(boundedFailure.index < 100, 'byte pressure, not the count ceiling, is what refuses here');
+
+    // With an explicit policy the same feed keeps staging past that pressure.
+    const retained = executor({ replayRetention: { evictSettled: true } });
+    for (let index = 0; index < 90; index += 1) {
+      const result = await retained.execute(
+        redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }),
+        ctx()
+      );
+      assert.equal(result.ok, true, `slice ${index} must stage under byte pressure`);
+    }
+  });
+
+  test('stays correct and bounded across many unique reclaimed scopes', async () => {
+    // Reclamation now drops a scope's accounting row instead of parking a zero,
+    // so a stream of admissions across unique scopes cannot grow that map
+    // without limit. The row itself is internal — capacity math reads a missing
+    // row and a zero row identically — so what is asserted here is that the
+    // executor keeps admitting and staging correctly well past the global
+    // ceiling, which is the behavior that bounded accounting has to sustain.
+    const retained = createInlineReportingSourceExecutor(
+      () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const scoped = scope => {
+      const value = redactedReportingSourceRequestV1({
+        sourceExecutionKey: `unique-scope-${String(scope).padStart(5, '0')}`,
+      });
+      value.sourceScope = { connection: `fixture-unique-${scope}`, region: 'test' };
+      return value;
+    };
+
+    for (let scope = 0; scope < 1_100; scope += 1) {
+      assert.equal((await retained.execute(scoped(scope), ctx())).ok, true, `scope ${scope}`);
+    }
+  });
+
+  test('routes a null reporting_revision_id as the cumulative read it is', async () => {
+    // A native cumulative handler alongside the installed ledger. Routing on
+    // mere presence sent `reporting_revision_id: null` to the ledger as if it
+    // were an exact read, so the cumulative request answered
+    // SERVICE_UNAVAILABLE wherever request validation is off.
+    const { service } = serviceFixture();
+    const seen = [];
+    const platform = service.install({
+      capabilities: { specialisms: [], config: {} },
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+        upsert: async () => [],
+      },
+      sales: {
+        getMediaBuyDelivery: async request => {
+          seen.push(request.media_buy_ids);
+          return {
+            reporting_period: { start: '2026-09-01', end: '2026-09-02' },
+            currency: 'USD',
+            media_buy_deliveries: [],
+          };
+        },
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'null-revision-test',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-rc.3',
+      // Production shape: a null is never stripped before routing.
+      validation: { requests: 'off', responses: 'off' },
+    });
+
+    const result = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: {
+            account: { account_id: 'account-a' },
+            reporting_revision_id: null,
+            media_buy_ids: ['media-buy-account-a'],
+            start_date: '2026-09-01',
+            end_date: '2026-09-02',
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    assert.deepEqual(seen, [['media-buy-account-a']], 'a null revision id is not an exact read');
+  });
+
+  test('refuses raw daily periods in a zone whose offset moves', async () => {
+    // Boundaries advance by fixed milliseconds here while the spec advances
+    // calendar days through local civil time. A P1D America/New_York
+    // generation anchored at 05:00Z keeps computing 05:00Z after the spring
+    // transition, where civil time says 04:00Z.
+    const { service } = serviceFixture();
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+    const install = (schedule, overrides = {}) =>
+      service.producer.installConfiguration({
+        ...ledgerInput,
+        ...overrides,
+        schedule: { ...ledgerInput.schedule, ...schedule },
+        account: { account_id: 'account-a' },
+        sourceScope: { network_id: 'n' },
+        sourceTimezone: overrides.sourceTimezone ?? 'UTC',
+        sourceSettings: { ...sourceSettings, currency: 'USD' },
+        contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+        constituents: [authorizedConstituent('account-a')],
+        mediaBuyIds: ['media-buy-account-a'],
+      });
+
+    const origin = reportingScheduleOriginV1('source_timezone', 'America/New_York');
+    const target = Date.parse('2026-03-01T00:00:00.000Z');
+    const anchorMs = origin + Math.ceil((target - origin) / 86_400_000) * 86_400_000;
+    await assert.rejects(
+      install(
+        { alignment: 'source_timezone', periodTimezone: 'America/New_York', anchor: new Date(anchorMs).toISOString() },
+        { sourceTimezone: 'America/New_York' }
+      ),
+      /changes its UTC offset/,
+      'a DST zone cannot be scheduled with fixed-length periods'
+    );
+  });
+
+  test('refuses an official identity that understates the offset obligations expect', async () => {
+    // expected_at is period end + officialAfterMilliseconds for an official
+    // generation, so publishing the nominal SLA advertises PT2H while every
+    // obligation is due six hours after close.
+    const authoritative = adapter();
+    const { cadence, ...sourceOffering } = authoritative.sourceOffering;
+    authoritative.sourceOffering = {
+      ...sourceOffering,
+      publicationClass: 'AUTHORITATIVE',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
+        expectedAvailabilityLag: 'PT15M',
+        worstCaseAvailabilityLag: 'PT1H',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P7D',
+        correctionPolicy: 'immutable_correction',
+      },
+      revisionSemantics: 'official_with_declared_correction_policy',
+    };
+    authoritative.deliveryOffering.supported_finality = ['official'];
+    authoritative.deliveryOffering.schedule.delivery_sla = 'PT6H';
+    const { service } = serviceFixture({ adapters: { fixture: authoritative } });
+
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+    const install = schedule =>
+      service.producer.installConfiguration({
+        ...ledgerInput,
+        requiredFinality: 'official',
+        finalityPolicy: {
+          policyId: 'policy-1',
+          basis: 'contractual_cutoff',
+          durationAfterPeriodEndMilliseconds: 21_600_000,
+        },
+        schedule: {
+          ...ledgerInput.schedule,
+          deliverySlaMilliseconds: 21_600_000,
+          officialAfterMilliseconds: 21_600_000,
+          ...schedule,
+        },
+        account: { account_id: 'account-a' },
+        sourceScope: { network_id: 'n' },
+        sourceTimezone: 'UTC',
+        sourceSettings: { ...sourceSettings, currency: 'USD' },
+        contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+        constituents: [authorizedConstituent('account-a')],
+        mediaBuyIds: ['media-buy-account-a'],
+      });
+
+    await assert.rejects(
+      install({ deliverySlaDuration: 'PT2H' }),
+      /deliverySlaDuration does not describe the offset its obligations expect/,
+      'the published SLA must equal the offset obligations are due at'
+    );
+
+    // Publishing the official deadline itself is truthful.
+    const consistent = await install({ deliverySlaDuration: 'PT6H' });
+    assert.equal(consistent.schedule.deliverySlaDuration, 'PT6H');
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];

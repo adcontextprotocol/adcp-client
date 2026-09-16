@@ -680,6 +680,24 @@ export function reportingUtcOffsetMinutesV1(timeZone: string, instantMs: number)
   return Math.round((asUtc - (instantMs - (instantMs % 1_000))) / 60_000);
 }
 
+/** Shorter than any real IANA offset era, so no change hides between probes. */
+const REPORTING_OFFSET_PROBE_STEP_MS_V1 = 10 * 86_400_000;
+
+/**
+ * True when `timeZone` does not hold one UTC offset across `[startMs, endMs]`.
+ *
+ * Fixed-millisecond period arithmetic only agrees with the spec's civil-time
+ * boundary generation while the offset holds still, so any change in the span
+ * means boundaries drift off source-local midnight.
+ */
+export function reportingUtcOffsetChangesV1(timeZone: string, startMs: number, endMs: number): boolean {
+  const baseline = reportingUtcOffsetMinutesV1(timeZone, startMs);
+  for (let instant = startMs; instant < endMs; instant += REPORTING_OFFSET_PROBE_STEP_MS_V1) {
+    if (reportingUtcOffsetMinutesV1(timeZone, instant) !== baseline) return true;
+  }
+  return reportingUtcOffsetMinutesV1(timeZone, endMs) !== baseline;
+}
+
 /** True when `instantMs` is exactly 00:00:00.000 local time in `timeZone`. */
 export function reportingIsSourceLocalMidnightV1(instantMs: number, timeZone: string): boolean {
   if (instantMs % 1_000 !== 0) return false;

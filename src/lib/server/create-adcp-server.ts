@@ -2626,13 +2626,29 @@ function thrownAdcpErrorRecovery(response: McpToolResponse): ErrorRecovery {
  * finalize path adds trusted session/account identity; other tool/session
  * special cases preserve their established scopes.
  */
+/** Stable identity of the authenticated caller, for per-caller replay scopes. */
+function callerIdempotencyPrincipal(context: unknown): string | undefined {
+  const ctx = context as {
+    authInfo?: { credential?: { key_id?: unknown }; clientId?: unknown };
+    agent?: { agent_url?: unknown };
+  };
+  const keyId = ctx.authInfo?.credential?.key_id;
+  if (typeof keyId === 'string' && keyId.length > 0) return `key:${keyId}`;
+  const clientId = ctx.authInfo?.clientId;
+  if (typeof clientId === 'string' && clientId.length > 0) return `client:${clientId}`;
+  const agentUrl = ctx.agent?.agent_url;
+  if (typeof agentUrl === 'string' && agentUrl.length > 0) return `agent:${agentUrl}`;
+  return undefined;
+}
+
 function resolveExtraScope(
   toolName: string,
   params: Record<string, unknown>,
   account?: unknown,
   sessionKey?: string,
   proposalScope?: Readonly<ProposalRefinementScope>,
-  callerMutationScope?: Readonly<CallerMutationScope>
+  callerMutationScope?: Readonly<CallerMutationScope>,
+  callerPrincipal?: string
 ): string | undefined {
   const accountLike = account as
     | { id?: unknown; account_id?: unknown; tenant_id?: unknown; tenantId?: unknown }
@@ -2655,6 +2671,17 @@ function resolveExtraScope(
       callerMutationScope.principal_id,
       callerMutationScope.account_id ?? null,
     ]);
+  }
+  // `sync_reporting_status` deposits a receipt for the calling consumer, and a
+  // registry resolves several callers onto one account. Sharing an account-only
+  // namespace let the second caller's identical request replay the first's
+  // cached response before its own consumer was resolved, so its receipt was
+  // never written. This tool keeps a scope resolver of its own — the caller is
+  // already authenticated here — so it is namespaced directly rather than
+  // joining CALLER_SCOPED_MUTATION_TOOLS, whose resolution path is specific to
+  // the two tools that declare one.
+  if (toolName === 'sync_reporting_status') {
+    return JSON.stringify([tenantId ?? null, accountId ?? null, callerPrincipal ?? null]);
   }
   if (toolName === 'si_send_message') {
     const sessionId = params.session_id;
@@ -6842,7 +6869,8 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             ctx.account,
             ctx.sessionKey,
             ctx.proposalRefinementScope,
-            ctx.callerMutationScope
+            ctx.callerMutationScope,
+            callerIdempotencyPrincipal(ctx)
           );
           const idempotencyPayload = buildIdempotencyPayload(toolName, params, ctx.account, ctx.sessionKey);
 
