@@ -2162,6 +2162,110 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
   });
 
+  test('blocks a lease takeover while a leaseholder recipient mutation is in flight', async () => {
+    // The lease predicate used to read the parent activity row without locking
+    // it, which only proved the lease was live when the statement's snapshot
+    // was taken. A statement that then blocked on a recipient lock could resume
+    // long after a successor had claimed, still see its own lease in that
+    // cached snapshot, and delete the successor's recipients. Locking the
+    // parent makes lease authority and recipient mutation one serialized act:
+    // a takeover cannot complete while a leaseholder's statement is in flight.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-inflight',
+      accountId: 'account-inflight',
+    };
+    const recovery = isolatedActivity('inflight-takeover');
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/inflight');
+    const obligation = await putObligation('inflight-takeover', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+
+    // Freeze a recipient so there is a row for the mutation to block on.
+    const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: event =>
+          notifications.emit({
+            ...event,
+            freezeRecipients: async candidates => {
+              await event.freezeRecipients(candidates);
+              throw new Error('stop before any attempt');
+            },
+          }),
+      },
+    });
+    await freezeOnly.recoverOnce({ ownerToken: 'inflight-freeze', limit: 1, retryAfterMs: 1 });
+    assert.equal((await readIntent(transition.transitionId, recovery.namespace)).recipients.length, 1);
+
+    // Hold a row lock on that recipient so the next freeze blocks mid-statement,
+    // after its lease predicate has already been evaluated.
+    const blocker = await pool.connect();
+    let takeover;
+    let settled;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query(
+        `SELECT 1 FROM adcp_reporting_notification_activity_recipients
+          WHERE namespace = $1 AND transition_id = $2 FOR UPDATE`,
+        [recovery.namespace, transition.transitionId]
+      );
+
+      // An ordinary delivering pass. Its freeze sits on the recipient lock with
+      // its lease predicate already evaluated — precisely the window in which a
+      // takeover used to be able to slip past.
+      await makeClaimEligible(recovery.namespace, transition.transitionId);
+      const inFlight = recovery.activity.recoverOnce({ ownerToken: 'inflight-holder', limit: 1 });
+      await new Promise(resolve => setTimeout(resolve, 250));
+
+      // A takeover attempted while that statement is in flight must not win.
+      const thief = await pool.connect();
+      try {
+        await thief.query("SET lock_timeout = '750ms'");
+        takeover = await thief
+          .query(
+            `UPDATE adcp_reporting_notification_activity
+                SET lease_owner = 'inflight-thief',
+                    lease_version = lease_version + 1,
+                    lease_expires_at = clock_timestamp() + INTERVAL '1 hour'
+              WHERE namespace = $1 AND transition_id = $2`,
+            [recovery.namespace, transition.transitionId]
+          )
+          .then(() => 'applied')
+          .catch(error =>
+            /lock timeout|canceling statement/i.test(error.message) ? 'blocked' : `failed: ${error.message}`
+          );
+      } finally {
+        thief.release();
+      }
+      await blocker.query('COMMIT');
+      settled = await inFlight;
+    } finally {
+      blocker.release();
+    }
+    assert.equal(
+      takeover,
+      'blocked',
+      'the takeover waits on the parent row the in-flight mutation holds, instead of racing past it'
+    );
+    // The leaseholder that held the row keeps its authority and completes.
+    assert.equal(settled.projected, 1);
+    assert.equal(
+      (await readIntent(transition.transitionId, recovery.namespace)).recipients.length,
+      1,
+      'its recipient was never reaped by a racing takeover'
+    );
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
+  });
+
   test('refuses legacy subscribers beside the transactional port', async () => {
     const obligation = await putObligation('subscriber-conflict', 'account-a');
     await assert.rejects(

@@ -268,8 +268,17 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
   terminal rows grow for the lifetime of a claim that kept retrying while fresh
   subscribers settled.
 - Every mutation — the replacement delete, the insert, compaction and
-  settlement — is gated on a live, matching lease, and so is the gate that
-  authorises them. A stale worker sees an empty lease source, which makes every
+  settlement — takes a `FOR UPDATE` lock on the parent activity row before it
+  touches a recipient, in a `MATERIALIZED` CTE so that lock is the statement's
+  first act. Reading the lease without locking it only proved the lease was
+  live when the snapshot was taken: a statement that then blocked on a
+  recipient lock could resume after a successor had claimed, still see its own
+  lease in the cached snapshot, and mutate the successor's rows. Holding the
+  parent means a takeover cannot complete while a leaseholder's statement is in
+  flight, and a statement starting after one matches nothing. Lock order is
+  always parent then recipient, so the paths cannot deadlock.
+- Every mutation is also gated on a live, matching lease, and so is the gate
+  that authorises them. A stale worker sees an empty lease source, which makes every
   other source empty and the budget zero; gating only the row sources let that
   empty budget satisfy the check and reap the rows a successor had already
   frozen. After a takeover a stale worker is a strict no-op that refuses.

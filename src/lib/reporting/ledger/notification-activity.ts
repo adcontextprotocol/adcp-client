@@ -931,11 +931,21 @@ async function freezeClaimRecipients(
     'Reporting notification recipient intent could not be committed',
     () =>
       db.query<{ leased: boolean; ok: boolean; retained: number; recipient: NotificationRecipientRef | null }>(
-        `WITH leased AS (
+        `WITH leased AS MATERIALIZED (
+           -- The parent row is the serialization point, and MATERIALIZED makes
+           -- its lock the statement's first act. Reading the lease without
+           -- locking it only proved the lease was live when the snapshot was
+           -- taken: a statement that then blocked on a recipient lock could
+           -- resume long after a successor had claimed, still see its own lease
+           -- in the cached snapshot, and mutate the successor's rows. Holding
+           -- this lock means a takeover cannot complete while this statement
+           -- runs, and a statement that starts after one sees the new lease and
+           -- matches nothing.
            SELECT transition_id FROM ${table}
             WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
               AND lease_owner = $3 AND lease_version = $4::bigint
               AND lease_expires_at >= clock_timestamp()
+              FOR UPDATE
          ), existing AS (
            -- FOR UPDATE is what serializes this statement against a concurrent
            -- checkpoint. Without it the budget is computed from a snapshot in
@@ -1050,16 +1060,18 @@ async function settleClaimRecipients(
   if (delivered.length > 0 || terminal.length > 0) {
     await reportingActivityDatabaseOperation('Reporting notification recipient settlement failed', () =>
       db.query(
-        `UPDATE ${recipientTable} SET settled_at = clock_timestamp(),
-           disposition = CASE WHEN recipient_fingerprint = ANY($3::text[]) THEN 'delivered' ELSE 'terminal' END
-          WHERE namespace = $1 AND transition_id = $2 AND settled_at IS NULL
-            AND (recipient_fingerprint = ANY($3::text[]) OR recipient_fingerprint = ANY($4::text[]))
-            AND EXISTS (
-              SELECT 1 FROM ${table} activity
-               WHERE activity.namespace = $1 AND activity.transition_id = $2
-                 AND activity.lease_owner = $5 AND activity.lease_version = $6::bigint
-                 AND activity.lease_expires_at >= clock_timestamp()
-            )`,
+        `WITH leased AS MATERIALIZED (
+           SELECT transition_id FROM ${table}
+            WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+              AND lease_owner = $5 AND lease_version = $6::bigint
+              AND lease_expires_at >= clock_timestamp()
+              FOR UPDATE
+         )
+         UPDATE ${recipientTable} AS target SET settled_at = clock_timestamp(),
+           disposition = CASE WHEN target.recipient_fingerprint = ANY($3::text[]) THEN 'delivered' ELSE 'terminal' END
+          FROM leased
+          WHERE target.namespace = $1 AND target.transition_id = $2 AND target.settled_at IS NULL
+            AND (target.recipient_fingerprint = ANY($3::text[]) OR target.recipient_fingerprint = ANY($4::text[]))`,
         [namespace, claim.transitionId, delivered, terminal, claim.leaseOwner, claim.leaseVersion]
       )
     );
@@ -1094,15 +1106,16 @@ async function compactSettledRecipients(
 ): Promise<void> {
   await reportingActivityDatabaseOperation('Reporting notification recipient compaction failed', () =>
     db.query(
-      `DELETE FROM ${recipientTable} superseded
+      `WITH leased AS MATERIALIZED (
+         SELECT transition_id FROM ${table}
+          WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+            AND lease_owner = $3 AND lease_version = $4::bigint
+            AND lease_expires_at >= clock_timestamp()
+            FOR UPDATE
+       )
+       DELETE FROM ${recipientTable} superseded USING leased
         WHERE superseded.namespace = $1 AND superseded.transition_id = $2
           AND superseded.settled_at IS NOT NULL
-          AND EXISTS (
-            SELECT 1 FROM ${table} activity
-             WHERE activity.namespace = $1 AND activity.transition_id = $2
-               AND activity.lease_owner = $3 AND activity.lease_version = $4::bigint
-               AND activity.lease_expires_at >= clock_timestamp()
-          )
           AND EXISTS (
             SELECT 1 FROM ${recipientTable} survivor
              WHERE survivor.namespace = superseded.namespace
