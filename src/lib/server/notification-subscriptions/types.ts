@@ -200,6 +200,17 @@ export type NotificationDeliveryAuthorizer = (
   input: Readonly<NotificationDeliveryAuthorizationInput>
 ) => MaybePromise<{ authorized: true } | { authorized: false }>;
 
+/**
+ * One resolved delivery target. Together with the event's `emissionId` these
+ * three fields are exactly the inputs to the per-subscriber delivery identity,
+ * so pinning them pins the idempotency key the subscriber sees.
+ */
+export interface NotificationRecipientRef {
+  scope: NotificationSubscriptionScope;
+  subscriberId: string;
+  destinationGeneration: string;
+}
+
 export interface NotificationEvent {
   /** Application-stable identity for this delivery event; reuse on crash retry, rotate on re-emission. */
   emissionId: string;
@@ -213,6 +224,28 @@ export interface NotificationEvent {
   /** Required for account-anchored events. */
   accountId?: string;
   payload: Record<string, unknown>;
+  /**
+   * Durably freezes the recipient set before any external send.
+   *
+   * The runtime resolves its candidates, hands them to this callback, and then
+   * delivers to exactly the intersection of those candidates and what the
+   * callback returns. An emitter that persists the first resolved set and
+   * replays it verbatim therefore keeps every `delivery_id` — and so every
+   * subscriber-visible idempotency key — stable across an ambiguous retry: a
+   * subscription replaced or revoked after the first send is skipped rather
+   * than addressed under a new destination generation, so a replay can never
+   * add a second logical delivery of the same notification.
+   *
+   * Called at most once per `emit`, before the first attempt. It is a
+   * durability barrier owned by the emitting subsystem, not an adopter policy
+   * hook, so it is deliberately not bounded by `adopterCallbackTimeoutMs`: the
+   * runtime cannot safely abandon a write that may still commit. Implementations
+   * must enforce their own transaction-level deadline. Throwing aborts the
+   * emission before anything is sent.
+   */
+  freezeRecipients?: (
+    candidates: readonly NotificationRecipientRef[]
+  ) => MaybePromise<readonly NotificationRecipientRef[]>;
 }
 
 export interface NotificationSubscriptionView {

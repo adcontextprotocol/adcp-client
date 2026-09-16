@@ -56,6 +56,7 @@ import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
 import {
   createPostgresReportingNotificationActivityRuntime,
   PostgresReportingLedgerStore,
+  REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
   REPORTING_LEDGER_MIGRATION,
 } from '@adcp/sdk/reporting/ledger';
 
@@ -84,6 +85,11 @@ for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 // Before enabling the port, keep legacy subscribers configured and run
 // retryReportingStatusNotificationsV1() until listPendingTransitions() is empty.
 // The transactional store fails closed if legacy pending rows remain.
+
+// Last cutover step, only once no pre-SDK-14 writer is still serving: fence
+// finality-less transitions out of the log. A surviving legacy writer now fails
+// closed on append instead of silently adding another redundant finality event.
+await pool.query(REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION);
 
 const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
@@ -182,6 +188,20 @@ The host remains responsible for a database-level retained-row/byte quota and
 storage alerting per tenant or isolated deployment; the runtime's pending cap
 protects delivery backlog but is not a general PostgreSQL storage quota.
 
+Recipient sets are frozen before anything leaves the process. The recovery
+worker commits the resolved recipients onto the claimed activity row — fenced on
+its lease, first writer wins — and every later attempt replays that committed
+set through `NotificationEvent.freezeRecipients`, which restricts fanout to the
+intersection of what is resolvable now and what was committed. That keeps each
+subscriber's `delivery_id`, and therefore the `idempotency_key` it dedupes on,
+identical across an ambiguous retry. A subscription replaced or revoked *after*
+the first send is skipped rather than addressed under a new destination
+generation, so a crash between send and settlement can never become a second
+logical delivery under a second idempotency key. A replacement that lands
+*before* the first send is still honoured, because the set is resolved at that
+first attempt. Custom notification runtimes that re-enumerate subscriptions per
+attempt must implement the same barrier.
+
 Custom ledger stores implement
 `ReportingLedgerNotificationActivityPortV1<TTransaction>` over their existing
 authority transaction. Their `applyLifecycleProjection` equivalent must call
@@ -221,6 +241,36 @@ Either rule can conclude `official`, which makes `previousFinality` equal
 activity record forever. Resolving to `none` instead records at most one
 redundant finality-only transition per obligation at upgrade, which stays
 internal activity because the AdCP status webhook is health-only.
+
+That bound holds only while no pre-v14 writer is still appending. During a
+rolling deploy an old pod keeps writing finality-less transitions; each becomes
+the latest row, gets its baseline committed as `none`, and produces another
+redundant finality-only transition. Deploy ordering and wall clocks cannot rule
+that out, so make it enforceable in the database.
+`REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION` adds
+
+```sql
+CHECK (data ? 'finality') NOT VALID
+```
+
+to `adcp_reporting_transitions`. `NOT VALID` is the whole point: PostgreSQL
+enforces the constraint for every INSERT and UPDATE while leaving historical
+rows unvalidated, so existing finality-less rows keep working and new
+legacy-shaped writes are rejected. Two consequences to plan for:
+
+- **Run it last**, after legacy pending transitions are drained and no old pod
+  remains. A surviving legacy writer will fail its appends with
+  `rejected by the finality writer fence`. That is deliberate — a loud rejection
+  beats a quietly unbounded event stream.
+- **Any UPDATE must leave the row fence-clean.** The baseline resolver and
+  `markTransitionNotified` both write `finality` as part of their update, so a
+  historical row is repaired by the same statement that touches it.
+
+Custom stores carry the same obligation: after cutover, reject any transition
+write that does not record an observed finality, and enforce it in the storage
+engine rather than in application code — an application-level check does not
+bind a pod running last release's binary. Repair a historical row in the same
+statement that mutates it.
 
 The transaction argument must be one BEGIN/COMMIT-bound connection, never a
 pool or autocommit queryable; the per-tenant advisory transaction lock provides

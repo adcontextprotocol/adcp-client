@@ -279,6 +279,45 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_checkpoints_expiry
   ON adcp_reporting_checkpoints (expires_at);
 `.trim();
 
+/** Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}. */
+export const REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT = 'adcp_reporting_transitions_finality_recorded';
+
+/**
+ * Cutover migration that fences pre-SDK-14 writers out of the transition log.
+ *
+ * A pre-SDK-14 writer appends transitions with no `finality`. Each one becomes
+ * the latest row, gets its baseline committed as `none`, and can therefore
+ * produce another redundant finality-only transition — so "at most one per
+ * obligation at upgrade" only holds once no such writer remains. Wall clocks
+ * and deploy ordering cannot establish that; a database constraint can.
+ *
+ * The constraint is added `NOT VALID`, which enforces it for every INSERT and
+ * UPDATE while leaving historical rows untouched and unvalidated. Existing
+ * finality-less rows keep working — the baseline resolver and
+ * `markTransitionNotified` both write `finality` as part of their update, so the
+ * new row version satisfies the check.
+ *
+ * Run it as part of the cutover, **after** legacy writers are drained. A legacy
+ * writer that is still running will fail closed on append rather than silently
+ * multiply finality-only events, which is the intended trade: loud rejection
+ * beats a quietly broken invariant. Idempotent and re-runnable; it takes no lock
+ * once installed.
+ */
+export const REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION = `
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'adcp_reporting_transitions'::regclass
+       AND conname = '${REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT}'
+  ) THEN
+    ALTER TABLE adcp_reporting_transitions
+      ADD CONSTRAINT ${REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT}
+      CHECK (data ? 'finality') NOT VALID;
+  END IF;
+END $$;
+`.trim();
+
 const MAX_SNAPSHOT_ITEMS = 10_000;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
@@ -1227,6 +1266,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
 
   async appendTransition(transition: ReportingLedgerStatusTransitionV1): Promise<{ inserted: boolean }> {
     const lock = await this.accountLockForObligation(transition.reporting_obligation_id);
+    return assertFinalityWriterFence(() => this.appendTransitionWithinLock(transition, lock));
+  }
+
+  private async appendTransitionWithinLock(
+    transition: ReportingLedgerStatusTransitionV1,
+    lock: string
+  ): Promise<{ inserted: boolean }> {
     return this.transaction(
       async client => {
         if (this.notificationActivityPort) {
@@ -1287,6 +1333,23 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     transition?: ReportingLedgerStatusTransitionV1;
   }): Promise<{ applied: boolean; transitionInserted: boolean }> {
     const lock = await this.accountLockForObligation(input.reporting_obligation_id);
+    return assertFinalityWriterFence(() => this.applyLifecycleProjectionWithinLock(input, lock));
+  }
+
+  private async applyLifecycleProjectionWithinLock(
+    input: {
+      reporting_obligation_id: string;
+      expectedRevisionIds: string[];
+      expectedPreviousHealth: import('./types').ReportingHealthV1;
+      expectedPreviousFinality?: ReportingObservedFinalityV1;
+      expectedObligationState: ReportingLedgerObligationV1['state'];
+      expectedAttemptCount: number;
+      projectedIssues: ReportingLedgerIssueV1[];
+      ledgerAsOf: string;
+      transition?: ReportingLedgerStatusTransitionV1;
+    },
+    lock: string
+  ): Promise<{ applied: boolean; transitionInserted: boolean }> {
     return this.transaction(
       async client => {
         const obligations = await client.query<JsonRow<ReportingLedgerObligationV1>>(
@@ -1378,9 +1441,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     if (!lock) return;
     await this.transaction(
       async client => {
+        // Also commit the `none` baseline when the row predates SDK 14: the
+        // writer fence rejects any new row version without a recorded finality,
+        // and `none` is the same value the baseline resolver would commit.
         await client.query(
           `UPDATE adcp_reporting_transitions
           SET data = data || jsonb_build_object('notifiedAt', $2::text)
+              || CASE WHEN data ? 'finality' THEN '{}'::jsonb ELSE jsonb_build_object('finality', 'none') END
         WHERE transition_id = $1 AND NOT (data ? 'notifiedAt')`,
           [transitionId, notifiedAt]
         );
@@ -2268,6 +2335,37 @@ async function assertNoLegacyPendingTransitions(
       'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
     );
   }
+}
+
+/**
+ * Translates a writer-fence rejection into actionable guidance.
+ *
+ * The fence is the only thing that makes "at most one redundant finality-only
+ * transition per obligation" enforceable, so a caller that trips it needs to
+ * know it wrote a pre-SDK-14 shaped row, not just that a CHECK failed.
+ */
+async function assertFinalityWriterFence<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (isFinalityWriterFenceViolation(error)) {
+      throw new Error(
+        'Reporting transition rejected by the finality writer fence: every transition written after ' +
+          'REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION must record an observed finality. Drain pre-SDK-14 ' +
+          'writers before installing the fence.',
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+}
+
+function isFinalityWriterFenceViolation(error: unknown): boolean {
+  for (let current = error; current instanceof Error; current = current.cause) {
+    const candidate = current as Error & { code?: unknown; constraint?: unknown };
+    if (candidate.code === '23514' && candidate.constraint === REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT) return true;
+  }
+  return false;
 }
 
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {

@@ -324,6 +324,197 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(fetchCalls.length, before);
   });
 
+  test('replays the committed recipient set so a replacement cannot add a second delivery', async () => {
+    // Send succeeds, the worker crashes before settlement, and the buyer then
+    // replaces its destination. The retry must replay the recipient set that was
+    // committed before the first send, not re-enumerate and address the
+    // replacement generation — that would deliver the same notification twice
+    // under two different idempotency keys.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-freeze',
+      accountId: 'account-freeze',
+    };
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/frozen-g1');
+    const obligation = await putObligation('recipient-freeze', 'account-freeze');
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const delivered = () => fetchCalls.filter(value => value.body.notification_id === transition.transitionId);
+
+    const crashRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: 'reporting-activity-tests',
+      tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
+      notifications: {
+        async emit(event) {
+          await notifications.emit(event);
+          throw new Error('crash after send, before settlement');
+        },
+      },
+    });
+    const firstPass = await crashRuntime.recoverOnce({ ownerToken: 'recipient-freeze-worker-one' });
+    assert.equal(firstPass.retried, 1, 'the ambiguous claim is released for retry');
+    assert.equal(delivered().length, 1, 'the first generation was addressed once');
+    assert.deepEqual(
+      delivered().map(value => value.url),
+      ['https://buyer.example/frozen-g1']
+    );
+    const committed = await pool.query(
+      `SELECT delivery_intent, delivery_intent_at, state FROM adcp_reporting_notification_activity
+        WHERE namespace = $1 AND transition_id = $2`,
+      ['reporting-activity-tests', transition.transitionId]
+    );
+    assert.equal(committed.rows[0].state, 'pending');
+    assert.ok(committed.rows[0].delivery_intent_at, 'the recipient set is committed before the send');
+    assert.equal(committed.rows[0].delivery_intent.length, 1);
+    const firstGeneration = committed.rows[0].delivery_intent[0].destinationGeneration;
+    assert.equal(committed.rows[0].delivery_intent[0].subscriberId, 'account-freeze-subscriber');
+
+    // The buyer replaces its destination while the retry is still outstanding.
+    const current = await notifications.read(scope);
+    await notifications.replace(
+      scope,
+      [
+        {
+          subscriber_id: 'account-freeze-subscriber',
+          url: 'https://buyer.example/frozen-g2',
+          event_types: ['reporting.status_changed'],
+        },
+      ],
+      { expectedGeneration: current.generation }
+    );
+    const replaced = await notifications.read(scope);
+    assert.notEqual(replaced.generation, current.generation, 'the replacement is a new subscription generation');
+
+    await pool.query(
+      `UPDATE adcp_reporting_notification_activity SET next_attempt_at = clock_timestamp()
+        WHERE namespace = $1 AND transition_id = $2`,
+      ['reporting-activity-tests', transition.transitionId]
+    );
+    const recovered = await activity.recoverOnce({ ownerToken: 'recipient-freeze-worker-two' });
+    assert.equal(recovered.projected, 1, 'the claim settles exactly once');
+    assert.equal(recovered.matched, 0, 'the committed generation is gone, so nothing is addressed again');
+
+    assert.equal(delivered().length, 1, 'no duplicate logical delivery');
+    assert.equal(
+      delivered().some(value => value.url === 'https://buyer.example/frozen-g2'),
+      false,
+      'the replacement generation is never addressed for an already-sent notification'
+    );
+    assert.equal(
+      new Set(delivered().map(value => value.body.idempotency_key)).size,
+      1,
+      'no new idempotency key is minted for the same notification'
+    );
+
+    const settled = await pool.query(
+      `SELECT delivery_intent, delivery_intent_at, state FROM adcp_reporting_notification_activity
+        WHERE namespace = $1 AND transition_id = $2`,
+      ['reporting-activity-tests', transition.transitionId]
+    );
+    assert.equal(settled.rows[0].state, 'projected');
+    assert.equal(
+      settled.rows[0].delivery_intent[0].destinationGeneration,
+      firstGeneration,
+      'the committed recipient set is immutable across replay'
+    );
+    assert.deepEqual(
+      settled.rows[0].delivery_intent_at.toISOString(),
+      committed.rows[0].delivery_intent_at.toISOString(),
+      'the intent is committed once, by the first writer'
+    );
+
+    // Exactly-once activity survives the whole sequence.
+    const page = await activity.listActivity({ tenantId: 'tenant-a', accountId: 'account-freeze' });
+    assert.equal(page.activities.filter(value => value.transitionId === transition.transitionId).length, 1);
+    assert.equal(JSON.stringify(page.activities).includes('buyer.example'), false);
+    assert.equal(JSON.stringify(page.activities).includes('destinationGeneration'), false);
+    assert.deepEqual(await activity.recoverOnce({ ownerToken: 'recipient-freeze-worker-three' }), {
+      claimed: 0,
+      matched: 0,
+      projected: 0,
+      retried: 0,
+      leaseLost: 0,
+    });
+    assert.equal(delivered().length, 1);
+  });
+
+  test('without the freeze barrier the same replay delivers twice under two idempotency keys', async () => {
+    // The hazard the barrier removes, demonstrated against the same PostgreSQL
+    // runtime. The only difference from the test above is a notification runtime
+    // that drops `freezeRecipients` and therefore re-enumerates subscriptions on
+    // every attempt — exactly what a custom runtime does by default.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-unfrozen',
+      accountId: 'account-unfrozen',
+    };
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/unfrozen-g1');
+    const obligation = await putObligation('recipient-unfrozen', 'account-unfrozen');
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const delivered = () => fetchCalls.filter(value => value.body.notification_id === transition.transitionId);
+
+    const unfrozen = notify => ({
+      db: pool,
+      namespace: 'reporting-activity-tests',
+      tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      notifications: { emit: ({ freezeRecipients, ...event }) => notify(event) },
+    });
+    const crashing = ledger.createPostgresReportingNotificationActivityRuntime(
+      unfrozen(async event => {
+        await notifications.emit(event);
+        throw new Error('crash after send, before settlement');
+      })
+    );
+    assert.equal((await crashing.recoverOnce({ ownerToken: 'unfrozen-worker-one' })).retried, 1);
+    assert.equal(delivered().length, 1);
+
+    const current = await notifications.read(scope);
+    await notifications.replace(
+      scope,
+      [
+        {
+          subscriber_id: 'account-unfrozen-subscriber',
+          url: 'https://buyer.example/unfrozen-g2',
+          event_types: ['reporting.status_changed'],
+        },
+      ],
+      { expectedGeneration: current.generation }
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_notification_activity SET next_attempt_at = clock_timestamp()
+        WHERE namespace = $1 AND transition_id = $2`,
+      ['reporting-activity-tests', transition.transitionId]
+    );
+    const replaying = ledger.createPostgresReportingNotificationActivityRuntime(
+      unfrozen(event => notifications.emit(event))
+    );
+    assert.equal((await replaying.recoverOnce({ ownerToken: 'unfrozen-worker-two' })).projected, 1);
+
+    assert.deepEqual(
+      delivered().map(value => value.url),
+      ['https://buyer.example/unfrozen-g1', 'https://buyer.example/unfrozen-g2'],
+      're-enumeration addresses the replacement generation for an already-sent notification'
+    );
+    assert.equal(
+      new Set(delivered().map(value => value.body.idempotency_key)).size,
+      2,
+      'the second delivery carries a new idempotency key, so the buyer cannot dedupe it'
+    );
+  });
+
   test('refuses legacy subscribers beside the transactional port', async () => {
     const obligation = await putObligation('subscriber-conflict', 'account-a');
     await assert.rejects(

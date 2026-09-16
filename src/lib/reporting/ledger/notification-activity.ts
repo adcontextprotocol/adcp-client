@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { PersistentNotificationRuntime } from '../../server/notification-subscriptions';
+import type { NotificationRecipientRef, PersistentNotificationRuntime } from '../../server/notification-subscriptions';
 import type { ReportingStatusChangedWebhook } from '../../types/core.generated';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import type {
@@ -134,6 +134,8 @@ CREATE TABLE IF NOT EXISTS ${table} (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   projected_at           TIMESTAMPTZ,
   retain_until           TIMESTAMPTZ,
+  delivery_intent        JSONB,
+  delivery_intent_at     TIMESTAMPTZ,
   PRIMARY KEY (namespace, transition_id),
   CONSTRAINT ${raw}_valid_state CHECK (state IN ('pending', 'projected')),
   CONSTRAINT ${raw}_valid_fingerprint CHECK (intent_fingerprint ~ '^[a-f0-9]{64}$'),
@@ -141,8 +143,15 @@ CREATE TABLE IF NOT EXISTS ${table} (
   CONSTRAINT ${raw}_valid_projection CHECK (
     (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
     (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL)
+  ),
+  CONSTRAINT ${raw}_valid_delivery_intent CHECK (
+    (delivery_intent IS NULL AND delivery_intent_at IS NULL) OR
+    (jsonb_typeof(delivery_intent) = 'array' AND delivery_intent_at IS NOT NULL)
   )
 );
+
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent JSONB;
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_${raw}_pending
   ON ${table}(namespace, next_attempt_at, lease_expires_at, activity_sequence)
@@ -304,7 +313,8 @@ export function createPostgresReportingNotificationActivityRuntime(
         await options.db.query(
           `SELECT namespace, transition_id, tenant_scope, account_id, obligation_id,
                   activity, intent_fingerprint, state, notification_required, lease_owner, lease_version,
-                  lease_expires_at, projected_at, retain_until FROM ${table} LIMIT 0`
+                  lease_expires_at, projected_at, retain_until, delivery_intent, delivery_intent_at
+             FROM ${table} LIMIT 0`
         );
       } catch (cause) {
         throw new Error(
@@ -368,6 +378,9 @@ export function createPostgresReportingNotificationActivityRuntime(
             tenantId: claim.tenantId,
             accountId: claim.accountId,
             payload: notificationPayload(claim.activity),
+            // Commit the recipient set under this lease before anything leaves
+            // the process, and replay the committed set verbatim afterwards.
+            freezeRecipients: candidates => freezeClaimRecipients(options.db, table, namespace, claim, candidates),
           });
           metrics.matched += result.matched;
           if (result.deliveries.some(delivery => delivery.failure !== undefined)) {
@@ -576,6 +589,67 @@ async function claimPending(
     leaseVersion: row.lease_version,
     attemptCount: row.attempt_count,
   }));
+}
+
+const MAX_DELIVERY_INTENT_BYTES = 256 * 1024;
+
+/**
+ * Commits the recipient set for a claim before its first external send, and
+ * returns the committed set on every later attempt.
+ *
+ * `COALESCE` makes the first writer authoritative: the set resolved for the
+ * first attempt is the set every replay uses. That is what keeps each
+ * subscriber's `delivery_id` — and so the idempotency key it dedupes on —
+ * identical across an ambiguous retry. If the buyer replaces or revokes the
+ * subscription after that first send, the replacement simply is not in the
+ * committed set, so recovery skips it instead of addressing the same
+ * notification again under a new destination generation.
+ *
+ * The write is fenced on the lease, so a worker whose lease was stolen can
+ * neither commit an intent nor send against one.
+ */
+async function freezeClaimRecipients(
+  db: ReportingLedgerTransactionV1,
+  table: string,
+  namespace: string,
+  claim: ClaimedActivity,
+  candidates: readonly NotificationRecipientRef[]
+): Promise<readonly NotificationRecipientRef[]> {
+  const proposed = canonicalRecipients(candidates);
+  const encoded = JSON.stringify(proposed);
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_DELIVERY_INTENT_BYTES) {
+    throw new RangeError('Reporting notification recipient intent exceeds 256 KiB');
+  }
+  const result = await reportingActivityDatabaseOperation(
+    'Reporting notification recipient intent could not be committed',
+    () =>
+      db.query<{ delivery_intent: NotificationRecipientRef[] }>(
+        `UPDATE ${table} SET
+         delivery_intent = COALESCE(delivery_intent, $5::jsonb),
+         delivery_intent_at = COALESCE(delivery_intent_at, clock_timestamp())
+       WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+         AND lease_owner = $3 AND lease_version = $4::bigint
+         AND lease_expires_at >= clock_timestamp()
+       RETURNING delivery_intent`,
+        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion, encoded]
+      )
+  );
+  const committed = result.rows[0]?.delivery_intent;
+  if (!committed) {
+    throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
+  }
+  return committed;
+}
+
+/** Deterministic ordering so a committed intent is byte-stable across replays. */
+function canonicalRecipients(candidates: readonly NotificationRecipientRef[]): NotificationRecipientRef[] {
+  return [...candidates]
+    .map(candidate => ({
+      scope: candidate.scope,
+      subscriberId: candidate.subscriberId,
+      destinationGeneration: candidate.destinationGeneration,
+    }))
+    .sort((left, right) => (canonicalJsonSha256(left) < canonicalJsonSha256(right) ? -1 : 1));
 }
 
 async function renewClaim(

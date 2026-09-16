@@ -12,6 +12,7 @@ import type {
   NotificationAuthenticationMode,
   NotificationEvent,
   NotificationFanoutDelivery,
+  NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
   NotificationSubscriptionScope,
@@ -366,7 +367,7 @@ export function createPersistentNotificationRuntime(
         throw new Error('Persistent notification fanout exceeded maxFanoutCandidates; no deliveries were attempted');
       }
 
-      const targets = candidateSets.flatMap(set =>
+      const resolved = candidateSets.flatMap(set =>
         set.subscriptions
           .filter(
             subscription =>
@@ -378,9 +379,14 @@ export function createPersistentNotificationRuntime(
           )
           .map(subscription => ({ set, subscription }))
       );
-      if (targets.length > maxFanoutCandidates) {
+      if (resolved.length > maxFanoutCandidates) {
         throw new Error('Persistent notification fanout exceeded maxFanoutCandidates; no deliveries were attempted');
       }
+      // Freeze the recipient set before the first send. Delivering only the
+      // intersection of what is resolvable now and what the emitter durably
+      // committed keeps every delivery_id stable across an ambiguous retry, so
+      // a replacement generation can never be added as a second delivery.
+      const targets = event.freezeRecipients ? await pinResolvedRecipients(resolved, event.freezeRecipients) : resolved;
       const deliveries = await mapConcurrent(targets, fanoutConcurrency, async ({ set, subscription }) => {
         const deliveryId = deliveryIdentity(event.emissionId, set.scope, subscription);
         const payload = notificationPayload(event, subscription.subscriberId);
@@ -737,6 +743,57 @@ function assertPayloadField(payload: Record<string, unknown>, field: string, exp
       `payload.${field}`
     );
   }
+}
+
+async function pinResolvedRecipients<
+  Target extends {
+    set: { scope: NotificationSubscriptionScope };
+    subscription: { subscriberId: string; destinationGeneration: string };
+  },
+>(
+  resolved: readonly Target[],
+  freezeRecipients: NonNullable<NotificationEvent['freezeRecipients']>
+): Promise<Target[]> {
+  const frozen = await freezeRecipients(
+    resolved.map(target => ({
+      scope: structuredClone(target.set.scope),
+      subscriberId: target.subscription.subscriberId,
+      destinationGeneration: target.subscription.destinationGeneration,
+    }))
+  );
+  if (!Array.isArray(frozen)) {
+    throw new TypeError('freezeRecipients must return the durably committed recipient set');
+  }
+  const committed = new Set(
+    frozen.map(recipient => {
+      if (
+        !recipient ||
+        typeof recipient.subscriberId !== 'string' ||
+        typeof recipient.destinationGeneration !== 'string' ||
+        !recipient.scope
+      ) {
+        throw new TypeError('freezeRecipients returned a malformed recipient reference');
+      }
+      return recipientKey(recipient);
+    })
+  );
+  return resolved.filter(target =>
+    committed.has(
+      recipientKey({
+        scope: target.set.scope,
+        subscriberId: target.subscription.subscriberId,
+        destinationGeneration: target.subscription.destinationGeneration,
+      })
+    )
+  );
+}
+
+function recipientKey(recipient: Readonly<NotificationRecipientRef>): string {
+  return canonicalJsonSha256({
+    scope: recipient.scope,
+    subscriberId: recipient.subscriberId,
+    destinationGeneration: recipient.destinationGeneration,
+  });
 }
 
 function deliveryIdentity(

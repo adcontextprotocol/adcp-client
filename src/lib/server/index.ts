@@ -571,6 +571,7 @@ export type {
   NotificationFanoutDelivery,
   NotificationFanoutResult,
   NotificationProofAdapter,
+  NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
   NotificationSubscriptionMatch,
