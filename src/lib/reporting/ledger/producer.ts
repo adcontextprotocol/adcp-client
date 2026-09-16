@@ -1099,6 +1099,8 @@ function boundedDiagnostic(value: unknown): string {
 
 /** Periods the planner will generate before a configuration is revisited. */
 const OFFSET_HORIZON_MILLISECONDS = 400 * 86_400_000;
+/** Bounds the probe; a century of 10-day samples is a few milliseconds. */
+const MAX_OFFSET_SCAN_MILLISECONDS = 100 * 365 * 86_400_000;
 
 /** Unparseable is simply "does not describe": a calendar duration such as P1M
  * has no fixed millisecond width, so it can never match these boundaries. */
@@ -1180,8 +1182,17 @@ function assertScheduleIdentityMatchesBoundaries(
   // zone holds one offset: a P1D America/New_York generation anchored at
   // 05:00Z keeps computing 05:00Z after the spring transition, where civil
   // time says 04:00Z.
-  const horizonMs = Date.now() + OFFSET_HORIZON_MILLISECONDS;
-  if (reportingUtcOffsetChangesV1(sourceTimezone, anchorMs, Math.max(anchorMs, horizonMs))) {
+  // Span both today and the anchor, whichever comes first, through the horizon
+  // beyond the later of them. Starting at the anchor collapsed the scan to a
+  // zero-width window for any anchor past `now + horizon`, so a future-dated
+  // DST generation was accepted without ever being probed.
+  const now = Date.now();
+  const scanStartMs = Math.min(anchorMs, now);
+  const scanEndMs = Math.max(anchorMs, now) + OFFSET_HORIZON_MILLISECONDS;
+  if (scanEndMs - scanStartMs > MAX_OFFSET_SCAN_MILLISECONDS) {
+    throw new Error('Reporting configuration anchor is too far from the operational horizon to verify its timezone');
+  }
+  if (reportingUtcOffsetChangesV1(sourceTimezone, scanStartMs, scanEndMs)) {
     throw new Error('Reporting source timezone changes its UTC offset; fixed-length periods cannot express its days');
   }
 }

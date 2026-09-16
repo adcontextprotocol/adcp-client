@@ -2293,6 +2293,113 @@ describe('ReliableReportingService', () => {
     assert.equal(consistent.schedule.deliverySlaDuration, 'PT6H');
   });
 
+  test('does not destroy retained replay when a slice fails after reclaiming capacity', async () => {
+    // Reclamation used to commit during projection/encoding, so a slice that
+    // was later refused — invalid temporal evidence here — had already deleted
+    // a valid replay to make room for work that never staged.
+    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    let invalidTemporal = false;
+    const retained = createInlineReportingSourceExecutor(
+      request =>
+        invalidTemporal
+          ? {
+              reporting_period: { start: request.start_date, end: request.end_date },
+              currency: 'USD',
+              reporting_rows: rows,
+              // Before the period even starts: refused as invalid evidence,
+              // well after capacity has been arranged for.
+              data_through: '2020-01-01T00:00:00.000Z',
+              observed_at: '2020-01-01T00:00:00.000Z',
+            }
+          : rows,
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `pressure-slice-${String(index).padStart(4, '0')}`;
+
+    // Fill the scope until it is under byte pressure.
+    const staged = [];
+    for (let index = 0; index < 47; index += 1) {
+      const request = redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) });
+      const sealed = await retained.execute(request, ctx());
+      assert.equal(sealed.ok, true, `slice ${index}`);
+      const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+      staged.push({
+        objectRef: object.objectRef,
+        objectGeneration: object.objectGeneration,
+        sourceScope: request.sourceScope,
+        account: request.account,
+        delivery_config_id: request.delivery_config_id,
+        delivery_config_version: request.delivery_config_version,
+        report_definition_id: request.report_definition_id,
+        reporting_obligation_id: request.reporting_obligation_id,
+        maxBytes: 8 * 1024 * 1024,
+        signal: new AbortController().signal,
+      });
+    }
+    const readable = async () => {
+      let count = 0;
+      for (const input of staged) {
+        try {
+          await retained.read({ ...input, signal: new AbortController().signal });
+          count += 1;
+        } catch {
+          /* reclaimed */
+        }
+      }
+      return count;
+    };
+    const before = await readable();
+    assert.ok(before > 0, 'the scope must hold retained replays to risk');
+
+    // A slice that reaches capacity handling and is then refused.
+    invalidTemporal = true;
+    const refused = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(900) }), ctx());
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, 'SOURCE_PERMANENT');
+
+    assert.equal(await readable(), before, 'a failed admission must not destroy retained replay');
+  });
+
+  test('refuses a future-dated anchor in a zone whose offset moves', async () => {
+    // An anchor past now + horizon collapsed the scan to a zero-width window,
+    // so a DST zone was accepted without ever being probed.
+    // account_resolved leaves the zone unpinned, so nothing but the offset scan
+    // can refuse this configuration.
+    const { service } = zonedFixture('America/New_York', { accountResolved: true });
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+    const origin = reportingScheduleOriginV1('source_timezone', 'America/New_York');
+    const target = Date.parse('2030-01-15T00:00:00.000Z');
+    const anchorMs = origin + Math.ceil((target - origin) / 86_400_000) * 86_400_000;
+
+    await assert.rejects(
+      service.producer.installConfiguration({
+        ...ledgerInput,
+        schedule: {
+          ...ledgerInput.schedule,
+          alignment: 'source_timezone',
+          periodTimezone: 'America/New_York',
+          anchor: new Date(anchorMs).toISOString(),
+        },
+        account: { account_id: 'account-a' },
+        sourceScope: { network_id: 'n' },
+        sourceTimezone: 'America/New_York',
+        sourceSettings: { ...sourceSettings, currency: 'USD' },
+        contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+        constituents: [authorizedConstituent('account-a')],
+        mediaBuyIds: ['media-buy-account-a'],
+      }),
+      /changes its UTC offset/,
+      'a future anchor must still be probed for variable offset'
+    );
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];

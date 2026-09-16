@@ -315,14 +315,7 @@ export function createInlineReportingSourceExecutor(
             scopeKey,
             // Only an explicit retention policy may trade replay for capacity;
             // the default must never evict silently.
-            evictSettled
-              ? () => {
-                  const victim = planReclaim(executions, [], scopeKey);
-                  if (victim === undefined) return false;
-                  commitReclaim(executions, storage, victim);
-                  return true;
-                }
-              : undefined
+            evictSettled ? createByteReclaimer(executions, storage, scopeKey) : undefined
           )
         )
         .then(result => ({ requestFingerprint, result }))
@@ -389,7 +382,7 @@ async function executeAndSeal(
   },
   executionNamespace: string,
   scopeKey: string,
-  reclaimForBytes?: () => boolean
+  byteReclaimer?: { plan(): number; commit(): void }
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
   try {
@@ -554,12 +547,25 @@ async function executeAndSeal(
   // terminalize every retry with STAGING_FAILED. Under byte pressure, free
   // settled executions the same way — the in-flight execution is pending and
   // is never a candidate.
+  // Reclamation is planned, not committed, while this slice is still capable of
+  // failing. Committing during projection or encoding destroyed a valid replay
+  // whenever a later check — temporal evidence, the absolute deadline — refused
+  // the slice, so a failed admission cost retained work. The planned bytes are
+  // credited to capacity so the slice can proceed as if they were already
+  // reclaimed, and the deletions land only once staging is certain.
+  let plannedCredit = 0;
   const capacity = (): number =>
     Math.min(
       INLINE_MAX_OBJECT_BYTES_V1,
-      INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
-      INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
+      INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes + plannedCredit,
+      INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedCredit
     );
+  const planMoreCapacity = (): boolean => {
+    const freed = byteReclaimer?.plan() ?? 0;
+    if (freed <= 0) return false;
+    plannedCredit += freed;
+    return true;
+  };
   let remainingCapacity = capacity();
   let projected: readonly Record<string, unknown>[] | undefined;
   while (projected === undefined) {
@@ -576,7 +582,7 @@ async function executeAndSeal(
         return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
       }
       // Capacity, not an oversized object: free settled evidence and retry.
-      if (!reclaimForBytes?.()) {
+      if (!planMoreCapacity()) {
         return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
       }
       remainingCapacity = capacity();
@@ -632,7 +638,7 @@ async function executeAndSeal(
     try {
       encoded = encodeRows(rows, format.mediaType, remainingCapacity);
     } catch {
-      if (!reclaimForBytes?.()) {
+      if (!planMoreCapacity()) {
         return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
       }
       remainingCapacity = capacity();
@@ -711,6 +717,10 @@ async function executeAndSeal(
   if (Date.parse(deadlineAt) <= Date.now()) {
     return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
   }
+  // Nothing below can refuse the slice, so the planned reclamations commit here
+  // — after every failure-capable check, immediately before the evidence they
+  // made room for is installed.
+  byteReclaimer?.commit();
   storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
   storage.totalBytes += bytes.byteLength;
   storage.scopeBytes.set(scopeKey, (storage.scopeBytes.get(scopeKey) ?? 0) + bytes.byteLength);
@@ -986,6 +996,38 @@ function planReclaim(
  * the original generation unable to read it — while the scope byte budget
  * never recovered.
  */
+/**
+ * A per-execution planner: it selects victims and reports the bytes they would
+ * free, and only `commit()` actually deletes anything.
+ */
+function createByteReclaimer(
+  executions: Map<string, ExecutionEntry>,
+  storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> },
+  scopeKey: string
+): { plan(): number; commit(): void } {
+  const planned: string[] = [];
+  return {
+    plan(): number {
+      for (;;) {
+        const victim = planReclaim(executions, planned, scopeKey);
+        if (victim === undefined) return 0;
+        planned.push(victim);
+        const freed = storage.objects.get(stagedObjectRef(victim))?.bytes.byteLength ?? 0;
+        if (freed > 0) return freed;
+      }
+    },
+    commit(): void {
+      for (const victim of planned) commitReclaim(executions, storage, victim);
+      planned.length = 0;
+    },
+  };
+}
+
+/** Staged evidence is keyed deterministically from the execution key. */
+function stagedObjectRef(executionKey: string): string {
+  return `inline-${executionKey.slice(0, 32)}`;
+}
+
 function commitReclaim(
   executions: Map<string, ExecutionEntry>,
   storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> },
@@ -994,7 +1036,7 @@ function commitReclaim(
   const entry = executions.get(key);
   if (!entry) return;
   executions.delete(key);
-  const objectRef = `inline-${key.slice(0, 32)}`;
+  const objectRef = stagedObjectRef(key);
   const stored = storage.objects.get(objectRef);
   if (!stored) return;
   storage.objects.delete(objectRef);
