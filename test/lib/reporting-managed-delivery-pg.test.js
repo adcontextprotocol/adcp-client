@@ -3593,6 +3593,313 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(row.rows[0].failure_code, 'DELIVERY_ATTEMPTS_EXHAUSTED');
   });
 
+  test('revalidates prune victims under the lock against a replay that commits after selection', async () => {
+    const raced = await seedSkewLedger('prunerace', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(raced),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: raced.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      now: () => new Date(Date.parse(raced.now) + 1000),
+      maxIterations: 2,
+      account_id: raced.accountId,
+    });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [raced.obligation.reporting_obligation_id]
+    );
+    raced.materialization = settled.rows[0].data;
+
+    const context = { account: { id: raced.accountId }, agent: { agent_url: 'https://prunerace-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const recordedReceipt = await sync(
+      {
+        idempotency_key: 'receipt-prunerace-batch-0001',
+        receipts: [receipt(raced, { reporting_receipt_id: 'receipt-prunerace-0001' })],
+      },
+      context
+    );
+    assert.equal(recordedReceipt.results[0].result, 'recorded');
+
+    // Age everything past retention and let the resource horizon pass, so an
+    // unraced prune would take all three rows.
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [raced.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET recorded_at = clock_timestamp() - INTERVAL '200 days',
+              data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [raced.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [raced.accountId]
+    );
+
+    // Selection deliberately runs unlocked. Commit a real replay on an
+    // independent connection in exactly that gap: the candidates are already
+    // chosen, and the account lock has not been taken yet.
+    const { Pool } = require('pg');
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+    const sideSync = ledger.createSyncReportingReceiptsHandler(
+      new ledger.PostgresReportingManagedDeliveryStore(sidePool),
+      value => value.agent.agent_url
+    );
+    let interleaved = 0;
+    const interleavingPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = async (sql, values) => {
+          const result = await query(sql, values);
+          if (interleaved === 0 && typeof sql === 'string' && sql.includes('ORDER BY materialization.recorded_at')) {
+            interleaved += 1;
+            const replayed = await sideSync(
+              {
+                idempotency_key: 'receipt-prunerace-batch-0002',
+                receipts: [receipt(raced, { reporting_receipt_id: 'receipt-prunerace-0001' })],
+              },
+              context
+            );
+            assert.equal(replayed.results[0].result, 'unchanged', 'the interleaved replay really did commit');
+          }
+          return result;
+        };
+        const release = client.release.bind(client);
+        client.release = (...args) => {
+          client.query = query;
+          client.release = release;
+          return release(...args);
+        };
+        return client;
+      },
+      query: (sql, values) => pool.query(sql, values),
+      end: async () => {},
+    };
+
+    try {
+      const retaining = new ledger.PostgresReportingManagedDeliveryStore(interleavingPool, {
+        evidenceRetentionDays: 90,
+      });
+      const pruned = await retaining.pruneExpiredEvidence({ account_id: raced.accountId });
+      assert.equal(interleaved, 1, 'the interleaving actually fired — otherwise this test proves nothing');
+      // The interleaved sync ages out its own consumer's replay cache before
+      // it measures it, so the expired batch row was already gone by the time
+      // the prune reached its delete.
+      assert.equal(pruned.batches, 0);
+      assert.equal(pruned.receipts, 0, 'a receipt a replay committed against after selection is not deleted');
+      assert.equal(pruned.materializations, 0, 'nor the materialization that the surviving receipt still names');
+      const survivors = await pool.query(
+        `SELECT
+           (SELECT COUNT(*) FROM adcp_reporting_receipts WHERE account_id = $1)::int AS receipts,
+           (SELECT COUNT(*) FROM adcp_reporting_materializations WHERE account_id = $1)::int AS materializations`,
+        [raced.accountId]
+      );
+      assert.equal(survivors.rows[0].receipts, 1);
+      assert.equal(survivors.rows[0].materializations, 1);
+      const batches = await pool.query(
+        `SELECT COUNT(*)::int AS live FROM adcp_reporting_receipt_batches
+          WHERE account_id = $1 AND recorded_at >= clock_timestamp() - INTERVAL '30 days'`,
+        [raced.accountId]
+      );
+      assert.deepEqual(
+        await pool
+          .query(`SELECT COUNT(*)::int AS total FROM adcp_reporting_receipt_batches WHERE account_id = $1`, [
+            raced.accountId,
+          ])
+          .then(value => value.rows[0].total),
+        batches.rows[0].live,
+        'no expired replay row survived the pass'
+      );
+      // The promise the replay made is still keepable.
+      const again = await sync(
+        {
+          idempotency_key: 'receipt-prunerace-batch-0002',
+          receipts: [receipt(raced, { reporting_receipt_id: 'receipt-prunerace-0001' })],
+        },
+        context
+      );
+      assert.equal(again.results[0].result, 'unchanged', 'the replay still reproduces its receipt');
+    } finally {
+      await sidePool.end();
+    }
+  });
+
+  test('refuses to overwrite a settlement that commits while the exhaustion sweep waits', async () => {
+    const contended = await seedSkewLedger('sweeprace');
+    assert.equal(await managed.planMaterializations({ account_id: contended.accountId }), 1);
+    for (let round = 0; round < 8; round += 1) {
+      const claimed = await managed.claimMaterialization({
+        owner: `sweeprace-worker-${round}`,
+        now: new Date().toISOString(),
+        lease_milliseconds: 1,
+        account_id: contended.accountId,
+      });
+      if (!claimed) break;
+      await new Promise(resolve => setTimeout(resolve, 3));
+    }
+    const exhausted = await pool.query(
+      `SELECT materialization_id, status, lease_generation FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [contended.accountId]
+    );
+    assert.equal(exhausted.rows[0].status, 'pending');
+    assert.equal(Number(exhausted.rows[0].lease_generation), 5, 'the row is sweep-eligible');
+
+    // A settle already holding the row lock, uncommitted. The sweep's
+    // subquery therefore still reads `pending` and its UPDATE parks on the
+    // row; committing the settle while it waits is the race.
+    const { Pool } = require('pg');
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+    const holder = await sidePool.connect();
+    try {
+      await holder.query('BEGIN');
+      const settled = await holder.query(
+        `UPDATE adcp_reporting_materializations
+            SET status = 'delivered', changed_at = clock_timestamp(),
+                lease_owner = NULL, lease_expires_at = NULL,
+                data = data || jsonb_build_object('status', 'delivered')
+          WHERE materialization_id = $1`,
+        [exhausted.rows[0].materialization_id]
+      );
+      assert.equal(settled.rowCount, 1);
+      const sweeping = managed.failExhaustedMaterializations({ account_id: contended.accountId });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      await holder.query('COMMIT');
+      assert.equal(await sweeping, 0, 'the sweep re-checks eligibility against the row it finally locked');
+    } finally {
+      holder.release();
+      await sidePool.end();
+    }
+    const outcome = await pool.query(
+      `SELECT status, data ->> 'failure_code' AS failure_code FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [contended.accountId]
+    );
+    assert.equal(outcome.rows[0].status, 'delivered', 'the successful settlement survives');
+    assert.equal(outcome.rows[0].failure_code, null);
+  });
+
+  test('admits an exact resubmission at the receipt cap because it adds no row', async () => {
+    // Its own schema: this fills a consumer to MAX_RECEIPTS_PER_CONSUMER, and
+    // a hundred thousand rows in the shared schema would be paid for by every
+    // other test's scans.
+    const { Pool } = require('pg');
+    const capSchema = `${schema}_capacity`;
+    await bootstrap.query(`CREATE SCHEMA "${capSchema}"`);
+    const capPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${capSchema}"` });
+    try {
+      await capPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await capPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const capCore = new ledger.PostgresReportingLedgerStore(capPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const capManaged = new ledger.PostgresReportingManagedDeliveryStore(capPool);
+      const full = await seedSkewLedgerInto(capCore, capManaged, 'capacity', 'consumer_receipt');
+      const adapter = {
+        verificationProfiles: ['canonical_digest'],
+        revocationFencesDeliveryGenerations: true,
+        deliver: async () => materializationOutcome(full),
+        read: async () => Buffer.from(''),
+        revoke: async () => {},
+      };
+      await capManaged.planMaterializations({ account_id: full.accountId });
+      await ledger.runManagedDeliveryWorker(capManaged, adapter, {
+        maxIterations: 2,
+        account_id: full.accountId,
+      });
+      const settled = await capPool.query(
+        `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+        [full.obligation.reporting_obligation_id]
+      );
+      full.materialization = settled.rows[0].data;
+
+      const consumerId = 'https://capacity-buyer.example';
+      const context = { account: { id: full.accountId }, agent: { agent_url: consumerId } };
+      const sync = ledger.createSyncReportingReceiptsHandler(capManaged, value => value.agent.agent_url);
+      // A rejection rather than an acceptance, so the subject stays open and
+      // a genuinely new row is still admissible at the boundary below.
+      const rejected = receipt(full, {
+        reporting_receipt_id: 'receipt-capacity-0001',
+        status: 'rejected',
+        rejection_codes: ['ROW_COUNT_MISMATCH'],
+      });
+      const first = await sync({ idempotency_key: 'receipt-capacity-batch-0001', receipts: [rejected] }, context);
+      assert.equal(first.results[0].result, 'recorded');
+
+      // Fill the consumer to exactly MAX_RECEIPTS_PER_CONSUMER.
+      await capPool.query(
+        `INSERT INTO adcp_reporting_receipts
+          (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+           is_current, semantic_fingerprint, data, received_at, recorded_at)
+         SELECT $1, $2, 'receipt-capacity-filler-' || i, 'revision', 'subject-capacity-filler-' || i,
+                false, 'filler', '{}'::jsonb, clock_timestamp(), clock_timestamp()
+           FROM generate_series(1, 99999) AS i`,
+        [full.accountId, consumerId]
+      );
+      const atCap = await capPool.query(
+        `SELECT COUNT(*)::int AS receipts FROM adcp_reporting_receipts
+          WHERE account_id = $1 AND consumer_id = $2`,
+        [full.accountId, consumerId]
+      );
+      assert.equal(atCap.rows[0].receipts, 100_000, 'the consumer is exactly at its cap');
+
+      // The same receipt again under a new idempotency key: not a batch
+      // replay, so it walks the full record path — and stores nothing.
+      const resubmitted = await sync({ idempotency_key: 'receipt-capacity-batch-0002', receipts: [rejected] }, context);
+      assert.equal(
+        resubmitted.results[0].result,
+        'unchanged',
+        'an identical receipt that adds no row is not refused for capacity'
+      );
+      assert.deepEqual(resubmitted.results[0].receipt, first.results[0].receipt);
+
+      // Capacity still binds on anything that would add a row, and refusing
+      // it leaves the current leaf alone.
+      const superseding = receipt(full, {
+        reporting_receipt_id: 'receipt-capacity-0002',
+        status: 'rejected',
+        rejection_codes: ['ROW_COUNT_MISMATCH'],
+        supersedes_reporting_receipt_id: 'receipt-capacity-0001',
+      });
+      const refused = await sync({ idempotency_key: 'receipt-capacity-batch-0003', receipts: [superseding] }, context);
+      assert.equal(refused.results[0].result, 'failed', 'a new row is still refused at the cap');
+      const leaf = await capPool.query(
+        `SELECT reporting_receipt_id FROM adcp_reporting_receipts
+          WHERE account_id = $1 AND consumer_id = $2 AND is_current`,
+        [full.accountId, consumerId]
+      );
+      assert.deepEqual(
+        leaf.rows.map(value => value.reporting_receipt_id),
+        ['receipt-capacity-0001'],
+        'a capacity refusal does not demote the current leaf'
+      );
+
+      // One row below the cap, the same submission is admitted — so the
+      // refusal above was capacity and not the content.
+      await capPool.query(
+        `DELETE FROM adcp_reporting_receipts
+          WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = 'receipt-capacity-filler-1'`,
+        [full.accountId, consumerId]
+      );
+      const admitted = await sync({ idempotency_key: 'receipt-capacity-batch-0004', receipts: [superseding] }, context);
+      assert.equal(admitted.results[0].result, 'recorded');
+    } finally {
+      await capPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${capSchema}" CASCADE`);
+    }
+  });
+
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {
     const promised = await seedSkewLedger('retentiondefault');
     await managed.planMaterializations({ account_id: promised.accountId });

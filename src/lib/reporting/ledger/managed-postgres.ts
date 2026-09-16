@@ -600,11 +600,43 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       const receipts = await client.query(
         `WITH doomed_keys AS (
            SELECT * FROM unnest($2::text[], $3::text[]) AS pair(consumer_id, reporting_receipt_id)
+         ), live_referenced AS (
+           -- Selection ran unlocked, so its answer is a proposal, not a
+           -- verdict: a replay could commit against a candidate between the
+           -- select and this delete, and the delete then removed the receipt
+           -- that replay had just promised to reproduce. Re-expanding the
+           -- live replay rows under the lock is one pass, and it is narrowed
+           -- to the candidates consumers rather than the whole account, so
+           -- the lock still holds no per-candidate join filter.
+           SELECT DISTINCT batch.consumer_id,
+                  COALESCE(
+                    elem ->> 'id',
+                    elem ->> 'reporting_receipt_id',
+                    elem -> 'receipt' ->> 'reporting_receipt_id',
+                    elem -> 'adjustment_receipt' ->> 'reporting_receipt_id'
+                  ) AS reporting_receipt_id
+             FROM adcp_reporting_receipt_batches batch,
+                  LATERAL jsonb_array_elements(batch.results) elem
+            WHERE batch.account_id = $1
+              AND batch.consumer_id = ANY($2::text[])
+              AND batch.recorded_at >= clock_timestamp() - ($4::bigint * INTERVAL '1 millisecond')
          ), doomed AS (
            SELECT receipt.* FROM adcp_reporting_receipts receipt
              JOIN doomed_keys ON doomed_keys.consumer_id = receipt.consumer_id
               AND doomed_keys.reporting_receipt_id = receipt.reporting_receipt_id
             WHERE receipt.account_id = $1
+              AND receipt.recorded_at < $5::timestamptz
+              AND NOT EXISTS (
+                SELECT 1 FROM live_referenced
+                 WHERE live_referenced.consumer_id = receipt.consumer_id
+                   AND live_referenced.reporting_receipt_id = receipt.reporting_receipt_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM adcp_reporting_materializations live
+                 WHERE live.account_id = receipt.account_id
+                   AND live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                   AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
+              )
          ), tombstoned AS (
            INSERT INTO adcp_reporting_receipt_tombstones
              (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
@@ -618,15 +650,37 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           WHERE target.account_id = doomed.account_id
             AND target.consumer_id = doomed.consumer_id
             AND target.reporting_receipt_id = doomed.reporting_receipt_id`,
-        [input.account_id, doomedConsumerIds, doomedReceiptIds]
+        [input.account_id, doomedConsumerIds, doomedReceiptIds, RECEIPT_BATCH_RETENTION_MS, cutoff]
       );
       // Attempt history is control state, not evidence. Dropping it let a
       // revision whose attempts were exhausted, or which had already
       // succeeded, restart at attempt 1 once its rows aged out.
       const materializations = await client.query(
-        `WITH doomed AS (
+        `WITH referenced AS (
+           -- Doomed receipts are already gone above, so a hit here is a
+           -- survivor: either one this pass never selected, or one a
+           -- concurrent sync recorded after selection read the table.
+           SELECT DISTINCT receipt.data ->> 'reporting_materialization_id' AS materialization_id
+             FROM adcp_reporting_receipts receipt
+            WHERE receipt.account_id = $2
+              AND receipt.data ->> 'reporting_materialization_id' = ANY($1::text[])
+         ), doomed AS (
            SELECT materialization.* FROM adcp_reporting_materializations materialization
             WHERE materialization.materialization_id = ANY($1::text[])
+              AND materialization.account_id = $2
+              -- Every selection predicate re-asserted under the lock. A
+              -- claim, a settle or a re-record between the select and here
+              -- makes the row live again.
+              AND materialization.recorded_at < $3::timestamptz
+              AND materialization.status <> 'pending'
+              AND materialization.lease_owner IS NULL
+              AND COALESCE(
+                    (materialization.data -> 'resource' ->> 'expires_at')::timestamptz <= clock_timestamp(),
+                    true)
+              AND NOT EXISTS (
+                SELECT 1 FROM referenced
+                 WHERE referenced.materialization_id = materialization.materialization_id
+              )
          ), tombstoned AS (
            INSERT INTO adcp_reporting_materialization_tombstones
              (configuration_id, revision_id, account_id, obligation_id, highest_attempt, reached_success)
@@ -641,7 +695,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
          )
          DELETE FROM adcp_reporting_materializations target USING doomed
           WHERE target.materialization_id = doomed.materialization_id`,
-        [doomedMaterializations.rows.map(row => row.materialization_id)]
+        [doomedMaterializations.rows.map(row => row.materialization_id), input.account_id, cutoff]
       );
       return {
         materializations: materializations.rowCount ?? 0,
@@ -1126,13 +1180,23 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             'failure_code', 'DELIVERY_ATTEMPTS_EXHAUSTED'
           ),
           changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
-        WHERE materialization_id IN (
-          SELECT materialization_id FROM adcp_reporting_materializations
-           WHERE status = 'pending'
-             AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
-             AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
-             AND ($1::text IS NULL OR account_id = $1)
-           ORDER BY created_at LIMIT $2)`,
+        WHERE
+          -- Re-evaluated after the row lock, not only as a subquery. The
+          -- subquery runs against the statement's snapshot, so a settle that
+          -- committed while this UPDATE waited on the row was overwritten:
+          -- a delivered materialization became failed /
+          -- DELIVERY_ATTEMPTS_EXHAUSTED. Repeating the predicates here makes
+          -- PostgreSQL recheck them against the committed row.
+          status = 'pending'
+          AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
+          AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+          AND materialization_id IN (
+            SELECT materialization_id FROM adcp_reporting_materializations
+             WHERE status = 'pending'
+               AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
+               AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+               AND ($1::text IS NULL OR account_id = $1)
+             ORDER BY created_at LIMIT $2)`,
       [input?.account_id ?? null, limit]
     );
     return result.rowCount ?? 0;
@@ -1486,14 +1550,17 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       for (const [index, entry] of input.entries.entries()) {
         if (
           !authorization[index] ||
-          remainingReceipts <= 0 ||
           duplicateIds.has(entry.receipt.reporting_receipt_id) ||
           duplicateSubjects.has(subjectKey(entry))
         ) {
           results.push(failed(entry.receipt.reporting_receipt_id));
           continue;
         }
-        const result = await this.recordReceipt(client, input, entry, receivedAt);
+        // Capacity is carried into recordReceipt rather than applied here:
+        // gating before the existing-receipt resolution made an exact
+        // resubmission answer `unchanged` at 99,999 stored receipts and
+        // `failed` at 100,000, though neither adds a row.
+        const result = await this.recordReceipt(client, input, entry, receivedAt, remainingReceipts);
         results.push(result);
         if (result.result === 'recorded') remainingReceipts -= 1;
       }
@@ -1578,7 +1645,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     client: PgClient,
     batch: ReportingReceiptBatchInputV1,
     entry: ReportingReceiptBatchEntryV1,
-    receivedAt: string
+    receivedAt: string,
+    remainingReceipts: number
   ): Promise<SyncReportingReceiptsResponse['results'][number]> {
     const fingerprint = digest(entry.receipt);
     const existing = await client.query<
@@ -1644,6 +1712,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     ) {
       return failed(entry.receipt.reporting_receipt_id);
     }
+    // Capacity is admission control on new rows, so it is decided here: the
+    // last point before this entry mutates anything, and after every reason
+    // this entry might add no row at all. Refusing earlier also refused an
+    // exact resubmission of a receipt that already exists, which stores
+    // nothing.
+    if (remainingReceipts <= 0) return failed(entry.receipt.reporting_receipt_id);
     if (leaf) {
       await client.query(
         `UPDATE adcp_reporting_receipts SET is_current = false
