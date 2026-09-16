@@ -368,12 +368,11 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
         message: 'sync_reporting_receipts entries must be objects',
       });
     }
-    // RC3 caps `receipts` and `adjustment_receipts` at 100 each, independently.
-    // The SDK used to invent a combined cap the spec does not have, so a legal
-    // request was rejected; refusing each array against its own cap is the
-    // contract. Over-cap arrays cannot be answered per item either, because
-    // `results` is itself capped at 100, so they are refused as a request
-    // error rather than as a non-conformant body.
+    // RC3 caps `receipts` and `adjustment_receipts` at 100 each in JSON Schema,
+    // so each array is checked against its own cap. An over-cap array cannot be
+    // answered per item either, because `results` is itself capped at 100, so
+    // it is refused as a request error rather than as a non-conformant body.
+    // The separate combined bound is enforced below.
     if (revisionReceipts.length > MAX_RECEIPTS_PER_ARRAY || adjustmentReceipts.length > MAX_RECEIPTS_PER_ARRAY) {
       throw new AdcpError('VALIDATION_ERROR', {
         message:

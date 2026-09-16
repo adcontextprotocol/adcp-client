@@ -319,6 +319,22 @@ export interface PostgresReportingLedgerStoreOptions {
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
   /** Explicitly opt this Core store into projecting the additive #2944 tables. */
   managedDelivery?: boolean;
+  /**
+   * Supplies the principals that owe a receipt for one obligation.
+   *
+   * Nothing durable in the managed tables enumerates them — destination
+   * authorizations and bindings are keyed by
+   * `(account_id, destination_ref, generation)` with no consumer dimension — so
+   * without this the store can only report who has already submitted, and must
+   * stay conservative: a `consumer_receipt` obligation is then never reported
+   * reconciled on a lifecycle transition. Wire this to whatever your
+   * authorization layer knows and return `complete: true` to get accurate
+   * reconciled transitions and webhooks.
+   */
+  obligatedConsumers?: (input: {
+    reporting_obligation_id: string;
+    account_id: string;
+  }) => Promise<{ ids: readonly string[]; complete: boolean }>;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -382,12 +398,14 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
   readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
   readonly [REPORTING_LEDGER_AUTHORITY]: ReportingLedgerAuthorityV1;
   private readonly managedDelivery: boolean;
+  private readonly obligatedConsumers: PostgresReportingLedgerStoreOptions['obligatedConsumers'];
 
   constructor(
     private readonly pool: ReportingPgPool,
     options: PostgresReportingLedgerStoreOptions = {}
   ) {
     this.managedDelivery = options.managedDelivery === true;
+    this.obligatedConsumers = options.obligatedConsumers;
     this[REPORTING_LEDGER_AUTHORITY] = { substrate: pool, managedDelivery: this.managedDelivery };
     const development = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
     if (!development && !options.acknowledgeIsolatedDatabase) {
@@ -2079,16 +2097,22 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       if (engaged.rows.length > MAX_SNAPSHOT_ITEMS) {
         throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
       }
-      const obligatedConsumerIds = [
-        ...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)]),
-      ].sort();
+      const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
+      // An adopter-supplied roster is authoritative and is the only way this
+      // store can report a complete one.
+      const supplied = this.obligatedConsumers
+        ? await this.obligatedConsumers({
+            reporting_obligation_id: input.reporting_obligation_id,
+            account_id: binding.account_id,
+          })
+        : undefined;
       return {
         binding,
         materializations,
         materializationHistory,
         consumers: [...byConsumer.values()],
-        obligatedConsumerIds,
-        obligatedConsumerRosterComplete: false,
+        obligatedConsumerIds: supplied ? [...new Set([...supplied.ids, ...observed])].sort() : observed,
+        obligatedConsumerRosterComplete: supplied?.complete === true,
       };
     });
   }

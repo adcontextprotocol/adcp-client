@@ -841,6 +841,28 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       }),
       null
     );
+    // Nothing durable enumerates who owes a receipt, so the bundled store
+    // cannot claim a complete roster on its own.
+    assert.equal(projection.obligatedConsumerRosterComplete, false);
+
+    // The supported seam: a seller whose authorization layer does know the
+    // roster supplies it and gets accurate reconciled transitions. Without it
+    // the fold stays conservative forever.
+    const rosterAware = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async input => {
+        assert.equal(input.reporting_obligation_id, snapshotFixture.obligation.reporting_obligation_id);
+        assert.equal(input.account_id, snapshotFixture.accountId);
+        return { ids: ['https://snapshot-buyer.example', 'https://governance.example'], complete: true };
+      },
+    });
+    const supplied = await rosterAware.getManagedLifecycleProjection({
+      reporting_obligation_id: snapshotFixture.obligation.reporting_obligation_id,
+      ledgerAsOf: new Date(Date.parse(snapshotFixture.now) + 600_000).toISOString(),
+    });
+    assert.equal(supplied.obligatedConsumerRosterComplete, true);
+    assert.deepEqual(supplied.obligatedConsumerIds, ['https://governance.example', 'https://snapshot-buyer.example']);
   });
 
   test('settles a lease issued under host clock skew against the database clock', async () => {

@@ -149,6 +149,7 @@ async function composeManagedLifecycleProjection(
   }
   let health = coreProjection.health;
   let satisfied = coreProjection.satisfied;
+  let suppressedReceiptIssue = false;
   const issues = new Map<string, ReportingLedgerIssueV1>(coreProjection.issues.map(value => [value.issueId, value]));
   for (const consumer of consumers) {
     const projected = projectManagedDelivery(
@@ -170,9 +171,34 @@ async function composeManagedLifecycleProjection(
     // duty view and it is deliberate: `satisfied` is not caller-scoped.
     satisfied = satisfied && projected.projection.satisfied;
     for (const issue of projected.projection.issues) {
-      if (CONSUMER_SCOPED_RECEIPT_ISSUE_CODES.has(issue.code)) continue;
+      if (CONSUMER_SCOPED_RECEIPT_ISSUE_CODES.has(issue.code)) {
+        suppressedReceiptIssue = true;
+        continue;
+      }
       issues.set(issue.issueId, issue);
     }
+  }
+  // Suppressing the consumer-scoped issue must not leave the escalation
+  // unexplained. With the bundled store the roster is never provably complete,
+  // so a Reconciled Billing obligation sits at `action_required` from the
+  // moment delivery succeeds; without this an operator would see that state,
+  // and a webhook carrying it, with nothing at all saying why. Restate it once
+  // at obligation scope from seller-visible facts only — no principal is named
+  // and `openedAt` is the obligation's own expectation instant, never a
+  // consumer's receipt ingest time — so it explains the health without
+  // reintroducing the leak.
+  if (suppressedReceiptIssue) {
+    const issueId = `reporting-issue.reconciliation-outstanding.${obligation.reporting_obligation_id}`;
+    issues.set(issueId, {
+      issueId,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      code: 'RECEIPT_REQUIRED',
+      severity: 'action_required',
+      responsibleParty: 'buyer',
+      recommendedAction: 'contact_buyer',
+      openedAt: obligation.expectedAt,
+      observedAt: input.ledgerAsOf,
+    });
   }
   return { ...coreProjection, health, satisfied, issues: [...issues.values()] };
 }

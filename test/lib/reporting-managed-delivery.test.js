@@ -826,15 +826,25 @@ describe('seller managed reporting runtime', () => {
     // scope, because the issue store has no consumer dimension and the read
     // path republishes persisted issues to whichever consumer is asking.
     assert.equal(
-      required.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REQUIRED'),
+      required.applied[0].projectedIssues.some(
+        value => value.issueId === 'reporting-issue.receipt-required.obligation-1'
+      ),
       false,
-      'a consumer-scoped receipt issue is never persisted at obligation scope'
+      'the consumer-scoped receipt issue is never persisted at obligation scope'
     );
     assert.equal(
-      requiredTransition.issueIds.some(value => value.includes('receipt-required')),
+      requiredTransition.issueIds.includes('reporting-issue.receipt-required.obligation-1'),
       false,
       'nor published on the transition every subscriber on the account receives'
     );
+    // Suppressing it must not leave the escalation unexplained: one
+    // obligation-scoped restatement, built only from seller-visible facts.
+    const restated = required.applied[0].projectedIssues.find(
+      value => value.issueId === 'reporting-issue.reconciliation-outstanding.obligation-1'
+    );
+    assert.ok(restated, 'action_required is always accompanied by something saying why');
+    assert.equal(restated.openedAt, period.end, 'anchored to the obligation, never to a consumer receipt');
+    assert.ok(requiredTransition.issueIds.includes(restated.issueId));
 
     const rejected = lifecycleStore([
       {
@@ -874,6 +884,12 @@ describe('seller managed reporting runtime', () => {
       rejected.applied[0].projectedIssues.some(value => value.openedAt === '2026-08-27T04:05:00.000Z'),
       false,
       "another tenant's receipt ingest instant is never persisted"
+    );
+    assert.ok(
+      rejected.applied[0].projectedIssues.some(
+        value => value.issueId === 'reporting-issue.reconciliation-outstanding.obligation-1'
+      ),
+      'the rejection escalation is still explained, without naming the consumer'
     );
 
     // Two consumers, one still outstanding: the seller's obligation is not
