@@ -142,6 +142,38 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_batches (
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (account_id, consumer_id, idempotency_key)
 );
+
+-- Agent-wide promises, durable and shared by every store instance and process
+-- that talks to this database. An in-memory bound only constrains the process
+-- that set it, so two replicas could each believe they were authoritative and
+-- publish different windows over the same bindings.
+CREATE TABLE IF NOT EXISTS adcp_reporting_managed_policy (
+  policy_key TEXT PRIMARY KEY,
+  advertised_recovery_window_seconds BIGINT,
+  advertised_status_retention_days BIGINT,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+
+-- Permanent, compact identity for a receipt whose body has aged out.
+-- Bodies are retained only through the advertised horizon, but identity is
+-- forever: a pruned receipt_id must never bind different content later, and a
+-- subject that reached a terminal accepted leaf must never reopen because the
+-- row proving it was terminal has expired.
+CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_tombstones (
+  account_id TEXT NOT NULL,
+  consumer_id TEXT NOT NULL,
+  reporting_receipt_id TEXT NOT NULL,
+  receipt_kind TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  was_current BOOLEAN NOT NULL,
+  semantic_fingerprint TEXT NOT NULL,
+  pruned_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (account_id, consumer_id, reporting_receipt_id)
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_receipt_tombstones_subject
+  ON adcp_reporting_receipt_tombstones (account_id, consumer_id, receipt_kind, subject_id);
 `.trim();
 
 const GENERIC_RECEIPT_MESSAGE = 'Receipt does not match authorized current reporting evidence';
@@ -232,23 +264,90 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
 export class PostgresReportingManagedDeliveryStore implements ReportingManagedDeliveryStore {
   private readonly evidenceRetentionDays: number | undefined;
   private readonly statusRetentionDays: number | undefined;
-  private advertisedRecoveryWindowSeconds: number | undefined;
+  private readonly pendingRecoveryWindowSeconds: number | undefined;
+  private policyRegistered = false;
+  /**
+   * Durably records the agent-wide advertised recovery window.
+   *
+   * Written to the database, not held in memory: the promise is agent-wide,
+   * so a second store instance — in this process or another replica — must be
+   * held to the same value, and `installBinding` must read it inside its own
+   * transaction rather than trusting whatever the local object happens to
+   * know. Idempotent for the same value; a disagreement is refused rather
+   * than silently taking the newer one, because two runtimes publishing
+   * different windows over one database cannot both be honoured.
+   */
+  async adoptAdvertisedRecoveryWindowSeconds(seconds: number): Promise<void> {
+    nonnegativeSafeInteger(seconds, 'automatedRecoveryWindowSeconds');
+    await this.upsertPolicy('advertised_recovery_window_seconds', seconds, 'advertised recovery window', 's');
+  }
 
   /**
-   * Records the agent-wide advertised recovery window so later binding
-   * installs are held to it. Idempotent for the same value; a disagreement is
-   * refused rather than silently taking the newer one, because two runtimes
-   * publishing different windows over one store cannot both be honoured.
+   * Durably records the advertised `status_retention_days`.
+   *
+   * Retention is enforced against the widest promise any runtime registered
+   * over this database, so a store configured with a short evidence retention
+   * cannot prune inside a horizon a differently configured runtime published.
    */
-  adoptAdvertisedRecoveryWindowSeconds(seconds: number): void {
-    nonnegativeSafeInteger(seconds, 'automatedRecoveryWindowSeconds');
-    if (this.advertisedRecoveryWindowSeconds !== undefined && this.advertisedRecoveryWindowSeconds !== seconds) {
-      throw new Error(
-        `Managed store is already bound to an advertised recovery window of ` +
-          `${this.advertisedRecoveryWindowSeconds}s and cannot also advertise ${seconds}s`
-      );
+  async adoptAdvertisedStatusRetentionDays(days: number): Promise<void> {
+    positiveInteger(days, 'statusRetentionDays');
+    await this.upsertPolicy('advertised_status_retention_days', days, 'advertised status retention', ' days');
+  }
+
+  /**
+   * Flushes constructor-supplied promises into the durable registry.
+   *
+   * Called from every entry point that depends on them, so a store built with
+   * options behaves identically to one a runtime adopted into.
+   */
+  private async ensurePolicyRegistered(): Promise<void> {
+    if (this.policyRegistered) return;
+    if (this.pendingRecoveryWindowSeconds !== undefined) {
+      await this.adoptAdvertisedRecoveryWindowSeconds(this.pendingRecoveryWindowSeconds);
     }
-    this.advertisedRecoveryWindowSeconds = seconds;
+    if (this.statusRetentionDays !== undefined) {
+      await this.adoptAdvertisedStatusRetentionDays(this.statusRetentionDays);
+    }
+    this.policyRegistered = true;
+  }
+
+  private async upsertPolicy(column: string, value: number, label: string, unit: string): Promise<void> {
+    await this.transaction(async client => {
+      // Serialize adopters so two racing runtimes cannot both read "absent"
+      // and each install their own value.
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
+      const existing = await client.query<QueryRow & { value: string | null }>(
+        `SELECT ${column}::text AS value FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+      );
+      const current = existing.rows[0]?.value;
+      if (current !== null && current !== undefined && Number(current) !== value) {
+        throw new Error(
+          `Managed reporting is already registered with an ${label} of ${current}${unit} and cannot also ` +
+            `register ${value}${unit}; every runtime over one database must publish the same promise`
+        );
+      }
+      await client.query(
+        `INSERT INTO adcp_reporting_managed_policy (policy_key, ${column})
+         VALUES ('agent', $1)
+         ON CONFLICT (policy_key) DO UPDATE SET ${column} = EXCLUDED.${column}, changed_at = clock_timestamp()`,
+        [value]
+      );
+    });
+  }
+
+  private async readPolicy(
+    client: PgClient
+  ): Promise<{ recoveryWindowSeconds: number | null; statusRetentionDays: number | null }> {
+    const result = await client.query<QueryRow & { recovery: string | null; status: string | null }>(
+      `SELECT advertised_recovery_window_seconds::text AS recovery,
+              advertised_status_retention_days::text AS status
+         FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+    );
+    const row = result.rows[0];
+    return {
+      recoveryWindowSeconds: row?.recovery === null || row?.recovery === undefined ? null : Number(row.recovery),
+      statusRetentionDays: row?.status === null || row?.status === undefined ? null : Number(row.status),
+    };
   }
 
   constructor(
@@ -278,8 +377,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
     if (options.advertisedRecoveryWindowSeconds !== undefined) {
       nonnegativeSafeInteger(options.advertisedRecoveryWindowSeconds, 'advertisedRecoveryWindowSeconds');
-      this.advertisedRecoveryWindowSeconds = options.advertisedRecoveryWindowSeconds;
     }
+    this.pendingRecoveryWindowSeconds = options.advertisedRecoveryWindowSeconds;
     this.statusRetentionDays = options.statusRetentionDays;
     this.evidenceRetentionDays = options.evidenceRetentionDays;
   }
@@ -308,9 +407,22 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     if (this.evidenceRetentionDays === undefined) {
       throw new Error('pruneExpiredEvidence requires PostgresReportingManagedDeliveryStore({ evidenceRetentionDays })');
     }
+    await this.ensurePolicyRegistered();
     const limit = input.limit ?? 1_000;
     positiveInteger(limit, 'limit');
+    // Enforce against the widest promise registered over this database, not
+    // just this instance's option. Another runtime may advertise a longer
+    // status horizon, and pruning inside it would break a promise this
+    // process never made but the deployment did.
+    const registered = await this.transaction(client => this.readPolicy(client));
     const days = this.evidenceRetentionDays;
+    if (registered.statusRetentionDays !== null && days < registered.statusRetentionDays) {
+      throw new Error(
+        `evidenceRetentionDays ${days} is shorter than the advertised statusRetentionDays ` +
+          `${registered.statusRetentionDays} registered for this database; pruning would cut inside an ` +
+          `advertised horizon`
+      );
+    }
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(input.account_id));
       // Batches first, so a replay row that has itself expired stops pinning
@@ -320,6 +432,30 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           WHERE account_id = $1
             AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 millisecond')`,
         [input.account_id, RECEIPT_BATCH_RETENTION_MS]
+      );
+      // Identity outlives the body. Record it before the delete so a pruned
+      // receipt id can never bind different content later, and a subject that
+      // reached a terminal accepted leaf can never reopen because the row
+      // proving it was terminal has expired.
+      await client.query(
+        `INSERT INTO adcp_reporting_receipt_tombstones
+           (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+            status, was_current, semantic_fingerprint)
+         SELECT receipt.account_id, receipt.consumer_id, receipt.reporting_receipt_id, receipt.receipt_kind,
+                receipt.subject_id, COALESCE(receipt.data ->> 'status', 'unknown'), receipt.is_current,
+                receipt.semantic_fingerprint
+           FROM adcp_reporting_receipts receipt
+          WHERE receipt.account_id = $1
+            AND receipt.recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
+            AND NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_receipt_batches batch
+               WHERE batch.account_id = receipt.account_id
+                 AND batch.consumer_id = receipt.consumer_id
+                 AND batch.results @> jsonb_build_array(
+                       jsonb_build_object('id', receipt.reporting_receipt_id))
+            )
+         ON CONFLICT (account_id, consumer_id, reporting_receipt_id) DO NOTHING`,
+        [input.account_id, days]
       );
       // A receipt may be older than the batch that replays it — a later key
       // can name an earlier receipt, and `unchanged` results do exactly that —
@@ -385,6 +521,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     if (authority.managedDelivery !== true) {
       throw new Error('Managed reporting requires PostgresReportingLedgerStore({ managedDelivery: true })');
     }
+    await this.ensurePolicyRegistered();
     const result = await this.query<QueryRow & { ready: boolean }>(
       `SELECT to_regclass('adcp_reporting_managed_bindings') IS NOT NULL
           AND to_regclass('adcp_reporting_materializations') IS NOT NULL
@@ -499,6 +636,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     if (binding.semantic_fingerprint !== expectedFingerprint) {
       throw new Error('Managed binding semantic fingerprint does not match its immutable content');
     }
+    await this.ensurePolicyRegistered();
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(binding.account_id));
       await advisoryLock(client, `adcp-reporting-binding:${binding.account_id}:${binding.delivery_config_id}`);
@@ -547,16 +685,17 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       // another install — cannot widen the deployment past what is published.
       // Both installs serialize on the per-configuration advisory lock taken
       // above, so neither can observe the other half-applied.
-      if (this.advertisedRecoveryWindowSeconds !== undefined) {
+      const advertisedRecoveryWindowSeconds = (await this.readPolicy(client)).recoveryWindowSeconds;
+      if (advertisedRecoveryWindowSeconds !== null) {
         const windowMilliseconds = Number(configuration.schedule?.recoveryWindowMilliseconds);
         if (!Number.isFinite(windowMilliseconds) || windowMilliseconds < 0) {
           throw new Error('Managed binding Core configuration has no usable recovery window');
         }
         const windowSeconds = Math.ceil(windowMilliseconds / 1_000);
-        if (windowSeconds > this.advertisedRecoveryWindowSeconds) {
+        if (windowSeconds > advertisedRecoveryWindowSeconds) {
           throw new Error(
             `Managed binding Core recovery window is ${windowSeconds}s but this agent advertises ` +
-              `automated_recovery_window_seconds ${this.advertisedRecoveryWindowSeconds}s; installing it would ` +
+              `automated_recovery_window_seconds ${advertisedRecoveryWindowSeconds}s; installing it would ` +
               `publish a recovery bound the deployment does not keep`
           );
         }
@@ -830,11 +969,19 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     now: string;
     lease_milliseconds: number;
     account_id?: string;
+    authorization_revocation_seconds?: number;
   }): Promise<ReportingDestinationRevocationLeaseV1 | null> {
     positiveInteger(input.lease_milliseconds, 'lease_milliseconds');
     return this.transaction(async client => {
       const result = await client.query<
-        QueryRow & { data: ReportingDestinationAuthorizationV1; generation: string; expires_at: Date }
+        QueryRow & {
+          data: ReportingDestinationAuthorizationV1;
+          generation: string;
+          expires_at: Date;
+          revoked_at: Date;
+          overdue: boolean | null;
+          remaining_milliseconds: string | null;
+        }
       >(
         `WITH candidate AS (
            SELECT account_id, destination_ref, generation
@@ -843,7 +990,16 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               -- Same single-clock rule as claimMaterialization: completeRevocation
               -- fences on clock_timestamp(), so the lease must be issued from it
               -- too or cleanup can never commit and the grant is never torn down.
-              AND (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at <= clock_timestamp())
+              --
+              -- The last arm reclaims at the SLA boundary. A worker that
+              -- crashed holding a long lease would otherwise make the grant
+              -- unreclaimable for the rest of that lease while the advertised
+              -- window elapsed. Lease generation fences the old holder, so its
+              -- late completion cannot commit over the new one.
+              AND (cleanup_lease_expires_at IS NULL
+                   OR cleanup_lease_expires_at <= clock_timestamp()
+                   OR ($4::bigint IS NOT NULL
+                       AND revoked_at + ($4::bigint * INTERVAL '1 second') <= clock_timestamp()))
               AND ($3::text IS NULL OR account_id = $3)
             ORDER BY cleanup_lease_generation, revoked_at, account_id, destination_ref
             FOR UPDATE SKIP LOCKED LIMIT 1
@@ -855,8 +1011,21 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
          WHERE target.account_id = candidate.account_id AND target.destination_ref = candidate.destination_ref
            AND target.generation = candidate.generation
          RETURNING target.data, target.cleanup_lease_generation::text AS generation,
-                   target.cleanup_lease_expires_at AS expires_at`,
-        [input.owner, input.lease_milliseconds, input.account_id ?? null]
+                   target.cleanup_lease_expires_at AS expires_at,
+                   target.revoked_at AS revoked_at,
+                   CASE WHEN $4::bigint IS NULL THEN NULL
+                        ELSE target.revoked_at + ($4::bigint * INTERVAL '1 second') <= clock_timestamp()
+                   END AS overdue,
+                   CASE WHEN $4::bigint IS NULL THEN NULL
+                        ELSE EXTRACT(EPOCH FROM (target.revoked_at
+                             + ($4::bigint * INTERVAL '1 second') - clock_timestamp())) * 1000
+                   END AS remaining_milliseconds`,
+        [
+          input.owner,
+          input.lease_milliseconds,
+          input.account_id ?? null,
+          input.authorization_revocation_seconds ?? null,
+        ]
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -865,6 +1034,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         owner: input.owner,
         generation: Number(row.generation),
         expires_at: row.expires_at.toISOString(),
+        // Every SLA fact comes from the database that committed the
+        // revocation, never from the worker host: a skewed worker must not be
+        // able to decide a grant is still inside its promised window.
+        revoked_at: row.revoked_at.toISOString(),
+        ...(row.overdue === null ? {} : { overdue: row.overdue }),
+        ...(row.remaining_milliseconds === null ? {} : { remaining_milliseconds: Number(row.remaining_milliseconds) }),
       };
     });
   }
@@ -1124,6 +1299,28 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       if (existing.rows[0].semantic_fingerprint !== fingerprint) return failed(entry.receipt.reporting_receipt_id);
       return unchanged(entry.kind, existing.rows[0].data);
     }
+    // The body may have aged out, but its identity has not. A tombstoned id
+    // may only ever be re-presented with byte-identical content, and a subject
+    // whose accepted leaf was pruned stays terminal — otherwise letting a body
+    // expire would quietly reopen reconciliation on settled billing evidence.
+    const tombstones = await client.query<
+      QueryRow & { reporting_receipt_id: string; status: string; was_current: boolean; semantic_fingerprint: string }
+    >(
+      `SELECT reporting_receipt_id, status, was_current, semantic_fingerprint
+         FROM adcp_reporting_receipt_tombstones
+        WHERE account_id = $1 AND consumer_id = $2
+          AND (reporting_receipt_id = $3 OR (receipt_kind = $4 AND subject_id = $5))`,
+      [batch.account_id, batch.consumer_id, entry.receipt.reporting_receipt_id, entry.kind, subjectIdFor(entry)]
+    );
+    for (const tombstone of tombstones.rows) {
+      if (tombstone.reporting_receipt_id === entry.receipt.reporting_receipt_id) {
+        if (tombstone.semantic_fingerprint !== fingerprint) return failed(entry.receipt.reporting_receipt_id);
+        continue;
+      }
+      if (tombstone.status === 'accepted' && tombstone.was_current) {
+        return failed(entry.receipt.reporting_receipt_id);
+      }
+    }
     const evidence = await this.loadReceiptEvidence(client, batch.account_id, entry);
     if (!evidence) return failed(entry.receipt.reporting_receipt_id);
     const matches =
@@ -1341,6 +1538,11 @@ function legacyReceiptBatchResult(
 ): SyncReportingReceiptsResponse['results'][number] | undefined {
   if (!value || typeof value !== 'object' || !('result' in value)) return undefined;
   return value as unknown as SyncReportingReceiptsResponse['results'][number];
+}
+
+/** The subject a receipt attaches to, matching `adcp_reporting_receipts.subject_id`. */
+function subjectIdFor(entry: ReportingReceiptBatchEntryV1): string {
+  return entry.kind === 'revision' ? entry.receipt.reporting_revision_id : entry.receipt.reporting_adjustment_id;
 }
 
 function subjectKey(entry: ReportingReceiptBatchEntryV1): string {

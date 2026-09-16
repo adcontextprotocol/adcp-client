@@ -576,6 +576,26 @@ export interface ReportingManagedLifecycleProjectionV1 {
    * apply.
    */
   managedStateVersion?: string;
+  /**
+   * The cutoff this projection actually used, at full database precision.
+   *
+   * A host `toISOString()` is millisecond-truncated while the underlying
+   * columns are microsecond timestamps, so a caller-taken "now" can sort
+   * before a row written in the same millisecond. A store that resolves its
+   * own instant reports it here, and the reconciler uses it for everything
+   * downstream so the projection, its token and the transition all describe
+   * one instant.
+   */
+  resolvedLedgerAsOf?: string;
+  /**
+   * Version of the externally supplied obligated-consumer roster.
+   *
+   * The roster is fetched outside the store's transaction, so it cannot be
+   * re-read inside the apply. It is versioned separately and re-checked just
+   * before the apply instead, which is what keeps a concurrent roster change
+   * from passing the CAS.
+   */
+  obligatedConsumerRosterVersion?: string;
 }
 
 export interface ReportingLedgerLeaseV1 {
@@ -688,8 +708,23 @@ export interface ReportingLedgerStore {
    */
   getManagedLifecycleProjection?(input: {
     reporting_obligation_id: string;
-    ledgerAsOf: string;
+    /** Omit to let the store resolve an authoritative instant at full precision. */
+    ledgerAsOf?: string;
   }): Promise<ReportingManagedLifecycleProjectionV1 | null>;
+  /**
+   * Re-reads the external obligated-consumer roster version immediately
+   * before an apply, outside any transaction.
+   */
+  readObligatedConsumerRosterVersion?(input: { reporting_obligation_id: string }): Promise<string | undefined>;
+  /**
+   * An authoritative instant from the ledger's own clock, at full precision.
+   *
+   * Lifecycle cutoffs taken from a caller's `Date` are millisecond-truncated
+   * and may lag the database, which silently drops rows written in the same
+   * millisecond. Reconciliation prefers this when the caller has not pinned a
+   * cutoff, and always takes a fresh one before a retry.
+   */
+  readLedgerInstant?(): Promise<string>;
   listTransitions(reporting_obligation_id: string): Promise<ReportingLedgerStatusTransitionV1[]>;
   listPendingTransitions(input?: { account_id?: string; limit?: number }): Promise<ReportingLedgerStatusTransitionV1[]>;
   createSnapshot(query: ReportingLedgerSnapshotQueryV1): Promise<ReportingLedgerSnapshotV1>;

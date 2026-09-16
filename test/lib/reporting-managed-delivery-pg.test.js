@@ -1834,47 +1834,435 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.ok(second.revocationsOverdue >= 1, 'overdue follows the SLA, not the lease');
   });
 
-  test('refuses a post-start binding that would widen the advertised recovery window', async () => {
-    // The agent advertises 0s. Startup saw no binding, so only the write path
-    // can stop a wider one arriving later.
-    const bounded = new ledger.PostgresReportingManagedDeliveryStore(pool, { advertisedRecoveryWindowSeconds: 0 });
-    assert.equal(await bounded.probe(core), true);
-    const wide = await seedSkewLedger('postbind', 'delivery_only', { install: false, stopAfterBinding: true });
-    await assert.rejects(
-      () => bounded.installBinding(wide.binding),
-      error =>
-        /transaction failed/.test(String(error)) &&
-        /advertises automated_recovery_window_seconds 0s/.test(String(error.cause))
-    );
-    const absent = await pool.query('SELECT 1 FROM adcp_reporting_managed_bindings WHERE configuration_id = $1', [
-      wide.configuration.configurationId,
-    ]);
-    assert.equal(absent.rowCount, 0, 'nothing was written');
+  test('holds every store instance to one durable agent-wide recovery window', async () => {
+    // The promise is agent-wide and the registry is the database, so this runs
+    // in its own schema: registering a window here must not constrain, or be
+    // constrained by, the rest of the suite.
+    const { Pool } = require('pg');
+    const policySchema = `${schema}_policy`;
+    await bootstrap.query(`CREATE SCHEMA "${policySchema}"`);
+    const policyPool = new Pool({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${policySchema}"`,
+    });
+    try {
+      await policyPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await policyPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
 
-    // Concurrent installs of the same binding are serialized and both refused.
-    const raced = await Promise.allSettled([
-      bounded.installBinding(wide.binding),
-      bounded.installBinding(wide.binding),
-    ]);
-    assert.deepEqual(
-      raced.map(value => value.status),
-      ['rejected', 'rejected']
+      // Two instances, as two replicas would be, racing incompatible windows.
+      const first = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
+      const second = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
+      const raced = await Promise.allSettled([
+        first.adoptAdvertisedRecoveryWindowSeconds(60),
+        second.adoptAdvertisedRecoveryWindowSeconds(900),
+      ]);
+      assert.equal(
+        raced.filter(value => value.status === 'fulfilled').length,
+        1,
+        'exactly one window can win; in-memory state would have let both believe they had'
+      );
+      const registered = await policyPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS value FROM adcp_reporting_managed_policy`
+      );
+      const winner = Number(registered.rows[0].value);
+      assert.ok(winner === 60 || winner === 900);
+
+      // A third instance that never adopted is still held to the durable value.
+      const third = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
+      await assert.rejects(
+        () => third.adoptAdvertisedRecoveryWindowSeconds(winner === 60 ? 900 : 60),
+        error => /already registered with an advertised recovery window/.test(String(error.cause))
+      );
+
+      // And the bound is enforced on the authoritative install path, by an
+      // instance that has adopted nothing in this process.
+      const policyCore = new ledger.PostgresReportingLedgerStore(policyPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const widerSeconds = winner + 60;
+      const configuration = {
+        ...fixture.configuration,
+        configurationId: 'configuration-policy-wide-1',
+        account: { account_id: 'account-policy' },
+        delivery_config_id: 'policy-files',
+        schedule: { ...fixture.configuration.schedule, recoveryWindowMilliseconds: widerSeconds * 1000 },
+        semanticFingerprint: 'configuration-policy-wide-fingerprint',
+      };
+      await policyCore.putConfiguration(configuration);
+      await third.authorizeDestination({
+        account_id: 'account-policy',
+        destination_ref: 'destination-policy-1',
+        generation: 1,
+        authorized_at: fixture.now,
+      });
+      const wideBinding = ledger.reportingManagedDeliveryBindingV1({
+        ...fixture.binding,
+        configurationId: configuration.configurationId,
+        account_id: 'account-policy',
+        delivery_config_id: configuration.delivery_config_id,
+        destination_ref: 'destination-policy-1',
+      });
+      await assert.rejects(
+        () => third.installBinding(wideBinding),
+        error =>
+          /transaction failed/.test(String(error)) &&
+          new RegExp(`advertises automated_recovery_window_seconds ${winner}s`).test(String(error.cause))
+      );
+      const absent = await policyPool.query(
+        'SELECT 1 FROM adcp_reporting_managed_bindings WHERE configuration_id = $1',
+        [configuration.configurationId]
+      );
+      assert.equal(absent.rowCount, 0, 'nothing was written');
+    } finally {
+      await policyPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${policySchema}" CASCADE`);
+    }
+  });
+
+  test('refuses evidence retention shorter than a durably advertised status horizon', async () => {
+    const { Pool } = require('pg');
+    const retentionSchema = `${schema}_retention`;
+    await bootstrap.query(`CREATE SCHEMA "${retentionSchema}"`);
+    const retentionPool = new Pool({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${retentionSchema}"`,
+    });
+    try {
+      await retentionPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await retentionPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      // A runtime registers a 90-day status horizon.
+      const runtime = new ledger.PostgresReportingManagedDeliveryStore(retentionPool);
+      await runtime.adoptAdvertisedStatusRetentionDays(90);
+      // A differently configured store with only 30 days of evidence retention
+      // must refuse to prune rather than cut inside the registered promise.
+      const short = new ledger.PostgresReportingManagedDeliveryStore(retentionPool, { evidenceRetentionDays: 30 });
+      await assert.rejects(
+        () => short.pruneExpiredEvidence({ account_id: 'account-any' }),
+        /shorter than the advertised statusRetentionDays 90/
+      );
+      const sufficient = new ledger.PostgresReportingManagedDeliveryStore(retentionPool, {
+        evidenceRetentionDays: 120,
+      });
+      assert.deepEqual(await sufficient.pruneExpiredEvidence({ account_id: 'account-any' }), {
+        materializations: 0,
+        receipts: 0,
+        batches: 0,
+      });
+    } finally {
+      await retentionPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${retentionSchema}" CASCADE`);
+    }
+  });
+
+  test('keeps microsecond cutoff fidelity and ignores a lagging host clock', async () => {
+    const micro = await seedSkewLedger('micro');
+    await managed.planMaterializations({ account_id: micro.accountId });
+    // Pin the row at an exact sub-millisecond instant. A host cutoff of
+    // .123000 sorts before .123500, which is how a caller's `toISOString()`
+    // silently drops a row written in the same millisecond.
+    const pinned = await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET recorded_at = $2::timestamptz, changed_at = $2::timestamptz
+        WHERE obligation_id = $1 RETURNING recorded_at::text AS recorded_at`,
+      [micro.obligation.reporting_obligation_id, '2026-03-01T00:00:00.123500+00']
+    );
+    assert.equal(pinned.rowCount, 1);
+    assert.ok(pinned.rows[0].recorded_at.includes('.1235'), 'the column really holds microseconds');
+
+    const truncated = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: micro.obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-03-01T00:00:00.123Z',
+    });
+    assert.equal(truncated.materializationHistory.length, 0, 'a millisecond-truncated cutoff sorts before it');
+    assert.equal(
+      truncated.resolvedLedgerAsOf.startsWith('2026-03-01T00:00:00.123'),
+      true,
+      'a pinned cutoff is honoured exactly, not silently replaced'
     );
 
-    // A runtime adopts its own advertised value into the store, and refuses to
-    // share a store already bound to a different one.
-    const adopting = new ledger.PostgresReportingManagedDeliveryStore(pool);
-    adopting.adoptAdvertisedRecoveryWindowSeconds(60);
-    adopting.adoptAdvertisedRecoveryWindowSeconds(60);
-    assert.throws(
-      () => adopting.adoptAdvertisedRecoveryWindowSeconds(30),
-      /already bound to an advertised recovery window of 60s/
+    const exact = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: micro.obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-03-01T00:00:00.123500+00',
+    });
+    assert.equal(exact.materializationHistory.length, 1, 'microsecond fidelity survives the comparison');
+
+    // Unpinned: the store resolves its own instant, so neither a truncating
+    // nor a lagging host can hide the row.
+    const resolved = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: micro.obligation.reporting_obligation_id,
+    });
+    assert.equal(resolved.materializationHistory.length, 1);
+    assert.ok(resolved.resolvedLedgerAsOf, 'the store reports the instant it used');
+    assert.ok(
+      Date.parse(resolved.resolvedLedgerAsOf) > Date.now() - 600_000,
+      'the resolved instant is the database clock, not a lagging caller'
     );
-    assert.deepEqual(
-      await adopting.installBinding(wide.binding),
-      { inserted: true },
-      'a 60s bound admits a 60s window'
+
+    // A lagging host that reconciles without pinning still sees current state.
+    const lagging = await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: micro.obligation.reporting_obligation_id,
+      now: () => new Date(Date.now() - 365 * 86_400_000),
+    });
+    assert.notEqual(lagging, undefined);
+  });
+
+  test('schedules a lifecycle reconcile for a managed-only change after complete', async () => {
+    const late = await seedSkewLedger('managedonly', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(late),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: late.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 2,
+      account_id: late.accountId,
+    });
+    // Record a transition so the obligation has a "latest" to compare against,
+    // and confirm Core alone would not reschedule it.
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: late.obligation.reporting_obligation_id,
+    });
+    const transitions = await core.listTransitions(late.obligation.reporting_obligation_id);
+    assert.ok(transitions.length >= 1, 'the obligation has a persisted transition to go stale');
+
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [late.obligation.reporting_obligation_id]
     );
+    late.materialization = settled.rows[0].data;
+
+    const dueBefore = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: late.accountId,
+      limit: 100,
+    });
+    const idsBefore = dueBefore.map(value => value.reporting_obligation_id);
+
+    // A managed-only change: a consumer receipt, which writes nothing Core
+    // and moves no Core deadline.
+    const context = { account: { id: late.accountId }, agent: { agent_url: 'https://managedonly-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const recorded = await sync(
+      {
+        idempotency_key: 'receipt-managed-only-0001',
+        receipts: [receipt(late, { reporting_receipt_id: 'receipt-managed-only-0001' })],
+      },
+      context
+    );
+    assert.equal(recorded.results[0].result, 'recorded');
+
+    const dueAfter = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: late.accountId,
+      limit: 100,
+    });
+    assert.ok(
+      dueAfter.some(value => value.reporting_obligation_id === late.obligation.reporting_obligation_id),
+      'a managed-only receipt makes the obligation a reconcile candidate'
+    );
+    assert.equal(
+      idsBefore.includes(late.obligation.reporting_obligation_id) &&
+        dueAfter.length === dueBefore.length &&
+        idsBefore.length === dueAfter.length,
+      idsBefore.includes(late.obligation.reporting_obligation_id),
+      'sanity: the candidate set is driven by the change, not constant'
+    );
+
+    // Revocation is a managed-only change too.
+    await managed.revokeDestination({
+      account_id: late.accountId,
+      destination_ref: late.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    const dueAfterRevoke = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: late.accountId,
+      limit: 100,
+    });
+    assert.ok(
+      dueAfterRevoke.some(value => value.reporting_obligation_id === late.obligation.reporting_obligation_id),
+      'a revocation makes the obligation a reconcile candidate'
+    );
+  });
+
+  test('fences a concurrent external roster change through the lifecycle CAS', async () => {
+    const roster = await seedSkewLedger('rosterver', 'consumer_receipt');
+    let version = 'v1';
+    let reads = 0;
+    const rosterAware = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => {
+        reads += 1;
+        return { ids: ['https://roster-buyer.example'], complete: true, version };
+      },
+    });
+    const projection = await rosterAware.getManagedLifecycleProjection({
+      reporting_obligation_id: roster.obligation.reporting_obligation_id,
+    });
+    assert.equal(projection.obligatedConsumerRosterVersion, 'v1');
+
+    // The roster changes between projection and apply, outside the database.
+    version = 'v2';
+    assert.equal(
+      await rosterAware.readObligatedConsumerRosterVersion({
+        reporting_obligation_id: roster.obligation.reporting_obligation_id,
+      }),
+      'v2',
+      'the version the reconciler re-reads reflects the change'
+    );
+    assert.ok(reads >= 2, 'the roster really is re-read rather than cached');
+
+    // A roster with no declared version still moves when its content does.
+    let ids = ['https://a.example'];
+    const contentVersioned = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids, complete: true }),
+    });
+    const before = await contentVersioned.readObligatedConsumerRosterVersion({
+      reporting_obligation_id: roster.obligation.reporting_obligation_id,
+    });
+    ids = ['https://a.example', 'https://b.example'];
+    const after = await contentVersioned.readObligatedConsumerRosterVersion({
+      reporting_obligation_id: roster.obligation.reporting_obligation_id,
+    });
+    assert.notEqual(before, after, 'an unversioned roster is still fenced by its content');
+  });
+
+  test('reclaims a crashed cleanup lease at the SLA boundary and counts overdue on the DB clock', async () => {
+    const crashed = await seedSkewLedger('crashlease');
+    await managed.revokeDestination({
+      account_id: crashed.accountId,
+      destination_ref: crashed.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    // A worker takes a very long lease and never comes back.
+    const abandoned = await managed.claimRevocation({
+      owner: 'crashed-worker',
+      now: new Date().toISOString(),
+      lease_milliseconds: 3_600_000,
+      account_id: crashed.accountId,
+      authorization_revocation_seconds: 1,
+    });
+    assert.ok(abandoned);
+    assert.equal(abandoned.overdue, false, 'inside the window at claim time');
+    assert.ok(abandoned.remaining_milliseconds > 0);
+    assert.ok(abandoned.revoked_at, 'the SLA anchor comes from the database, not the worker');
+
+    // Not reclaimable while both the lease and the window hold.
+    assert.equal(
+      await managed.claimRevocation({
+        owner: 'other-worker',
+        now: new Date().toISOString(),
+        lease_milliseconds: 60_000,
+        account_id: crashed.accountId,
+        authorization_revocation_seconds: 3_600,
+      }),
+      null
+    );
+
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    // Past the 1s SLA the grant is reclaimable even though the hour-long lease
+    // has not expired, and the database reports it overdue.
+    const reclaimed = await managed.claimRevocation({
+      owner: 'recovery-worker',
+      now: new Date(Date.now() - 365 * 86_400_000).toISOString(),
+      lease_milliseconds: 60_000,
+      account_id: crashed.accountId,
+      authorization_revocation_seconds: 1,
+    });
+    assert.ok(reclaimed, 'the SLA boundary reclaims a crashed lease');
+    assert.equal(reclaimed.overdue, true, 'overdue is computed on the DB clock, not the skewed caller');
+    assert.ok(reclaimed.generation > abandoned.generation, 'generation fences the crashed holder');
+    assert.equal(
+      await managed.completeRevocation({ lease: abandoned, completed_at: new Date().toISOString() }),
+      false,
+      'the crashed holder cannot commit over the new one'
+    );
+    assert.equal(await managed.completeRevocation({ lease: reclaimed, completed_at: new Date().toISOString() }), true);
+  });
+
+  test('keeps pruned receipt identity and terminal subjects permanent', async () => {
+    const tomb = await seedSkewLedger('tombstone', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(tomb),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: tomb.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: tomb.accountId });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [tomb.obligation.reporting_obligation_id]
+    );
+    tomb.materialization = settled.rows[0].data;
+
+    const context = { account: { id: tomb.accountId }, agent: { agent_url: 'https://tombstone-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const accepted = receipt(tomb, { reporting_receipt_id: 'receipt-tombstone-0001' });
+    assert.equal(
+      (await sync({ idempotency_key: 'receipt-tombstone-batch-0001', receipts: [accepted] }, context)).results[0]
+        .result,
+      'recorded'
+    );
+
+    // Age everything past retention and prune the bodies.
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [tomb.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [tomb.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    const pruned = await retaining.pruneExpiredEvidence({ account_id: tomb.accountId });
+    assert.equal(pruned.receipts, 1, 'the body aged out');
+    const tombstones = await pool.query(
+      `SELECT status, was_current FROM adcp_reporting_receipt_tombstones WHERE reporting_receipt_id = $1`,
+      ['receipt-tombstone-0001']
+    );
+    assert.equal(tombstones.rowCount, 1, 'identity is retained permanently');
+    assert.equal(tombstones.rows[0].status, 'accepted');
+
+    // The id cannot be rebound to different content now the body is gone.
+    const rebind = await sync(
+      {
+        idempotency_key: 'receipt-tombstone-batch-0002',
+        receipts: [receipt(tomb, { reporting_receipt_id: 'receipt-tombstone-0001', observed_row_count: 99 })],
+      },
+      context
+    );
+    assert.equal(rebind.results[0].result, 'failed', 'a pruned receipt id cannot bind new content');
+
+    // And the terminal accepted subject cannot reopen.
+    const reopen = await sync(
+      {
+        idempotency_key: 'receipt-tombstone-batch-0003',
+        receipts: [
+          receipt(tomb, {
+            reporting_receipt_id: 'receipt-tombstone-reopen-01',
+            status: 'rejected',
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(reopen.results[0].result, 'failed', 'a terminal subject stays terminal after its body expires');
   });
 
   async function seedCoreLedger() {

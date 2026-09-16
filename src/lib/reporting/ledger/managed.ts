@@ -63,6 +63,18 @@ export interface ReportingDestinationRevocationLeaseV1 {
   owner: string;
   generation: number;
   expires_at: string;
+  /**
+   * SLA facts as the ledger's own clock sees them.
+   *
+   * The advertised window is measured from the instant the revocation was
+   * committed, so deciding whether a grant is still inside it on the worker's
+   * host clock lets skew silently extend or collapse the promise. A store
+   * that can compute them reports them here; `overdue` is true at the exact
+   * boundary, because the window is elapsed once it has been reached.
+   */
+  revoked_at?: string;
+  overdue?: boolean;
+  remaining_milliseconds?: number;
 }
 
 export type ReportingReceiptBatchEntryV1 =
@@ -125,19 +137,21 @@ export interface ReportingManagedDeliveryStore {
     now: string;
     lease_milliseconds: number;
     account_id?: string;
+    /** Advertised window, so the store can compute SLA facts on its own clock. */
+    authorization_revocation_seconds?: number;
   }): Promise<ReportingDestinationRevocationLeaseV1 | null>;
   completeRevocation(input: { lease: ReportingDestinationRevocationLeaseV1; completed_at: string }): Promise<boolean>;
   /**
    * Releases a cleanup lease after a failed attempt so the grant is
    * immediately reclaimable.
    *
-   * Optional for compatibility; a store without it keeps the lease as the
-   * retry delay, which defers the next attempt and hides an overdue grant
-   * behind a lease that has not expired yet. `claimRevocation` orders by
+   * Required, not optional: without it a failed attempt keeps its lease as
+   * the retry delay, which defers the next attempt and hides an overdue grant
+   * behind a lease that has not expired. `claimRevocation` orders by
    * `cleanup_lease_generation`, and a failed attempt has already incremented
    * it, so releasing cannot let one broken grant starve the queue.
    */
-  releaseRevocation?(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean>;
+  releaseRevocation(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean>;
   getReadableResource(input: {
     account_id: string;
     resource_ref: string;
@@ -596,13 +610,20 @@ export async function runManagedDeliveryWorker(
       now: now().toISOString(),
       lease_milliseconds: revocationLeaseMilliseconds,
       ...(options.account_id ? { account_id: options.account_id } : {}),
+      ...(options.authorizationRevocationSeconds !== undefined
+        ? { authorization_revocation_seconds: options.authorizationRevocationSeconds }
+        : {}),
     });
     if (!revocation) break;
     // `authorization_revocation_seconds` is a maximum delay measured from the
     // instant authorization ended, so the bound belongs to the authorization,
     // not to the worker tick that happens to pick it up.
-    const remaining = remainingRevocationMilliseconds(revocation, revocationWindow, now());
-    if (remaining !== undefined && remaining < 0) counts.revocationsOverdue += 1;
+    // Prefer what the ledger computed on its own clock; fall back to the host
+    // only for a store that cannot supply it.
+    const remaining =
+      revocation.remaining_milliseconds ?? remainingRevocationMilliseconds(revocation, revocationWindow, now());
+    const overdue = revocation.overdue ?? (remaining !== undefined && remaining <= 0);
+    if (overdue) counts.revocationsOverdue += 1;
     // Never give an attempt a budget that would itself run past the promised
     // instant. Once the window is already spent there is no bound left to
     // honour and withholding cleanup would strand the grant forever, so the
@@ -630,7 +651,7 @@ export async function runManagedDeliveryWorker(
       // instead — `claimRevocation` sorts by `cleanup_lease_generation`, which
       // this failed attempt already incremented, so a repeatedly failing grant
       // is deprioritised behind every healthy one.
-      await store.releaseRevocation?.({ lease: revocation });
+      await store.releaseRevocation({ lease: revocation });
     }
   }
 

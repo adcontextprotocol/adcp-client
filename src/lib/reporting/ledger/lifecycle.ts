@@ -11,28 +11,80 @@ import type {
   ReportingLedgerSubscriberV1,
 } from './types';
 
+/**
+ * The instant this reconcile runs at.
+ *
+ * A caller-pinned cutoff wins on the first attempt, because a deadline sweep
+ * legitimately replays synthetic times. Everything else prefers the store's
+ * own clock: a host `Date` is millisecond-truncated while the ledger's
+ * timestamps are microsecond, so a cutoff taken in the same millisecond as a
+ * write sorts before that write and the row vanishes from the projection.
+ * Retries never reuse the pinned value, and the cutoff never moves backwards
+ * past a transition already recorded at a later instant.
+ */
+async function resolveLedgerAsOf(
+  input: { store: ReportingLedgerStore; ledgerAsOf?: string; now?: () => Date },
+  attempt: number
+): Promise<string> {
+  if (attempt === 0 && input.ledgerAsOf !== undefined) return input.ledgerAsOf;
+  const resolved = (await input.store.readLedgerInstant?.()) ?? (input.now ?? (() => new Date()))().toISOString();
+  if (input.ledgerAsOf === undefined) return resolved;
+  return Date.parse(resolved) > Date.parse(input.ledgerAsOf) ? resolved : input.ledgerAsOf;
+}
+
 /** Bounded so a contended obligation falls back to the sweep instead of spinning. */
 const MAX_LIFECYCLE_CAS_ATTEMPTS = 3;
+
+/**
+ * Re-runs a reconcile whose compare-and-set was refused.
+ *
+ * Core evidence, managed state or the external roster moved under us.
+ * Recompute rather than waiting for the next deadline sweep, which for a
+ * managed-only change may not be scheduled at all — that is how a stale
+ * `complete` would otherwise stay persisted and notified.
+ *
+ * The retry deliberately drops the pinned cutoff so the store resolves a fresh
+ * authoritative instant at full precision. Reusing the original would re-read
+ * the same as-of bounded view that just lost the race and reapply the health
+ * the CAS refused, and a host-taken replacement would reintroduce the
+ * millisecond truncation the projection exists to avoid.
+ */
+async function retryLifecycle(
+  input: Parameters<typeof reconcileReportingStatusLifecycleV1>[0],
+  attempt: number
+): Promise<ReportingLedgerStatusTransitionV1 | null> {
+  if (attempt + 1 >= MAX_LIFECYCLE_CAS_ATTEMPTS) return null;
+  return reconcileReportingStatusLifecycleV1(input, attempt + 1);
+}
 
 export async function reconcileReportingStatusLifecycleV1(
   input: {
     store: ReportingLedgerStore;
     reporting_obligation_id: string;
-    ledgerAsOf: string;
-    subscribers?: readonly ReportingLedgerSubscriberV1[];
-    /** Clock used to take a fresh cutoff when a CAS retry re-projects. */
+    /**
+     * Cutoff to reconcile at. Omit it — and prefer omitting it outside a
+     * deadline sweep — to let the store supply an authoritative instant at
+     * full precision instead of a millisecond-truncated host `Date`.
+     */
+    ledgerAsOf?: string;
+    /** Fallback clock for a store that cannot supply its own instant. */
     now?: () => Date;
+    subscribers?: readonly ReportingLedgerSubscriberV1[];
   },
   attempt = 0
 ): Promise<ReportingLedgerStatusTransitionV1 | null> {
   const obligation = await input.store.getObligation(input.reporting_obligation_id);
   if (!obligation) throw new Error('Reporting obligation is unavailable');
+  // Resolve the cutoff before anything reads against it. A retry always takes
+  // a fresh one: the previous attempt lost a race, so re-evaluating at the
+  // instant it already failed at can only fail again or apply a stale health.
+  const ledgerAsOf = await resolveLedgerAsOf(input, attempt);
   const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
   const coreProjection = projectReportingObligationHealthV1(
     obligation,
     revisions,
-    input.ledgerAsOf,
-    Date.parse(obligation.period.end) <= Date.parse(input.ledgerAsOf)
+    ledgerAsOf,
+    Date.parse(obligation.period.end) <= Date.parse(ledgerAsOf)
   );
   // Persist and notify the same health `get_reporting_status` returns. Before
   // this, the transition log carried Core health only: a managed delivery
@@ -41,16 +93,21 @@ export async function reconcileReportingStatusLifecycleV1(
   // `RECEIPT_REQUIRED`, and a managed-only change produced no transition at all
   // so nothing was ever notified. The read path and this path now call the one
   // `projectManagedDelivery`, so the rule itself cannot drift again.
-  const composed = await composeManagedLifecycleProjection(input, obligation, revisions, coreProjection);
+  const composed = await composeManagedLifecycleProjection(
+    { store: input.store, ledgerAsOf },
+    obligation,
+    revisions,
+    coreProjection
+  );
   const projection = composed.projection;
   const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
   for (const pending of transitions.filter(value => !value.notifiedAt)) {
     if (await notifyTransition(pending, obligation.account.account_id, input.subscribers)) {
-      await input.store.markTransitionNotified(pending.transitionId, input.ledgerAsOf);
+      await input.store.markTransitionNotified(pending.transitionId, ledgerAsOf);
     }
   }
   const latest = transitions.at(-1);
-  if (latest && Date.parse(input.ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
+  if (latest && Date.parse(ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
   const previousHealth = latest?.health ?? 'waiting';
   const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
   const transition: ReportingLedgerStatusTransitionV1 | undefined =
@@ -64,7 +121,7 @@ export async function reconcileReportingStatusLifecycleV1(
                 previousHealth,
                 projection.health,
                 [...nextIssueIds].sort(),
-                input.ledgerAsOf,
+                ledgerAsOf,
               ])
             )
             .digest('base64url')
@@ -73,8 +130,22 @@ export async function reconcileReportingStatusLifecycleV1(
           previousHealth,
           health: projection.health,
           issueIds: [...nextIssueIds].sort(),
-          occurredAt: input.ledgerAsOf,
+          occurredAt: ledgerAsOf,
         };
+  // The roster lives outside the database, so the apply transaction cannot
+  // re-read it. Re-check its version here, immediately before the apply and
+  // outside any transaction, and treat a change exactly like a CAS failure —
+  // otherwise a roster edit concurrent with this reconcile would ride through
+  // unfenced and settle an obligation against a membership that no longer
+  // holds.
+  if (composed.obligatedConsumerRosterVersion !== undefined && input.store.readObligatedConsumerRosterVersion) {
+    const current = await input.store.readObligatedConsumerRosterVersion({
+      reporting_obligation_id: obligation.reporting_obligation_id,
+    });
+    if (current !== composed.obligatedConsumerRosterVersion) {
+      return retryLifecycle(input, attempt);
+    }
+  }
   const applied = await input.store.applyLifecycleProjection({
     reporting_obligation_id: obligation.reporting_obligation_id,
     expectedRevisionIds: revisions.map(value => value.reporting_revision_id),
@@ -82,34 +153,17 @@ export async function reconcileReportingStatusLifecycleV1(
     expectedObligationState: obligation.state,
     expectedAttemptCount: obligation.attemptCount,
     projectedIssues: projection.issues,
-    ledgerAsOf: input.ledgerAsOf,
+    ledgerAsOf: ledgerAsOf,
     ...(transition ? { transition } : {}),
     ...(composed.managedStateVersion !== undefined
       ? { expectedManagedStateVersion: composed.managedStateVersion }
       : {}),
   });
-  if (!applied.applied) {
-    // The CAS refused: Core evidence or managed state moved under us. Recompute
-    // and reapply rather than waiting for the next deadline sweep, which for a
-    // managed-only change may not be scheduled at all — that is how a stale
-    // `complete` would otherwise stay persisted and notified. Bounded, so a
-    // genuinely hot obligation degrades to the sweep instead of spinning.
-    if (attempt + 1 >= MAX_LIFECYCLE_CAS_ATTEMPTS) return null;
-    // Re-project against a fresh cutoff. Reusing the original would re-read
-    // the same as-of bounded view that just lost the race and reapply the
-    // health the CAS refused, so the retry could only ever fail again or, once
-    // the token happened to match, write a cutoff-stale health. Never move the
-    // cutoff backwards: a lagging clock must not rewind an obligation past a
-    // transition already recorded at the later instant.
-    const retryAt = (input.now ?? (() => new Date()))();
-    const ledgerAsOf =
-      Date.parse(retryAt.toISOString()) > Date.parse(input.ledgerAsOf) ? retryAt.toISOString() : input.ledgerAsOf;
-    return reconcileReportingStatusLifecycleV1({ ...input, ledgerAsOf }, attempt + 1);
-  }
+  if (!applied.applied) return retryLifecycle(input, attempt);
   if (!transition || !applied.transitionInserted) return null;
   const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
-  if (notified) await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
-  return notified ? { ...transition, notifiedAt: input.ledgerAsOf } : transition;
+  if (notified) await input.store.markTransitionNotified(transition.transitionId, ledgerAsOf);
+  return notified ? { ...transition, notifiedAt: ledgerAsOf } : transition;
 }
 
 /**
@@ -148,6 +202,8 @@ async function composeManagedLifecycleProjection(
 ): Promise<{
   projection: ReturnType<typeof projectReportingObligationHealthV1>;
   managedStateVersion?: string;
+  obligatedConsumerRosterVersion?: string;
+  resolvedLedgerAsOf?: string;
 }> {
   if (!input.store.getManagedLifecycleProjection) return { projection: coreProjection };
   const managed = await input.store.getManagedLifecycleProjection({
@@ -244,6 +300,10 @@ async function composeManagedLifecycleProjection(
   return {
     projection: { ...coreProjection, health, satisfied, issues: [...issues.values()] },
     ...(managed.managedStateVersion !== undefined ? { managedStateVersion: managed.managedStateVersion } : {}),
+    ...(managed.obligatedConsumerRosterVersion !== undefined
+      ? { obligatedConsumerRosterVersion: managed.obligatedConsumerRosterVersion }
+      : {}),
+    ...(managed.resolvedLedgerAsOf !== undefined ? { resolvedLedgerAsOf: managed.resolvedLedgerAsOf } : {}),
   };
 }
 

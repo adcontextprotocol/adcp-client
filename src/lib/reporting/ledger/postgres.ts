@@ -342,7 +342,7 @@ export interface PostgresReportingLedgerStoreOptions {
   obligatedConsumers?: (input: {
     reporting_obligation_id: string;
     account_id: string;
-  }) => Promise<{ ids: readonly string[]; complete: boolean }>;
+  }) => Promise<{ ids: readonly string[]; complete: boolean; version?: string }>;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -537,10 +537,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     positiveInteger(input.limit, 'limit');
     if (input.limit > 1_000) throw new RangeError('limit must not exceed 1000');
     if (!Number.isFinite(Date.parse(input.ledgerAsOf))) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+    // The managed arm names managed tables, and PostgreSQL resolves those at
+    // parse time regardless of any runtime guard — so a Core-only deployment
+    // would fail on "relation does not exist". Include it only when the
+    // managed schema is actually present.
+    const managedDueArm = (await this.managedDueTablesReady()) ? MANAGED_DUE_ARM : '';
     const result = await this.query<JsonRow<ReportingLedgerObligationV1>>(
       `SELECT obligation.data FROM adcp_reporting_obligations obligation
        LEFT JOIN LATERAL (
-         SELECT transition.data->>'health' AS health
+         SELECT transition.data->>'health' AS health, transition.occurred_at
            FROM adcp_reporting_transitions transition
           WHERE transition.obligation_id = obligation.obligation_id
           ORDER BY transition.transition_sequence DESC LIMIT 1
@@ -555,7 +560,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                AND EXISTS (
                  SELECT 1 FROM adcp_reporting_revisions revision
                   WHERE revision.obligation_id = obligation.obligation_id
-               )))
+               ))
+${managedDueArm}       )
        ORDER BY LEAST(
          (obligation.data->>'expectedAt')::timestamptz,
          (obligation.data->>'recoveryDeadlineAt')::timestamptz
@@ -2047,7 +2053,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
    */
   async getManagedLifecycleProjection(input: {
     reporting_obligation_id: string;
-    ledgerAsOf: string;
+    ledgerAsOf?: string;
   }): Promise<ReportingManagedLifecycleProjectionV1 | null> {
     if (!this.managedDelivery) return null;
     const base = await this.transaction(
@@ -2069,31 +2075,49 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         // is when the row left `pending`, so `changed_at > ledgerAsOf` means it
         // was still pending then; the same applies to a revocation, which only
         // counts once `revoked_at` is at or before the cutoff.
-        const asOf = Date.parse(input.ledgerAsOf);
-        if (!Number.isFinite(asOf)) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+        // Resolve the cutoff inside the snapshot when the caller did not pin
+        // one, and keep every comparison against it in SQL.
+        //
+        // A caller's `new Date().toISOString()` is millisecond-truncated while
+        // these columns are microsecond timestamps, so a cutoff taken in the
+        // same millisecond as an insert sorts before it and the row silently
+        // disappears — and comparing in JS re-truncates even a microsecond
+        // cutoff. The placement predicates and the digest below therefore run
+        // in SQL against one value, inside one REPEATABLE READ snapshot.
+        const resolvedLedgerAsOf = (
+          await client.query<QueryResultRow & { instant: string }>(
+            // RFC 3339 with microseconds. PostgreSQL's own ::text rendering
+            // uses a space separator and a two-digit offset, which the SDK's
+            // instant parser rejects, and round-tripping through a JS Date
+            // would truncate the microseconds this exists to preserve.
+            `SELECT ${rfc3339Microseconds('COALESCE($1::timestamptz, clock_timestamp())')} AS instant`,
+            [input.ledgerAsOf ?? null]
+          )
+        ).rows[0]!.instant;
         const rows = await client.query<
-          JsonRow<ReportingMaterialization> & { changed_at: Date; revoked_at: Date | null }
+          JsonRow<ReportingMaterialization> & { settled_after_cutoff: boolean; revoked_at: Date | null }
         >(
-          `SELECT materialization.data, materialization.changed_at, authz.revoked_at
-           FROM adcp_reporting_materializations materialization
-           JOIN adcp_reporting_destination_authorizations authz
-             ON authz.account_id = materialization.account_id
-            AND authz.destination_ref = materialization.destination_ref
-            AND authz.generation = materialization.authorization_generation
-          WHERE materialization.obligation_id = $1
-            AND materialization.recorded_at <= $2
-          ORDER BY materialization.attempt, materialization.materialization_id
-          LIMIT $3`,
-          [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+          `SELECT materialization.data,
+                  materialization.changed_at > $2::timestamptz AS settled_after_cutoff,
+                  CASE WHEN authz.revoked_at <= $2::timestamptz THEN authz.revoked_at END AS revoked_at
+             FROM adcp_reporting_materializations materialization
+             JOIN adcp_reporting_destination_authorizations authz
+               ON authz.account_id = materialization.account_id
+              AND authz.destination_ref = materialization.destination_ref
+              AND authz.generation = materialization.authorization_generation
+            WHERE materialization.obligation_id = $1
+              AND materialization.recorded_at <= $2::timestamptz
+            ORDER BY materialization.attempt, materialization.materialization_id
+            LIMIT $3`,
+          [input.reporting_obligation_id, resolvedLedgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
         );
         if (rows.rows.length > MAX_SNAPSHOT_ITEMS) {
           throw new Error('Reporting lifecycle projection exceeds the managed materialization limit');
         }
-        const placed = rows.rows.map(row => {
-          const atAsOf = row.changed_at.getTime() > asOf ? pendingAtCutoff(row.data) : clone(row.data);
-          const revokedAt = row.revoked_at && row.revoked_at.getTime() <= asOf ? row.revoked_at : null;
-          return { atAsOf, revokedAt };
-        });
+        const placed = rows.rows.map(row => ({
+          atAsOf: row.settled_after_cutoff ? pendingAtCutoff(row.data) : clone(row.data),
+          revokedAt: row.revoked_at,
+        }));
         const materializationHistory = placed.map(value => value.atAsOf);
         const materializations = placed.map(({ atAsOf, revokedAt }) =>
           revokedAt && (atAsOf.status === 'available' || atAsOf.status === 'delivered')
@@ -2131,7 +2155,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             )
           ORDER BY receipt.consumer_id, receipt.recorded_at, receipt.reporting_receipt_id
           LIMIT $3`,
-          [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+          [input.reporting_obligation_id, resolvedLedgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
         );
         if (receipts.rows.length > MAX_SNAPSHOT_ITEMS) {
           throw new Error('Reporting lifecycle projection exceeds the managed receipt limit');
@@ -2174,6 +2198,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           obligatedConsumerIds: observed,
           obligatedConsumerRosterComplete: false,
           managedStateVersion,
+          resolvedLedgerAsOf,
         };
         // REPEATABLE READ, not the default. Under READ COMMITTED every statement
         // above takes its own snapshot, so a settle committing between the
@@ -2206,7 +2231,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     if (ids.length > MAX_SNAPSHOT_ITEMS) {
       throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
     }
-    return { ...base, obligatedConsumerIds: ids, obligatedConsumerRosterComplete: supplied.complete === true };
+    return {
+      ...base,
+      obligatedConsumerIds: ids,
+      obligatedConsumerRosterComplete: supplied.complete === true,
+      // Falls back to the roster content itself when the adopter supplies no
+      // version, so a roster change is still detectable rather than silently
+      // unfenced.
+      obligatedConsumerRosterVersion: supplied.version ?? digest({ ids, complete: supplied.complete === true }),
+    };
   }
 
   /**
@@ -2238,6 +2271,14 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
          SELECT 'a:' || adjustment_id || ':' || EXTRACT(EPOCH FROM recorded_at)::text
            FROM adcp_reporting_adjustments WHERE obligation_id = $1
          UNION ALL
+         -- Consumer statuses are a health input through the mismatch
+         -- projection and they widen the observed roster, so a status landing
+         -- between projection and apply has to move the token too.
+         SELECT 'c:' || status.consumer_id || ':' || status.consumer_status_id || ':'
+                || status.is_current::text || ':' || EXTRACT(EPOCH FROM status.created_at)::text
+           FROM adcp_reporting_consumer_statuses status
+          WHERE status.obligation_id = $1
+         UNION ALL
          SELECT 'z:' || authz.generation::text
                 || ':' || COALESCE(EXTRACT(EPOCH FROM authz.revoked_at)::text, '')
                 || ':' || COALESCE(EXTRACT(EPOCH FROM authz.cleanup_completed_at)::text, '')
@@ -2252,6 +2293,47 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       [obligationId]
     );
     return result.rows[0]?.version ?? '';
+  }
+
+  /**
+   * Current external roster version, read outside any transaction so the
+   * reconciler can re-check it immediately before an apply.
+   */
+  /** Authoritative instant from the database clock, at microsecond precision. */
+  async readLedgerInstant(): Promise<string> {
+    const result = await this.query<QueryResultRow & { instant: string }>(
+      `SELECT ${rfc3339Microseconds('clock_timestamp()')} AS instant`
+    );
+    return result.rows[0]!.instant;
+  }
+
+  async readObligatedConsumerRosterVersion(input: { reporting_obligation_id: string }): Promise<string | undefined> {
+    if (!this.managedDelivery || !this.obligatedConsumers) return undefined;
+    const accountId = await this.query<QueryResultRow & { account_id: string }>(
+      'SELECT account_id FROM adcp_reporting_obligations WHERE obligation_id = $1',
+      [input.reporting_obligation_id]
+    );
+    const account_id = accountId.rows[0]?.account_id;
+    if (!account_id) return undefined;
+    const supplied = await withReportingCallbackDeadline(
+      this.obligatedConsumers({ reporting_obligation_id: input.reporting_obligation_id, account_id }),
+      OBLIGATED_CONSUMERS_DEADLINE_MS,
+      'Reporting obligated-consumer lookup deadline elapsed'
+    );
+    return supplied.version ?? digest({ ids: [...supplied.ids].sort(), complete: supplied.complete === true });
+  }
+
+  private managedDueTablesReadyCache: Promise<boolean> | undefined;
+
+  /** Whether the managed schema exists, resolved once per store instance. */
+  private managedDueTablesReady(): Promise<boolean> {
+    if (!this.managedDelivery) return Promise.resolve(false);
+    this.managedDueTablesReadyCache ??= this.query<QueryResultRow & { ready: boolean }>(
+      `SELECT to_regclass('adcp_reporting_managed_bindings') IS NOT NULL
+          AND to_regclass('adcp_reporting_materializations') IS NOT NULL
+          AND to_regclass('adcp_reporting_receipts') IS NOT NULL AS ready`
+    ).then(result => result.rows[0]?.ready === true);
+    return this.managedDueTablesReadyCache;
   }
 
   private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {
@@ -2846,6 +2928,64 @@ function pendingAtCutoff(value: ReportingMaterialization): ReportingMaterializat
     ...pending
   } = clone(value);
   return { ...pending, status: 'pending' };
+}
+
+const MANAGED_DUE_ARM = `           OR (EXISTS (
+                 SELECT 1 FROM adcp_reporting_managed_bindings binding
+                  WHERE binding.configuration_id = obligation.configuration_id
+                    AND (
+                      -- A managed change after the last transition. Health is
+                      -- composed from managed state, but only Core evidence
+                      -- and the clock used to schedule a reconcile — so a
+                      -- settlement, revocation, receipt, consumer status or
+                      -- roster-visible change arriving after a complete left
+                      -- that complete persisted and webhooked forever while
+                      -- a live read of the same obligation degraded.
+                      EXISTS (
+                        SELECT 1 FROM adcp_reporting_materializations m
+                         WHERE m.obligation_id = obligation.obligation_id
+                           AND m.changed_at > COALESCE(latest.occurred_at, obligation.created_at)
+                           AND m.changed_at <= $2)
+                      OR EXISTS (
+                        SELECT 1 FROM adcp_reporting_destination_authorizations authz
+                         WHERE authz.account_id = binding.account_id
+                           AND authz.destination_ref = binding.destination_ref
+                           AND GREATEST(authz.changed_at, COALESCE(authz.cleanup_completed_at, authz.changed_at))
+                               > COALESCE(latest.occurred_at, obligation.created_at)
+                           AND authz.changed_at <= $2)
+                      OR EXISTS (
+                        SELECT 1 FROM adcp_reporting_receipts receipt
+                         WHERE receipt.recorded_at > COALESCE(latest.occurred_at, obligation.created_at)
+                           AND receipt.recorded_at <= $2
+                           AND ((receipt.receipt_kind = 'revision' AND EXISTS (
+                                  SELECT 1 FROM adcp_reporting_revisions rv
+                                   WHERE rv.revision_id = receipt.subject_id
+                                     AND rv.obligation_id = obligation.obligation_id))
+                             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                                  SELECT 1 FROM adcp_reporting_adjustments aj
+                                   WHERE aj.adjustment_id = receipt.subject_id
+                                     AND aj.obligation_id = obligation.obligation_id))))
+                      OR EXISTS (
+                        SELECT 1 FROM adcp_reporting_consumer_statuses status
+                         WHERE status.obligation_id = obligation.obligation_id
+                           AND status.created_at > COALESCE(latest.occurred_at, obligation.created_at)
+                           AND status.created_at <= $2)
+                      -- A retained resource expiring is a health change with
+                      -- no row written anywhere, so nothing else can notice it.
+                      OR EXISTS (
+                        SELECT 1 FROM adcp_reporting_materializations m
+                         WHERE m.obligation_id = obligation.obligation_id
+                           AND m.status IN ('available', 'delivered')
+                           AND (m.data -> 'resource' ->> 'expires_at')::timestamptz <= $2
+                           AND (m.data -> 'resource' ->> 'expires_at')::timestamptz
+                               > COALESCE(latest.occurred_at, obligation.created_at))
+                    )
+               ))
+`;
+
+/** Renders a timestamptz as an RFC 3339 UTC instant without losing microseconds. */
+function rfc3339Microseconds(expression: string): string {
+  return `to_char(${expression} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 function accountLock(accountId: string): string {

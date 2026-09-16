@@ -296,7 +296,9 @@ describe('seller managed reporting runtime', () => {
     const completed = [];
     const store = {
       planMaterializations: async () => 0,
+      releaseRevocation: async () => true,
       claimRevocation: async () => leases.shift() ?? null,
+      releaseRevocation: async () => true,
       completeRevocation: async ({ lease: value }) => {
         completed.push(value.authorization.destination_ref);
         return true;
@@ -652,6 +654,7 @@ describe('seller managed reporting runtime', () => {
                 expires_at: new Date(revokedAt + 60_000).toISOString(),
               };
         },
+        releaseRevocation: async () => true,
         completeRevocation: async () => true,
       };
     }
@@ -666,7 +669,9 @@ describe('seller managed reporting runtime', () => {
       leaseMilliseconds: 300_000,
       deliveryDeadlineMilliseconds: 5_000,
     });
-    assert.equal(boundary.revocationsOverdue, 0);
+    // The advertised window is elapsed once it has been reached, so the exact
+    // boundary counts as overdue rather than as the last compliant instant.
+    assert.equal(boundary.revocationsOverdue, 1);
     assert.equal(boundary.revocationsCompleted, 1);
     assert.equal(
       claimsAtBoundary[0].lease_milliseconds,
@@ -676,13 +681,13 @@ describe('seller managed reporting runtime', () => {
 
     const claimsPastBoundary = [];
     const past = await ledger.runManagedDeliveryWorker(revocationStore(claimsPastBoundary), adapter, {
-      now: () => new Date(revokedAt + 60_001),
+      now: () => new Date(revokedAt + 59_999),
       maxIterations: 2,
       authorizationRevocationSeconds: 60,
       leaseMilliseconds: 300_000,
       deliveryDeadlineMilliseconds: 5_000,
     });
-    assert.equal(past.revocationsOverdue, 1);
+    assert.equal(past.revocationsOverdue, 0, 'one millisecond inside the window is still compliant');
 
     // An attempt is never given a budget that would itself run past the promise.
     const claimsNearBoundary = [];
@@ -1049,6 +1054,7 @@ describe('seller managed reporting runtime', () => {
               expires_at: new Date(revokedAt + 10_000).toISOString(),
             };
       },
+      releaseRevocation: async () => true,
       completeRevocation: async () => true,
     };
     await ledger.runManagedDeliveryWorker(
