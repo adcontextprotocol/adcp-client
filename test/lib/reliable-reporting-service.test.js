@@ -108,12 +108,17 @@ function zonedFixture(
   if (minimumWindow) {
     zoned.sourceOffering.windowing = { ...zoned.sourceOffering.windowing, minimumWindow };
   }
-  zoned.deliveryOffering.schedule = {
-    ...zoned.deliveryOffering.schedule,
-    alignment,
-    period_duration: periodDuration,
-    period_timezone: periodTimezone ?? timezone,
-  };
+  const { period_timezone_policy, period_timezone, ...base } = zoned.deliveryOffering.schedule;
+  zoned.deliveryOffering.schedule =
+    alignment === 'utc'
+      ? { ...base, alignment, period_duration: periodDuration }
+      : {
+          ...base,
+          alignment,
+          period_duration: periodDuration,
+          period_timezone_policy: 'fixed',
+          period_timezone: periodTimezone ?? timezone,
+        };
   return serviceFixture({
     adapters: { fixture: zoned },
     resolveSource: account => ({
@@ -817,7 +822,7 @@ describe('ReliableReportingService', () => {
       /UTC offset is zero/
     );
 
-    // An anchor that is not source-local midnight: the executor refuses every
+    // An anchor off the protocol period boundary: the executor refuses every
     // slice, so the generation must never install.
     const noonAnchored = serviceFixture();
     await assert.rejects(
@@ -832,7 +837,7 @@ describe('ReliableReportingService', () => {
         }),
         context
       ),
-      /anchor must fall on source-local midnight/
+      /is not on a 'source_timezone' period boundary/
     );
 
     // A delivery offering that advertises UTC periods while its source resolves
@@ -864,7 +869,9 @@ describe('ReliableReportingService', () => {
         configuration({
           expectedSourceTimezone: 'America/New_York',
           schedule: {
-            anchor: '2026-09-01T04:00:00.000Z', // 2026-09-01T00:00 EDT
+            // On the zone's own protocol grid (its 1970 origin is 05:00Z under
+            // EST), so the phase is right and only DST behavior is under test.
+            anchor: '2026-01-01T05:00:00.000Z',
             periodMilliseconds: 86_400_000,
             deliverySlaMilliseconds: 0,
             recoveryWindowMilliseconds: 86_400_000,
@@ -872,7 +879,8 @@ describe('ReliableReportingService', () => {
         }),
         context
       ),
-      /changes its UTC offset/
+      /UTC offset/,
+      'a DST zone cannot hold local midnight under fixed-length periods'
     );
 
     // Sub-day windows have no source-local midnight boundary. The inline
@@ -900,34 +908,16 @@ describe('ReliableReportingService', () => {
         }),
         context
       ),
-      /changes its UTC offset/,
-      'the probe must span the anchor through the current planning horizon'
+      /UTC offset/,
+      'validation must reach from the anchor through the periods being generated now'
     );
 
-    // An anchor older than the verifiable horizon fails closed rather than
-    // scanning unbounded history.
-    const ancient = zonedFixture('Asia/Kolkata');
-    await assert.rejects(
-      ancient.service.installConfiguration(
-        configuration({
-          expectedSourceTimezone: 'Asia/Kolkata',
-          schedule: {
-            anchor: '1900-01-01T18:30:00.000Z',
-            periodMilliseconds: 86_400_000,
-            deliverySlaMilliseconds: 0,
-            recoveryWindowMilliseconds: 86_400_000,
-          },
-        }),
-        context
-      ),
-      /too far in the past to verify/
-    );
-
-    // Positive controls: a fixed-offset non-UTC zone is installable at both a
-    // current and a historical anchor, so the rule is "no offset change across
-    // the span", not "UTC only" or "recent anchors only".
+    // Positive controls: a fixed-offset non-UTC zone installs both at a recent
+    // boundary and at the protocol's own 1970 local-midnight origin, which is
+    // exactly what a spec-following adopter sends. The rule is "no offset
+    // change", not "UTC only" or "recent anchors only".
     const kolkata = zonedFixture('Asia/Kolkata');
-    for (const anchor of ['2026-09-01T18:30:00.000Z', '2021-12-31T18:30:00.000Z']) {
+    for (const anchor of ['2026-09-01T18:30:00.000Z', '1969-12-31T18:30:00.000Z']) {
       const installed = await kolkata.service.installConfiguration(
         configuration({
           delivery_config_id: `delivery-config-${anchor}`,
@@ -943,6 +933,283 @@ describe('ReliableReportingService', () => {
       );
       assert.equal(installed.sourceTimezone, 'Asia/Kolkata');
     }
+  });
+
+  test('keeps a legacy cumulative delivery handler reachable after installing reporting', async () => {
+    // A reporting-only platform: no native sales/lifecycle delivery, so the
+    // adopter's own handler is still the one that serves cumulative reads.
+    const { service } = serviceFixture();
+    const seen = [];
+    const server = createAdcpServerFromPlatform(
+      service.install({
+        capabilities: { specialisms: [], config: {} },
+        accounts: {
+          resolution: 'explicit',
+          resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+          upsert: async () => [],
+        },
+      }),
+      {
+        name: 'legacy-cumulative-delivery-test',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.3',
+        validation: { requests: 'off', responses: 'off' },
+        legacyHandlers: {
+          mediaBuy: {
+            getMediaBuyDelivery: async request => {
+              seen.push(request.media_buy_ids);
+              return {
+                reporting_period: { start: '2026-09-01', end: '2026-09-02' },
+                currency: 'USD',
+                media_buy_deliveries: [],
+              };
+            },
+          },
+        },
+      }
+    );
+
+    const cumulative = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: {
+            account: { account_id: 'account-a' },
+            media_buy_ids: ['media-buy-account-a'],
+            start_date: '2026-09-01',
+            end_date: '2026-09-02',
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.notEqual(cumulative.isError, true, JSON.stringify(cumulative.structuredContent));
+    assert.deepEqual(seen, [['media-buy-account-a']], 'installing reporting must not shadow the legacy handler');
+
+    // The reporting ledger still owns exact revision reads.
+    const exact = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: { account: { account_id: 'account-a' }, reporting_revision_id: 'revision-unknown' },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.equal(seen.length, 1, 'an exact revision read must not reach the legacy handler');
+    assert.equal(exact.isError, true);
+  });
+
+  test('projects an installed source_timezone schedule as itself, not billing_cycle', async () => {
+    const { service, store } = serviceFixture();
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration();
+    input.schedule.anchor = anchor;
+    const installed = await service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: 'account-a' }, view: 'periods' },
+      { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
+    );
+    const [obligation] = status.periods;
+    // A UTC source timezone whose boundaries sit on the 1970 UTC origin is
+    // exactly the `utc` alignment, and `utc` forbids both extra fields.
+    assert.equal(obligation.schedule.alignment, 'utc');
+    assert.equal(obligation.schedule.period_anchor, undefined, 'period_anchor is forbidden outside billing_cycle');
+    assert.equal(obligation.schedule.period_timezone, undefined, 'period_timezone is forbidden for utc');
+  });
+
+  test('refuses an official delivery SLA the source cannot finalize within', async () => {
+    const infeasible = adapter();
+    const { cadence, ...sourceOffering } = infeasible.sourceOffering;
+    infeasible.sourceOffering = {
+      ...sourceOffering,
+      publicationClass: 'AUTHORITATIVE',
+      finalization: {
+        // Finalizes 06:00 source-local one day after period end, then PT15M.
+        schedule: { sourceLocalReadyTime: '06:00', daysAfterPeriodEnd: 1 },
+        expectedAvailabilityLag: cadence.expectedAvailabilityLag,
+        worstCaseAvailabilityLag: cadence.worstCaseAvailabilityLag,
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P7D',
+        correctionPolicy: 'immutable_correction',
+      },
+      revisionSemantics: 'official_with_declared_correction_policy',
+    };
+    infeasible.deliveryOffering.supported_finality = ['official'];
+    infeasible.deliveryOffering.schedule.delivery_sla = 'PT2H';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: infeasible } }),
+      /shorter than the source can finalize and publish/
+    );
+
+    // Widening the advertised SLA past the finalization moment makes it honest.
+    infeasible.deliveryOffering.schedule.delivery_sla = 'PT30H15M';
+    const feasible = serviceFixture({ adapters: { fixture: infeasible } });
+    assert.equal(feasible.service.capabilities.offerings[0].schedule.delivery_sla, 'PT30H15M');
+  });
+
+  test('applies per-account budgets and rotates tenants in deployment-wide mode', async () => {
+    const { service } = serviceFixture({ resolveCurrency: () => 'USD' });
+    for (const id of ['account-a', 'account-b', 'account-c']) {
+      const installed = await service.installConfiguration(configuration(), {
+        account: { id, ctx_metadata: {} },
+      });
+      assert.equal(installed.account.account_id, id);
+    }
+
+    const passes = [];
+    let current = [];
+    service.producer.planObligations = async (_now, options) => {
+      current.push([options?.account_id, options?.maxObligations]);
+      return [];
+    };
+    service.producer.runWorker = async options => {
+      assert.equal(options?.maxIterations, 7, 'per-account worker budget must reach the worker');
+      return { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 };
+    };
+
+    service.start({
+      intervalMilliseconds: 60,
+      deploymentWide: true,
+      maxObligationsPerAccount: 5,
+      maxWorkerIterationsPerAccount: 7,
+    });
+    while (passes.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      if (current.length >= 3) {
+        passes.push(current.slice(0, 3));
+        current = current.slice(3);
+      }
+    }
+    await service.stop();
+
+    // Every tenant gets its own bounded cycle, not one global sweep.
+    for (const pass of passes) {
+      assert.deepEqual(
+        pass.map(entry => entry[1]),
+        [5, 5, 5],
+        'the per-account obligation budget must be applied per account'
+      );
+      assert.deepEqual(
+        [...pass.map(entry => entry[0])].sort(),
+        ['account-a', 'account-b', 'account-c'],
+        'a deployment-wide pass must still cover every tenant'
+      );
+    }
+    assert.notDeepEqual(
+      passes[0].map(entry => entry[0]),
+      passes[1].map(entry => entry[0]),
+      'the starting tenant must rotate so a fixed order cannot starve'
+    );
+  });
+
+  test('refuses a keyless generation replay once a second adapter is installed', async () => {
+    const { service, store } = serviceFixture();
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+    await service.producer.installConfiguration({
+      ...ledgerInput,
+      account: { account_id: 'account-a' },
+      sourceScope: { network_id: 'network-account-a' },
+      sourceTimezone: 'UTC',
+      sourceSettings: { ...sourceSettings, currency: 'USD' },
+      contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+      constituents: [authorizedConstituent('account-a')],
+      mediaBuyIds: ['media-buy-account-a'],
+    });
+
+    // A second adapter means the sole-adapter fallback no longer resolves, so a
+    // keyless generation could never route. Refuse rather than replay it into a
+    // configuration whose every execute and read would fail.
+    const second = adapter();
+    second.sourceOffering.offeringId = 'fixture-daily-snapshot-two';
+    second.deliveryOffering.offering_id = 'fixture-daily-snapshot-two';
+    const multi = serviceFixture({ store, adapters: { fixture: adapter(), other: second } });
+    await assert.rejects(
+      multi.service.installConfiguration(configuration(), context),
+      /cannot be routed with multiple adapters installed/
+    );
+
+    // The single-adapter deployment still replays it.
+    const replayed = await service.installConfiguration(configuration(), context);
+    assert.deepEqual(replayed.sourceScope, { network_id: 'network-account-a' });
+  });
+
+  test('refuses constituent lineage that contradicts its product binding', async () => {
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    const contradictions = [
+      [
+        constituent => {
+          constituent.productBinding.mediaBuyId = 'media-buy-account-b';
+        },
+        /mediaBuyId contradicts its product binding/,
+      ],
+      [
+        constituent => {
+          constituent.productBinding.productId = 'other-product';
+        },
+        /productId contradicts its product binding/,
+      ],
+    ];
+    for (const [mutate, expected] of contradictions) {
+      const { service } = serviceFixture({
+        resolveCoverage: account => {
+          const constituent = authorizedConstituent(account.id);
+          mutate(constituent);
+          return { constituents: [constituent] };
+        },
+      });
+      await assert.rejects(service.installConfiguration(configuration(), context), expected);
+    }
+  });
+
+  test('refuses package_item coverage the inline executor can never produce', async () => {
+    // The inline executor narrows applicability to media_buy, so the routed
+    // offering must advertise that narrowing too: otherwise a package_item
+    // denominator installs against the declared applicability and then fails
+    // every execute forever.
+    // The adapter *declares* both kinds; only the executor's narrowing removes
+    // package_item, so this fixture is what makes the narrowing load-bearing.
+    const broad = adapter();
+    broad.sourceOffering.applicability = {
+      ...broad.sourceOffering.applicability,
+      constituentKinds: ['media_buy', 'package_item'],
+    };
+    assert.deepEqual(serviceFixture({ adapters: { fixture: broad } }).service.producer !== undefined, true);
+
+    const [template] = redactedReportingSourceRequestV1().coverage.constituents;
+    const packageConstituent = {
+      constituentId: 'constituent-package',
+      constituentKind: 'package_item',
+      productId: template.productId,
+      packageId: 'package-1',
+      productBinding: {
+        ...structuredClone(template.productBinding),
+        bindingKind: 'package_item_product',
+        packageId: 'package-1',
+        mediaBuyId: undefined,
+      },
+    };
+    delete packageConstituent.productBinding.mediaBuyId;
+
+    const packaged = serviceFixture({
+      adapters: { fixture: broad },
+      resolveCoverage: () => ({ constituents: [packageConstituent] }),
+    });
+    await assert.rejects(
+      packaged.service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } }),
+      /constituent kind is outside its offering applicability/
+    );
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
@@ -984,7 +1251,9 @@ describe('ReliableReportingService', () => {
       ...sourceOffering,
       publicationClass: 'AUTHORITATIVE',
       finalization: {
-        schedule: { sourceLocalReadyTime: '02:00', daysAfterPeriodEnd: 0 },
+        // Finalizes 01:00 source-local the same day, then PT15M to publish:
+        // reachable inside the PT2H official SLA advertised below.
+        schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
         expectedAvailabilityLag: cadence.expectedAvailabilityLag,
         worstCaseAvailabilityLag: cadence.worstCaseAvailabilityLag,
         triggerSupport: cadence.triggerSupport,

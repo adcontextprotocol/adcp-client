@@ -26,6 +26,9 @@ import {
   SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1,
   ReportingSourceOfferingV1Schema,
   ReportingSourceScopeV1Schema,
+  reportingIsSourceLocalMidnightV1,
+  reportingScheduleOriginV1,
+  reportingUtcOffsetMinutesV1,
   createInlineReportingSourceExecutor,
   reportingIsoDurationMillisecondsV1,
   reportingSourceCapabilitiesV1,
@@ -176,7 +179,17 @@ export interface ReliableReportingServiceV1<TCtxMeta = Record<string, unknown>> 
     configuration: ReliableReportingConfigurationInputV1,
     context: ReliableReportingInstallContextV1<TCtxMeta>
   ): Promise<ReportingLedgerConfigurationV1>;
-  install<TConfig>(platform: DecisioningPlatform<TConfig, TCtxMeta>): DecisioningPlatform<TConfig, TCtxMeta>;
+  /**
+   * Returns the same platform object, narrowed to also carry `reporting`.
+   * The input type is preserved: widening to `DecisioningPlatform` would erase
+   * literal `capabilities.specialisms` and adopter-declared members, and
+   * `createAdcpServerFromPlatform` enforces specialism-required tools off
+   * exactly those types.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  install<TPlatform extends DecisioningPlatform<any, TCtxMeta>>(
+    platform: TPlatform
+  ): TPlatform & { reporting: ReliableReportingPlatform<TCtxMeta> };
   runCycle(options: ReliableReportingCycleOptionsV1): Promise<{
     planned: number;
     claimed: number;
@@ -211,8 +224,16 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     validateDeliveryOffering(sourceOffering, deliveryOffering);
     if (offerings.has(sourceOffering.offeringId)) throw new TypeError('Reporting offering IDs must be unique');
     const source = createInlineReportingSourceExecutor(adapter.fetchSlice, sourceOffering);
+    // The inline executor narrows the offering it will actually honor — most
+    // importantly to `media_buy` constituent applicability. Publish and validate
+    // against that narrowed view, or a `package_item` denominator installs
+    // cleanly against the declared applicability and then fails every execute.
+    const routedOffering = source.capabilities.offerings.find(
+      candidate => candidate.offeringId === sourceOffering.offeringId
+    );
+    if (!routedOffering) throw new TypeError('Reporting adapter executor did not expose its own offering');
     sources.set(adapterId, source);
-    offerings.set(sourceOffering.offeringId, sourceOffering);
+    offerings.set(routedOffering.offeringId, routedOffering);
     deliveryOfferings.push(deliveryOffering);
   }
 
@@ -350,8 +371,13 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         [ADAPTER_SCOPE_KEY]: route.adapterId,
       });
       const sourceScope =
-        (await keylessPredecessorScope(options.store, context.account.id, frozenInput, route.sourceScope)) ??
-        routedScope;
+        (await keylessPredecessorScope(
+          options.store,
+          context.account.id,
+          frozenInput,
+          route.sourceScope,
+          sources.size
+        )) ?? routedScope;
       const {
         expectedCurrency: _currency,
         expectedSourceTimezone: _timezone,
@@ -374,7 +400,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       });
     },
 
-    install<TConfig>(platform: DecisioningPlatform<TConfig, TCtxMeta>) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    install<TPlatform extends DecisioningPlatform<any, TCtxMeta>>(platform: TPlatform) {
       if (typeof platform.accounts.upsert !== 'function') {
         throw new TypeError(
           'Reliable reporting requires accounts.upsert so the advertised sync_accounts configuration task is installed'
@@ -391,7 +418,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           writable: false,
         });
       }
-      return platform;
+      return platform as TPlatform & { reporting: ReliableReportingPlatform<TCtxMeta> };
     },
 
     async runCycle(cycle) {
@@ -424,7 +451,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       positiveInteger(scheduler.intervalMilliseconds, 'intervalMilliseconds');
       schedulerAbort = new AbortController();
       const signal = schedulerAbort.signal;
-      schedulerPromise = schedulerLoop(service, scheduler, signal).finally(() => {
+      schedulerPromise = schedulerLoop(service, scheduler, signal, options.store).finally(() => {
         schedulerPromise = undefined;
         schedulerAbort = undefined;
       });
@@ -474,19 +501,36 @@ function routeSource(
 async function schedulerLoop<TCtxMeta>(
   service: ReliableReportingServiceV1<TCtxMeta>,
   options: ReliableReportingSchedulerOptionsV1,
-  signal: AbortSignal
+  signal: AbortSignal,
+  store: ReportingLedgerStore
 ): Promise<void> {
+  // Rotation cursor. Without it the same ledger order runs every interval, so a
+  // tenant early in that order can consume the whole per-pass budget and the
+  // tenants behind it never produce.
+  let rotation = 0;
+  const perAccountBudget =
+    options.maxObligationsPerAccount !== undefined || options.maxWorkerIterationsPerAccount !== undefined;
   while (!signal.aborted) {
     let accountIds: Array<string | undefined> = [];
     try {
       accountIds = options.deploymentWide
-        ? [undefined]
-        : validateAccountIds(
-            typeof options.accountIds === 'function' ? await options.accountIds() : options.accountIds
+        ? // A single deployment-wide sweep would apply the per-account budgets
+          // once across every tenant, which is not what those options name.
+          // Enumerate the ledger's accounts so each one gets its own bounded
+          // cycle, and rotate the starting point every pass.
+          perAccountBudget
+          ? rotate(await deploymentWideAccountIds(store), rotation)
+          : [undefined]
+        : rotate(
+            validateAccountIds(
+              typeof options.accountIds === 'function' ? await options.accountIds() : options.accountIds
+            ),
+            rotation
           );
     } catch (error) {
       await reportSchedulerError(options, signal, error);
     }
+    rotation += 1;
     for (const accountId of accountIds) {
       if (signal.aborted) break;
       try {
@@ -545,6 +589,23 @@ function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void
   });
 }
 
+/** Start each pass one tenant further along so no fixed order can starve. */
+function rotate<T>(values: readonly T[], by: number): T[] {
+  if (values.length < 2) return [...values];
+  const offset = ((by % values.length) + values.length) % values.length;
+  return [...values.slice(offset), ...values.slice(0, offset)];
+}
+
+/**
+ * Every account the ledger currently holds a configuration for. This is the
+ * roster a deployment-wide worker is authorized over, so it is also the roster
+ * the per-account budgets apply to.
+ */
+async function deploymentWideAccountIds(store: ReportingLedgerStore): Promise<string[]> {
+  const configurations = await store.listConfigurations();
+  return [...new Set(configurations.map(value => value.account.account_id))].sort();
+}
+
 function validateAccountIds(values: readonly string[]): Array<string | undefined> {
   if (!Array.isArray(values)) {
     throw new TypeError('Reporting scheduler accountIds resolver must return an array');
@@ -597,7 +658,8 @@ async function keylessPredecessorScope(
   store: ReportingLedgerStore,
   accountId: string,
   configuration: Pick<ReliableReportingConfigurationInputV1, 'delivery_config_id' | 'delivery_config_version'>,
-  resolvedScope: Record<string, unknown>
+  resolvedScope: Record<string, unknown>,
+  adapterCount: number
 ): Promise<Record<string, unknown> | undefined> {
   const predecessor = (await store.listConfigurations(accountId)).find(
     value =>
@@ -606,6 +668,16 @@ async function keylessPredecessorScope(
   );
   if (!predecessor || Object.prototype.hasOwnProperty.call(predecessor.sourceScope, ADAPTER_SCOPE_KEY)) {
     return undefined;
+  }
+  // A keyless scope only routes through the sole-adapter fallback. Replaying
+  // one into a multi-adapter deployment would hand back a configuration that
+  // cannot name an adapter, so every later execute and read would fail. Refuse
+  // the replay instead of succeeding into a permanently broken generation.
+  if (adapterCount > 1) {
+    throw new TypeError(
+      'Reporting configuration generation predates the adapter route key and cannot be routed with ' +
+        'multiple adapters installed; install a new generation with an explicit adapter route'
+    );
   }
   if (canonicalize(predecessor.sourceScope) !== canonicalize(resolvedScope)) return undefined;
   return structuredClone(predecessor.sourceScope);
@@ -637,6 +709,23 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   }
   if (delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
     throw new TypeError('Official delivery finality requires an authoritative source offering');
+  }
+  if (delivery.supported_finality.includes('official') && source.publicationClass === 'AUTHORITATIVE') {
+    // `expected_at` for an official period is period end + delivery_sla, but the
+    // source cannot publish before its own declared finalization moment plus the
+    // availability lag it expects after it. Advertising a shorter SLA promises a
+    // deadline the adapter is structurally unable to meet on any period.
+    const { finalization } = source;
+    const readyOffset =
+      finalization.schedule.daysAfterPeriodEnd * 86_400_000 +
+      localTimeOfDayMilliseconds(finalization.schedule.sourceLocalReadyTime);
+    const earliest = readyOffset + reportingIsoDurationMillisecondsV1(finalization.expectedAvailabilityLag);
+    if (reportingIsoDurationMillisecondsV1(delivery.schedule.delivery_sla) < earliest) {
+      throw new TypeError(
+        'Official reporting delivery SLA is shorter than the source can finalize and publish; ' +
+          'the advertised deadline is unreachable for every period'
+      );
+    }
   }
   const period = reportingIsoDurationMillisecondsV1(delivery.schedule.period_duration);
   const min = reportingIsoDurationMillisecondsV1(source.windowing.minimumWindow);
@@ -708,6 +797,24 @@ function trustedCoverage(coverage: ReliableReportingCoverageV1): {
   if (constituentIds.size !== constituents.length) {
     throw new TypeError('resolveCoverage must return unique constituent identities');
   }
+  // The identity schema types each arm but does not tie the constituent's own
+  // ids to the binding it carries. Contradictory lineage would be frozen into
+  // the generation and every obligation, so refuse it before it is durable.
+  for (const constituent of constituents) {
+    const binding = constituent.productBinding as
+      | { productId?: string; mediaBuyId?: string; packageId?: string }
+      | undefined;
+    if (!binding) continue;
+    if (binding.productId !== constituent.productId) {
+      throw new TypeError('resolveCoverage constituent productId contradicts its product binding');
+    }
+    if (constituent.constituentKind === 'media_buy' && binding.mediaBuyId !== constituent.mediaBuyId) {
+      throw new TypeError('resolveCoverage constituent mediaBuyId contradicts its product binding');
+    }
+    if (constituent.constituentKind === 'package_item' && binding.packageId !== constituent.packageId) {
+      throw new TypeError('resolveCoverage constituent packageId contradicts its product binding');
+    }
+  }
   const mediaBuyIds = [
     ...new Set(constituents.map(value => value.mediaBuyId).filter((value): value is string => Boolean(value))),
   ].sort();
@@ -726,20 +833,33 @@ const DAY_MILLISECONDS = 86_400_000;
  * two probes.
  */
 const OFFSET_PROBE_STEP_DAYS = 10;
-/** Probe past today so periods the planner has not generated yet are covered. */
+/** Periods the planner may still backfill inside a recovery window. */
+const OFFSET_BACKWARD_HORIZON_DAYS = 400;
+/** Periods the planner will generate before this configuration is revisited. */
 const OFFSET_FORWARD_HORIZON_DAYS = 400;
-/** Bounded work, and a fail-closed refusal for pathologically old anchors. */
-const MAX_OFFSET_PROBE_DAYS = 40 * 365;
 
 /**
  * Refuse a schedule the installed executor could never satisfy.
  *
  * `createInlineReportingSourceExecutor` requires both period boundaries to land
- * exactly on source-local midnight, and the ledger generates periods as
- * `anchor + n * periodMilliseconds`. Without this gate an offering may advertise
- * an alignment, anchor, or timezone the service cannot honor, the generation
- * installs cleanly, and every slice is then refused at execution time — an
- * outage that looks like an upstream failure rather than a configuration one.
+ * exactly on source-local midnight, and the ledger generates boundaries as
+ * `anchor + n * periodMilliseconds`. Two things therefore have to hold, and the
+ * spec decides both:
+ *
+ *  - **Phase.** `core/reporting-schedule.json` fixes interval zero: `utc` uses
+ *    1970-01-01T00:00:00Z, `source_timezone` uses local midnight on that date
+ *    in the period timezone. A compliant generation anchors on that origin, so
+ *    the anchor is validated as "sits on a protocol boundary", not as "is
+ *    recent" — a 1970 origin is the compliant case, not a suspect one.
+ *  - **Offset stability.** The spec generates calendar durations with local
+ *    civil-time arithmetic across DST; this service multiplies fixed
+ *    milliseconds. The two agree only while the zone's UTC offset holds still,
+ *    so a zone that moves its offset is refused rather than silently drifting
+ *    to 23:00 local.
+ *
+ * Both checks are bounded: the phase test is arithmetic, and the offset scan
+ * covers only the operational window around now, never the whole span back to
+ * the origin.
  */
 function assertSupportedScheduleSemantics(
   schedule: ReliableReportingConfigurationInputV1['schedule'],
@@ -750,12 +870,10 @@ function assertSupportedScheduleSemantics(
   if (alignment !== 'utc' && alignment !== 'source_timezone') {
     throw new TypeError(
       `ReliableReportingService cannot honor '${alignment}' period alignment; it generates fixed-length ` +
-        'periods on source-local day boundaries'
+        'periods from the utc and source_timezone origins'
     );
   }
-  if (offering.schedule.period_timezone_policy === 'fixed' && offering.schedule.period_timezone !== sourceTimezone) {
-    throw new TypeError('Reporting offering pins a period timezone that is not the resolved source timezone');
-  }
+  assertOfferingScheduleShape(offering, sourceTimezone);
   if (schedule.periodMilliseconds % DAY_MILLISECONDS !== 0) {
     throw new TypeError(
       'Reporting periods must be whole source-local days; a sub-day window has no source-local midnight boundary'
@@ -763,95 +881,92 @@ function assertSupportedScheduleSemantics(
   }
   const anchorMs = Date.parse(schedule.anchor);
   if (!Number.isFinite(anchorMs)) throw new TypeError('Reporting configuration anchor must be a valid instant');
-  if (offering.schedule.period_anchor !== undefined && Date.parse(offering.schedule.period_anchor) !== anchorMs) {
-    throw new TypeError('Reporting configuration anchor does not match the anchor its offering advertises');
+
+  // A property of the alignment/zone pairing rather than of this anchor, so it
+  // is reported before any phase or boundary arithmetic derived from it.
+  if (alignment === 'utc' && reportingUtcOffsetMinutesV1(sourceTimezone, anchorMs) !== 0) {
+    throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
   }
-  // A fixed-millisecond period only tracks local days in a zone whose UTC
-  // offset never moves. Under a DST or statutory offset change `anchor + n *
-  // 24h` lands at 23:00 or 01:00 local, so every period after the transition is
-  // refused at execution time.
-  //
-  // The span has to run from the anchor all the way through the periods the
-  // planner will generate, not a fixed window after the anchor: a generation
-  // anchored in 2022 in Asia/Almaty looks stable for its first year and then
-  // breaks on that zone's 2024 UTC+6 → UTC+5 change, which every currently
-  // generated boundary sits after.
-  const anchorOffset = utcOffsetMinutes(sourceTimezone, anchorMs);
-  const probeEndMs = Math.max(anchorMs, Date.now()) + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
-  const probeDays = Math.ceil((probeEndMs - anchorMs) / DAY_MILLISECONDS);
-  if (probeDays > MAX_OFFSET_PROBE_DAYS) {
+
+  const originMs = reportingScheduleOriginV1(alignment, sourceTimezone);
+  const phase =
+    (((anchorMs - originMs) % schedule.periodMilliseconds) + schedule.periodMilliseconds) % schedule.periodMilliseconds;
+  if (phase !== 0) {
     throw new TypeError(
-      'Reporting configuration anchor is too far in the past to verify its source timezone offset; ' +
-        'anchor the generation within the last 40 years'
+      `Reporting configuration anchor is not on a '${alignment}' period boundary; boundaries are derived from ` +
+        'the protocol origin (1970-01-01 local midnight) plus whole periods'
     );
   }
-  if (!isSourceLocalMidnight(anchorMs, sourceTimezone)) {
-    throw new TypeError('Reporting configuration anchor must fall on source-local midnight in the source timezone');
+
+  // Only the window the planner actually touches needs scanning. The boundary
+  // check below is what catches an offset change between the origin and today.
+  const now = Date.now();
+  const spanStartMs = Math.max(anchorMs, now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS);
+  const spanEndMs = now + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
+  const ordinal = Math.ceil((spanStartMs - originMs) / schedule.periodMilliseconds);
+  const firstBoundaryMs = originMs + ordinal * schedule.periodMilliseconds;
+  if (!reportingIsSourceLocalMidnightV1(firstBoundaryMs, sourceTimezone)) {
+    throw new TypeError(
+      'Reporting source timezone has changed its UTC offset since the schedule origin; the periods being ' +
+        'generated now do not land on source-local midnight'
+    );
   }
-  for (let day = OFFSET_PROBE_STEP_DAYS; day <= probeDays; day += OFFSET_PROBE_STEP_DAYS) {
-    if (utcOffsetMinutes(sourceTimezone, anchorMs + day * DAY_MILLISECONDS) !== anchorOffset) {
+  const spanOffset = reportingUtcOffsetMinutesV1(sourceTimezone, spanStartMs);
+  for (let instant = spanStartMs; instant < spanEndMs; instant += OFFSET_PROBE_STEP_DAYS * DAY_MILLISECONDS) {
+    if (reportingUtcOffsetMinutesV1(sourceTimezone, instant) !== spanOffset) {
       throw new TypeError(
         'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
       );
     }
   }
-  if (utcOffsetMinutes(sourceTimezone, probeEndMs) !== anchorOffset) {
+  if (reportingUtcOffsetMinutesV1(sourceTimezone, spanEndMs) !== spanOffset) {
     throw new TypeError(
       'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
     );
   }
-  if (alignment === 'utc' && anchorOffset !== 0) {
-    throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
-  }
 }
 
-function isSourceLocalMidnight(instantMs: number, timeZone: string): boolean {
-  if (instantMs % 1_000 !== 0) return false;
-  const parts = localParts(timeZone, instantMs);
-  return parts.hour === 0 && parts.minute === 0 && parts.second === 0;
-}
-
-function utcOffsetMinutes(timeZone: string, instantMs: number): number {
-  const parts = localParts(timeZone, instantMs);
-  const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-  return Math.round((asUtc - (instantMs - (instantMs % 1_000))) / 60_000);
-}
-
-const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
-
-/** Constructing a formatter per probe would dominate the offset scan. */
-function zonedFormatter(timeZone: string): Intl.DateTimeFormat {
-  let formatter = zonedFormatters.get(timeZone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-    zonedFormatters.set(timeZone, formatter);
-  }
-  return formatter;
-}
-
-function localParts(
-  timeZone: string,
-  instantMs: number
-): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
-  const parts = zonedFormatter(timeZone).formatToParts(new Date(instantMs));
-  const field = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find(part => part.type === type)?.value);
-  return {
-    year: field('year'),
-    month: field('month'),
-    day: field('day'),
-    hour: field('hour'),
-    minute: field('minute'),
-    second: field('second'),
+/**
+ * Enforce the conditional field shape `core/reporting-schedule-offering.json`
+ * defines per alignment. The generated Zod mirrors the property types but not
+ * the `allOf`/`if` branches, so an offering can otherwise advertise a
+ * `period_anchor` that the alignment forbids.
+ */
+function assertOfferingScheduleShape(offering: ReportingDeliveryOffering, sourceTimezone: string): void {
+  const advertised = offering.schedule as Record<string, unknown>;
+  const forbid = (fields: readonly string[]): void => {
+    for (const field of fields) {
+      if (advertised[field] !== undefined) {
+        throw new TypeError(
+          `Reporting offering advertises ${field}, which '${offering.schedule.alignment}' alignment forbids`
+        );
+      }
+    }
   };
+  if (offering.schedule.alignment === 'utc') {
+    forbid(['period_anchor', 'period_anchor_policy', 'period_timezone', 'period_timezone_policy']);
+    return;
+  }
+  forbid(['period_anchor', 'period_anchor_policy']);
+  const policy = offering.schedule.period_timezone_policy;
+  if (policy === undefined) {
+    throw new TypeError('source_timezone reporting offerings must advertise a period_timezone_policy');
+  }
+  if (policy === 'fixed') {
+    if (offering.schedule.period_timezone !== sourceTimezone) {
+      throw new TypeError('Reporting offering pins a period timezone that is not the resolved source timezone');
+    }
+    return;
+  }
+  if (offering.schedule.period_timezone !== undefined) {
+    forbid(['period_timezone']);
+  }
+}
+
+/** `HH:MM` local wall-clock offset from that day's local midnight. */
+function localTimeOfDayMilliseconds(value: string): number {
+  const [hours = 0, minutes = 0] = value.split(':').map(Number);
+  return hours * 3_600_000 + minutes * 60_000;
 }
 
 function trustedCurrency(value: string): string {

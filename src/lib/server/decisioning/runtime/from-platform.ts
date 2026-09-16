@@ -3336,7 +3336,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       ),
       'mediaBuy',
       mergeOpts,
-      defaultCreativeWireMode
+      defaultCreativeWireMode,
+      platform.mediaBuyLifecycle?.getMediaBuyDelivery !== undefined || platform.sales?.getMediaBuyDelivery !== undefined
     ),
     proposalNegotiation: platformProposalNegotiation ?? opts.proposalNegotiation,
     creative: mergeHandlers(
@@ -4485,12 +4486,33 @@ function mergeMediaBuyHandlers(
   platform: MediaBuyHandlers<Account> | undefined,
   domain: string,
   opts: { mode: MergeSeamMode; logger: AdcpLogger },
-  fallbackWireMode: 'canonical' | 'legacy'
+  fallbackWireMode: 'canonical' | 'legacy',
+  platformServesCumulativeDelivery: boolean
 ): MediaBuyHandlers<Account> | undefined {
   const merged = mergeHandlers(custom, platform, domain, opts);
   if (!custom || !platform || !merged) return merged;
 
   const routed = { ...merged } as Record<string, unknown>;
+  // Installing reporting makes the platform emit `getMediaBuyDelivery` purely to
+  // serve exact revision reads. On a reporting-only platform that key would
+  // otherwise shadow an adopter's still-current cumulative handler and answer
+  // UNSUPPORTED_FEATURE, so route unbound reads back to the adopter. The custom
+  // handler keeps receiving the raw HandlerContext it is written against.
+  const customDelivery = custom.getMediaBuyDelivery;
+  const platformDelivery = platform.getMediaBuyDelivery;
+  if (
+    !platformServesCumulativeDelivery &&
+    typeof customDelivery === 'function' &&
+    typeof platformDelivery === 'function'
+  ) {
+    routed.getMediaBuyDelivery = (...args: unknown[]) => {
+      const revisionId = (args[0] as { reporting_revision_id?: unknown } | undefined)?.reporting_revision_id;
+      const exactRevisionRead = typeof revisionId === 'string' && revisionId.length > 0;
+      return exactRevisionRead
+        ? Reflect.apply(platformDelivery, platform, args)
+        : Reflect.apply(customDelivery, custom, args);
+    };
+  }
   for (const key of ['createMediaBuy', 'updateMediaBuy', 'getMediaBuys'] as const) {
     const customHandler = (custom as Record<string, unknown>)[key];
     const platformHandler = (platform as Record<string, unknown>)[key];

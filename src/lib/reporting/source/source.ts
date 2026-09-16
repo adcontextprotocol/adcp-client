@@ -625,3 +625,108 @@ function sourceLocalDate(instant: string, timezone: string) {
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
 }
+
+/**
+ * Normative period-boundary origins from `core/reporting-schedule.json`.
+ *
+ * `utc` uses 1970-01-01T00:00:00Z as interval zero; `source_timezone` uses
+ * local midnight on that date in the explicit period timezone. Every boundary
+ * is the origin plus an interval ordinal, so an adopter that follows the spec
+ * anchors its generation on that origin rather than on a recent date.
+ */
+export const REPORTING_SCHEDULE_ORIGIN_UTC_DATE_V1 = Date.UTC(1970, 0, 1);
+
+const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Constructing a formatter per sample would dominate an offset scan. */
+function zonedFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = zonedFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    zonedFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+function zonedParts(
+  timeZone: string,
+  instantMs: number
+): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
+  const parts = zonedFormatter(timeZone).formatToParts(new Date(instantMs));
+  const field = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find(part => part.type === type)?.value);
+  return {
+    year: field('year'),
+    month: field('month'),
+    day: field('day'),
+    hour: field('hour'),
+    minute: field('minute'),
+    second: field('second'),
+  };
+}
+
+/** Minutes east of UTC that `timeZone` observes at `instantMs`. */
+export function reportingUtcOffsetMinutesV1(timeZone: string, instantMs: number): number {
+  const parts = zonedParts(timeZone, instantMs);
+  const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return Math.round((asUtc - (instantMs - (instantMs % 1_000))) / 60_000);
+}
+
+/** True when `instantMs` is exactly 00:00:00.000 local time in `timeZone`. */
+export function reportingIsSourceLocalMidnightV1(instantMs: number, timeZone: string): boolean {
+  if (instantMs % 1_000 !== 0) return false;
+  const parts = zonedParts(timeZone, instantMs);
+  return parts.hour === 0 && parts.minute === 0 && parts.second === 0;
+}
+
+/**
+ * Interval zero for an alignment, per `reporting-schedule.json` §period_generation.
+ * `billing_cycle` has no derivable origin — it carries an explicit anchor.
+ */
+export function reportingScheduleOriginV1(alignment: 'utc' | 'source_timezone', timeZone: string): number {
+  if (alignment === 'utc') return REPORTING_SCHEDULE_ORIGIN_UTC_DATE_V1;
+  // Resolve local midnight on 1970-01-01 by converging on the zone's own
+  // offset at that instant; two passes settle any offset/era difference.
+  let instant = REPORTING_SCHEDULE_ORIGIN_UTC_DATE_V1;
+  for (let pass = 0; pass < 3; pass += 1) {
+    const candidate = REPORTING_SCHEDULE_ORIGIN_UTC_DATE_V1 - reportingUtcOffsetMinutesV1(timeZone, instant) * 60_000;
+    if (candidate === instant) break;
+    instant = candidate;
+  }
+  return instant;
+}
+
+/**
+ * Which alignment an installed fixed-millisecond schedule actually describes.
+ *
+ * A generation whose boundaries fall on the normative `utc` or `source_timezone`
+ * origins must be reported as that alignment: projecting it as `billing_cycle`
+ * both contradicts discovery and forces a `period_anchor` the wire schema
+ * forbids for the derived alignments.
+ */
+export function reportingDeriveScheduleAlignmentV1(input: {
+  periodMilliseconds: number;
+  anchorMs: number;
+  sourceTimezone: string;
+}): 'utc' | 'source_timezone' | 'billing_cycle' {
+  const { periodMilliseconds, anchorMs, sourceTimezone } = input;
+  if (!Number.isFinite(anchorMs) || periodMilliseconds <= 0 || periodMilliseconds % 86_400_000 !== 0) {
+    return 'billing_cycle';
+  }
+  const onOrigin = (alignment: 'utc' | 'source_timezone'): boolean => {
+    const origin = reportingScheduleOriginV1(alignment, sourceTimezone);
+    const delta = anchorMs - origin;
+    return ((delta % periodMilliseconds) + periodMilliseconds) % periodMilliseconds === 0;
+  };
+  if (reportingUtcOffsetMinutesV1(sourceTimezone, anchorMs) === 0 && onOrigin('utc')) return 'utc';
+  if (onOrigin('source_timezone')) return 'source_timezone';
+  return 'billing_cycle';
+}

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
 import { AdcpError } from '../../server/decisioning/async-outcome';
 import type { GetReportingStatusResponse } from '../../types';
-import { canonicalJsonV1 } from '../source';
+import { canonicalJsonV1, reportingDeriveScheduleAlignmentV1 } from '../source';
 import {
   evaluateReportingLedgerCoverageV1,
   relevantReportingLedgerConfigurations,
@@ -536,13 +536,7 @@ function wireObligation(
       source_timezone: obligation.period.sourceTimezone,
     },
     expected_at: obligation.expectedAt,
-    schedule: {
-      period_duration: `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
-      alignment: 'billing_cycle',
-      period_anchor: obligation.schedule.anchor,
-      period_timezone: obligation.period.sourceTimezone,
-      delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
-    },
+    schedule: wireSchedule(obligation),
     required_finality: obligation.requiredFinality,
     reconciliation_mode: 'delivery_only',
     reconciliation_status: 'not_required',
@@ -825,4 +819,29 @@ function copyArray(raw: Record<string, unknown>, key: string): Record<string, un
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Project an obligation's schedule under the alignment it actually describes.
+ *
+ * `core/reporting-schedule.json` forbids `period_anchor` for every alignment
+ * except `billing_cycle`, and forbids `period_timezone` for `utc`. Reporting a
+ * spec-origin schedule as `billing_cycle` therefore both contradicts what the
+ * offering advertised at discovery and carries a field the wire rejects for the
+ * alignment the buyer was promised.
+ */
+function wireSchedule(obligation: ReportingLedgerObligationV1) {
+  const anchorMs = Date.parse(obligation.schedule.anchor);
+  const alignment = reportingDeriveScheduleAlignmentV1({
+    periodMilliseconds: obligation.schedule.periodMilliseconds,
+    anchorMs,
+    sourceTimezone: obligation.period.sourceTimezone,
+  });
+  return {
+    period_duration: `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
+    alignment,
+    ...(alignment === 'billing_cycle' ? { period_anchor: obligation.schedule.anchor } : {}),
+    ...(alignment === 'utc' ? {} : { period_timezone: obligation.period.sourceTimezone }),
+    delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
+  };
 }
