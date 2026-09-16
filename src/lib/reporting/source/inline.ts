@@ -159,6 +159,20 @@ const INLINE_MAX_VALIDATION_WORK_UNITS_V1 = 5_000_000;
 // at the per-object staging ceiling: no response may be scanned more than a single
 // staged object's worth, however the claims are distributed across rows and metrics.
 const INLINE_MAX_VALIDATION_SCAN_BYTES_V1 = INLINE_MAX_OBJECT_BYTES_V1;
+// Retained validation state is held to the ceiling on what this caller could actually
+// stage: holding a response in memory may not cost more than writing it out would. Claims
+// are kept columnar -- one value slot and one flag byte per captured field -- so a shape
+// this bound admits is cheap to hold, and a shape it refuses could not have been staged
+// either. Per-field claim objects in a Map cost roughly twenty-five times as much, which
+// let a request inside every other limit hold most of a gigabyte before a completeness
+// check could reject it.
+const INLINE_MAX_VALIDATION_RETAINED_BYTES_V1 = INLINE_MAX_SCOPE_OBJECT_BYTES_V1;
+const INLINE_RETAINED_BYTES_PER_ROW_V1 = 160;
+const INLINE_RETAINED_BYTES_PER_CLAIM_V1 = 9;
+// The longest status this adapter recognizes is `reporting_delayed`. A longer string
+// cannot match one, so it is never case-folded: a huge status shared by every row used to
+// be copied once per row before a failure that was already decided.
+const INLINE_MAX_STATUS_CHARS_V1 = 32;
 const INLINE_UNAVAILABLE_ROW_STATUSES_V1 = [
   'failed',
   'reporting_delayed',
@@ -484,7 +498,7 @@ async function executeAndSeal(
   }
   const reportingRows = reportingRowsInput as readonly unknown[] | undefined;
   const mediaBuyDeliveries = mediaBuyDeliveriesInput as readonly unknown[] | undefined;
-  const responseStatus = !isRows(fetched) ? fetched.status?.toLowerCase() : undefined;
+  const responseStatus = !isRows(fetched) ? boundedLowerCaseStatus(fetched.status) : undefined;
   if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
     return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
   }
@@ -578,30 +592,50 @@ async function executeAndSeal(
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
     }
   }
-  // Settle the observation budget from counts alone, before a single row is read: one
-  // identity read plus one read per requested metric and dimension, per row.
+  // Settle both observation budgets from counts alone, before a single row is read: one
+  // identity read plus one read per requested metric and dimension, per row, and the
+  // bytes the captured claims will occupy while validation runs.
+  const captureLayout = captureLayoutFor(request);
   if (
     workUnitsExceedCap(
       sourceRowInputs.length + auxiliaryRowInputs.length,
       1 + request.requestedMetrics.length + request.requestedDimensions.length,
       INLINE_MAX_VALIDATION_WORK_UNITS_V1
+    ) ||
+    workUnitsExceedCap(
+      sourceRowInputs.length + auxiliaryRowInputs.length,
+      INLINE_RETAINED_BYTES_PER_ROW_V1 + captureLayout.fields.length * INLINE_RETAINED_BYTES_PER_CLAIM_V1,
+      INLINE_MAX_VALIDATION_RETAINED_BYTES_V1
     )
   ) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the work budget');
   }
-  // Observe every row exactly once. Budgeting, scope and currency checks, availability
-  // validation, projection and the staged bytes all read these snapshots, so a row that
-  // answers differently on a second read cannot charge one shape and perform another.
+  const strictClaims = availabilityEvidence !== undefined;
   let scanBudget = INLINE_MAX_VALIDATION_SCAN_BYTES_V1;
   const chargeScan = (units: number) => {
     if (units > scanBudget) throw new InlineWorkBudgetExhaustedError();
     scanBudget -= units;
   };
+  // Row status and row currency are decided in their own streaming passes, before any
+  // claim is captured, so a response whose first row already settles the outcome does not
+  // pay to capture the rest. Each field is still observed exactly once overall: status
+  // here, currency here, and every metric and dimension in the capture below.
+  if (anyRowIsUnavailable(sourceRowInputs, auxiliaryRowInputs)) {
+    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
+  }
+  if (anyRowCurrencyDiffers(sourceRowInputs, auxiliaryRowInputs, request.sourceSettings.currency)) {
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
+  }
+  // Observe every claim exactly once. Budgeting, scope checks, availability validation,
+  // projection and the staged bytes all read these snapshots, so a row that answers
+  // differently on a second read cannot charge one shape and perform another.
   let sourceSnapshots: readonly (RowSnapshotV1 | undefined)[];
   let auxiliarySnapshots: readonly (RowSnapshotV1 | undefined)[];
   try {
-    sourceSnapshots = sourceRowInputs.map(row => captureRowSnapshot(row, request, chargeScan));
-    auxiliarySnapshots = auxiliaryRowInputs.map(row => captureRowSnapshot(row, request, chargeScan));
+    sourceSnapshots = sourceRowInputs.map(row => captureRowSnapshot(row, captureLayout, strictClaims, chargeScan));
+    auxiliarySnapshots = auxiliaryRowInputs.map(row =>
+      captureRowSnapshot(row, captureLayout, strictClaims, chargeScan)
+    );
   } catch (error) {
     if (error instanceof InlineWorkBudgetExhaustedError) {
       return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the scan budget');
@@ -609,16 +643,6 @@ async function executeAndSeal(
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
   }
   const allSnapshots = [...sourceSnapshots, ...auxiliarySnapshots];
-  if (allSnapshots.some(snapshot => snapshot?.unavailable === true)) {
-    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
-  }
-  if (
-    allSnapshots.some(
-      snapshot => snapshot?.currency !== undefined && snapshot.currency !== request.sourceSettings.currency
-    )
-  ) {
-    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
-  }
   // Now that the identities are captured, price the fanout from them: every constituent
   // naming a media buy re-checks that media buy's rows against its own cells.
   if (
@@ -710,7 +734,7 @@ async function executeAndSeal(
           (availabilityEvidence === undefined &&
             (constituentRows.length === 0 ||
               constituentRows.some(snapshot =>
-                request.requestedMetrics.some(metric => snapshotField(snapshot, metric).value === undefined)
+                request.requestedMetrics.some(metric => snapshotFieldValue(snapshot, metric) === undefined)
               )))
         );
       })
@@ -956,140 +980,203 @@ class InlineWorkBudgetExhaustedError extends Error {}
 /** One claim for one field, from a single descriptor observation. */
 type RowClaimV1 = { readonly claimed: boolean; readonly value?: unknown };
 
-/**
- * One field of one row, fully resolved from a single observation.
- *
- * Every derivation that costs a scan -- byte length, the zero test, and the decimal
- * canonicalization behind a duplicate-claim comparison -- is computed here, once, while
- * the scan budget is being charged. Validation then visits a field any number of times
- * (once per cell, per constituent sharing the media buy) at constant cost, so the work
- * the budget charges is the work that is performed.
- */
-type RowFieldClaimsV1 = {
-  readonly direct: RowClaimV1;
-  readonly nested: RowClaimV1;
-  /** The claim that governs the field: the direct one when present, else the `totals` one. */
-  readonly claim: RowClaimV1;
-  readonly directValid: boolean;
-  readonly nestedValid: boolean;
-  readonly claimValid: boolean;
-  /** The usable value: the direct one when valid, else the `totals` one. */
-  readonly value: string | number | undefined;
-  readonly valueIsZero: boolean;
-  readonly claimIsZero: boolean;
-  /** False only when both claims are present and state different quantities. */
-  readonly claimsAgree: boolean;
-};
-
 const UNCLAIMED_V1: RowClaimV1 = { claimed: false };
-const NO_FIELD_CLAIMS_V1: RowFieldClaimsV1 = {
-  direct: UNCLAIMED_V1,
-  nested: UNCLAIMED_V1,
-  claim: UNCLAIMED_V1,
-  directValid: false,
-  nestedValid: false,
-  claimValid: false,
-  value: undefined,
-  valueIsZero: false,
-  claimIsZero: false,
-  claimsAgree: true,
-};
+
+/**
+ * Field ordinals shared by every row of one request. Claims are addressed by ordinal, so
+ * a row retains two flat slots per field rather than a Map entry and a claim object:
+ * 100,000 rows over 48 requested fields held roughly 4,800,000 claim objects and Map
+ * entries -- near a gigabyte -- before a completeness check could reject the response.
+ */
+type CaptureLayoutV1 = { readonly fields: readonly string[]; readonly indexOf: ReadonlyMap<string, number> };
+
+function captureLayoutFor(request: ReportingSourceSliceRequestV1): CaptureLayoutV1 {
+  const fields: string[] = [];
+  const indexOf = new Map<string, number>();
+  for (const field of [...request.requestedMetrics, ...request.requestedDimensions]) {
+    if (field === 'media_buy_id' || indexOf.has(field)) continue;
+    indexOf.set(field, fields.length);
+    fields.push(field);
+  }
+  return { fields, indexOf };
+}
+
+// Per-field capture flags. Only the resolved value is retained: the direct claim is what
+// projection keeps whenever it is claimed and valid, and the `totals` claim otherwise, so
+// both reduce to one slot plus these bits.
+const CLAIM_DIRECT_CLAIMED_V1 = 1 << 0;
+const CLAIM_NESTED_CLAIMED_V1 = 1 << 1;
+const CLAIM_DIRECT_VALID_V1 = 1 << 2;
+const CLAIM_NESTED_VALID_V1 = 1 << 3;
+const CLAIM_VALUE_IS_ZERO_V1 = 1 << 4;
+const CLAIM_CLAIM_IS_ZERO_V1 = 1 << 5;
+const CLAIM_DISAGREE_V1 = 1 << 6;
 
 /**
  * One delivery row observed exactly once.
  *
- * Work budgeting, scope and currency checks, availability validation, projection and the
- * staged bytes all read this snapshot rather than the adopter row. Re-reading a row let a
- * stateful proxy answer differently per observation: a `media_buy_id` reporting a unique
- * value while the fanout budget was counted and a shared value while the rows were
- * grouped charged one constituent's work and then performed every constituent's.
+ * Work budgeting, scope checks, availability validation, projection and the staged bytes
+ * all read this snapshot rather than the adopter row. Re-reading a row let a stateful
+ * proxy answer differently per observation: a `media_buy_id` reporting a unique value
+ * while the fanout budget was counted and a shared value while the rows were grouped
+ * charged one constituent's work and then performed every constituent's.
  */
 type RowSnapshotV1 = {
+  readonly layout: CaptureLayoutV1;
   readonly mediaBuyId: string | undefined;
-  readonly currency: string | undefined;
-  readonly unavailable: boolean;
-  /** Claims for every requested metric and dimension, keyed by field name. */
-  readonly fieldClaims: ReadonlyMap<string, RowFieldClaimsV1>;
+  /** Resolved value per captured field, addressed by layout ordinal. */
+  readonly values: readonly (string | number | undefined)[];
+  readonly flags: Uint8Array;
 };
+
+/** Layout ordinal of `field`, or -1 when the request did not ask for it. */
+function fieldSlotOf(snapshot: RowSnapshotV1, field: string): number {
+  return snapshot.layout.indexOf.get(field) ?? -1;
+}
+
+function slotValue(snapshot: RowSnapshotV1, slot: number): string | number | undefined {
+  return slot < 0 ? undefined : snapshot.values[slot];
+}
+
+function slotFlags(snapshot: RowSnapshotV1, slot: number): number {
+  return slot < 0 ? 0 : (snapshot.flags[slot] ?? 0);
+}
+
+/** The resolved value for `field`: the direct claim when valid, else the `totals` claim. */
+function snapshotFieldValue(snapshot: RowSnapshotV1, field: string): string | number | undefined {
+  return slotValue(snapshot, fieldSlotOf(snapshot, field));
+}
 
 /**
  * Capture one row. Returns undefined when the value is not a row object at all, so the
- * unavailable and currency checks keep their precedence over the projection's rejection.
+ * status and currency passes keep their precedence over the projection's rejection.
  */
 function captureRowSnapshot(
   row: unknown,
-  request: ReportingSourceSliceRequestV1,
+  layout: CaptureLayoutV1,
+  strictClaims: boolean,
   chargeScan: (units: number) => void
 ): RowSnapshotV1 | undefined {
-  if (typeof row !== 'object' || row === null || Array.isArray(row)) return undefined;
-  const record = row as Record<string, unknown>;
+  const record = asRowRecord(row);
+  if (!record) return undefined;
   const mediaBuyId = ownDataValue(record, 'media_buy_id');
-  const currency = ownDataValue(record, 'currency');
-  const status = ownDataValue(record, 'status');
-  const partialData = ownDataValue(record, 'partial_data');
   const totals = ownDataValue(record, 'totals');
   const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
-  const fieldClaims = new Map<string, RowFieldClaimsV1>();
-  for (const field of [...request.requestedMetrics, ...request.requestedDimensions]) {
-    if (field === 'media_buy_id' || fieldClaims.has(field)) continue;
-    fieldClaims.set(field, captureFieldClaims(record, totalsRecord, field, chargeScan));
+  const values: (string | number | undefined)[] = new Array(layout.fields.length);
+  const flags = new Uint8Array(layout.fields.length);
+  for (let slot = 0; slot < layout.fields.length; slot += 1) {
+    const field = layout.fields[slot]!;
+    const direct = ownDataClaim(record, field);
+    const nested = totalsRecord ? ownDataClaim(totalsRecord, field) : UNCLAIMED_V1;
+    // Charge both claims before anything measures or canonicalizes either one. A
+    // string's `length` is O(1), while its byte length, the zero test and the decimal
+    // trims are all O(length). Only the retained value is charged against the projection
+    // budget, so a long string appearing as the discarded half of a duplicate claim -- a
+    // tiny direct value beside a huge `totals` restatement -- otherwise bought a full
+    // scan per row at no cost, and the same string reused across rows bought one scan
+    // per occurrence.
+    chargeScan(claimScanUnits(direct.value, strictClaims) + claimScanUnits(nested.value, strictClaims));
+
+    const directValid = isEvidenceValue(direct.value);
+    const nestedValid = isEvidenceValue(nested.value);
+    const value: string | number | undefined = directValid
+      ? (direct.value as string | number)
+      : nestedValid
+        ? (nested.value as string | number)
+        : undefined;
+    let bits = 0;
+    if (direct.claimed) bits |= CLAIM_DIRECT_CLAIMED_V1;
+    if (nested.claimed) bits |= CLAIM_NESTED_CLAIMED_V1;
+    if (directValid) bits |= CLAIM_DIRECT_VALID_V1;
+    if (nestedValid) bits |= CLAIM_NESTED_VALID_V1;
+    // The zero tests and the duplicate-claim comparison are read only while evidence
+    // cells are checked and projected strictly. Computing them on the legacy path scanned
+    // and canonicalized values whose results nothing would consult.
+    if (strictClaims) {
+      const claimValue = direct.claimed ? direct.value : nested.value;
+      const claimValid = direct.claimed ? directValid : nestedValid;
+      if (value !== undefined && isZeroEvidenceValue(value)) bits |= CLAIM_VALUE_IS_ZERO_V1;
+      if (claimValid && isZeroEvidenceValue(claimValue as string | number)) bits |= CLAIM_CLAIM_IS_ZERO_V1;
+      if (
+        direct.claimed &&
+        nested.claimed &&
+        directValid &&
+        nestedValid &&
+        !metricClaimsAgree(direct.value, nested.value)
+      ) {
+        bits |= CLAIM_DISAGREE_V1;
+      }
+    }
+    values[slot] = value;
+    flags[slot] = bits;
   }
   return {
+    layout,
     mediaBuyId: typeof mediaBuyId === 'string' ? mediaBuyId : undefined,
-    currency: typeof currency === 'string' ? currency : undefined,
-    unavailable:
-      (typeof status === 'string' && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status.toLowerCase())) ||
-      partialData === true,
-    fieldClaims,
+    values,
+    flags,
   };
 }
 
-function captureFieldClaims(
-  record: Record<string, unknown>,
-  totalsRecord: Record<string, unknown> | undefined,
-  field: string,
-  chargeScan: (units: number) => void
-): RowFieldClaimsV1 {
-  const direct = ownDataClaim(record, field);
-  const nested = totalsRecord ? ownDataClaim(totalsRecord, field) : UNCLAIMED_V1;
-  // Charge both claims before anything measures or canonicalizes either one. A string's
-  // `length` is O(1), while its byte length, the zero test and the decimal trims are all
-  // O(length). Only the retained value is charged against the projection budget, so a
-  // long string appearing as the discarded half of a duplicate claim -- a tiny direct
-  // value beside a huge `totals` restatement -- otherwise bought a full scan per row at
-  // no cost, and the same string reused across rows bought one scan per occurrence.
-  chargeScan(scanUnits(direct.value) + scanUnits(nested.value));
-
-  const directValid = isEvidenceValue(direct.value);
-  const nestedValid = isEvidenceValue(nested.value);
-  const claim = direct.claimed ? direct : nested;
-  const claimValid = claim === direct ? directValid : nestedValid;
-  const value: string | number | undefined = directValid
-    ? (direct.value as string | number)
-    : nestedValid
-      ? (nested.value as string | number)
-      : undefined;
-  return {
-    direct,
-    nested,
-    claim,
-    directValid,
-    nestedValid,
-    claimValid,
-    value,
-    valueIsZero: value !== undefined && isZeroEvidenceValue(value),
-    claimIsZero: claimValid && isZeroEvidenceValue(claim.value as string | number),
-    // Only a duplicate claim can disagree, and only then is a canonical decimal form
-    // needed -- so the comparison happens here, once, rather than once per projection.
-    claimsAgree:
-      !direct.claimed || !nested.claimed || !directValid || !nestedValid
-        ? true
-        : metricClaimsAgree(direct.value, nested.value),
-  };
+function asRowRecord(row: unknown): Record<string, unknown> | undefined {
+  return typeof row !== 'object' || row === null || Array.isArray(row) ? undefined : (row as Record<string, unknown>);
 }
 
-function scanUnits(value: unknown): number {
-  return typeof value === 'string' ? value.length + 1 : 1;
+/** Case-fold a status only when it is short enough to be one this adapter recognizes. */
+function boundedLowerCaseStatus(status: unknown): string | undefined {
+  return typeof status === 'string' && status.length <= INLINE_MAX_STATUS_CHARS_V1 ? status.toLowerCase() : undefined;
+}
+
+/** Stream both collections, stopping at the first unavailable row. Nothing is retained. */
+function anyRowIsUnavailable(sourceRowInputs: readonly unknown[], auxiliaryRowInputs: readonly unknown[]): boolean {
+  for (const rows of [sourceRowInputs, auxiliaryRowInputs]) {
+    for (const row of rows) {
+      const record = asRowRecord(row);
+      if (!record) continue;
+      const status = boundedLowerCaseStatus(ownDataValue(record, 'status'));
+      if (status !== undefined && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status)) return true;
+      if (ownDataValue(record, 'partial_data') === true) return true;
+    }
+  }
+  return false;
+}
+
+/** Stream both collections, stopping at the first row that declares another currency. */
+function anyRowCurrencyDiffers(
+  sourceRowInputs: readonly unknown[],
+  auxiliaryRowInputs: readonly unknown[],
+  currency: string
+): boolean {
+  for (const rows of [sourceRowInputs, auxiliaryRowInputs]) {
+    for (const row of rows) {
+      const record = asRowRecord(row);
+      if (!record) continue;
+      const declared = ownDataValue(record, 'currency');
+      if (typeof declared === 'string' && declared !== currency) return true;
+    }
+  }
+  return false;
+}
+
+function claimScanUnits(value: unknown, strictClaims: boolean): number {
+  if (typeof value === 'string') return value.length + 1;
+  if (typeof value !== 'number') return 1;
+  // Only a strict duplicate-claim comparison canonicalizes a number into plain decimal.
+  return strictClaims ? numericScanUnits(value) : 1;
+}
+
+/**
+ * Characters a number can materialize while it is canonicalized.
+ *
+ * `String` prints a finite double in at most about 25 characters, but exponent notation
+ * expands by the exponent once the decimal point is shifted into plain form: `5e-324`
+ * becomes 326 digits. Charging one unit per number let 200,000 duplicate numeric claims
+ * buy more than 130,000,000 characters of scanning for 400,000 units.
+ */
+function numericScanUnits(value: number): number {
+  const printed = String(value);
+  const exponent = /[eE]([+-]?\d+)$/.exec(printed);
+  return printed.length + (exponent ? Math.abs(Number(exponent[1])) : 0) + 1;
 }
 
 /** True when `count` items at `unitsEach` each would exceed `cap`, without multiplying. */
@@ -1164,14 +1251,10 @@ function groupSnapshotsByMediaBuyId(
   return grouped;
 }
 
-function snapshotField(snapshot: RowSnapshotV1, field: string): RowFieldClaimsV1 {
-  return snapshot.fieldClaims.get(field) ?? NO_FIELD_CLAIMS_V1;
-}
-
 function snapshotHasDimension(snapshot: RowSnapshotV1, dimension: string): boolean {
   return dimension === 'media_buy_id'
     ? snapshot.mediaBuyId !== undefined
-    : snapshotField(snapshot, dimension).value !== undefined;
+    : snapshotFieldValue(snapshot, dimension) !== undefined;
 }
 
 /**
@@ -1228,14 +1311,18 @@ function cellVerdictForSnapshot(
   snapshot: RowSnapshotV1,
   isSourceRow: boolean
 ): 'partial' | 'integrity' | undefined {
-  const field = snapshotField(snapshot, cell.metric);
+  const slot = fieldSlotOf(snapshot, cell.metric);
+  const flags = slotFlags(snapshot, slot);
   if (isSourceRow) {
-    if (cell.status === 'present' && field.value === undefined) return 'partial';
-    if (cell.status === 'explicit_zero' && !field.valueIsZero) return 'integrity';
+    if (cell.status === 'present' && slotValue(snapshot, slot) === undefined) return 'partial';
+    if (cell.status === 'explicit_zero' && (flags & CLAIM_VALUE_IS_ZERO_V1) === 0) return 'integrity';
   }
-  if (field.claim.claimed && !field.claimValid) return 'integrity';
-  if (!field.claimValid) return undefined;
-  if (cell.status === 'explicit_zero' && !field.claimIsZero) return 'integrity';
+  const directClaimed = (flags & CLAIM_DIRECT_CLAIMED_V1) !== 0;
+  const claimClaimed = directClaimed || (flags & CLAIM_NESTED_CLAIMED_V1) !== 0;
+  const claimValid = (directClaimed ? flags & CLAIM_DIRECT_VALID_V1 : flags & CLAIM_NESTED_VALID_V1) !== 0;
+  if (claimClaimed && !claimValid) return 'integrity';
+  if (!claimValid) return undefined;
+  if (cell.status === 'explicit_zero' && (flags & CLAIM_CLAIM_IS_ZERO_V1) === 0) return 'integrity';
   return INLINE_UNAVAILABLE_CELL_STATUSES_V1.includes(cell.status) ? 'integrity' : undefined;
 }
 
@@ -1695,7 +1782,7 @@ function projectSnapshotRow(
   if (options.includeDimensions) {
     for (const dimension of request.requestedDimensions) {
       if (dimension === 'media_buy_id') continue;
-      const { value } = snapshotField(snapshot, dimension);
+      const value = snapshotFieldValue(snapshot, dimension);
       if (value === undefined) {
         if (options.allowMissingDimensions) continue;
         throw new TypeError('Invalid dimension evidence');
@@ -1706,27 +1793,25 @@ function projectSnapshotRow(
   }
   const projectedTotals: Record<string, unknown> = {};
   for (const metric of request.requestedMetrics) {
-    const field = snapshotField(snapshot, metric);
-    const { direct, nested } = field;
-    let value: string | number | undefined;
+    const slot = fieldSlotOf(snapshot, metric);
+    const flags = slotFlags(snapshot, slot);
+    const directClaimed = (flags & CLAIM_DIRECT_CLAIMED_V1) !== 0;
+    const directValid = (flags & CLAIM_DIRECT_VALID_V1) !== 0;
+    // The resolved slot already is what projection retains: the direct claim whenever it
+    // is claimed and valid, the `totals` claim otherwise.
+    const value = slotValue(snapshot, slot);
     let directValue = false;
     if (options.strictMetricClaims) {
-      if (direct.claimed && !field.directValid) throw new TypeError('Invalid metric evidence');
-      if (nested.claimed && !field.nestedValid) throw new TypeError('Invalid metric evidence');
+      if (directClaimed && !directValid) throw new TypeError('Invalid metric evidence');
+      if ((flags & CLAIM_NESTED_CLAIMED_V1) !== 0 && (flags & CLAIM_NESTED_VALID_V1) === 0) {
+        throw new TypeError('Invalid metric evidence');
+      }
       // A row that claims the same metric twice must not let the direct value mask a
       // contradictory totals claim -- the sealed evidence would misrepresent the source.
-      if (!field.claimsAgree) throw new TypeError('Contradictory metric evidence');
-      if (direct.claimed) {
-        value = direct.value as string | number | undefined;
-        directValue = true;
-      } else {
-        value = nested.value as string | number | undefined;
-      }
-    } else if (field.directValid) {
-      value = direct.value as string | number;
-      directValue = true;
+      if ((flags & CLAIM_DISAGREE_V1) !== 0) throw new TypeError('Contradictory metric evidence');
+      directValue = directClaimed;
     } else {
-      value = field.nestedValid ? (nested.value as string | number) : undefined;
+      directValue = directValid;
     }
     if (value === undefined) {
       if (options.allowMissingMetrics) continue;

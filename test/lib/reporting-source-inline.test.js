@@ -1788,6 +1788,174 @@ describe('createInlineReportingSourceExecutor', () => {
     return { source, slice };
   }
 
+  // Widen the offering so `metricCount` metrics and `dimensionCount` dimensions are exact.
+  function widenedOffering(metricCount, dimensionCount) {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    const metrics = ['impressions', 'spend'].slice(0, Math.min(metricCount, 2));
+    for (let index = metrics.length; index < metricCount; index += 1) {
+      const name = `metric_${String(index).padStart(4, '0')}`;
+      offering.metrics.push({ ...offering.metrics[0], name, semanticContractId: `delivery.${name}` });
+      metrics.push(name);
+    }
+    const dimensions = ['media_buy_id'];
+    for (let index = 1; index < dimensionCount; index += 1) {
+      const name = `dimension_${String(index).padStart(4, '0')}`;
+      offering.dimensions.push({ name, support: 'exact' });
+      dimensions.push(name);
+    }
+    return { offering, metrics, dimensions };
+  }
+
+  function peakHeapWatcher() {
+    if (global.gc) global.gc();
+    const before = process.memoryUsage().heapUsed;
+    let peak = before;
+    const timer = setInterval(() => {
+      peak = Math.max(peak, process.memoryUsage().heapUsed);
+    }, 4);
+    return () => {
+      clearInterval(timer);
+      peak = Math.max(peak, process.memoryUsage().heapUsed);
+      return (peak - before) / 1024 / 1024;
+    };
+  }
+
+  test('holds captured claims within a bounded footprint', async () => {
+    // Rows that identify their media buy and nothing else retain nothing through
+    // projection, so the staging budget is untouched and the response is rejected as
+    // incomplete -- but the capture still has to hold every requested field of every row.
+    const { offering, metrics, dimensions } = widenedOffering(24, 24);
+    const incompleteSource = rowCount =>
+      createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: Array.from({ length: rowCount }, () => ({ media_buy_id: 'fixture-media-buy' })),
+        }),
+        offering
+      );
+    const wideSlice = key => {
+      const slice = request(key);
+      slice.requestedMetrics = metrics;
+      slice.requestedDimensions = dimensions;
+      return slice;
+    };
+
+    // 100,000 rows over 48 requested fields sits inside the 5,000,000 unit work budget,
+    // but the claims would outlast what this caller could stage, so it is refused from
+    // counts alone rather than held. With per-field claim objects this shape allocated
+    // roughly 4,800,000 objects -- about 800 MiB measured -- before returning.
+    const readRefusedPeak = peakHeapWatcher();
+    const refused = await incompleteSource(100_000).execute(wideSlice('fixture-inline-retained-over'), context());
+    const refusedPeakMiB = readRefusedPeak();
+    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    assert.ok(refusedPeakMiB < 350, `refused capture peaked at ${refusedPeakMiB.toFixed(0)} MiB`);
+
+    // A shape inside the bound is still admitted, and holding it stays proportionate.
+    const readAdmittedPeak = peakHeapWatcher();
+    const incomplete = await incompleteSource(50_000).execute(wideSlice('fixture-inline-retained-under'), context());
+    const admittedPeakMiB = readAdmittedPeak();
+    assert.equal(validateReportingSourceFailureV1(incomplete, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    assert.ok(admittedPeakMiB < 200, `admitted capture peaked at ${admittedPeakMiB.toFixed(0)} MiB`);
+  });
+
+  test('stops at the first unavailable row without transforming later statuses', async () => {
+    // The first row already decides PARTIAL_RESULT. Capturing every row before checking
+    // meant 9,999 more rows were observed, and each shared status was case-folded into a
+    // fresh 200,000-character copy on the way.
+    let statusReads = 0;
+    const sharedStatus = `Delivered-${'S'.repeat(200_000)}`;
+    const rowProxy = fields =>
+      new Proxy(fields, {
+        getOwnPropertyDescriptor(target, property) {
+          if (property === 'status') statusReads += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          rowProxy({ media_buy_id: 'fixture-media-buy', status: 'failed', impressions: 1, spend: '1.00' }),
+          ...Array.from({ length: 9_999 }, () =>
+            rowProxy({ media_buy_id: 'fixture-media-buy', status: sharedStatus, impressions: 1, spend: '1.00' })
+          ),
+        ],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const readPeak = peakHeapWatcher();
+    const started = process.hrtime.bigint();
+    const result = await source.execute(request('fixture-inline-status-short-circuit'), context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    const peakMiB = readPeak();
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    assert.equal(statusReads, 1, 'the run stops at the first row that settles the outcome');
+    assert.ok(elapsedMs < 1_000, `status short-circuit took ${elapsedMs.toFixed(1)}ms`);
+    assert.ok(peakMiB < 200, `status short-circuit peaked at ${peakMiB.toFixed(0)} MiB`);
+  });
+
+  test('charges the canonicalized width of numeric claims', async () => {
+    // `String(5e-324)` prints 6 characters but canonicalizes to 326 digits, so a numeric
+    // claim charged one unit while scanning hundreds. Duplicate claims across 200 rows and
+    // 1,000 metrics were charged about 400,000 units for more than 130,000,000 characters.
+    const { offering, metrics } = widenedOffering(1_000, 1);
+    const strictSlice = request('fixture-inline-numeric-scan-width');
+    strictSlice.requestedMetrics = metrics;
+    strictSlice.coverage.expected = 'partial';
+    const denormalRows = () =>
+      Array.from({ length: 200 }, () => {
+        const row = { media_buy_id: 'fixture-media-buy', totals: {} };
+        for (const metric of metrics) {
+          // Two different denormals: the comparison cannot short-circuit on identity.
+          row[metric] = 5e-324;
+          row.totals[metric] = 1e-323;
+        }
+        return row;
+      });
+    const strictSource = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: denormalRows(),
+        availability_evidence: {
+          version: '1.0',
+          cells: input.requested_metrics.map(metric => ({
+            constituent_id: input.constituents[0].constituent_id,
+            metric,
+            status: 'present',
+            data_through: input.end_date,
+          })),
+        },
+      }),
+      offering
+    );
+    const strictStarted = process.hrtime.bigint();
+    const refused = await strictSource.execute(strictSlice, context());
+    const strictMs = Number(process.hrtime.bigint() - strictStarted) / 1e6;
+    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    assert.ok(strictMs < 2_000, `numeric width refusal took ${strictMs.toFixed(1)}ms`);
+
+    // Without evidence nothing consults a duplicate-claim comparison, so the legacy path
+    // must not canonicalize at all -- it used to reconcile every pair and discard it.
+    const legacySlice = request('fixture-inline-numeric-scan-legacy');
+    legacySlice.requestedMetrics = metrics;
+    const legacySource = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: denormalRows(),
+      }),
+      offering
+    );
+    const legacyStarted = process.hrtime.bigint();
+    const sealed = await legacySource.execute(legacySlice, context());
+    const legacyMs = Number(process.hrtime.bigint() - legacyStarted) / 1e6;
+    assert.equal(sealed.ok, true);
+    assert.ok(legacyMs < 2_000, `legacy duplicate claims took ${legacyMs.toFixed(1)}ms`);
+  });
+
   test('resolves each row identity from one observation', async () => {
     // The fanout budget read `media_buy_id` from the adopter row and the grouping read it
     // again. A row reporting a unique id on the first read and the shared id afterwards
