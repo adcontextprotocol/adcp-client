@@ -1,5 +1,56 @@
 # Changelog
 
+## 14.0.0-rc.39
+
+### Minor Changes
+
+- 8c19826: Separate nullable targeting input aliases from strict targeting state during type generation. All schema-defined input clears are accepted by TypeScript, while proposal snapshots reject clear commands. Preserve array cardinality and construct the starter's accepted purchase from its supported fields after rejecting targeting overlays.
+
+  This corrects the existing AdCP 3.2.0-rc.3 contract, with a minor changeset for its public typing and validation impact. `ProposalPurchase['targeting_overlay']` no longer permits `null` for `geo_metros`, `language`, `keyword_targets`, or `negative_keywords`; downstream code assigning those clear commands to proposal snapshots must change. The root `TargetingOverlay` export was already strict and remains so. Put clears in the request-side `TargetingOverlayInput` or `BuyProductsRequest` types. `TargetingOverlayInputSchema` from `@adcp/sdk/schemas` accepts these schema-valid null inputs. Both public targeting Zod schemas now enforce the pinned protocol's cardinality, scalar, and nested-object constraints, so previously accepted but wire-invalid targeting values may be rejected. Persist and echo resolved targeting state, without clear commands.
+
+- a4a269c: Add unified product, proposal, and live MediaBuy action assessment, portable change-constraint preflight, canonical task routing, and an explicit seller change-right resolver. Preserve opaque legacy references and unknown conditions without granting negotiated rights. Add a tree-shakeable browser entry point at `@adcp/sdk/media-buy/actions` and retain existing legacy preflight compatibility.
+
+  Existing `preflightUpdateMediaBuy` now enforces accepted change terms when that snapshot is supplied, including unmapped-field and whole-request task checks. An explicitly empty `available_actions` array takes precedence over legacy `valid_actions` hints. The public action union includes canonical and rc.3 actions, and mode recovery adds `waitForTask` for `seller_managed`; exhaustive consumers should handle the additive variants.
+
+  The existing update facade can subsume advertised compact tasks, including atomic mixed targeting and assignment changes; explicitly attempted compact tasks must still match. Seller package lifecycle projections narrow mixed scopes to packages whose current state supports the action.
+
+  Compatibility preflight also rejects unknown sibling mutations and unknown structured modes, and honors explicit package scopes and compact route restrictions without an accepted snapshot. Separately supplied proposal snapshots require accepted status and a current MediaBuy/proposal identity link.
+
+  Flat legacy `update_name` hints no longer authorize metadata changes; sellers must advertise explicit structured live authority for naming updates.
+
+  Explicit negotiated status scope can admit pause/resume while pending, including clearing a create-time hold. Existing packages default an omitted `paused` flag to false; missing packages, unknown lifecycle statuses, and terminal states remain unavailable. A structured naming grant no longer requires hydrating an accepted proposal snapshot, while supplied snapshot identities remain checked.
+
+  Direct and unified availability stay unknown for unmapped request fields, including opaque new-package extensions. Both preflight paths enforce the served-version ceiling for rc.3 shared caps and package scope, including legacy snapshots without embedded terms.
+
+  Known action IDs use closed canonical metadata. Readable live entries preserve unknown wire IDs as strings without granting them authority.
+  Accordingly, `getAvailableActions().actions` and preflight echoes expose readable string IDs, and action-context snapshots accept readonly arrays. Exhaustive consumers should handle unknown wire IDs and copy snapshots before mutating them.
+
+  Modern term-linked live entries require the accepted snapshot for preflight/assertion; missing terms cannot silently downgrade to legacy compatibility. Legacy opaque references retain the existing compatibility path.
+
+  Package holds operate independently on active or paused buys; pending buy states require explicit negotiated status scope.
+
+  Explicit local pending package status takes precedence over both pause-flag values. A live resume grant cannot override it in buyer assessment, either preflight, seller assertion, or seller projection; negotiated MediaBuy-level pending scope remains separate.
+
+  Legacy package controls also require current operational package and buy state, and unlinked structured grants must use a compatible canonical task. Served versions before 3.2.0-beta.9 cannot emit or execute modern term identities or seller-managed modes. Explicit current product policies constrain the final emitted processing SLA, including tighter seller-selected commitments.
+
+### Patch Changes
+
+- 6e11406: Add a packed existing-platform example for translating nullable targeting commands into provider operations and strict accepted state.
+- cccb3ea: Retire the obsolete AdCP 3.1 beta type side-bundle before the 14.0 GA release. The beta-only `@adcp/sdk/types/v3-1-beta` subpath and its schema/codegen pipeline are removed; use the primary `@adcp/sdk/types` 3.2 surface for current protocol types. For the legacy `get_products` mirror shape, import `LegacyWholesaleProduct` from `@adcp/sdk/wholesale-feed-sync` (or derive `NonNullable<GetProductsResponse['products']>[number]`) rather than using the canonical root `Product`. Wholesale feed sync keeps its documented legacy product-view behavior through current, narrowed types. Publishing now fails closed if a superseded protocol beta/RC cache, type bundle, export, or compatibility alias enters the npm artifact.
+
+  Refresh the generated registry OpenAPI declarations to match the current registry schema.
+
+- f3bee47: Correct applicability and execution evidence in routed storyboard runs (`runStoryboard('', storyboard, { agents })` and `adcp storyboard run --agents-map`). Re-baseline routed CI expectations: these corrections can change previously passing, failing, or skipped results.
+  - Each step uses its selected route's discovered tools and capabilities. Remove run-level `agentTools` or `_profile` overrides in routed mode; discovery is authoritative. Per-entry auth/transport overrides still inherit caller-supplied defaults, including shared headers and signing configuration.
+  - OAuth/JWKS evidence stays within its route, including entries sharing a URL with different credentials. A probe can now fail if it previously borrowed another route's metadata.
+  - Capability-unavailable producers and their dependent context/state consumers skip neutrally. Negative vectors no longer pass by sending missing context; successful alternate producers still restore execution.
+  - Missing-tool/controller and failed-route producers also block consumers of their absent declared outputs with hard prerequisite skips; intentional unrelated negative vectors and successfully restored outputs still execute.
+  - Unrescued missing tools and real failures take precedence over capability-only cascades. Failed required phases prevent an overall passing result without counting skipped rows as executed failures. Optional phases, branch regrading, and fixture/no-phase dispositions retain their existing rules.
+  - Unresolved or failed routes are hard failures. Repair the agents map, an explicit step agent, or the default agent as indicated by the routing error.
+  - Capability prerequisite skips display their reason in CLI output. Fixture-routing exceptions close the runner-owned webhook listener.
+
+  Storyboard-level required-tool applicability remains any-of across the discovered union. Single-agent and replica routing remain unchanged; the required-phase rollup and CLI diagnostics also correct these shared runner paths. Legacy controller seeding still requires external provisioning and `skip_controller_seeding: true`; declared fixture resolution routes each operation.
+
 ## 14.0.0-rc.38
 
 ### Minor Changes
