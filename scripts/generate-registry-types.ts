@@ -10,7 +10,8 @@
 
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
+
+import { parse as parseYaml } from 'yaml';
 
 const REGISTRY_SPEC_URL = 'https://agenticadvertising.org/openapi/registry.yaml';
 const SCHEMA_DIR = path.join(__dirname, '../schemas/registry');
@@ -18,6 +19,78 @@ const CACHED_SPEC = path.join(SCHEMA_DIR, 'registry.yaml');
 const OUTPUT_FILE = path.join(__dirname, '../src/lib/registry/types.generated.ts');
 const SPEC_TIMEOUT_MS = 10_000;
 const SPEC_MAX_BYTES = 1024 * 1024;
+
+/**
+ * Operations whose `requestBody` the upstream spec declares without `required: true`.
+ *
+ * OpenAPI defaults `requestBody.required` to `false`, so `openapi-typescript` emits
+ * `requestBody?:` and the generated operation admits a bodyless call even when the body
+ * schema itself lists required properties. For a mutation that is a plain spec bug.
+ *
+ * These corrections are applied to an in-memory copy of the spec, never to the cached
+ * file: `schemas/registry/registry.yaml` stays byte-identical to what AAO publishes, and
+ * the generated output is a pure function of (cached spec + this table), so re-running
+ * sync or generation is stable and no hand edit is ever needed.
+ *
+ * Remove an entry once AAO publishes the fix -- `applyUpstreamSpecCorrections` reports
+ * every entry that has become a no-op, so a stale entry cannot go unnoticed.
+ */
+const REQUEST_BODY_REQUIRED_CORRECTIONS: ReadonlyArray<{ operationId: string; reason: string }> = [
+  {
+    operationId: 'selectAgentGradingProfile',
+    reason:
+      'PUT /api/registry/agents/{encodedUrl}/grading-profile requires seven body fields ' +
+      '(organization_id, role, adcp_version, selected_profile, assessment_id, expected_revision, ' +
+      'idempotency_key) and performs a revision compare-and-swap, but omits requestBody.required.',
+  },
+];
+
+type MutableRequestBody = { required?: boolean };
+type MutableOperation = { operationId?: unknown; requestBody?: MutableRequestBody };
+
+function asOperation(value: unknown): MutableOperation | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const candidate = value as MutableOperation;
+  return typeof candidate.operationId === 'string' ? candidate : undefined;
+}
+
+/**
+ * Mark the request body of each corrected operation required. Returns one header line
+ * per applied correction so the generated file records why it differs from the spec.
+ */
+function applyUpstreamSpecCorrections(spec: unknown): string[] {
+  const pending = new Map(REQUEST_BODY_REQUIRED_CORRECTIONS.map(entry => [entry.operationId, entry]));
+  const applied: string[] = [];
+  const paths =
+    typeof spec === 'object' && spec !== null ? ((spec as { paths?: unknown }).paths as unknown) : undefined;
+
+  for (const pathItem of Object.values((paths as Record<string, unknown>) ?? {})) {
+    if (typeof pathItem !== 'object' || pathItem === null) continue;
+    for (const candidate of Object.values(pathItem as Record<string, unknown>)) {
+      const operation = asOperation(candidate);
+      const entry = operation ? pending.get(operation.operationId as string) : undefined;
+      if (!operation || !entry) continue;
+      pending.delete(entry.operationId);
+
+      if (typeof operation.requestBody !== 'object' || operation.requestBody === null) {
+        console.warn(`! ${entry.operationId}: upstream declares no requestBody; drop this correction.`);
+        continue;
+      }
+      if (operation.requestBody.required === true) {
+        console.log(`= ${entry.operationId}: upstream now marks requestBody required; drop this correction.`);
+        continue;
+      }
+      operation.requestBody.required = true;
+      applied.push(`${entry.operationId}: requestBody.required = true. ${entry.reason}`);
+      console.log(`+ ${entry.operationId}: requestBody marked required.`);
+    }
+  }
+
+  for (const operationId of pending.keys()) {
+    console.warn(`! ${operationId}: not present in the cached spec; drop this correction.`);
+  }
+  return applied;
+}
 
 function writeFileIfChanged(filePath: string, newContent: string): boolean {
   const contentWithoutTimestamp = (content: string) =>
@@ -115,17 +188,27 @@ async function generate(): Promise<void> {
   const { default: openapiTS, astToString } = await import('openapi-typescript');
 
   console.log('Generating types from cached spec...');
-  const specUrl = pathToFileURL(CACHED_SPEC);
-  const ast = await openapiTS(specUrl);
+  const spec: unknown = parseYaml(readFileSync(CACHED_SPEC, 'utf8'));
+  const corrections = applyUpstreamSpecCorrections(spec);
+  const ast = await openapiTS(spec as Parameters<typeof openapiTS>[0]);
   const rawOutput = astToString(ast);
 
   // Build the output file with ergonomic re-exports
+  const correctionNotes =
+    corrections.length === 0
+      ? ''
+      : `//
+// Upstream spec corrections applied in memory by scripts/generate-registry-types.ts.
+// The cached spec is untouched; remove the entry there once AAO publishes the fix.
+${corrections.map(note => `//   - ${note}`).join('\n')}
+`;
+
   const header = `// Generated AdCP Registry types from OpenAPI spec
 // Generated at: ${new Date().toISOString()}
 // Source: ${REGISTRY_SPEC_URL}
 //
 // Do not edit this file manually. Run: npm run generate-registry-types
-`;
+${correctionNotes}`;
 
   const content = `${header}
 ${rawOutput}

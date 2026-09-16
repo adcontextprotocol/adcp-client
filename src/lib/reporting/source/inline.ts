@@ -563,8 +563,14 @@ async function executeAndSeal(
   }
   if (
     availabilityEvidence !== undefined &&
-    sourceRowInputs.length + auxiliaryRowInputs.length >
-      Math.floor(INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 / request.requestedMetrics.length)
+    (sourceRowInputs.length + auxiliaryRowInputs.length >
+      Math.floor(INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 / request.requestedMetrics.length) ||
+      availabilityRowCellWorkExceedsCap(
+        sourceRowInputs,
+        auxiliaryRowInputs,
+        request,
+        INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1
+      ))
   ) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the row-cell limit');
   }
@@ -901,6 +907,70 @@ function parseInlineAvailabilityEvidence(
   };
 }
 
+const NO_ROWS: readonly unknown[] = [];
+
+/** Group rows by `media_buy_id`, keeping only media buys the request admits. */
+function groupRowsByMediaBuyId(
+  rows: readonly unknown[],
+  admittedMediaBuyIds: ReadonlySet<string>
+): Map<string, unknown[]> {
+  const grouped = new Map<string, unknown[]>();
+  for (const row of rows) {
+    const mediaBuyId = rowMediaBuyId(row);
+    if (mediaBuyId === undefined || !admittedMediaBuyIds.has(mediaBuyId)) continue;
+    const existing = grouped.get(mediaBuyId);
+    if (existing) existing.push(row);
+    else grouped.set(mediaBuyId, [row]);
+  }
+  return grouped;
+}
+
+/**
+ * True when the cumulative row-by-cell comparison work exceeds `cap`.
+ *
+ * Every row is compared against the cells of each constituent naming its
+ * `media_buy_id`, so one media buy shared by many constituents multiplies the work by
+ * that fanout. Bounding rows x metrics alone missed it entirely: 1,000 constituents
+ * sharing one media buy, one requested metric and 100,000 rows charges 100,000 against
+ * a 5,000,000 cap while actually performing 100,000,000 comparisons.
+ *
+ * The per-constituent contribution is checked against the cap before it is multiplied
+ * out, and the running total returns as soon as it passes the cap, so neither value can
+ * grow beyond `cap` plus one constituent's contribution -- both stay far inside the
+ * safe-integer range regardless of how large the declared coverage is.
+ */
+function availabilityRowCellWorkExceedsCap(
+  sourceRows: readonly unknown[],
+  auxiliaryRows: readonly unknown[],
+  request: ReportingSourceSliceRequestV1,
+  cap: number
+): boolean {
+  const metricCount = request.requestedMetrics.length;
+  const perConstituentCap = Math.floor(cap / metricCount);
+  const sourceRowCounts = countRowsByMediaBuyId(sourceRows);
+  const auxiliaryRowCounts = countRowsByMediaBuyId(auxiliaryRows);
+  let work = 0;
+  for (const constituent of request.coverage.constituents) {
+    if (!constituent.mediaBuyId) continue;
+    const rowVisits =
+      (sourceRowCounts.get(constituent.mediaBuyId) ?? 0) + (auxiliaryRowCounts.get(constituent.mediaBuyId) ?? 0);
+    if (rowVisits > perConstituentCap) return true;
+    work += rowVisits * metricCount;
+    if (work > cap) return true;
+  }
+  return false;
+}
+
+function countRowsByMediaBuyId(rows: readonly unknown[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const mediaBuyId = rowMediaBuyId(row);
+    if (mediaBuyId === undefined) continue;
+    counts.set(mediaBuyId, (counts.get(mediaBuyId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function validateRowsAgainstAvailabilityEvidence(
   sourceRows: readonly unknown[],
   evidenceRows: readonly unknown[],
@@ -908,38 +978,25 @@ function validateRowsAgainstAvailabilityEvidence(
   cells: readonly z.output<typeof InlineReportingMetricEvidenceV1Schema>[]
 ): 'partial' | 'integrity' | undefined {
   const cellsByConstituent = new Map<string, Array<(typeof cells)[number]>>();
-  // One media buy can back several constituents. Inverting that to a single constituent
-  // per media buy let the last-declared constituent absorb every row, leaving the others
-  // row-free: their `explicit_zero` and unavailable cells were then never checked
-  // against the rows that do carry values, so a contradiction sealed on declaration
-  // order alone.
-  const constituentIdsByMediaBuyId = new Map<string, string[]>();
-  const sourceRowsByConstituent = new Map<string, unknown[]>();
-  const evidenceRowsByConstituent = new Map<string, unknown[]>();
+  const admittedMediaBuyIds = new Set<string>();
   for (const constituent of request.coverage.constituents) {
     cellsByConstituent.set(constituent.constituentId, []);
-    sourceRowsByConstituent.set(constituent.constituentId, []);
-    evidenceRowsByConstituent.set(constituent.constituentId, []);
-    if (constituent.mediaBuyId) {
-      const sharing = constituentIdsByMediaBuyId.get(constituent.mediaBuyId) ?? [];
-      sharing.push(constituent.constituentId);
-      constituentIdsByMediaBuyId.set(constituent.mediaBuyId, sharing);
-    }
+    if (constituent.mediaBuyId) admittedMediaBuyIds.add(constituent.mediaBuyId);
   }
   for (const cell of cells) cellsByConstituent.get(cell.constituent_id)?.push(cell);
-  for (const row of sourceRows) {
-    for (const constituentId of constituentIdsByMediaBuyId.get(rowMediaBuyId(row) ?? '') ?? []) {
-      sourceRowsByConstituent.get(constituentId)?.push(row);
-    }
-  }
-  for (const row of evidenceRows) {
-    for (const constituentId of constituentIdsByMediaBuyId.get(rowMediaBuyId(row) ?? '') ?? []) {
-      evidenceRowsByConstituent.get(constituentId)?.push(row);
-    }
-  }
+  // One media buy can back several constituents, and each of them must be held to its
+  // own cells against that media buy's rows. Grouping by media buy once and sharing the
+  // array keeps that fanout free of copies: pushing every row into a per-constituent
+  // array instead allocated the rows again for each constituent sharing the media buy.
+  const sourceRowsByMediaBuyId = groupRowsByMediaBuyId(sourceRows, admittedMediaBuyIds);
+  const evidenceRowsByMediaBuyId = groupRowsByMediaBuyId(evidenceRows, admittedMediaBuyIds);
   for (const constituent of request.coverage.constituents) {
-    const sourceConstituentRows = sourceRowsByConstituent.get(constituent.constituentId) ?? [];
-    const allConstituentRows = evidenceRowsByConstituent.get(constituent.constituentId) ?? [];
+    const sourceConstituentRows = constituent.mediaBuyId
+      ? (sourceRowsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_ROWS)
+      : NO_ROWS;
+    const allConstituentRows = constituent.mediaBuyId
+      ? (evidenceRowsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_ROWS)
+      : NO_ROWS;
     for (const cell of cellsByConstituent.get(constituent.constituentId) ?? []) {
       if (cell.status === 'present') {
         if (sourceConstituentRows.length === 0) return 'partial';

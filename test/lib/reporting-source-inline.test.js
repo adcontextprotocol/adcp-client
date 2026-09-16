@@ -1731,6 +1731,64 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(validateReportingSourceFailureV1(result, 'STAGING_FAILED').code, 'STAGING_FAILED');
   });
 
+  test('bounds row-by-cell work across shared constituent fanout', async () => {
+    // One media buy backing many constituents multiplies the comparison work by that
+    // fanout. The rows x metrics bound never saw it, so a request well inside every
+    // declared limit could demand orders of magnitude more work than the cap allows.
+    const sharedFanout = (executionKey, constituentCount, rowCount) => {
+      const slice = request(executionKey);
+      const base = slice.coverage.constituents[0];
+      slice.requestedMetrics = ['impressions'];
+      slice.coverage.constituents = Array.from({ length: constituentCount }, (unused, index) => ({
+        ...base,
+        constituentId: `fixture-constituent-${String(index).padStart(4, '0')}`,
+      }));
+      slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: Array.from({ length: rowCount }, () => ({
+            media_buy_id: 'fixture-media-buy',
+            impressions: 10,
+          })),
+          availability_evidence: {
+            version: '1.0',
+            cells: input.constituents.map(constituent => ({
+              constituent_id: constituent.constituent_id,
+              metric: 'impressions',
+              status: 'present',
+              data_through: input.end_date,
+            })),
+          },
+        }),
+        redactedReportingSourceOfferingV1
+      );
+      return { source, slice };
+    };
+
+    // 1,000 constituents x 6,000 rows x 1 metric = 6,000,000 comparisons, over the
+    // 5,000,000 cap, while the rows x metrics bound only ever charged 6,000. The cap is
+    // reached from counts alone, so no fanout is allocated and the refusal is immediate.
+    const over = sharedFanout('fixture-inline-shared-fanout-over', 1_000, 6_000);
+    const started = process.hrtime.bigint();
+    const refused = await over.source.execute(over.slice, context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    // Counting is linear in the rows; performing the fanout is not.
+    assert.ok(elapsedMs < 2_000, `shared-fanout refusal took ${elapsedMs.toFixed(1)}ms`);
+
+    // Below the cap the same shape must still seal, and every constituent sharing the
+    // media buy has to be proved by it.
+    const under = sharedFanout('fixture-inline-shared-fanout-under', 100, 10);
+    const sealed = await under.source.execute(under.slice, context());
+    assert.equal(sealed.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(sealed.response.manifest, sealed.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.equal(manifest.metricAvailability.length, 100);
+    assert.ok(manifest.metricAvailability.every(cell => cell.status === 'present'));
+  });
+
   test('does not spend projection capacity on the auxiliary collection without evidence', async () => {
     // Only availability verification reads the auxiliary collection, so on the legacy
     // path its values are never projected. Projecting them charged a separate budget and
