@@ -7154,7 +7154,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
                 recovery: 'correctable',
               });
             }
+            const servedByReportingLedger =
+              reporting?.getMediaBuyDelivery !== undefined && selectedDelivery === reporting.getMediaBuyDelivery;
             const result = await selectedDelivery(asValidatedDomainRequest(params), reqCtx);
+            if (servedByReportingLedger) {
+              // An exact reporting revision is hash-bound: its rows are an
+              // opaque payload carried under the revision's RFC 8785 JCS
+              // SHA-256 digest, not creative-bearing media-buy delivery.
+              // Creative-format projection would rewrite row content without
+              // updating that digest, and it rejects a perfectly legitimate
+              // row whose columns happen to be named `creative_id` and
+              // `format_kind` with INVALID_REQUEST. Return the bytes the
+              // ledger bound. `projectSync` still applies the ctx_metadata /
+              // implementation_config leak strip around this.
+              return result;
+            }
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
               'media_buy_ids',

@@ -330,6 +330,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       ) {
         throw new TypeError('Trusted reporting timezone conflicts with the configuration timezone assertion');
       }
+      assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone);
       const { constituents, mediaBuyIds } = trustedCoverage(coverage);
       if (
         configuration.expectedMediaBuyIds !== undefined &&
@@ -717,6 +718,102 @@ function sameIdMembers(left: readonly string[], right: readonly string[]): boole
   if (!Array.isArray(left)) throw new TypeError('expectedMediaBuyIds must be an array of media buy IDs');
   const expected = new Set(left);
   return expected.size === right.length && right.every(value => expected.has(value));
+}
+
+const DAY_MILLISECONDS = 86_400_000;
+/** Long enough to straddle both transitions of any DST-observing zone. */
+const OFFSET_PROBE_DAYS = 400;
+const OFFSET_PROBE_STEP_DAYS = 10;
+
+/**
+ * Refuse a schedule the installed executor could never satisfy.
+ *
+ * `createInlineReportingSourceExecutor` requires both period boundaries to land
+ * exactly on source-local midnight, and the ledger generates periods as
+ * `anchor + n * periodMilliseconds`. Without this gate an offering may advertise
+ * an alignment, anchor, or timezone the service cannot honor, the generation
+ * installs cleanly, and every slice is then refused at execution time — an
+ * outage that looks like an upstream failure rather than a configuration one.
+ */
+function assertSupportedScheduleSemantics(
+  schedule: ReliableReportingConfigurationInputV1['schedule'],
+  offering: ReportingDeliveryOffering,
+  sourceTimezone: string
+): void {
+  const { alignment } = offering.schedule;
+  if (alignment !== 'utc' && alignment !== 'source_timezone') {
+    throw new TypeError(
+      `ReliableReportingService cannot honor '${alignment}' period alignment; it generates fixed-length ` +
+        'periods on source-local day boundaries'
+    );
+  }
+  if (offering.schedule.period_timezone_policy === 'fixed' && offering.schedule.period_timezone !== sourceTimezone) {
+    throw new TypeError('Reporting offering pins a period timezone that is not the resolved source timezone');
+  }
+  if (schedule.periodMilliseconds % DAY_MILLISECONDS !== 0) {
+    throw new TypeError(
+      'Reporting periods must be whole source-local days; a sub-day window has no source-local midnight boundary'
+    );
+  }
+  const anchorMs = Date.parse(schedule.anchor);
+  if (!Number.isFinite(anchorMs)) throw new TypeError('Reporting configuration anchor must be a valid instant');
+  if (offering.schedule.period_anchor !== undefined && Date.parse(offering.schedule.period_anchor) !== anchorMs) {
+    throw new TypeError('Reporting configuration anchor does not match the anchor its offering advertises');
+  }
+  if (!isSourceLocalMidnight(anchorMs, sourceTimezone)) {
+    throw new TypeError('Reporting configuration anchor must fall on source-local midnight in the source timezone');
+  }
+  // A fixed-millisecond period only tracks local days in a zone whose UTC
+  // offset never moves. Under DST `anchor + n * 24h` lands at 23:00 or 01:00
+  // local, so every period after the transition is refused at execution time.
+  const anchorOffset = utcOffsetMinutes(sourceTimezone, anchorMs);
+  for (let day = OFFSET_PROBE_STEP_DAYS; day <= OFFSET_PROBE_DAYS; day += OFFSET_PROBE_STEP_DAYS) {
+    if (utcOffsetMinutes(sourceTimezone, anchorMs + day * DAY_MILLISECONDS) !== anchorOffset) {
+      throw new TypeError(
+        'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
+      );
+    }
+  }
+  if (alignment === 'utc' && anchorOffset !== 0) {
+    throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
+  }
+}
+
+function isSourceLocalMidnight(instantMs: number, timeZone: string): boolean {
+  if (instantMs % 1_000 !== 0) return false;
+  const parts = localParts(timeZone, instantMs);
+  return parts.hour === 0 && parts.minute === 0 && parts.second === 0;
+}
+
+function utcOffsetMinutes(timeZone: string, instantMs: number): number {
+  const parts = localParts(timeZone, instantMs);
+  const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return Math.round((asUtc - (instantMs - (instantMs % 1_000))) / 60_000);
+}
+
+function localParts(
+  timeZone: string,
+  instantMs: number
+): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(new Date(instantMs));
+  const field = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find(part => part.type === type)?.value);
+  return {
+    year: field('year'),
+    month: field('month'),
+    day: field('day'),
+    hour: field('hour'),
+    minute: field('minute'),
+    second: field('second'),
+  };
 }
 
 function trustedCurrency(value: string): string {

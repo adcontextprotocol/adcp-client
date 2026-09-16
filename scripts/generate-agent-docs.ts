@@ -2149,6 +2149,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  statusRetentionDays, // enforce this commitment in the ledger database`);
   ln(`  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),`);
   ln(`  resolveCurrency: account => currency,`);
+  ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
   ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
   ln(`});`);
   ln();
@@ -2161,7 +2162,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln('```');
   ln();
   ln(
-    `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, and currency. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
+    `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply \`account\`, \`sourceScope\`, \`sourceTimezone\`, \`contract\`, \`currency\`, \`constituents\`, or \`mediaBuyIds\`; \`mediaBuyIds\` is derived from \`resolveCoverage\`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
   );
   ln();
 

@@ -13,6 +13,8 @@ const {
 } = require('../../dist/lib/reporting/source/index.js');
 const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
+const { canonicalize } = require('../../dist/lib/utils/jcs.js');
+const { createHash } = require('node:crypto');
 
 function deliveryOffering() {
   const source = redactedReportingSourceOfferingV1;
@@ -94,6 +96,32 @@ function authorizedConstituent(accountId) {
     mediaBuyId,
     productBinding: { ...structuredClone(template.productBinding), mediaBuyId },
   };
+}
+
+/** A fixture whose offering and resolver agree on one non-UTC source timezone. */
+function zonedFixture(
+  timezone,
+  { alignment = 'source_timezone', periodDuration = 'P1D', minimumWindow, periodTimezone } = {}
+) {
+  const zoned = adapter();
+  zoned.sourceOffering.sourceTimezone = { ...zoned.sourceOffering.sourceTimezone, ianaTimezone: timezone };
+  if (minimumWindow) {
+    zoned.sourceOffering.windowing = { ...zoned.sourceOffering.windowing, minimumWindow };
+  }
+  zoned.deliveryOffering.schedule = {
+    ...zoned.deliveryOffering.schedule,
+    alignment,
+    period_duration: periodDuration,
+    period_timezone: periodTimezone ?? timezone,
+  };
+  return serviceFixture({
+    adapters: { fixture: zoned },
+    resolveSource: account => ({
+      adapterId: 'fixture',
+      sourceScope: { network_id: `network-${account.id}` },
+      sourceTimezone: timezone,
+    }),
+  });
 }
 
 function serviceFixture(overrides = {}) {
@@ -558,6 +586,209 @@ describe('ReliableReportingService', () => {
       const { service } = serviceFixture({ resolveCoverage });
       await assert.rejects(service.installConfiguration(configuration(), context), expected);
     }
+  });
+
+  test('serves populated hash-bound reporting rows without creative-format projection', async () => {
+    // Columns a real ad-server reporting feed carries. `creative_id` +
+    // `format_kind` is exactly the pair that trips response creative-format
+    // projection, which would rewrite content out from under the revision's
+    // content digest.
+    const rows = [
+      {
+        media_buy_id: 'media-buy-account-a',
+        creative_id: 'creative-1',
+        format_kind: 'display_300x250',
+        impressions: 1000,
+        spend: 12.34,
+      },
+    ];
+    const reportingAdapter = adapter();
+    reportingAdapter.sourceOffering.dimensions = [
+      { name: 'media_buy_id', support: 'exact' },
+      { name: 'creative_id', support: 'exact' },
+      { name: 'format_kind', support: 'exact' },
+    ];
+    reportingAdapter.fetchSlice = (request, context) => ({
+      reporting_period: { start: request.start_date, end: request.end_date },
+      currency: context.sourceSettings.currency,
+      reporting_rows: structuredClone(rows),
+    });
+    const { service, store } = serviceFixture({ adapters: { fixture: reportingAdapter } });
+
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration({ requestedDimensions: ['media_buy_id', 'creative_id', 'format_kind'] });
+    input.schedule.anchor = anchor;
+    const installed = await service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    const cycle = await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+    assert.equal(cycle.revisionsCommitted, 1);
+
+    const obligation = (await store.listObligations('account-a'))[0];
+    const revision = (await store.listRevisions(obligation.reporting_obligation_id))[0];
+    const platform = service.install({
+      capabilities: { specialisms: [], config: {} },
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+        upsert: async () => [],
+      },
+    });
+    const server = createAdcpServerFromPlatform(platform, {
+      name: 'reporting-rows-test',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-rc.3',
+      validation: { requests: 'strict', responses: 'strict' },
+    });
+    const wire = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: {
+            account: { account_id: 'account-a' },
+            reporting_revision_id: revision.reporting_revision_id,
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.notEqual(wire.isError, true, JSON.stringify(wire.structuredContent));
+    assert.deepEqual(wire.structuredContent.reporting_rows, rows, 'exact revision content must reach the wire intact');
+
+    // The bytes on the wire still satisfy the revision's own content binding.
+    const wireRevision = wire.structuredContent.reporting_revision;
+    const rebound = createHash('sha256')
+      .update(
+        Buffer.from(
+          canonicalize({
+            reporting_revision_id: wireRevision.reporting_revision_id,
+            row_count: wireRevision.row_count,
+            control_totals: wireRevision.control_totals,
+            reporting_rows: wire.structuredContent.reporting_rows,
+          }),
+          'utf8'
+        )
+      )
+      .digest('hex');
+    assert.equal(rebound, wireRevision.revision_content_sha256);
+  });
+
+  test('refuses schedule semantics the installed executor cannot satisfy', async () => {
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+
+    // Alignment the service does not generate periods for.
+    for (const alignment of ['billing_cycle', 'account_timezone']) {
+      const { service } = zonedFixture('UTC', { alignment });
+      await assert.rejects(
+        service.installConfiguration(configuration(), context),
+        /cannot honor '.*' period alignment/,
+        `${alignment} must be refused`
+      );
+    }
+
+    // UTC-aligned offerings need a zero-offset source timezone.
+    const utcAligned = zonedFixture('Asia/Kolkata', { alignment: 'utc' });
+    await assert.rejects(
+      utcAligned.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: 'Asia/Kolkata',
+          schedule: {
+            anchor: '2026-09-01T18:30:00.000Z', // Kolkata-local midnight
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      ),
+      /UTC offset is zero/
+    );
+
+    // An anchor that is not source-local midnight: the executor refuses every
+    // slice, so the generation must never install.
+    const noonAnchored = serviceFixture();
+    await assert.rejects(
+      noonAnchored.service.installConfiguration(
+        configuration({
+          schedule: {
+            anchor: '2026-09-01T12:00:00.000Z',
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      ),
+      /anchor must fall on source-local midnight/
+    );
+
+    // A delivery offering that advertises UTC periods while its source resolves
+    // to a different zone. The source/offering timezone agreement check does
+    // not see this: it compares the *source* offering, not the advertised
+    // period timezone buyers read from discovery.
+    const mismatched = zonedFixture('Asia/Kolkata', { periodTimezone: 'UTC' });
+    await assert.rejects(
+      mismatched.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: 'Asia/Kolkata',
+          schedule: {
+            anchor: '2026-09-01T18:30:00.000Z',
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      ),
+      /pins a period timezone that is not the resolved source timezone/
+    );
+
+    // A DST-observing zone: `anchor + n * 24h` drifts off local midnight after
+    // the transition, so fixed-length periods cannot express its local days.
+    const dst = zonedFixture('America/New_York');
+    await assert.rejects(
+      dst.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: 'America/New_York',
+          schedule: {
+            anchor: '2026-09-01T04:00:00.000Z', // 2026-09-01T00:00 EDT
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      ),
+      /changes its UTC offset/
+    );
+
+    // Sub-day windows have no source-local midnight boundary. The inline
+    // executor refuses the offering outright, so the service never constructs.
+    assert.throws(
+      () => zonedFixture('UTC', { periodDuration: 'PT12H', minimumWindow: 'PT12H' }),
+      /whole source-day fixed windows/
+    );
+
+    // Positive control: a fixed-offset non-UTC zone is still installable, so
+    // the rule is "no offset changes", not "UTC only".
+    const kolkata = zonedFixture('Asia/Kolkata');
+    const installed = await kolkata.service.installConfiguration(
+      configuration({
+        expectedSourceTimezone: 'Asia/Kolkata',
+        schedule: {
+          anchor: '2026-09-01T18:30:00.000Z',
+          periodMilliseconds: 86_400_000,
+          deliverySlaMilliseconds: 0,
+          recoveryWindowMilliseconds: 86_400_000,
+        },
+      }),
+      context
+    );
+    assert.equal(installed.sourceTimezone, 'Asia/Kolkata');
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
