@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJsonV1 } from '../source';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { projectReportingObligationHealthV1 } from './health';
+import type { ReportingAdjustmentReceipt, ReportingReceipt } from '../../types';
 import type {
   ReportingLedgerIssueV1,
   ReportingLedgerStatusTransitionV1,
@@ -122,9 +123,30 @@ async function composeManagedLifecycleProjection(
   });
   if (!managed) return coreProjection;
   const adjustments = await input.store.listAdjustments(obligation.reporting_obligation_id);
-  // No consumer has submitted anything yet: project once with empty receipts so
-  // a `consumer_receipt` binding still raises RECEIPT_REQUIRED on schedule.
-  const consumers = managed.consumers.length ? managed.consumers : [{ receipts: [], adjustmentReceipts: [] }];
+  // Aggregate over the obligated roster, not merely over whoever has already
+  // submitted. A consumer that owes a receipt and has sent nothing has no
+  // receipt row, so aggregating observed consumers alone let it disappear as
+  // soon as another consumer accepted — the transition and its webhook went
+  // reconciled while that consumer's own read still said `action_required`.
+  const byConsumer = new Map(managed.consumers.map(value => [value.consumer_id, value]));
+  for (const consumerId of managed.obligatedConsumerIds ?? []) {
+    if (!byConsumer.has(consumerId)) {
+      byConsumer.set(consumerId, { consumer_id: consumerId, receipts: [], adjustmentReceipts: [] });
+    }
+  }
+  const consumers: Array<{ receipts: ReportingReceipt[]; adjustmentReceipts: ReportingAdjustmentReceipt[] }> = [
+    ...byConsumer.values(),
+  ];
+  // Fail safe while the roster is not provably complete: keep one zero-receipt
+  // consumer in the fold so a `consumer_receipt` obligation is never called
+  // reconciled on the strength of the consumers that happened to be observed.
+  // Also covers the plain "nobody has submitted yet" case for either mode.
+  if (
+    !consumers.length ||
+    (managed.binding.reconciliation_mode === 'consumer_receipt' && managed.obligatedConsumerRosterComplete !== true)
+  ) {
+    consumers.push({ receipts: [], adjustmentReceipts: [] });
+  }
   let health = coreProjection.health;
   let satisfied = coreProjection.satisfied;
   const issues = new Map<string, ReportingLedgerIssueV1>(coreProjection.issues.map(value => [value.issueId, value]));

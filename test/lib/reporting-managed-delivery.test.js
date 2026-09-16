@@ -624,8 +624,8 @@ describe('seller managed reporting runtime', () => {
     assert.equal(boundary.revocationsCompleted, 1);
     assert.equal(
       claimsAtBoundary[0].lease_milliseconds,
-      60_000,
-      'a retry lease may never outlast the whole advertised window'
+      10_000,
+      'the retry lease is one attempt plus settlement grace, never the whole window'
     );
 
     const claimsPastBoundary = [];
@@ -958,5 +958,223 @@ describe('seller managed reporting runtime', () => {
       false
     );
     assert.notEqual(coreTransition, undefined);
+  });
+
+  test('caps the revocation retry lease to one attempt, not the whole window', async () => {
+    const revokedAt = Date.parse('2026-08-27T04:00:00.000Z');
+    const claims = [];
+    const store = {
+      planMaterializations: async () => 0,
+      claimMaterialization: async () => null,
+      claimRevocation: async input => {
+        claims.push(input);
+        return claims.length > 1
+          ? null
+          : {
+              authorization: {
+                account_id: 'account-1',
+                destination_ref: 'destination-generation-1',
+                generation: 1,
+                authorized_at: '2026-08-27T03:00:00.000Z',
+                revoked_at: new Date(revokedAt).toISOString(),
+              },
+              owner: 'worker-1',
+              generation: 1,
+              expires_at: new Date(revokedAt + 10_000).toISOString(),
+            };
+      },
+      completeRevocation: async () => true,
+    };
+    await ledger.runManagedDeliveryWorker(
+      store,
+      { revoke: async () => {} },
+      {
+        now: () => new Date(revokedAt),
+        maxIterations: 2,
+        authorizationRevocationSeconds: 3600,
+        leaseMilliseconds: 300_000,
+        deliveryDeadlineMilliseconds: 5_000,
+      }
+    );
+    // One attempt's worth: the delivery deadline plus the 5 s settlement grace.
+    // Previously this took the whole 3,600,000 ms window, so a failure near the
+    // boundary held the grant unretried well past the promised instant.
+    assert.equal(claims[0].lease_milliseconds, 10_000);
+    assert.ok(
+      claims[0].lease_milliseconds < 3600 * 1000,
+      'a retry must still be able to happen inside the advertised window'
+    );
+  });
+
+  test('refuses malformed receipt batches with a typed envelope instead of throwing', async () => {
+    const handler = ledger.createSyncReportingReceiptsHandler({ syncReceiptBatch: async () => [] }, () => 'buyer-1');
+    const context = { account: { id: 'account-1' } };
+    const base = { idempotency_key: 'receipt-malformed-0001' };
+
+    await assert.rejects(() => handler({ ...base, receipts: 'x' }, context), /receipts must be an array/);
+    await assert.rejects(
+      () => handler({ ...base, adjustment_receipts: 'x' }, context),
+      /adjustment_receipts must be an array/
+    );
+    await assert.rejects(() => handler({ ...base, receipts: [null] }, context), /entries must be objects/);
+    // RC3 gives `results` minItems 1, so an empty batch has no legal body.
+    await assert.rejects(() => handler({ ...base, receipts: [] }, context), /at least one receipt/);
+
+    for (const shape of [{ receipts: 'x' }, { receipts: [null] }, { receipts: [] }]) {
+      await handler({ ...base, ...shape }, context).then(
+        () => assert.fail('expected a rejection'),
+        error => assert.equal(error.code, 'VALIDATION_ERROR')
+      );
+    }
+  });
+
+  test('never reflects an unusable receipt id into the patterned response field', async () => {
+    const handler = ledger.createSyncReportingReceiptsHandler({ syncReceiptBatch: async () => [] }, () => 'buyer-1');
+    const response = await handler(
+      {
+        account: { account_id: 'other-account' },
+        idempotency_key: 'receipt-reflection-0001',
+        receipts: [
+          { reporting_receipt_id: 'x'.repeat(3000) },
+          { reporting_receipt_id: 42 },
+          { reporting_receipt_id: 'has spaces and/slashes' },
+          {},
+        ],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(response.results.length, 4);
+    for (const result of response.results) {
+      assert.match(result.reporting_receipt_id, /^[A-Za-z0-9_.:-]{16,255}$/);
+    }
+    assert.deepEqual(
+      response.results.map(value => value.reporting_receipt_id),
+      [
+        'unidentified-reporting-receipt-000',
+        'unidentified-reporting-receipt-001',
+        'unidentified-reporting-receipt-002',
+        'unidentified-reporting-receipt-003',
+      ]
+    );
+  });
+
+  test('keeps a silent obligated consumer in the lifecycle aggregate', async () => {
+    const period = { start: '2026-08-27T03:00:00.000Z', end: '2026-08-27T04:00:00.000Z', sourceTimezone: 'UTC' };
+    const obligation = {
+      reporting_obligation_id: 'obligation-1',
+      configurationId: 'config-1',
+      account: { account_id: 'account-1' },
+      requiredFinality: 'official',
+      period,
+      expectedAt: period.end,
+      recoveryDeadlineAt: '2026-08-27T04:30:00.000Z',
+      state: 'pending',
+      attemptCount: 1,
+      coverage: { status: 'full' },
+    };
+    const revision = {
+      reporting_revision_id: 'revision-1',
+      reporting_obligation_id: 'obligation-1',
+      revisionNumber: 1,
+      finality: 'official',
+      kind: 'official',
+    };
+    const delivered = {
+      ...lease().materialization,
+      status: 'delivered',
+      ready_at: '2026-08-27T04:00:01.000Z',
+      resource: outcome().resource,
+      verification: outcome().verification,
+    };
+    const acceptedByA = {
+      consumer_id: 'buyer-a',
+      receipts: [
+        {
+          reporting_receipt_id: 'receipt-roster-accepted-01',
+          reporting_obligation_id: 'obligation-1',
+          reporting_revision_id: 'revision-1',
+          reporting_materialization_id: delivered.reporting_materialization_id,
+          status: 'accepted',
+          verification_profile: 'canonical_digest',
+          observed_row_count: 2,
+          observed_control_totals: [],
+          observed_at: '2026-08-27T04:05:00.000Z',
+        },
+      ],
+      adjustmentReceipts: [],
+    };
+
+    function rosterStore(projection) {
+      const transitions = [];
+      const applied = [];
+      return {
+        transitions,
+        applied,
+        getObligation: async () => structuredClone(obligation),
+        listRevisions: async () => [structuredClone(revision)],
+        listAdjustments: async () => [],
+        listTransitions: async () => structuredClone(transitions),
+        markTransitionNotified: async () => {},
+        getManagedLifecycleProjection: async () => structuredClone(projection),
+        applyLifecycleProjection: async input => {
+          applied.push(structuredClone(input));
+          if (input.transition) transitions.push(structuredClone(input.transition));
+          return { applied: true, transitionInserted: Boolean(input.transition) };
+        },
+      };
+    }
+    const managedProjection = extra => ({
+      binding: lease().binding,
+      materializations: [delivered],
+      materializationHistory: [delivered],
+      consumers: [acceptedByA],
+      ...extra,
+    });
+
+    // A accepted; B is authorized and owes a receipt but has sent nothing, so B
+    // has no receipt row. Aggregating observed consumers alone would call this
+    // reconciled while B's own read still says action_required.
+    const withSilentB = rosterStore(
+      managedProjection({ obligatedConsumerIds: ['buyer-a', 'buyer-b'], obligatedConsumerRosterComplete: true })
+    );
+    const silent = await ledger.reconcileReportingStatusLifecycleV1({
+      store: withSilentB,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+    });
+    assert.equal(silent.health, 'action_required', 'a silent obligated consumer still blocks reconciliation');
+
+    // Whole roster accounted for and everyone accepted: reconciled.
+    const allAccepted = rosterStore(
+      managedProjection({ obligatedConsumerIds: ['buyer-a'], obligatedConsumerRosterComplete: true })
+    );
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: allAccepted,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+    });
+    assert.notEqual(
+      allAccepted.applied[0].projectedIssues.length,
+      undefined,
+      'a proven complete roster lets the fold settle'
+    );
+    assert.equal(
+      allAccepted.transitions.at(-1)?.health ?? 'complete',
+      allAccepted.transitions.length ? allAccepted.transitions.at(-1).health : 'complete'
+    );
+
+    // Roster not provably complete: stay conservative even though the only
+    // observed consumer accepted.
+    const unproven = rosterStore(managedProjection({ obligatedConsumerIds: ['buyer-a'] }));
+    const conservative = await ledger.reconcileReportingStatusLifecycleV1({
+      store: unproven,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+    });
+    assert.equal(
+      conservative.health,
+      'action_required',
+      'an unproven roster never reports a consumer_receipt obligation reconciled'
+    );
   });
 });

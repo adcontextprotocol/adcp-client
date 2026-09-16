@@ -843,6 +843,411 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
   });
 
+  test('settles a lease issued under host clock skew against the database clock', async () => {
+    const skewed = await seedSkewLedger();
+    // A worker whose host clock is ten minutes behind the database. Before the
+    // lease was issued from clock_timestamp(), the claim succeeded and the
+    // settle matched zero rows, stranding the row at status 'pending'
+    // attempt 1 where the planner's HAVING cannot see it — so the attempt cap
+    // never engaged and the adapter was re-asked to deliver without bound.
+    const behind = new Date(Date.now() - 10 * 60_000).toISOString();
+    await managed.planMaterializations({ account_id: skewed.accountId });
+    const claimed = await managed.claimMaterialization({
+      owner: 'skewed-worker',
+      now: behind,
+      lease_milliseconds: 65_000,
+      account_id: skewed.accountId,
+    });
+    assert.ok(claimed, 'the skewed worker can still claim');
+    assert.ok(
+      Date.parse(claimed.expires_at) > Date.now() - 60_000,
+      'the committed expiry comes from the database clock, not the caller'
+    );
+    const settled = await managed.settleMaterialization({
+      lease: claimed,
+      now: behind,
+      outcome: materializationOutcome(skewed),
+    });
+    assert.equal(settled, true, 'host clock skew must not strand a delivered materialization');
+    const rows = await pool.query(
+      `SELECT status FROM adcp_reporting_materializations WHERE obligation_id = $1 ORDER BY attempt`,
+      [skewed.obligation.reporting_obligation_id]
+    );
+    assert.deepEqual(
+      rows.rows.map(row => row.status),
+      ['available'],
+      'the row leaves pending instead of being re-delivered forever'
+    );
+
+    // Same single-clock rule for revocation cleanup.
+    await managed.revokeDestination({
+      account_id: skewed.accountId,
+      destination_ref: skewed.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    const cleanup = await managed.claimRevocation({
+      owner: 'skewed-cleanup-worker',
+      now: behind,
+      lease_milliseconds: 65_000,
+      account_id: skewed.accountId,
+    });
+    assert.ok(cleanup);
+    assert.equal(
+      await managed.completeRevocation({ lease: cleanup, completed_at: new Date().toISOString() }),
+      true,
+      'host clock skew must not prevent provider grant cleanup from committing'
+    );
+  });
+
+  test('accepts an adjustment rejection whose digests agree', async () => {
+    const semantic = await seedSkewLedger('semantic', 'consumer_receipt');
+    const rows = [{ media_buy_id: 'buy-3', impressions: 11 }];
+    const bytes = Buffer.from(canonicalize(rows), 'utf8');
+    const wireAdjustmentWithoutDigest = {
+      reporting_adjustment_id: 'adjustment-semantic-0001',
+      adjusts_reporting_revision_id: semantic.revision.reporting_revision_id,
+      reason_code: 'source_correction',
+      accounting_period: { start: semantic.period.start, end: semantic.period.end },
+      control_total_deltas: [{ name: 'row_count', value: '0', value_type: 'integer' }],
+      correction_observed_at: semantic.now,
+      created_at: semantic.now,
+    };
+    const canonicalAdjustmentSha256 = createHash('sha256')
+      .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+      .digest('hex');
+    await core.commitAdjustment(
+      {
+        reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+        reporting_obligation_id: semantic.obligation.reporting_obligation_id,
+        adjusts_reporting_revision_id: semantic.revision.reporting_revision_id,
+        adjustmentNumber: 1,
+        manifest: { level: 'basic', objectRef: 'semantic-manifest', sha256: 'b'.repeat(64), byteCount: 1 },
+        sourcePublicationId: 'adjustment-publication-semantic',
+        binding: {
+          algorithm: 'rfc8785_jcs_v1',
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          byteCount: bytes.byteLength,
+          rowCount: rows.length,
+        },
+        rows,
+        observedAt: semantic.now,
+        dataThrough: semantic.period.end,
+        sourceReadCutoffAt: semantic.now,
+        createdAt: semantic.now,
+        wireAdjustment: { ...wireAdjustmentWithoutDigest, canonical_adjustment_sha256: canonicalAdjustmentSha256 },
+      },
+      semantic.coreLease
+    );
+
+    const context = { account: { id: semantic.accountId }, agent: { agent_url: 'https://semantic-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const adjustmentReceipt = overrides => ({
+      reporting_receipt_id: 'adjustment-receipt-semantic-0001',
+      reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+      adjusts_reporting_revision_id: semantic.revision.reporting_revision_id,
+      observed_adjustment_sha256: canonicalAdjustmentSha256,
+      observed_at: semantic.now,
+      ...overrides,
+    });
+
+    // RC3 acceptance_match: "A digest OR SEMANTIC disagreement is rejected with
+    // stable rejection_codes." A semantic disagreement has matching digests, so
+    // requiring a digest mismatch to reject made the class unfileable, and an
+    // accepted leaf being terminal left reconciliation with no exit at all.
+    const semanticRejection = await sync(
+      {
+        idempotency_key: 'adjustment-semantic-reject-0001',
+        adjustment_receipts: [adjustmentReceipt({ status: 'rejected', rejection_codes: ['SEMANTIC_MISMATCH'] })],
+      },
+      context
+    );
+    assert.equal(semanticRejection.results[0].result, 'recorded');
+    assert.equal(validateResponse('sync_reporting_receipts', semanticRejection, '3.2.0-rc.3').valid, true);
+
+    // Negative controls: a rejection with no codes, and an acceptance whose
+    // digest disagrees, both stay refused.
+    const uncoded = await sync(
+      {
+        idempotency_key: 'adjustment-semantic-reject-0002',
+        adjustment_receipts: [
+          adjustmentReceipt({ reporting_receipt_id: 'adjustment-receipt-semantic-0002', status: 'rejected' }),
+        ],
+      },
+      context
+    );
+    assert.equal(uncoded.results[0].result, 'failed');
+    const mismatchedAccept = await sync(
+      {
+        idempotency_key: 'adjustment-semantic-accept-0001',
+        adjustment_receipts: [
+          adjustmentReceipt({
+            reporting_receipt_id: 'adjustment-receipt-semantic-0003',
+            status: 'accepted',
+            observed_adjustment_sha256: '1'.repeat(64),
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(mismatchedAccept.results[0].result, 'failed');
+  });
+
+  test('refuses a binding replay whose fingerprint was copied from different content', async () => {
+    const authentic = fixture.binding;
+    // Same configuration identity, different immutable content, carrying the
+    // stored fingerprint. The replay branch used to trust the supplied value
+    // and accept this as an idempotent no-op.
+    await assert.rejects(
+      () =>
+        managed.installBinding({
+          ...authentic,
+          resource_retention_days: authentic.resource_retention_days + 1,
+          semantic_fingerprint: authentic.semantic_fingerprint,
+        }),
+      /semantic fingerprint does not match its immutable content/
+    );
+    const stored = await pool.query('SELECT data FROM adcp_reporting_managed_bindings WHERE configuration_id = $1', [
+      authentic.configurationId,
+    ]);
+    assert.equal(
+      stored.rows[0].data.resource_retention_days,
+      authentic.resource_retention_days,
+      'the stored immutable binding is untouched'
+    );
+    assert.deepEqual(await managed.installBinding(authentic), { inserted: false }, 'an exact replay still succeeds');
+  });
+
+  test('scopes adjustment receipts to the adjustments the view returns', async () => {
+    const context = { account: { id: fixture.accountId }, agent: { agent_url: 'https://semantic-buyer.example' } };
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    const revisionView = await getStatus(
+      {
+        account: { account_id: fixture.accountId },
+        view: 'revision',
+        reporting_revision_id: fixture.revision.reporting_revision_id,
+      },
+      context
+    );
+    const returnedAdjustmentIds = new Set(revisionView.adjustments.map(value => value.reporting_adjustment_id));
+    for (const value of revisionView.adjustment_receipts ?? []) {
+      assert.ok(
+        returnedAdjustmentIds.has(value.reporting_adjustment_id),
+        'RC3 revision_adjustments: every adjustment_receipt must name one of those adjustments'
+      );
+    }
+    assert.equal(
+      validateResponse('get_reporting_status', revisionView, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('get_reporting_status', revisionView, '3.2.0-rc.3').issues)
+    );
+
+    // An unrelated revision returns no adjustments, so it must return no
+    // adjustment receipts either.
+    const unrelated = await getStatus(
+      {
+        account: { account_id: fixture.accountId },
+        view: 'revision',
+        reporting_revision_id: snapshotFixture.revision.reporting_revision_id,
+      },
+      { account: { id: snapshotFixture.accountId }, agent: { agent_url: 'https://semantic-buyer.example' } }
+    );
+    assert.deepEqual(unrelated.adjustments, []);
+    assert.deepEqual(unrelated.adjustment_receipts ?? [], []);
+  });
+
+  async function seedSkewLedger(suffix = 'skew', reconciliationMode = 'delivery_only') {
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    const period = {
+      start: new Date(nowMs - 10_800_000).toISOString(),
+      end: new Date(nowMs - 9_000_000).toISOString(),
+    };
+    const accountId = `account-managed-${suffix}`;
+    const configuration = {
+      configurationId: `configuration-managed-${suffix}-1`,
+      account: { account_id: accountId },
+      sourceScope: { warehouse: 'fixture' },
+      delivery_config_id: `${suffix}-files`,
+      delivery_config_version: 1,
+      offeringId: `${suffix}-files-v1`,
+      report_definition_id: 'analytics-v1',
+      feedPurpose: 'analytics',
+      requiredFinality: 'official',
+      canonicalization: {
+        id: 'analytics-rows-v1',
+        uri: 'https://schemas.fixture.example/canonicalization.json',
+        sha256: 'c'.repeat(64),
+        primaryKeys: ['media_buy_id'],
+      },
+      requestedMetrics: ['impressions'],
+      requestedDimensions: ['media_buy_id'],
+      constituents: [],
+      mediaBuyIds: ['buy-3'],
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: period.start,
+        periodMilliseconds: 1_800_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 60_000,
+      },
+      sourceSettings: {},
+      contract: { reportingProfile: 'analytics-v1' },
+      installedAt: period.start,
+      semanticFingerprint: `configuration-managed-${suffix}-fingerprint`,
+    };
+    await core.putConfiguration(configuration);
+    await managed.authorizeDestination({
+      account_id: accountId,
+      destination_ref: `destination-${suffix}-1`,
+      generation: 1,
+      authorized_at: now,
+    });
+    const binding = ledger.reportingManagedDeliveryBindingV1({
+      configurationId: configuration.configurationId,
+      account_id: accountId,
+      delivery_config_id: configuration.delivery_config_id,
+      delivery_config_version: 1,
+      destination_ref: `destination-${suffix}-1`,
+      authorization_generation: 1,
+      feed_purpose: 'analytics',
+      method: 'file_transfer',
+      transport: 'fixture_object_store',
+      verification_profile: 'canonical_digest',
+      reconciliation_mode: reconciliationMode,
+      resource_retention_days: 30,
+      created_at: now,
+    });
+    await managed.installBinding(binding);
+    const obligation = {
+      reporting_obligation_id: `obligation-managed-${suffix}-1`,
+      configurationId: configuration.configurationId,
+      account: configuration.account,
+      sourceScope: configuration.sourceScope,
+      delivery_config_id: configuration.delivery_config_id,
+      delivery_config_version: 1,
+      offeringId: configuration.offeringId,
+      report_definition_id: configuration.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'official',
+      periodOrdinal: 0,
+      period: { ...period, sourceTimezone: 'UTC' },
+      schedule: configuration.schedule,
+      scopeResolvedAt: period.end,
+      coverage: {
+        status: 'full',
+        evaluatedAt: period.end,
+        mediaBuyIds: ['buy-3'],
+        fullyCoveredMediaBuyIds: ['buy-3'],
+        partiallyCoveredMediaBuyIds: [],
+        unsupportedMediaBuyIds: [],
+        unknownMediaBuyIds: [],
+      },
+      requestedMetrics: ['impressions'],
+      requestedDimensions: ['media_buy_id'],
+      constituents: [],
+      mediaBuyIds: ['buy-3'],
+      sourceSettings: {},
+      contract: configuration.contract,
+      expectedAt: period.end,
+      recoveryDeadlineAt: new Date(Date.parse(period.end) + 60_000).toISOString(),
+      publicationOffsets: [],
+      nextAttemptAt: period.end,
+      attemptCount: 0,
+      state: 'pending',
+      semanticFingerprint: `obligation-managed-${suffix}-fingerprint`,
+      createdAt: now,
+    };
+    await core.putObligation(obligation);
+    const coreLease = await core.claimObligation({
+      owner: `${suffix}-core-worker`,
+      now,
+      leaseMilliseconds: 600_000,
+      account_id: accountId,
+    });
+    const rows = [{ media_buy_id: 'buy-3', impressions: 4 }];
+    const controlTotals = [{ name: 'impressions', value: '4', value_type: 'integer', unit: 'impressions' }];
+    const revisionBytes = Buffer.from(
+      canonicalize({
+        reporting_revision_id: `revision-managed-${suffix}-1`,
+        row_count: rows.length,
+        control_totals: controlTotals,
+        reporting_rows: rows,
+      })
+    );
+    const digest = {
+      algorithm: 'sha256',
+      value: '6'.repeat(64),
+      canonicalization_id: 'analytics-rows-v1',
+      canonicalization_uri: 'https://schemas.fixture.example/canonicalization.json',
+      canonicalization_sha256: 'c'.repeat(64),
+    };
+    const revision = {
+      reporting_revision_id: `revision-managed-${suffix}-1`,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'official',
+      kind: 'official',
+      manifest: { level: 'basic', objectRef: 'manifest', sha256: 'a'.repeat(64), byteCount: 1 },
+      sourcePublicationId: `publication-managed-${suffix}-1`,
+      binding: {
+        algorithm: 'rfc8785_jcs_v1',
+        sha256: createHash('sha256').update(revisionBytes).digest('hex'),
+        byteCount: revisionBytes.byteLength,
+        rowCount: rows.length,
+      },
+      rows,
+      observedAt: now,
+      dataThrough: period.end,
+      sourceReadCutoffAt: now,
+      createdAt: now,
+      wireRevision: {
+        reporting_revision_id: `revision-managed-${suffix}-1`,
+        revision_content_sha256: createHash('sha256').update(revisionBytes).digest('hex'),
+        report_definition_id: 'analytics-v1',
+        report_definition_uri: 'https://schemas.fixture.example/report-definition.json',
+        report_definition_sha256: '9'.repeat(64),
+        reporting_profile: 'analytics-v1',
+        schema_version: '1.0',
+        schema_uri: 'https://schemas.fixture.example/reporting-profile.json',
+        schema_sha256: '8'.repeat(64),
+        schema_dialect: 'https://json-schema.org/draft/2020-12/schema',
+        schema_ref_policy: 'local_fragment_only',
+        account_id: accountId,
+        media_buy_ids: ['buy-3'],
+        coverage: {
+          status: 'full',
+          evaluated_at: now,
+          media_buy_ids: ['buy-3'],
+          fully_covered_media_buy_ids: ['buy-3'],
+          partially_covered_media_buy_ids: [],
+          unsupported_media_buy_ids: [],
+          unknown_media_buy_ids: [],
+          package_ids: [],
+          covered_package_ids: [],
+          unsupported_package_ids: [],
+          limitations: [],
+        },
+        period: { ...period, source_timezone: 'UTC' },
+        finality: 'official',
+        finality_basis: 'contractual_cutoff',
+        finality_policy_id: 'contractual-cutoff-v1',
+        finalized_at: now,
+        observed_at: now,
+        data_through: period.end,
+        data_through_precision: 'exact',
+        row_count: 1,
+        control_totals: controlTotals,
+        canonical_content_digest: digest,
+        created_at: now,
+      },
+    };
+    await core.commitRevision(revision, coreLease);
+    return { accountId, now, period, configuration, obligation, revision, binding, coreLease };
+  }
+
   async function seedCoreLedger() {
     const nowMs = Date.now();
     const now = new Date(nowMs).toISOString();

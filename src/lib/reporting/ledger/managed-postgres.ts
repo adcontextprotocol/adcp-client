@@ -301,6 +301,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     if (binding.reconciliation_mode === 'consumer_receipt' && binding.verification_profile !== 'canonical_digest') {
       throw new Error('Reconciled Billing bindings require canonical-digest verification');
     }
+    // Recompute before anything compares it. The replay branch used to trust the
+    // caller's `semantic_fingerprint`, so changed binding content carrying a
+    // copied-over old fingerprint was accepted as an idempotent replay and the
+    // immutable binding silently meant something else than the stored row.
+    const expectedFingerprint = managedBindingFingerprint(binding);
+    if (binding.semantic_fingerprint !== expectedFingerprint) {
+      throw new Error('Managed binding semantic fingerprint does not match its immutable content');
+    }
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(binding.account_id));
       await advisoryLock(client, `adcp-reporting-binding:${binding.account_id}:${binding.delivery_config_id}`);
@@ -309,7 +317,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         [binding.configurationId]
       );
       if (existing.rowCount) {
-        if (existing.rows[0]?.semantic_fingerprint !== binding.semantic_fingerprint) {
+        if (existing.rows[0]?.semantic_fingerprint !== expectedFingerprint) {
           throw new Error('Immutable managed binding identity names different content');
         }
         return { inserted: false };
@@ -343,10 +351,6 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       }
       if (binding.reconciliation_mode === 'consumer_receipt' && !configuration.canonicalization) {
         throw new Error('Reconciled Billing requires a Core configuration with pinned canonicalization');
-      }
-      const expectedFingerprint = managedBindingFingerprint(binding);
-      if (binding.semantic_fingerprint !== expectedFingerprint) {
-        throw new Error('Managed binding semantic fingerprint does not match its immutable content');
       }
       const inserted = await client.query<QueryRow & { semantic_fingerprint: string }>(
         `INSERT INTO adcp_reporting_managed_bindings
@@ -519,13 +523,20 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               AND authz.revoked_at IS NULL
             WHERE materialization.status = 'pending'
               AND ($1::text IS NULL OR materialization.account_id = $1)
-              AND (materialization.lease_expires_at IS NULL OR materialization.lease_expires_at <= $3)
+              -- One authoritative clock. settleMaterialization fences on
+              -- clock_timestamp(), so issuing the lease from the caller's clock
+              -- made ordinary NTP drift fatal: the claim succeeded, the settle
+              -- matched zero rows, and the row stayed 'pending' at attempt 1
+              -- where the planner's HAVING cannot see it — so the attempt cap
+              -- never engaged and the adapter was asked to deliver again, and
+              -- again, with no bound.
+              AND (materialization.lease_expires_at IS NULL OR materialization.lease_expires_at <= clock_timestamp())
             ORDER BY materialization.created_at, materialization.materialization_id
             FOR UPDATE OF materialization SKIP LOCKED LIMIT 1
          ), claimed AS (
            UPDATE adcp_reporting_materializations materialization
               SET lease_owner = $2, lease_generation = lease_generation + 1,
-                  lease_expires_at = $3::timestamptz + ($4::bigint * INTERVAL '1 millisecond')
+                  lease_expires_at = clock_timestamp() + ($3::bigint * INTERVAL '1 millisecond')
              FROM candidate WHERE materialization.materialization_id = candidate.materialization_id
          RETURNING materialization.*
          )
@@ -536,7 +547,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
            JOIN adcp_reporting_managed_bindings binding ON binding.configuration_id = claimed.configuration_id
            JOIN adcp_reporting_obligations obligation ON obligation.obligation_id = claimed.obligation_id
            JOIN adcp_reporting_revisions revision ON revision.revision_id = claimed.revision_id`,
-        [input.account_id ?? null, input.owner, input.now, input.lease_milliseconds]
+        [input.account_id ?? null, input.owner, input.lease_milliseconds]
       );
       const row = selected.rows[0];
       if (!row) return null;
@@ -614,20 +625,23 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
            SELECT account_id, destination_ref, generation
              FROM adcp_reporting_destination_authorizations
             WHERE revoked_at IS NOT NULL AND cleanup_completed_at IS NULL
-              AND (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at <= $2)
-              AND ($4::text IS NULL OR account_id = $4)
+              -- Same single-clock rule as claimMaterialization: completeRevocation
+              -- fences on clock_timestamp(), so the lease must be issued from it
+              -- too or cleanup can never commit and the grant is never torn down.
+              AND (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at <= clock_timestamp())
+              AND ($3::text IS NULL OR account_id = $3)
             ORDER BY cleanup_lease_generation, revoked_at, account_id, destination_ref
             FOR UPDATE SKIP LOCKED LIMIT 1
          )
          UPDATE adcp_reporting_destination_authorizations target SET
            cleanup_lease_owner = $1, cleanup_lease_generation = target.cleanup_lease_generation + 1,
-           cleanup_lease_expires_at = $2::timestamptz + ($3::bigint * INTERVAL '1 millisecond')
+           cleanup_lease_expires_at = clock_timestamp() + ($2::bigint * INTERVAL '1 millisecond')
           FROM candidate
          WHERE target.account_id = candidate.account_id AND target.destination_ref = candidate.destination_ref
            AND target.generation = candidate.generation
          RETURNING target.data, target.cleanup_lease_generation::text AS generation,
                    target.cleanup_lease_expires_at AS expires_at`,
-        [input.owner, input.now, input.lease_milliseconds, input.account_id ?? null]
+        [input.owner, input.lease_milliseconds, input.account_id ?? null]
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -864,7 +878,15 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       entry.kind === 'revision'
         ? receiptEvidenceMatches(entry.receipt, evidence.materialization!)
         : adjustmentReceiptEvidenceMatches(entry.receipt, evidence.adjustment!);
-    if (entry.receipt.status === 'accepted' ? !matches : matches || !entry.receipt.rejection_codes?.length) {
+    // RC3 acceptance_match: "accepted requires observed_adjustment_sha256 to
+    // equal the referenced adjustment's canonical_adjustment_sha256 ... A digest
+    // OR SEMANTIC disagreement is rejected with stable rejection_codes." A
+    // semantic disagreement is by construction one where the digests DO match,
+    // so requiring `!matches` to reject made that whole class unfileable — and
+    // because an accepted leaf is terminal, reconciliation had no exit at all.
+    // A rejection is well formed when it carries rejection codes.
+    const wellFormed = entry.receipt.status === 'accepted' ? matches : Boolean(entry.receipt.rejection_codes?.length);
+    if (!wellFormed) {
       return failed(entry.receipt.reporting_receipt_id);
     }
     const current = await client.query<QueryRow & { reporting_receipt_id: string; data: { status: string } }>(

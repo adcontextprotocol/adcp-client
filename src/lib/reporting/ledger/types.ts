@@ -539,6 +539,31 @@ export interface ReportingManagedLifecycleProjectionV1 {
     receipts: ReportingReceipt[];
     adjustmentReceipts: ReportingAdjustmentReceipt[];
   }>;
+  /**
+   * Principals that owe a receipt for this obligation, from trusted state.
+   *
+   * `consumers` alone is not a roster: it is only who has already submitted
+   * something. Aggregating it would let an authorized consumer that owes a
+   * receipt and has stayed silent vanish the moment another consumer accepts,
+   * so the account-level transition could report the obligation reconciled
+   * while that consumer's own read still says `action_required`. Entries here
+   * that have submitted nothing are projected with empty receipts.
+   */
+  obligatedConsumerIds?: readonly string[];
+  /**
+   * Set only when `obligatedConsumerIds` is provably the complete roster.
+   *
+   * The managed tables key destination authorizations and bindings by
+   * `(account_id, destination_ref, generation)` with no consumer dimension, so
+   * the SDK's own PostgreSQL store cannot prove completeness and leaves this
+   * false. While it is false the reconciler keeps projecting one additional
+   * zero-receipt consumer for a `consumer_receipt` binding, so the obligation
+   * is never reported reconciled on the strength of the consumers that
+   * happened to be observed. A seller whose authorization layer knows the
+   * roster should supply it and set this true to get accurate reconciled
+   * transitions.
+   */
+  obligatedConsumerRosterComplete?: boolean;
 }
 
 export interface ReportingLedgerLeaseV1 {

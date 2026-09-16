@@ -2064,7 +2064,32 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         else consumer.adjustmentReceipts.push(clone(row.data) as ReportingAdjustmentReceipt);
         byConsumer.set(row.consumer_id, consumer);
       }
-      return { binding, materializations, materializationHistory, consumers: [...byConsumer.values()] };
+      // Widen the roster past "who has already submitted a receipt" with every
+      // consumer that has engaged with this obligation at all. It is still not
+      // provably complete: destination authorizations and managed bindings are
+      // keyed by (account_id, destination_ref, generation) with no consumer
+      // dimension, so nothing durable here enumerates who owes a receipt. Say
+      // so, and let the reconciler stay conservative.
+      const engaged = await client.query<QueryResultRow & { consumer_id: string }>(
+        `SELECT DISTINCT consumer_id FROM adcp_reporting_consumer_statuses
+          WHERE obligation_id = $1 AND consumer_id <> '__legacy_unscoped_consumer__'
+          ORDER BY consumer_id LIMIT $2`,
+        [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1]
+      );
+      if (engaged.rows.length > MAX_SNAPSHOT_ITEMS) {
+        throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
+      }
+      const obligatedConsumerIds = [
+        ...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)]),
+      ].sort();
+      return {
+        binding,
+        materializations,
+        materializationHistory,
+        consumers: [...byConsumer.values()],
+        obligatedConsumerIds,
+        obligatedConsumerRosterComplete: false,
+      };
     });
   }
 

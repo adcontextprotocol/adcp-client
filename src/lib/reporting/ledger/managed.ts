@@ -348,8 +348,26 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
     if (!consumer_id || consumer_id.length > 255) {
       throw new TypeError('resolveConsumerId must return a durable authenticated principal of at most 255 characters');
     }
+    // These handlers are exported and adopters call them directly, and
+    // `requestValidationMode` defaults to 'off' in production, so the framework
+    // cannot be assumed to have shape-checked anything. Refuse a malformed
+    // request with the repository's typed envelope instead of letting a
+    // TypeError escape from `.map` or a destructure.
+    if (request.receipts !== undefined && !Array.isArray(request.receipts)) {
+      throw new AdcpError('VALIDATION_ERROR', { message: 'sync_reporting_receipts receipts must be an array' });
+    }
+    if (request.adjustment_receipts !== undefined && !Array.isArray(request.adjustment_receipts)) {
+      throw new AdcpError('VALIDATION_ERROR', {
+        message: 'sync_reporting_receipts adjustment_receipts must be an array',
+      });
+    }
     const revisionReceipts = request.receipts ?? [];
     const adjustmentReceipts = request.adjustment_receipts ?? [];
+    if (!revisionReceipts.every(isRecord) || !adjustmentReceipts.every(isRecord)) {
+      throw new AdcpError('VALIDATION_ERROR', {
+        message: 'sync_reporting_receipts entries must be objects',
+      });
+    }
     // RC3 caps `receipts` and `adjustment_receipts` at 100 each, independently.
     // The SDK used to invent a combined cap the spec does not have, so a legal
     // request was rejected; refusing each array against its own cap is the
@@ -390,7 +408,13 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
     if (request.account && 'account_id' in request.account && request.account.account_id !== account_id) {
       return receiptBatchFailure(entries, 'PERMISSION_DENIED', 'Reporting receipt account is unavailable');
     }
-    if (!entries.length) return { status: 'completed', results: [] };
+    // RC3 requires `results` minItems 1 and the request anyOf requires a
+    // non-empty array, so an empty batch has no legal response body either.
+    if (!entries.length) {
+      throw new AdcpError('VALIDATION_ERROR', {
+        message: 'sync_reporting_receipts requires at least one receipt or adjustment receipt',
+      });
+    }
     if (!/^[A-Za-z0-9_.:-]{16,255}$/.test(request.idempotency_key)) {
       return receiptBatchFailure(entries, 'VALIDATION_ERROR', 'sync_reporting_receipts idempotency_key is invalid');
     }
@@ -420,7 +444,7 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
         valid[index]
           ? stored[storedIndex++]!
           : receiptFailure(
-              entry.receipt.reporting_receipt_id,
+              reflectableReceiptId(entry.receipt.reporting_receipt_id, index),
               'VALIDATION_ERROR',
               'Reporting receipt evidence is invalid or exceeds 64 KiB'
             )
@@ -436,8 +460,25 @@ function receiptBatchFailure(
 ): SyncReportingReceiptsResponse {
   return {
     status: 'completed',
-    results: entries.map(entry => receiptFailure(entry.receipt.reporting_receipt_id, code, message)),
+    results: entries.map((entry, index) =>
+      receiptFailure(reflectableReceiptId(entry.receipt.reporting_receipt_id, index), code, message)
+    ),
   };
+}
+
+const RECEIPT_ID_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
+
+/**
+ * `results[].reporting_receipt_id` is pattern- and length-constrained, so a
+ * caller-supplied id can only be echoed when it already satisfies the wire
+ * contract. Anything else — absent, non-string, 3,000 characters, or carrying
+ * characters outside the class — is replaced by a positional placeholder, which
+ * keeps a malformed request from steering the shape of our own response.
+ */
+function reflectableReceiptId(value: unknown, index: number): string {
+  return typeof value === 'string' && RECEIPT_ID_PATTERN.test(value)
+    ? value
+    : `unidentified-reporting-receipt-${String(index).padStart(3, '0')}`;
 }
 
 function receiptFailure(
@@ -476,12 +517,22 @@ export async function runManagedDeliveryWorker(
   }
   const revocationWindow =
     options.authorizationRevocationSeconds === undefined ? undefined : options.authorizationRevocationSeconds * 1_000;
-  // A failed cleanup keeps its lease as the retry delay, so a lease longer than
-  // the whole advertised window would defer the retry past the promise on its
-  // own. Cap it at the window; `claimRevocation` requires at least 1 ms, which
-  // is the correct reading of a zero-second promise: no backoff is permitted.
+  // A failed cleanup keeps its lease as the retry delay, so the lease is the
+  // retry interval. Capping it at the whole advertised window was not enough:
+  // a failure near the boundary then held the grant unretried for up to the
+  // entire window, i.e. past the promise. The lease a claim can safely take is
+  // one attempt's worth — the delivery deadline plus the settlement grace —
+  // which is the shortest interval that cannot cut an in-flight attempt short,
+  // and it leaves the rest of the window available for further retries.
+  // `claimRevocation` requires at least 1 ms, which is the right reading of a
+  // zero-second promise: no backoff at all is permitted.
   const revocationLeaseMilliseconds =
-    revocationWindow === undefined ? leaseMilliseconds : Math.max(1, Math.min(leaseMilliseconds, revocationWindow));
+    revocationWindow === undefined
+      ? leaseMilliseconds
+      : Math.max(
+          1,
+          Math.min(leaseMilliseconds, deadlineMilliseconds + MINIMUM_SETTLEMENT_GRACE_MILLISECONDS, revocationWindow)
+        );
   const owner = `managed-reporting-${randomUUID()}`;
   const counts = {
     planned: await store.planMaterializations({ ...(options.account_id ? { account_id: options.account_id } : {}) }),
@@ -868,6 +919,15 @@ export function reportingManagedDeliveryBindingV1(
   input: Omit<ReportingManagedDeliveryBindingV1, 'created_at' | 'semantic_fingerprint'> & { created_at?: string }
 ): ReportingManagedDeliveryBindingV1 {
   const created_at = input.created_at ?? new Date().toISOString();
-  const semantic_fingerprint = sha256({ ...input, created_at: undefined });
-  return { ...input, created_at, semantic_fingerprint };
+  // Derive from semantic content only. Deriving a new binding by spreading an
+  // existing one is the documented pattern, and that carries the predecessor's
+  // `semantic_fingerprint` in as an ordinary field — which used to be folded
+  // into the digest, so the helper produced a value the store's own
+  // `managedBindingFingerprint` could never reproduce. The store now recomputes
+  // before it compares anything, so the two must agree exactly.
+  const { semantic_fingerprint: _predecessor, ...semantic } = input as typeof input & {
+    semantic_fingerprint?: string;
+  };
+  const semantic_fingerprint = sha256({ ...semantic, created_at: undefined });
+  return { ...semantic, created_at, semantic_fingerprint };
 }

@@ -316,6 +316,10 @@ export function createReportingStatusHandler<TContext = unknown>(
         if (!revision) {
           return lookupUnavailable(view);
         }
+        const revisionAdjustments = page.adjustments.filter(
+          value => value.adjusts_reporting_revision_id === revision.reporting_revision_id
+        );
+        const revisionAdjustmentIds = new Set(revisionAdjustments.map(value => value.reporting_adjustment_id));
         return {
           ...base,
           view: 'revision',
@@ -326,9 +330,7 @@ export function createReportingStatusHandler<TContext = unknown>(
             row_count: revision.binding.rowCount,
           },
           reporting_rows: revision.rows,
-          adjustments: page.adjustments
-            .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
-            .map(value => value.wireAdjustment),
+          adjustments: revisionAdjustments.map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
           materializations: (page.materializations ?? []).filter(
             value => value.reporting_revision_id === revision.reporting_revision_id
@@ -336,7 +338,14 @@ export function createReportingStatusHandler<TContext = unknown>(
           receipts: (page.receipts ?? []).filter(
             value => value.reporting_revision_id === revision.reporting_revision_id
           ),
-          adjustment_receipts: page.adjustmentReceipts ?? [],
+          // RC3 `revision_adjustments`: "every adjustment_receipt, when
+          // supported, MUST name one of those adjustments. No unrelated status
+          // or correction may appear." Emitting the page's whole adjustment
+          // receipt set let a read of R1 return a receipt for an adjustment on
+          // R2 while `adjustments` was empty.
+          adjustment_receipts: (page.adjustmentReceipts ?? []).filter(value =>
+            revisionAdjustmentIds.has(value.reporting_adjustment_id)
+          ),
           errors: [],
           pagination: {
             has_more: page.hasMore,
@@ -350,6 +359,8 @@ export function createReportingStatusHandler<TContext = unknown>(
         const pageIds = new Set(page.obligations.map(value => value.reporting_obligation_id));
         const pageProjected = selected.filter(value => pageIds.has(value.obligation.reporting_obligation_id));
         const selectedPageIds = new Set(selected.map(value => value.obligation.reporting_obligation_id));
+        const pageAdjustments = page.adjustments.filter(value => selectedPageIds.has(value.reporting_obligation_id));
+        const pageAdjustmentIds = new Set(pageAdjustments.map(value => value.reporting_adjustment_id));
         return {
           ...base,
           view: 'periods',
@@ -378,15 +389,17 @@ export function createReportingStatusHandler<TContext = unknown>(
                 (!query.finality || query.finality.includes(value.finality))
             )
             .map(value => value.wireRevision),
-          adjustments: page.adjustments
-            .filter(value => selectedPageIds.has(value.reporting_obligation_id))
-            .map(value => value.wireAdjustment),
+          adjustments: pageAdjustments.map(value => value.wireAdjustment),
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
-          adjustment_receipts: page.adjustmentReceipts ?? [],
+          // Same scoping rule as the revision view: a receipt may only appear
+          // beside the correction or revision it names.
+          adjustment_receipts: (page.adjustmentReceipts ?? []).filter(value =>
+            pageAdjustmentIds.has(value.reporting_adjustment_id)
+          ),
           materializations: (page.materializations ?? []).filter(value =>
             selectedPageIds.has(value.reporting_obligation_id)
           ),
-          receipts: page.receipts ?? [],
+          receipts: (page.receipts ?? []).filter(value => selectedPageIds.has(value.reporting_obligation_id)),
           pagination: {
             has_more: page.hasMore,
             total_count: page.totalCount,
