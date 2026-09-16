@@ -2127,6 +2127,44 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
 
+  // --- Reliable reporting service ---
+  ln(`## Reliable Reporting Service`);
+  ln();
+  ln(
+    `Import from \`@adcp/sdk/reporting/service\`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`interface ReliableReportingAdapterV1 {`);
+  ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
+  ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
+  ln(`  readonly fetchSlice: InlineReportingDeliveryFetchV1;`);
+  ln(`}`);
+  ln();
+  ln(`const reporting = createReliableReportingService({`);
+  ln(`  store,`);
+  ln(`  adapters,`);
+  ln(`  contact,`);
+  ln(`  automatedRecoveryWindowSeconds,`);
+  ln(`  statusRetentionDays, // enforce this commitment in the ledger database`);
+  ln(`  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),`);
+  ln(`  resolveCurrency: account => currency,`);
+  ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
+  ln(`});`);
+  ln();
+  ln(`await pool.query(reporting.setup.migrations[0]);`);
+  ln(`const installedPlatform = reporting.install(platform);`);
+  ln(`await reporting.installConfiguration(configuration, { account: ctx.account });`);
+  ln(`await reporting.runCycle({ accountId }); // tenant-partitioned`);
+  ln(`reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan`);
+  ln(`await reporting.stop();`);
+  ln('```');
+  ln();
+  ln(
+    `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, and currency. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
+  );
+  ln();
+
   // --- Enums ---
   ln(`## Key Enums`);
   ln();

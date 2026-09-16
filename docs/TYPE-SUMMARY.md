@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-15
+> Generated at: 2026-09-16
 > @adcp/sdk v14.0.0-rc.38
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -2841,6 +2841,38 @@ const syncReportingStatus = createSyncReportingStatusHandler(store, {
 ```
 
 The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+
+## Reliable Reporting Service
+
+Import from `@adcp/sdk/reporting/service`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.
+
+```typescript
+interface ReliableReportingAdapterV1 {
+  readonly sourceOffering: ReportingSourceOfferingV1;
+  readonly deliveryOffering: ReportingDeliveryOffering;
+  readonly fetchSlice: InlineReportingDeliveryFetchV1;
+}
+
+const reporting = createReliableReportingService({
+  store,
+  adapters,
+  contact,
+  automatedRecoveryWindowSeconds,
+  statusRetentionDays, // enforce this commitment in the ledger database
+  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),
+  resolveCurrency: account => currency,
+  resolveConsumerId, // optional; controls consumer-status handler/capability
+});
+
+await pool.query(reporting.setup.migrations[0]);
+const installedPlatform = reporting.install(platform);
+await reporting.installConfiguration(configuration, { account: ctx.account });
+await reporting.runCycle({ accountId }); // tenant-partitioned
+reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan
+await reporting.stop();
+```
+
+Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free `sourceScope`, source timezone, and currency. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires `platform.accounts.upsert`, which owns the advertised `sync_accounts` configuration path.
 
 ## Key Enums
 

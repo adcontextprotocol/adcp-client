@@ -2785,6 +2785,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // empty support list as a positive 3.1 metric-optimization declaration.
   const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
+  const reportingDelivery = platform.reporting?.capabilities;
   const targeting = platform.capabilities.targeting
     ? normalizeTargetingCapabilities(platform.capabilities.targeting)
     : undefined;
@@ -2806,6 +2807,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     cs != null ||
     som != null ||
     fc != null ||
+    reportingDelivery != null ||
     targeting != null ||
     supportsProposals !== undefined;
   // App `version` / capability `build_version` are deployment metadata and
@@ -2818,6 +2820,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     throw new PlatformConfigError(
       `Configured AdCP version '${configuredAdcpVersion}' is not a valid release identifier`
     );
+  }
+  if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.3')) {
+    throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.3 or newer schema pin');
   }
   for (const advertisedVersion of platform.capabilities.supported_versions ?? []) {
     const advertisedRelease = parseAdcpRelease(advertisedVersion);
@@ -2847,6 +2852,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(cs != null && { content_standards: cs }),
     ...(som != null && { supported_optimization_metrics: som }),
     ...(fc != null && { frequency_capping: fc }),
+    ...(reportingDelivery != null && { reporting_delivery: reportingDelivery }),
     ...(targeting != null && { execution: { targeting } }),
     ...(supportsProposals !== undefined && { supports_proposals: supportsProposals }),
     features: {
@@ -3029,6 +3035,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const adopterExtensionsSupported = platform.capabilities.extensions_supported;
   const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
+  const adopterExperimentalFeatures = (adopterOverrides?.experimental_features ?? []) as readonly string[];
+  if (
+    reportingDelivery &&
+    !adopterExperimentalFeatures.includes('media_buy.reporting_delivery') &&
+    adopterExperimentalFeatures.length >= 32
+  ) {
+    throw new PlatformConfigError(
+      'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+    );
+  }
+  const experimentalFeatures = reportingDelivery
+    ? Array.from(new Set([...adopterExperimentalFeatures, 'media_buy.reporting_delivery']))
+    : adopterOverrides?.experimental_features;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
   const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
 
@@ -3063,6 +3082,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         }),
         ...(hasComplianceTestingProjection &&
           complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
+        ...(experimentalFeatures !== undefined && { experimental_features: experimentalFeatures }),
       },
     }),
   };
@@ -6428,12 +6448,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   const lifecycle = platform.mediaBuyLifecycle;
-  const getMediaBuyDelivery = lifecycle?.getMediaBuyDelivery ?? sales?.getMediaBuyDelivery;
+  const reporting = platform.reporting;
+  const liveMediaBuyDelivery = lifecycle?.getMediaBuyDelivery ?? sales?.getMediaBuyDelivery;
+  const getMediaBuyDelivery = liveMediaBuyDelivery ?? reporting?.getMediaBuyDelivery;
   const getMediaBuys = lifecycle?.getMediaBuys ?? sales?.getMediaBuys;
   const proposalManager = (platform as { proposalManager?: import('../proposal').ProposalManager }).proposalManager;
   // Without a legacy sales surface, compact lifecycle, or proposal manager,
   // there's nothing to dispatch.
-  if (!sales && !lifecycle && !proposalManager) return undefined;
+  if (!sales && !lifecycle && !proposalManager && !reporting) return undefined;
 
   const dispatchCompactMutation = async <TResult>(
     tool: string,
@@ -6491,6 +6513,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
       value => value
     );
+  };
+
+  const reportingContext = (
+    tool: 'get_media_buy_delivery' | 'get_reporting_status' | 'sync_reporting_status',
+    params: Readonly<Record<string, unknown>>,
+    ctx: HandlerContext<Account>
+  ): RequestContext<Account> => {
+    if (ctx.authInfo === undefined && ctx.agent === undefined) {
+      throw new AdcpError('AUTH_MISSING', {
+        message: `${tool} requires an authenticated buyer principal`,
+        recovery: 'correctable',
+      });
+    }
+    if (!ctx.account?.id) throw missingAccountError(tool, platform.accounts.resolution);
+    return ctxFor(ctx, params);
   };
 
   // Core lifecycle methods are optional on the SalesPlatform interface
@@ -7080,7 +7117,12 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getMediaBuyDelivery']>>
       ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
-        const reqCtx = ctxFor(ctx, params);
+        const exactRevisionRequested =
+          (params as { reporting_revision_id?: unknown }).reporting_revision_id !== undefined;
+        const reportingRevisionRequested = exactRevisionRequested && reporting !== undefined;
+        const reqCtx = reportingRevisionRequested
+          ? reportingContext('get_media_buy_delivery', params, ctx)
+          : ctxFor(ctx, params);
         // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
         // Resolutions §5, recipe-driven delivery aggregation needs the
         // same recipe view the originating createMediaBuy used.
@@ -7103,7 +7145,16 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
-            const result = await getMediaBuyDelivery(asValidatedDomainRequest(params), reqCtx);
+            const selectedDelivery = exactRevisionRequested
+              ? (reporting?.getMediaBuyDelivery ?? liveMediaBuyDelivery)
+              : liveMediaBuyDelivery;
+            if (!selectedDelivery) {
+              throw new AdcpError('UNSUPPORTED_FEATURE', {
+                message: 'This reporting-only platform does not provide cumulative delivery reads',
+                recovery: 'correctable',
+              });
+            }
+            const result = await selectedDelivery(asValidatedDomainRequest(params), reqCtx);
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
               'media_buy_ids',
@@ -7122,6 +7173,26 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           actuals => actuals
         );
       },
+    }),
+
+    ...(reporting?.getReportingStatus && {
+      getReportingStatus: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getReportingStatus']>>
+      ) =>
+        projectSync(
+          () => reporting.getReportingStatus(params, reportingContext('get_reporting_status', params, ctx)),
+          value => value
+        ),
+    }),
+
+    ...(reporting?.syncReportingStatus && {
+      syncReportingStatus: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['syncReportingStatus']>>
+      ) =>
+        projectSync(
+          () => reporting.syncReportingStatus!(params, reportingContext('sync_reporting_status', params, ctx)),
+          value => value
+        ),
     }),
 
     // Optional methods — return UNSUPPORTED_FEATURE when the platform omits

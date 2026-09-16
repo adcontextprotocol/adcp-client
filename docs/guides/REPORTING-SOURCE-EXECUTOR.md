@@ -4,6 +4,14 @@
 
 The existing buyer-side `reconcileReporting` API is unchanged.
 
+For the common bounded, non-paginated provider API, prefer
+`createReliableReportingService` from `@adcp/sdk/reporting/service`. Its
+`ReliableReportingAdapterV1` is the narrow inline boundary described below and
+adds trusted account/source/currency routing, the existing ledger lifecycle,
+server handlers, scheduler, and truthful Core capabilities. Use the raw
+executor interfaces in this guide for paginated, asynchronous, or externally
+staged sources that need more control.
+
 ## Day 1: register an executor
 
 Implement `ReportingSourceExecutorV1` and `ReportingSourceStagedObjectReaderV1`. Keep `sourceScope` opaque: the caller defines and freezes it, while the executor echoes it and uses it to scope immutable staged-object reads.

@@ -2,6 +2,94 @@
 
 `@adcp/sdk/reporting/ledger` turns a conforming reporting source into durable seller-side Reliable Reporting Core. It is separate from the buyer-side `reconcileReporting` API.
 
+## Recommended: install the lifecycle service
+
+`createReliableReportingService` is the adapter-first production path. A
+provider adapter supplies one bounded slice fetch and two immutable offering
+descriptions; the service reuses the PostgreSQL ledger, source executor,
+producer, handlers, and decisioning-platform account resolver.
+
+```ts
+import { Pool } from 'pg';
+import { PostgresReportingLedgerStore } from '@adcp/sdk/reporting/ledger';
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+});
+
+const reporting = createReliableReportingService({
+  store,
+  adapters: {
+    // These descriptions are immutable declarations owned by your adapter.
+    gam: { sourceOffering: gamSourceOffering, deliveryOffering: gamDeliveryOffering,
+      fetchSlice: (slice, ctx) => gam.fetchDeliverySlice(slice, ctx) },
+  },
+  contact: { name: 'Reporting operations', email: 'reporting@example.com' },
+  automatedRecoveryWindowSeconds: 86_400,
+  statusRetentionDays: 90,
+
+  // `account` is the framework-resolved account, not request.account.
+  resolveSource: account => ({
+    adapterId: 'gam',
+    sourceScope: { network_id: account.ctx_metadata.gam.networkId },
+    sourceTimezone: account.ctx_metadata.gam.reportingTimezone,
+  }),
+  // Resolve from trusted commercial/account state. The result is frozen into
+  // the generation and every obligation; no request-body fallback exists.
+  resolveCurrency: account => account.ctx_metadata.gam.currency,
+  resolveConsumerId: ctx => {
+    if (!ctx.agent) throw new Error('Authenticated buyer-agent registry required');
+    return ctx.agent.agent_url;
+  },
+});
+
+await pool.query(reporting.setup.migrations[0]);
+const installedPlatform = reporting.install(platform);
+const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
+
+reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
+process.once('SIGTERM', () => void reporting.stop());
+```
+
+The service advertises Reliable Reporting Core only. An inline adapter cannot
+turn on Managed Delivery, Reconciled Billing, receipts, webhook activity, or
+reporting notifications. `sync_reporting_status` is advertised only when
+`resolveConsumerId` is installed and the supplied ledger implements its
+atomic consumer-status methods. Follow-up work adds those higher tiers; do not
+place them in a manual capability override.
+
+Install a buyer declaration after the account and its media-buy scope have
+been authorized and resolved. `installConfiguration` intentionally accepts no
+account, `sourceScope`, contract, timezone, or currency fields from the
+declaration. Pass the framework-resolved `ctx.account`; trusted callbacks
+derive the remaining lineage. `expectedCurrency` and
+`expectedSourceTimezone` are optional assertions and fail closed on conflict.
+The service rejects credential-shaped keys and `ctx_metadata` anywhere in the
+returned `sourceScope`, then applies the source contract and existing ledger
+immutability checks. Return the resulting secret-free configuration state from
+your `sync_accounts` implementation.
+
+For tenant-partitioned jobs, call `runCycle({ accountId })`, or configure
+`start({ accountIds: [...] })`. Every planner and worker call receives that
+same account boundary. A deployment-owned worker must explicitly pass
+`deploymentWide: true`; use that form only when one trusted service instance is
+authorized for every account in the store. Planning is resumable and bounded;
+set `maxObligationsPerAccount` and `maxWorkerIterationsPerAccount` for tighter
+operational limits. `stop()` aborts current source work, waits for settlement,
+and wakes a sleeping scheduler immediately. Planning is a bounded ledger
+operation rather than abortable source I/O, so shutdown waits for an in-flight
+planning pass to settle and does not begin its worker afterward.
+
+Run `runReliableReportingServiceConformanceV1` against an isolated test ledger
+before deployment. It covers source replay, two-account isolation,
+configuration replay/frozen currency, lifecycle start/stop, and Core
+capability truthfulness.
+
+## Advanced: assemble the primitives directly
+
 ```ts
 import { Pool } from 'pg';
 import {
@@ -38,6 +126,33 @@ await sweepExpiredReportingLedgerState(pool);
 Pass `getReportingStatus` and `getMediaBuyDelivery` directly to the matching `createAdcpServer` slots. The delivery helper serves only exact `reporting_revision_id` reads and returns the row payload bound by the ledger revision. Advertise `media_buy.reporting_delivery` in `experimental_features` together with a `media_buy.reporting_delivery` capability whose Reliable Reporting version is `1.0` only after both handlers are wired. Configure account resolution on the server: both handlers require the framework-resolved, caller-scoped account identity and never trust a request-body identity as an authorization boundary. If two callers can name the same upstream account, the resolver must issue distinct internal account IDs for their ledger namespaces. Install immutable delivery-configuration generations through `producer.installConfiguration`, call `planObligations()` after period close, and run `runWorker()` from a durable scheduler. Multiple workers are safe: PostgreSQL claims use `SKIP LOCKED`, expiring leases, and fencing generations.
 
 The planner uses fixed millisecond periods and an explicitly frozen IANA source timezone. Calendar or billing-cycle schedules should be expanded by the seller into immutable period boundaries before installation; the SDK intentionally has no Temporal dependency. At period end, the obligation freezes the constituent denominator and coverage. A zero-row source object commits like any other revision. Absence remains an empty revision association. A deployment with per-tenant workers should pass the resolved `account_id` to both `planObligations()` and `runWorker()`; omitting it intentionally runs a deployment-wide worker.
+
+### Migrating an existing manual lifecycle
+
+Keep the same `PostgresReportingLedgerStore` and run the same
+`REPORTING_LEDGER_MIGRATION`; there is no second store and no data migration.
+Move each inline fetch plus its source/delivery offering into an entry in
+`adapters`, move account routing and currency lookup into the two trusted
+resolvers, and replace manual producer/handler/capability assembly with
+`reporting.install(platform)`. Replace cron calls to `planObligations` and
+`runWorker` with `runCycle` or `start`. Remove manual reporting capability
+overrides so discovery has one owner. Existing configuration IDs and semantic
+fingerprints remain compatible because the service delegates installation to
+the existing producer. With one installed adapter, pre-service obligations
+without the reserved adapter route continue through that sole adapter. A
+multi-adapter migration must create a new immutable configuration generation
+with an explicit route. Existing custom source executors that need pagination
+or durable staged objects should stay on the advanced primitives until a
+future service adapter extension explicitly supports them.
+
+`reporting.install(platform)` mutates that platform object in place and
+requires it to be extensible; this preserves class instances and private-field
+methods that a shallow wrapper would break. It also requires the platform's
+native `accounts.upsert` seam. The service cannot truthfully advertise `configuration_task:
+sync_accounts` without it. That account method remains responsible for mapping
+an authorized wire reporting configuration to the service's resolved input and
+calling `installConfiguration`; the service does not claim a generic mapping
+that the current protocol does not define.
 
 Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline.
 
