@@ -384,11 +384,13 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   test('progresses a pre-v14 obligation whose stored insert clock is skewed from the ledger clock', async () => {
     const obligation = await putObligation('finality-clock-skew', 'account-b');
     const obligationId = obligation.reporting_obligation_id;
-    // The database insert clock runs eight hours ahead of the application clock
-    // the revision payloads carry. A baseline reconstructed from the `created_at`
-    // insert column would therefore see nothing visible at the legacy
-    // transition, disagree with the lifecycle decision on every pass, and wedge
-    // the compare-and-set forever.
+    // Committed in the order snapshot -> legacy transition -> official, but the
+    // `created_at` insert column runs eight hours ahead of the application clock
+    // the revision payloads carry. A baseline reconstructed from `created_at`
+    // against the transition's application-clock `occurredAt` would see nothing
+    // observed at the legacy transition, disagree with the lifecycle decision on
+    // every pass, and wedge the compare-and-set forever. Ordering both sides by
+    // the committed `recorded_at` ignores the skew entirely.
     await insertSkewedRevision({
       obligationId,
       revisionId: 'rrev_clock_skew_snapshot',
@@ -397,24 +399,13 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       createdAt: '2026-09-02T01:05:00.000Z',
       insertedAt: '2026-09-02T09:05:00.000Z',
     });
-    await pool.query(
-      `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
-       VALUES ($1, $2, $3::jsonb, $4)`,
-      [
-        'rst_clock_skew_pre_v14',
-        obligationId,
-        JSON.stringify({
-          transitionId: 'rst_clock_skew_pre_v14',
-          reporting_obligation_id: obligationId,
-          previousHealth: 'waiting',
-          health: 'delayed',
-          issueIds: [],
-          occurredAt: '2026-09-02T01:10:00.000Z',
-          notifiedAt: '2026-09-02T01:10:00.000Z',
-        }),
-        '2026-09-02T01:10:00.000Z',
-      ]
-    );
+    await insertLegacyTransition({
+      transitionId: 'rst_clock_skew_pre_v14',
+      obligationId,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      occurredAt: '2026-09-02T01:10:00.000Z',
+    });
     await insertSkewedRevision({
       obligationId,
       revisionId: 'rrev_clock_skew_official',
@@ -471,6 +462,106 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(delivered().length, 1, 'notification stays exactly-once across the replay');
     const page = await activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b' });
     assert.equal(page.activities.filter(value => value.transitionId === transition.transitionId).length, 1);
+  });
+
+  test('excludes a revision committed after a legacy transition whose payload timestamp predates it', async () => {
+    // A revision can be constructed before a transition occurs and still commit
+    // after it. Ordering by the revision payload's `createdAt` would count it as
+    // already observed, so the backfilled baseline would jump straight to
+    // 'official' and the real finality change would never be reported.
+    const suppressed = await putObligation('late-commit-finality', 'account-b');
+    await insertLegacyTransition({
+      transitionId: 'rst_late_commit_finality',
+      obligationId: suppressed.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'complete',
+      occurredAt: '2026-09-02T01:30:00.000Z',
+    });
+    await insertSkewedRevision({
+      obligationId: suppressed.reporting_obligation_id,
+      revisionId: 'rrev_late_commit_official',
+      revisionNumber: 1,
+      finality: 'official',
+      // Created a quarter hour before the legacy transition, committed after it.
+      createdAt: '2026-09-02T01:15:00.000Z',
+      insertedAt: '2026-09-02T01:15:00.000Z',
+    });
+
+    const finalityOnly = await ledger.reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: suppressed.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:00:00.000Z',
+    });
+    assert.ok(finalityOnly, 'the late-committed official revision is still reported');
+    assert.deepEqual(
+      [finalityOnly.previousHealth, finalityOnly.health, finalityOnly.previousFinality, finalityOnly.finality],
+      ['complete', 'complete', 'none', 'official'],
+      'the baseline excludes a revision that committed after the legacy transition'
+    );
+    assert.equal(
+      (await store.listTransitions(suppressed.reporting_obligation_id))[0].finality,
+      'none',
+      'the committed baseline is backfilled onto the legacy row'
+    );
+
+    // Health did not change, so this stays internal activity: the AdCP status
+    // webhook is health-only.
+    const suppressedActivity = await activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b' });
+    const suppressedRecord = suppressedActivity.activities.filter(
+      value => value.transitionId === finalityOnly.transitionId
+    );
+    assert.equal(suppressedRecord.length, 1);
+    assert.ok(suppressedRecord[0].notificationProjectedAt);
+    assert.equal(suppressedRecord[0].notificationType, undefined);
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === finalityOnly.transitionId).length, 0);
+
+    // Same late-commit ordering, but with a health change, so the wire
+    // notification must fire exactly once across recovery and replay.
+    const notified = await putObligation('late-commit-health', 'account-b');
+    await insertLegacyTransition({
+      transitionId: 'rst_late_commit_health',
+      obligationId: notified.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      occurredAt: '2026-09-02T01:30:00.000Z',
+    });
+    await insertSkewedRevision({
+      obligationId: notified.reporting_obligation_id,
+      revisionId: 'rrev_late_commit_health_official',
+      revisionNumber: 1,
+      finality: 'official',
+      createdAt: '2026-09-02T01:15:00.000Z',
+      insertedAt: '2026-09-02T01:15:00.000Z',
+    });
+    const healthChange = await ledger.reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: notified.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:00:00.000Z',
+    });
+    assert.ok(healthChange);
+    assert.deepEqual(
+      [healthChange.previousHealth, healthChange.health, healthChange.previousFinality, healthChange.finality],
+      ['delayed', 'complete', 'none', 'official']
+    );
+    const delivered = () => fetchCalls.filter(value => value.body.notification_id === healthChange.transitionId);
+    assert.equal((await activity.recoverOnce({ ownerToken: 'late-commit-worker' })).projected, 1);
+    assert.equal(delivered().length, 1);
+    assert.equal(
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store,
+        reporting_obligation_id: notified.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T02:15:00.000Z',
+      }),
+      null
+    );
+    assert.deepEqual(await activity.recoverOnce({ ownerToken: 'late-commit-replay-worker' }), {
+      claimed: 0,
+      matched: 0,
+      projected: 0,
+      retried: 0,
+      leaseLost: 0,
+    });
+    assert.equal(delivered().length, 1, 'notification stays exactly-once across the replay');
   });
 
   test('claims rows incrementally so a slow batch cannot expire later leases', async () => {
@@ -781,6 +872,28 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           ...(input.supersedesRevisionId ? { supersedes_reporting_revision_id: input.supersedesRevisionId } : {}),
         }),
         input.insertedAt,
+      ]
+    );
+  }
+
+  /** Commits a pre-SDK-14 transition row: no `finality`, already notified. */
+  async function insertLegacyTransition(input) {
+    await pool.query(
+      `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
+       VALUES ($1, $2, $3::jsonb, $4)`,
+      [
+        input.transitionId,
+        input.obligationId,
+        JSON.stringify({
+          transitionId: input.transitionId,
+          reporting_obligation_id: input.obligationId,
+          previousHealth: input.previousHealth,
+          health: input.health,
+          issueIds: [],
+          occurredAt: input.occurredAt,
+          notifiedAt: input.occurredAt,
+        }),
+        input.occurredAt,
       ]
     );
   }

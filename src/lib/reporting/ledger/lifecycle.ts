@@ -49,12 +49,7 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   if (latest && Date.parse(input.ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
   const previousHealth = latest?.health ?? 'waiting';
   const finality = observedFinality(revisions);
-  const previousFinality = await resolveFinalityBaseline(
-    input.store,
-    obligation.reporting_obligation_id,
-    revisions,
-    latest
-  );
+  const previousFinality = await resolveFinalityBaseline(input.store, obligation.reporting_obligation_id, latest);
   const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
   const transition: ReportingLedgerStatusTransitionV1 | undefined =
     previousHealth === projection.health && previousFinality === finality
@@ -109,19 +104,29 @@ export async function reconcileReportingStatusLifecycleV1(input: {
  * the store's compare-and-set must both use.
  *
  * Transitions written from SDK 14 onward carry their own `finality`, so the
- * baseline is the committed value. Pre-SDK-14 rows carry none, and their
- * baseline has to be reconstructed from the revisions that were visible when
- * they occurred. That reconstruction is delegated to the store, which derives
- * it once and persists it, because recomputing it independently here and inside
- * the store's transaction is only safe while both derivations read the same
- * clock: the revision record's `createdAt` is the application clock, a store's
- * insert timestamp is the database clock, and insert latency or skew between
- * them silently wedges the lifecycle compare-and-set forever.
+ * baseline is the committed value. Pre-SDK-14 rows carry none, and only the
+ * store can say which revisions were already committed when such a row was
+ * recorded — that ordering lives in the store's own committed write order, not
+ * in any timestamp carried by a revision payload. So the reconstruction is
+ * delegated to the store, which derives it once and persists it.
+ *
+ * Reconstructing it here instead would have to compare the revision payload's
+ * `createdAt` against the transition's `occurredAt`, and neither the mixed-clock
+ * nor the single-clock form of that comparison is sound: mixing an application
+ * clock with a store's insert clock lets the two sides disagree under skew and
+ * wedges the compare-and-set forever, while comparing creation instants counts
+ * a revision created early but committed late as already observed and
+ * permanently suppresses the real snapshot→official transition.
+ *
+ * A store that cannot supply a committed baseline gets `'none'`. That is
+ * deterministic, and it errs toward recording one redundant finality-only
+ * transition at upgrade — which stays internal activity, because the AdCP
+ * status webhook is health-only — rather than silently dropping a real
+ * finality change.
  */
 async function resolveFinalityBaseline(
   store: ReportingLedgerStore,
   reporting_obligation_id: string,
-  revisions: readonly Pick<ReportingLedgerRevisionV1, 'finality' | 'createdAt'>[],
   latest: ReportingLedgerStatusTransitionV1 | undefined
 ): Promise<ReportingObservedFinalityV1> {
   if (!latest) return 'none';
@@ -129,20 +134,14 @@ async function resolveFinalityBaseline(
   if (store.resolveTransitionFinalityBaseline) {
     return store.resolveTransitionFinalityBaseline(reporting_obligation_id);
   }
-  // Stores compiled against the pre-finality port cannot persist a baseline and
-  // must therefore ignore `expectedPreviousFinality`; reconstruct locally from
-  // the revision record's own application-clock `createdAt`.
-  return observedFinality(revisions, latest.occurredAt);
+  return 'none';
 }
 
 function observedFinality(
-  revisions: readonly Pick<ReportingLedgerRevisionV1, 'finality' | 'createdAt'>[],
-  at?: string
+  revisions: readonly Pick<ReportingLedgerRevisionV1, 'finality'>[]
 ): ReportingObservedFinalityV1 {
-  const visible =
-    at === undefined ? revisions : revisions.filter(value => Date.parse(value.createdAt) <= Date.parse(at));
-  if (visible.some(value => value.finality === 'official')) return 'official';
-  return visible.length > 0 ? 'snapshot' : 'none';
+  if (revisions.some(value => value.finality === 'official')) return 'official';
+  return revisions.length > 0 ? 'snapshot' : 'none';
 }
 
 export async function retryReportingStatusNotificationsV1(input: {

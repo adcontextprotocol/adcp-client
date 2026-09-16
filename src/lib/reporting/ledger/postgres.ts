@@ -2207,42 +2207,45 @@ function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
 }
 
-function observedStoredFinality(
-  revisions: readonly { finality: ReportingObservedFinalityV1 }[]
-): ReportingObservedFinalityV1 {
-  if (revisions.some(value => value.finality === 'official')) return 'official';
-  return revisions.length > 0 ? 'snapshot' : 'none';
-}
-
 /**
  * Resolves the committed observed-finality baseline of the latest transition,
  * backfilling it once for pre-SDK-14 rows.
  *
  * Transitions written from SDK 14 onward carry `finality` in their own row, so
  * the baseline is simply read back. Pre-SDK-14 rows carry none, so the baseline
- * is reconstructed from the revisions visible when they occurred and then
- * written onto the row under the caller's account advisory lock — every later
- * read, here and in the lifecycle projection, returns that one committed value.
+ * is reconstructed from the revisions that were already committed when the row
+ * was recorded, then written onto the row under the caller's account advisory
+ * lock — every later read, here and in the lifecycle projection, returns that
+ * one committed value.
  *
- * Reconstruction compares the revision record's own `createdAt` against the
- * transition's own `occurredAt`; both are application-clock instants from the
- * committed payloads. The `created_at` column is the database insert clock and
- * must never take part: mixing the two clocks lets this store and the lifecycle
- * decision disagree under insert latency or skew, which fails the lifecycle
- * compare-and-set on every pass and wedges the obligation forever.
+ * Reconstruction orders both sides by `recorded_at`, the database insert clock
+ * both tables default to `clock_timestamp()` and no ledger write ever sets by
+ * hand. That is the ledger's existing committed-ordering domain (the same one
+ * the changes cursor and pending-transition scans bound by), and because the
+ * per-account advisory lock is held from before `BEGIN` until after `COMMIT`,
+ * its order is the commit order for every revision and transition of an
+ * account.
+ *
+ * Two rules must not be used here. Reading the revision's `created_at` column
+ * against the transition's application-clock `occurredAt` mixes the database
+ * and application clocks, so insert latency or skew makes this store and the
+ * lifecycle decision disagree and wedges the compare-and-set forever. Reading
+ * the revision payload's `createdAt` against that same `occurredAt` stays in
+ * one clock but compares creation instants rather than commit order, so a
+ * revision created before the transition but committed after it is falsely
+ * counted as already observed — the backfilled baseline jumps to `official` and
+ * the real snapshot→official transition is suppressed permanently. Neither
+ * timestamp is round-tripped through JavaScript, so microsecond precision is
+ * never truncated.
  */
 async function resolveStoredFinalityBaseline(
   transaction: ReportingPgClient,
   obligationId: string
 ): Promise<ReportingObservedFinalityV1> {
   const latest = await transaction.query<
-    QueryResultRow & {
-      transition_id: string;
-      finality: ReportingObservedFinalityV1 | null;
-      occurred_at_instant: string | null;
-    }
+    QueryResultRow & { transition_id: string; finality: ReportingObservedFinalityV1 | null }
   >(
-    `SELECT transition_id, data->>'finality' AS finality, data->>'occurredAt' AS occurred_at_instant
+    `SELECT transition_id, data->>'finality' AS finality
        FROM adcp_reporting_transitions
       WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1
       FOR UPDATE`,
@@ -2251,19 +2254,21 @@ async function resolveStoredFinalityBaseline(
   const previous = latest.rows[0];
   if (!previous) return 'none';
   if (previous.finality) return previous.finality;
-  const revisions = await transaction.query<
-    QueryResultRow & { finality: ReportingObservedFinalityV1; created_at_instant: string | null }
-  >(
-    `SELECT finality, data->>'createdAt' AS created_at_instant FROM adcp_reporting_revisions
-      WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
-    [obligationId]
+  const reconstructed = await transaction.query<QueryResultRow & { baseline: ReportingObservedFinalityV1 }>(
+    `SELECT CASE
+              WHEN bool_or(revision.finality = 'official') THEN 'official'
+              WHEN count(revision.revision_id) > 0 THEN 'snapshot'
+              ELSE 'none'
+            END AS baseline
+       FROM adcp_reporting_transitions transition
+       LEFT JOIN adcp_reporting_revisions revision
+         ON revision.obligation_id = transition.obligation_id
+        AND revision.recorded_at <= transition.recorded_at
+      WHERE transition.transition_id = $1`,
+    [previous.transition_id]
   );
-  const occurredAt = recordedInstantMilliseconds(previous.occurred_at_instant, 'transition occurredAt');
-  const baseline = observedStoredFinality(
-    revisions.rows.filter(
-      revision => recordedInstantMilliseconds(revision.created_at_instant, 'revision createdAt') <= occurredAt
-    )
-  );
+  const baseline = reconstructed.rows[0]?.baseline;
+  if (!baseline) throw new Error('Reporting transition finality baseline is unavailable');
   await transaction.query(
     `UPDATE adcp_reporting_transitions
         SET data = data || jsonb_build_object('finality', $2::text)
@@ -2288,12 +2293,6 @@ async function assertNoLegacyPendingTransitions(
       'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
     );
   }
-}
-
-function recordedInstantMilliseconds(value: string | null, field: string): number {
-  const parsed = Date.parse(value ?? '');
-  if (!Number.isFinite(parsed)) throw new Error(`Reporting ledger ${field} is not an RFC 3339 instant`);
-  return parsed;
 }
 
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {

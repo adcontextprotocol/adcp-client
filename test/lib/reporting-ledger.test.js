@@ -244,7 +244,7 @@ describe('seller reporting ledger', () => {
     assert.equal(second.finality, 'official');
   });
 
-  test('reconstructs a pre-v14 finality baseline without firing a health subscriber', async () => {
+  test('does not claim a pre-v14 finality baseline it cannot commit, and fires no health subscriber', async () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();
     store.obligations.set(obligation.reporting_obligation_id, obligation);
@@ -286,7 +286,9 @@ describe('seller reporting ledger', () => {
         },
       ],
     });
-    assert.equal(transition.previousFinality, 'snapshot');
+    // A store with no commit log cannot say the snapshot was already observed,
+    // so it commits 'none' rather than guessing from payload timestamps.
+    assert.equal(transition.previousFinality, 'none');
     assert.equal(transition.finality, 'official');
     assert.equal(transition.previousHealth, transition.health);
     assert.equal(transition.notifiedAt, '2026-09-02T02:00:00.000Z');
@@ -297,13 +299,6 @@ describe('seller reporting ledger', () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();
     store.obligations.set(obligation.reporting_obligation_id, obligation);
-    store.revisions.set('revision-baseline-snapshot', {
-      reporting_revision_id: 'revision-baseline-snapshot',
-      reporting_obligation_id: obligation.reporting_obligation_id,
-      revisionNumber: 1,
-      finality: 'snapshot',
-      createdAt: '2026-09-02T01:15:00.000Z',
-    });
     store.transitions.set('transition-before-v14', {
       transitionId: 'transition-before-v14',
       reporting_obligation_id: obligation.reporting_obligation_id,
@@ -316,7 +311,7 @@ describe('seller reporting ledger', () => {
     store.revisions.set('revision-baseline-official', {
       reporting_revision_id: 'revision-baseline-official',
       reporting_obligation_id: obligation.reporting_obligation_id,
-      revisionNumber: 2,
+      revisionNumber: 1,
       finality: 'official',
       createdAt: '2026-09-02T01:45:00.000Z',
     });
@@ -327,10 +322,10 @@ describe('seller reporting ledger', () => {
     });
     assert.equal(transition.previousHealth, 'delayed');
     assert.equal(transition.health, 'complete');
-    assert.equal(transition.previousFinality, 'snapshot');
+    assert.equal(transition.previousFinality, 'none');
     assert.equal(transition.finality, 'official');
-    assert.equal(store.finalityBaselineReconstructions, 1, 'the baseline is reconstructed once, not once per reader');
-    assert.equal(store.transitions.get('transition-before-v14').finality, 'snapshot');
+    assert.equal(store.finalityBaselineReconstructions, 1, 'the baseline is derived once, not once per reader');
+    assert.equal(store.transitions.get('transition-before-v14').finality, 'none');
     assert.equal(
       await reconcileReportingStatusLifecycleV1({
         store,
@@ -362,16 +357,16 @@ describe('seller reporting ledger', () => {
       occurredAt: '2026-09-02T01:30:00.000Z',
       notifiedAt: '2026-09-02T01:30:00.000Z',
     });
-    // The revision timestamps read locally imply 'snapshot'. The store's own
-    // committed baseline must still decide, because two independent derivations
-    // are exactly what a clock difference turns into a permanent CAS wedge.
-    store.resolveTransitionFinalityBaseline = async () => 'none';
+    // The store reports a baseline no local view of the revisions could produce.
+    // It must still decide, because two independent derivations are exactly what
+    // a clock or ordering difference turns into a permanent CAS wedge.
+    store.resolveTransitionFinalityBaseline = async () => 'official';
     const transition = await reconcileReportingStatusLifecycleV1({
       store,
       reporting_obligation_id: obligation.reporting_obligation_id,
       ledgerAsOf: '2026-09-02T02:00:00.000Z',
     });
-    assert.equal(transition.previousFinality, 'none');
+    assert.equal(transition.previousFinality, 'official');
     assert.equal(transition.finality, 'snapshot');
     assert.equal(transition.previousHealth, transition.health);
   });

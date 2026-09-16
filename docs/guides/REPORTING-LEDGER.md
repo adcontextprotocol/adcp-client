@@ -196,17 +196,42 @@ migration.
 That comparison must read **one** committed baseline, never a freshly
 recomputed one. Transitions written from SDK 14 onward carry their own
 `finality`, so the baseline is read straight back off the row. Pre-v14 rows
-carry none, so the store reconstructs their baseline once — from the revision
-record's own application-clock `createdAt` against the transition's own
-`occurredAt`, never from a database insert timestamp — and persists it via
+carry none, so the store reconstructs their baseline once and persists it via
 `resolveTransitionFinalityBaseline(reporting_obligation_id)`, which
 `reconcileReportingStatusLifecycleV1` calls before deciding the transition.
 Deriving the baseline independently on both sides is unsafe: when the two
-derivations read different clocks, insert latency or clock skew makes them
-disagree, every lifecycle compare-and-set then fails, and the obligation is
-wedged with no error. Implementing `resolveTransitionFinalityBaseline` is
+derivations disagree, every lifecycle compare-and-set fails and the obligation
+wedges with no error. Implementing `resolveTransitionFinalityBaseline` is
 therefore required of any store that honours `expectedPreviousFinality`; a
-store that omits it must also ignore `expectedPreviousFinality`.
+store that omits it must also ignore `expectedPreviousFinality`, and the
+lifecycle then treats a pre-v14 baseline as `none`.
+
+Reconstruction must rank revisions against the transition by the store's own
+**committed write order**. The bundled PostgreSQL store uses `recorded_at`,
+which both `adcp_reporting_transitions` and `adcp_reporting_revisions` default
+to `clock_timestamp()` and no ledger write ever sets by hand; because the
+per-account advisory lock is held from before `BEGIN` until after `COMMIT`,
+that order is the commit order for every revision and transition of an account.
+It is the same committed-ordering domain the changes cursor and
+pending-transition scans already bound by, and neither timestamp is
+round-tripped through the application, so microsecond precision is preserved.
+
+Two other rules look plausible and are both wrong:
+
+- **Insert clock vs. `occurredAt`** (e.g. the revision `created_at` column
+  against the transition payload's `occurredAt`) mixes the database and
+  application clocks. Insert latency or skew makes the store and the lifecycle
+  decision disagree, and the compare-and-set wedges permanently.
+- **Payload `createdAt` vs. `occurredAt`** stays in one clock but ranks
+  creation instants rather than commits. A revision constructed before the
+  transition but committed after it is then counted as already observed, the
+  backfilled baseline jumps to `official`, and the real snapshot→official
+  lifecycle transition and its activity record are suppressed forever.
+
+A custom store with no committed write order to consult must return and persist
+`none` rather than guess. That records at most one redundant finality-only
+transition per obligation at upgrade, which stays internal activity because the
+AdCP status webhook is health-only.
 The transaction argument must be one BEGIN/COMMIT-bound connection, never a
 pool or autocommit queryable; the per-tenant advisory transaction lock provides
 capacity serialization under READ COMMITTED. Never call the port in a

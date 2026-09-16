@@ -177,25 +177,25 @@ class MemoryLedgerStore {
     return { inserted };
   }
   /**
-   * Mirrors the PostgreSQL store: reconstruct a pre-SDK-14 baseline at most once
-   * from the revision record's own application-clock `createdAt`, persist it on
-   * the transition row, and serve every later read from that committed value.
+   * Returns the committed finality baseline of the latest transition.
+   *
+   * This double keeps no commit log — fixtures are seeded straight into the
+   * maps — so it cannot say which revisions were already committed when a
+   * pre-SDK-14 transition was recorded, and it must not guess from revision
+   * payload timestamps: a revision created before that transition but committed
+   * after it would be counted as already observed and would suppress the real
+   * snapshot→official change. It therefore declares no reconstruction, persists
+   * `'none'` as the baseline, and serves every later read from that value.
    */
   async resolveTransitionFinalityBaseline(obligationId) {
     const latest = (await this.listTransitions(obligationId)).at(-1);
     if (!latest) return 'none';
     if (latest.finality) return latest.finality;
-    const occurredAt = Date.parse(latest.occurredAt);
-    const visible = (await this.listRevisions(obligationId)).filter(value => Date.parse(value.createdAt) <= occurredAt);
-    const finality = visible.some(value => value.finality === 'official')
-      ? 'official'
-      : visible.length
-        ? 'snapshot'
-        : 'none';
     this.finalityBaselineReconstructions += 1;
-    this.transitions.set(latest.transitionId, { ...this.transitions.get(latest.transitionId), finality });
-    return finality;
+    this.transitions.set(latest.transitionId, { ...this.transitions.get(latest.transitionId), finality: 'none' });
+    return 'none';
   }
+
   async applyLifecycleProjection(input) {
     const revisionIds = (await this.listRevisions(input.reporting_obligation_id)).map(
       value => value.reporting_revision_id
