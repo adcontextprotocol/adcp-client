@@ -428,6 +428,33 @@ describe('seller managed reporting runtime', () => {
       observed_at: '2026-08-27T04:00:01.000Z',
     };
     assert.equal(ledger.receiptEvidenceMatches(missingDigestReceipt, manifestMaterialization), false);
+
+    // RC3 pins the checksum value to its algorithm. The generated Zod emits a
+    // bare `z.string()` for both variants, so `ReportingMaterializationSchema`
+    // does NOT catch this — the handwritten `isPhysicalChecksums` guard reached
+    // through `isReportingVerificationEvidence` is what does. Pinned here
+    // because the two validators disagree and only one of them is load-bearing:
+    // if that guard ever loses the check, nothing else would reject evidence
+    // the read path cannot emit conformantly.
+    const badChecksum = outcome();
+    badChecksum.verification.physical_checksums = [{ object_ref: 'rows.json', algorithm: 'sha256', value: 'nope' }];
+    assert.throws(
+      () => ledger.assertMaterializationOutcome(lease(), badChecksum, '2026-08-27T04:00:00.000Z'),
+      /missing evidence required by its verification profile/
+    );
+    const shortSha512 = outcome();
+    shortSha512.verification.physical_checksums = [
+      { object_ref: 'rows.json', algorithm: 'sha512', value: 'f'.repeat(64) },
+    ];
+    assert.throws(
+      () => ledger.assertMaterializationOutcome(lease(), shortSha512, '2026-08-27T04:00:00.000Z'),
+      /missing evidence required by its verification profile/
+    );
+    const validSha512 = outcome();
+    validSha512.verification.physical_checksums = [
+      { object_ref: 'rows.json', algorithm: 'sha512', value: 'a'.repeat(128) },
+    ];
+    assert.doesNotThrow(() => ledger.assertMaterializationOutcome(lease(), validSha512, '2026-08-27T04:00:00.000Z'));
   });
 
   test('returns typed per-item receipt errors without discarding valid siblings', async () => {
