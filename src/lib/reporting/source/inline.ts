@@ -223,13 +223,21 @@ export function createInlineReportingSourceExecutor(
       }
 
       if (executions.size >= INLINE_MAX_EXECUTIONS_V1) {
-        return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline reporting replay capacity is exhausted');
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          'Inline reporting replay capacity is exhausted; supply a durable executor for long-lived feeds'
+        );
       }
       if (
         [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length >=
         INLINE_MAX_EXECUTIONS_PER_SCOPE_V1
       ) {
-        return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline reporting scope replay capacity is exhausted');
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          'Inline reporting scope replay capacity is exhausted; supply a durable executor for long-lived feeds'
+        );
       }
       if (activeExecutions >= INLINE_MAX_CONCURRENT_EXECUTIONS_V1) {
         return failure('RATE_LIMITED', 'retryable', 'Inline reporting concurrency capacity is exhausted');

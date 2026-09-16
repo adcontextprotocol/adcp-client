@@ -846,8 +846,12 @@ function wireSchedule(obligation: ReportingLedgerObligationV1) {
   return {
     period_duration: obligation.schedule.periodDuration ?? `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
     alignment,
+    // reporting-schedule.json: billing_cycle requires both fields,
+    // source_timezone requires period_timezone and forbids period_anchor, and
+    // utc/account_timezone forbid both. Emitting period_timezone for
+    // account_timezone fails the whole strict get_reporting_status response.
     ...(alignment === 'billing_cycle' ? { period_anchor: obligation.schedule.anchor } : {}),
-    ...(alignment === 'utc' ? {} : { period_timezone: periodTimezone }),
+    ...(alignment === 'billing_cycle' || alignment === 'source_timezone' ? { period_timezone: periodTimezone } : {}),
     // Echo the installed lexical duration. Recomputing it from expected_at
     // would answer PT3600S where the offering advertised PT1H — the same
     // instant, but not the same value installed_schedule_match compares.

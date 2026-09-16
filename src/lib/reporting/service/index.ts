@@ -43,7 +43,18 @@ const ADAPTER_SCOPE_KEY = '_adcp_reporting_adapter';
 export interface ReliableReportingAdapterV1 {
   readonly sourceOffering: ReportingSourceOfferingV1;
   readonly deliveryOffering: ReportingDeliveryOffering;
-  readonly fetchSlice: InlineReportingDeliveryFetchV1;
+  /**
+   * Adapted through the bounded inline executor, whose replay table is capped
+   * per scope. Reclamation keeps a long-lived feed running, but a deployment
+   * that needs durable cross-restart replay should supply `executor` instead.
+   */
+  readonly fetchSlice?: InlineReportingDeliveryFetchV1;
+  /**
+   * Escape hatch for feeds the inline executor cannot serve: pagination,
+   * durable staged objects, or replay that must survive process restarts.
+   * Mutually exclusive with `fetchSlice`.
+   */
+  readonly executor?: ReportingSourceWithReaderV1;
 }
 
 /**
@@ -223,7 +234,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     ) as ReportingDeliveryOffering;
     validateDeliveryOffering(sourceOffering, deliveryOffering);
     if (offerings.has(sourceOffering.offeringId)) throw new TypeError('Reporting offering IDs must be unique');
-    const source = createInlineReportingSourceExecutor(adapter.fetchSlice, sourceOffering);
+    if ((adapter.fetchSlice === undefined) === (adapter.executor === undefined)) {
+      throw new TypeError('Each reporting adapter requires exactly one of fetchSlice or executor');
+    }
+    const source = adapter.executor ?? createInlineReportingSourceExecutor(adapter.fetchSlice!, sourceOffering);
     // The inline executor narrows the offering it will actually honor — most
     // importantly to `media_buy` constituent applicability. Publish and validate
     // against that narrowed view, or a `package_item` denominator installs
@@ -580,7 +594,24 @@ async function reportSchedulerError(
   }
 }
 
-function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+/**
+ * `setTimeout` silently clamps a delay above 2^31-1 ms to 1 ms, so a scheduler
+ * configured with, say, a 30-day interval would spin through ledger scans
+ * instead of sleeping. Sleep in chunks below that ceiling so the whole
+ * advertised interval range is honored.
+ */
+const MAX_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
+
+async function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  let remaining = milliseconds;
+  while (remaining > 0 && !signal.aborted) {
+    const chunk = Math.min(remaining, MAX_TIMER_DELAY_MILLISECONDS);
+    await abortableTimeout(chunk, signal);
+    remaining -= chunk;
+  }
+}
+
+function abortableTimeout(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     const timer = setTimeout(done, milliseconds);
     function done() {
@@ -725,6 +756,12 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
         'it generates fixed-length periods from the utc and source_timezone origins'
     );
   }
+  assertOfferingScheduleShape(delivery);
+  // Parse both advertised durations here. A snapshot offering advertising, say,
+  // P1M is published happily and then throws `Invalid reporting duration` on
+  // every install, because only the official branch parsed the SLA.
+  const advertisedSla = parseAdvertisedDuration(delivery.schedule.delivery_sla, 'delivery_sla');
+  parseAdvertisedDuration(delivery.schedule.period_duration, 'period_duration');
   if (delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
     throw new TypeError('Official delivery finality requires an authoritative source offering');
   }
@@ -749,9 +786,21 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
     // Worst case, not expected: the SLA is a maximum the seller promises for
     // every period, so a deadline only the typical period meets is untruthful.
     const earliest = readyOffset + reportingIsoDurationMillisecondsV1(finalization.worstCaseAvailabilityLag);
-    if (reportingIsoDurationMillisecondsV1(delivery.schedule.delivery_sla) < earliest) {
+    if (advertisedSla < earliest) {
       throw new TypeError(
         'Official reporting delivery SLA is shorter than the source can finalize and publish; ' +
+          'the advertised deadline is unreachable for every period'
+      );
+    }
+  }
+  if (source.publicationClass === 'PROVISIONAL_SNAPSHOT') {
+    // A snapshot SLA is a promise about every period too. Advertising PT0S
+    // against a source whose own worst case is PT6H tells buyers data is due at
+    // period close while the upstream may still be six hours from having it.
+    const worstCase = reportingIsoDurationMillisecondsV1(source.cadence.worstCaseAvailabilityLag);
+    if (advertisedSla < worstCase) {
+      throw new TypeError(
+        'Snapshot reporting delivery SLA is shorter than the source worst-case availability lag; ' +
           'the advertised deadline is unreachable for every period'
       );
     }
@@ -921,7 +970,9 @@ function assertSupportedScheduleSemantics(
         'periods from the utc and source_timezone origins'
     );
   }
-  assertOfferingScheduleShape(offering, sourceTimezone);
+  if (offering.schedule.period_timezone_policy === 'fixed' && offering.schedule.period_timezone !== sourceTimezone) {
+    throw new TypeError('Reporting offering pins a period timezone that is not the resolved source timezone');
+  }
   if (schedule.periodMilliseconds % DAY_MILLISECONDS !== 0) {
     throw new TypeError(
       'Reporting periods must be whole source-local days; a sub-day window has no source-local midnight boundary'
@@ -983,7 +1034,7 @@ function assertSupportedScheduleSemantics(
  * the `allOf`/`if` branches, so an offering can otherwise advertise a
  * `period_anchor` that the alignment forbids.
  */
-function assertOfferingScheduleShape(offering: ReportingDeliveryOffering, sourceTimezone: string): void {
+function assertOfferingScheduleShape(offering: ReportingDeliveryOffering): void {
   const advertised = offering.schedule as Record<string, unknown>;
   const forbid = (fields: readonly string[]): void => {
     for (const field of fields) {
@@ -1004,13 +1055,24 @@ function assertOfferingScheduleShape(offering: ReportingDeliveryOffering, source
     throw new TypeError('source_timezone reporting offerings must advertise a period_timezone_policy');
   }
   if (policy === 'fixed') {
-    if (offering.schedule.period_timezone !== sourceTimezone) {
-      throw new TypeError('Reporting offering pins a period timezone that is not the resolved source timezone');
+    if (offering.schedule.period_timezone === undefined) {
+      throw new TypeError('A fixed source_timezone reporting offering must advertise its period_timezone');
     }
     return;
   }
   if (offering.schedule.period_timezone !== undefined) {
     forbid(['period_timezone']);
+  }
+}
+
+function parseAdvertisedDuration(value: string, field: string): number {
+  try {
+    return reportingIsoDurationMillisecondsV1(value);
+  } catch {
+    throw new TypeError(
+      `Reporting offering advertises a ${field} of '${value}' that this service cannot express as a fixed ` +
+        'duration; every installation would reject it'
+    );
   }
 }
 

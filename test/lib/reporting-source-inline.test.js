@@ -590,7 +590,11 @@ describe('createInlineReportingSourceExecutor', () => {
       assert.equal((await source.execute(request(`fixture-inline-capacity-${index}`), context())).ok, true);
     }
     const exhausted = await source.execute(request('fixture-inline-capacity-exhausted'), context());
-    assert.equal(validateReportingSourceFailureV1(exhausted, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    const failure = validateReportingSourceFailureV1(exhausted, 'QUOTA_EXHAUSTED');
+    assert.equal(failure.code, 'QUOTA_EXHAUSTED');
+    // Retaining every admitted execution is what keeps the replay below sound,
+    // so the ceiling is real. Say what a feed that outlives it should do.
+    assert.match(failure.safeMessage, /durable executor for long-lived feeds/);
     assert.equal((await source.execute(admitted, context())).ok, true, 'an admitted key remains replayable');
 
     const otherScope = request('fixture-inline-other-scope');

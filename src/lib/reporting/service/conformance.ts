@@ -44,7 +44,11 @@ export interface ReliableReportingServiceConformanceResultV1 {
 export async function runReliableReportingServiceConformanceV1<TCtxMeta = Record<string, unknown>>(
   options: ReliableReportingServiceConformanceOptionsV1<TCtxMeta>
 ): Promise<ReliableReportingServiceConformanceResultV1> {
-  const source = createInlineReportingSourceExecutor(options.adapter.fetchSlice, options.adapter.sourceOffering);
+  // An adapter supplying its own durable executor is exercised directly; the
+  // replay contract is the same either way.
+  const source =
+    options.adapter.executor ??
+    createInlineReportingSourceExecutor(options.adapter.fetchSlice!, options.adapter.sourceOffering);
   const manifest = await runReportingSourceReplayConformanceV1({
     level: 'basic',
     executor: source,

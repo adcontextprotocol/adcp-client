@@ -8,6 +8,7 @@ const {
   runReliableReportingServiceConformanceV1,
 } = require('../../dist/lib/reporting/service/index.js');
 const {
+  createInlineReportingSourceExecutor,
   redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
   reportingScheduleOriginV1,
@@ -48,8 +49,17 @@ function deliveryOffering() {
 }
 
 function adapter(calls = []) {
+  const sourceOffering = structuredClone(redactedReportingSourceOfferingV1);
+  // The shared fixture declares a PT6H worst case while the delivery offering
+  // below advertises PT0S. Make the fixture internally truthful so the SLA
+  // feasibility gate has a consistent baseline to work from.
+  sourceOffering.cadence = {
+    ...sourceOffering.cadence,
+    expectedAvailabilityLag: 'PT0S',
+    worstCaseAvailabilityLag: 'PT0S',
+  };
   return {
-    sourceOffering: structuredClone(redactedReportingSourceOfferingV1),
+    sourceOffering,
     deliveryOffering: deliveryOffering(),
     fetchSlice: (request, context) => {
       calls.push({ request: structuredClone(request), sourceScope: structuredClone(context.sourceScope) });
@@ -1521,6 +1531,150 @@ describe('ReliableReportingService', () => {
     authoritative.deliveryOffering.supported_finality = ['official'];
     const { service } = serviceFixture({ adapters: { fixture: authoritative } });
     assert.deepEqual(service.capabilities.offerings[0].supported_finality, ['official']);
+  });
+
+  test('gates conditional shape and duration parseability before publishing capabilities', async () => {
+    // A source_timezone offering without period_timezone_policy is invalid per
+    // reporting-schedule-offering.json, so publishing it would fail a strict
+    // get_adcp_capabilities for every buyer.
+    const shapeless = adapter();
+    delete shapeless.deliveryOffering.schedule.period_timezone_policy;
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: shapeless } }),
+      /must advertise a period_timezone_policy/
+    );
+
+    const anchored = adapter();
+    anchored.deliveryOffering.schedule.period_anchor = '2026-09-01T00:00:00.000Z';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: anchored } }),
+      /advertises period_anchor, which 'source_timezone' alignment forbids/
+    );
+
+    // A snapshot SLA the service cannot express as a fixed duration was
+    // published happily and then threw on every install.
+    const monthly = adapter();
+    monthly.deliveryOffering.schedule.delivery_sla = 'P1M';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: monthly } }),
+      /delivery_sla of 'P1M' that this service cannot express/
+    );
+
+    const monthlyPeriod = adapter();
+    monthlyPeriod.deliveryOffering.schedule.period_duration = 'P1M';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: monthlyPeriod } }),
+      /period_duration of 'P1M' that this service cannot express/
+    );
+  });
+
+  test('projects only the schema-allowed schedule fields for account_timezone', async () => {
+    // reporting-schedule.json forbids period_timezone for account_timezone, and
+    // a strict get_reporting_status rejects the whole response if it appears.
+    const { service, store } = serviceFixture();
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration();
+    input.schedule.anchor = anchor;
+    const installed = await service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+
+    // Rewrite the stored identity to account_timezone the way a non-service
+    // ledger adopter could, then read it back through the status handler.
+    store.configurations.get(installed.configurationId).schedule.alignment = 'account_timezone';
+    // The store clones on read, so mutate the entries it actually holds.
+    for (const obligation of store.obligations.values()) {
+      obligation.schedule.alignment = 'account_timezone';
+    }
+
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: 'account-a' }, view: 'periods' },
+      { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
+    );
+    const [obligation] = status.periods;
+    assert.equal(obligation.schedule.alignment, 'account_timezone');
+    assert.equal(obligation.schedule.period_timezone, undefined, 'account_timezone forbids period_timezone');
+    assert.equal(obligation.schedule.period_anchor, undefined, 'account_timezone forbids period_anchor');
+  });
+
+  test('sleeps safely across an interval beyond the platform timer ceiling', async () => {
+    const { service } = serviceFixture({ resolveCurrency: () => 'USD' });
+    await service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } });
+    let cycles = 0;
+    service.producer.planObligations = async () => {
+      cycles += 1;
+      return [];
+    };
+    service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+
+    // 30 days exceeds setTimeout's 2^31-1 ms ceiling. Clamping it to 1ms turns
+    // the scheduler into a tight ledger-scan loop.
+    service.start({ intervalMilliseconds: 30 * 24 * 60 * 60 * 1_000, deploymentWide: true });
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const afterSleep = cycles;
+    await service.stop();
+
+    assert.equal(afterSleep, 1, `expected one cycle while sleeping, saw ${afterSleep}`);
+    assert.equal(service.running, false);
+  });
+
+  test('accepts an injectable durable executor in place of the inline one', async () => {
+    const inlineAdapter = adapter();
+    const durable = createInlineReportingSourceExecutor(
+      inlineAdapter.fetchSlice,
+      structuredClone(inlineAdapter.sourceOffering)
+    );
+    const injected = {
+      sourceOffering: inlineAdapter.sourceOffering,
+      deliveryOffering: inlineAdapter.deliveryOffering,
+      executor: durable,
+    };
+    const { service } = serviceFixture({ adapters: { fixture: injected } });
+    const installed = await service.installConfiguration(configuration(), {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    assert.equal(installed.account.account_id, 'account-a');
+
+    // Exactly one of the two must be supplied.
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: { ...injected, fetchSlice: inlineAdapter.fetchSlice } } }),
+      /exactly one of fetchSlice or executor/
+    );
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: { ...injected, executor: undefined } } }),
+      /exactly one of fetchSlice or executor/
+    );
+  });
+
+  test('refuses a snapshot delivery SLA shorter than the source worst case', async () => {
+    const optimistic = adapter();
+    optimistic.sourceOffering.cadence = {
+      ...optimistic.sourceOffering.cadence,
+      expectedAvailabilityLag: 'PT15M',
+      worstCaseAvailabilityLag: 'PT6H',
+    };
+    optimistic.deliveryOffering.schedule.delivery_sla = 'PT0S';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: optimistic } }),
+      /Snapshot reporting delivery SLA is shorter than the source worst-case/,
+      'PT0S promises close-time delivery the source cannot make on a bad day'
+    );
+
+    // The expected lag is not the promise either: PT15M still under-promises.
+    optimistic.deliveryOffering.schedule.delivery_sla = 'PT15M';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: optimistic } }),
+      /Snapshot reporting delivery SLA is shorter than the source worst-case/
+    );
+
+    // Advertising the worst case is truthful.
+    optimistic.deliveryOffering.schedule.delivery_sla = 'PT6H';
+    const truthful = serviceFixture({ adapters: { fixture: optimistic } });
+    assert.equal(truthful.service.capabilities.offerings[0].schedule.delivery_sla, 'PT6H');
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
