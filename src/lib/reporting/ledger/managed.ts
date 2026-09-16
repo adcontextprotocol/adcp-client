@@ -107,7 +107,15 @@ export interface ReportingManagedDeliveryStore {
    * the bindings present at startup, which leaves a binding installed later
    * free to exceed the published bound until the next restart.
    */
-  adoptAdvertisedRecoveryWindowSeconds?(seconds: number): void;
+  adoptAdvertisedRecoveryWindowSeconds?(seconds: number): Promise<void>;
+  /**
+   * Durably registers the advertised `status_retention_days`.
+   *
+   * Every advertised retention promise must be registered before it is
+   * published, or a store configured with shorter evidence retention will
+   * happily prune inside a horizon this runtime is advertising.
+   */
+  adoptAdvertisedStatusRetentionDays?(days: number): Promise<void>;
   authorizeDestination(
     input: Omit<ReportingDestinationAuthorizationV1, 'revoked_at' | 'cleanup_completed_at'>
   ): Promise<void>;
@@ -287,7 +295,11 @@ export async function createReportingManagedDeliveryRuntime<
   // Hand the store the bound before reading the installed set, so a binding
   // racing this wiring is already held to it rather than slipping in between
   // the check and the first enforced install.
-  options.store.adoptAdvertisedRecoveryWindowSeconds?.(options.automatedRecoveryWindowSeconds);
+  // Awaited, and before anything is published. These calls can reject — a
+  // replica registering a different window over the same database is refused
+  // — and firing them without awaiting let a runtime publish a capability
+  // document whose promise the registry had already rejected.
+  await options.store.adoptAdvertisedRecoveryWindowSeconds?.(options.automatedRecoveryWindowSeconds);
   const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
   const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
   if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
@@ -298,6 +310,10 @@ export async function createReportingManagedDeliveryRuntime<
     );
   }
   positiveInteger(options.statusRetentionDays, 'statusRetentionDays');
+  // Register the retention horizon too. Advertising 90 days while the durable
+  // policy stayed null let a store built with 45 days of evidence retention
+  // prune inside the horizon this runtime publishes.
+  await options.store.adoptAdvertisedStatusRetentionDays?.(options.statusRetentionDays);
   positiveInteger(options.resourceRetentionDays, 'resourceRetentionDays');
   nonnegativeInteger(options.authorizationRevocationSeconds, 'authorizationRevocationSeconds');
   if (
@@ -611,7 +627,13 @@ export async function runManagedDeliveryWorker(
       lease_milliseconds: revocationLeaseMilliseconds,
       ...(options.account_id ? { account_id: options.account_id } : {}),
       ...(options.authorizationRevocationSeconds !== undefined
-        ? { authorization_revocation_seconds: options.authorizationRevocationSeconds }
+        ? {
+            authorization_revocation_seconds: options.authorizationRevocationSeconds,
+            // A holder is only displaced after it has had a full attempt's
+            // worth of time, which recovers a crashed worker without letting
+            // live workers steal from each other on an already-late grant.
+            steal_after_milliseconds: deadlineMilliseconds + MINIMUM_SETTLEMENT_GRACE_MILLISECONDS,
+          }
         : {}),
     });
     if (!revocation) break;

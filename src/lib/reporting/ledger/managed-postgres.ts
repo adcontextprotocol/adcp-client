@@ -174,6 +174,25 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_tombstones (
 );
 CREATE INDEX IF NOT EXISTS adcp_reporting_receipt_tombstones_subject
   ON adcp_reporting_receipt_tombstones (account_id, consumer_id, receipt_kind, subject_id);
+
+-- Compact terminal state for a materialization whose row has been pruned.
+-- Attempt history is control state, not evidence: without it a revision whose
+-- attempts were exhausted, or which already succeeded, restarts at attempt 1
+-- the moment its rows age out.
+CREATE TABLE IF NOT EXISTS adcp_reporting_materialization_tombstones (
+  configuration_id TEXT NOT NULL,
+  revision_id TEXT NOT NULL,
+  account_id TEXT NOT NULL,
+  obligation_id TEXT NOT NULL,
+  highest_attempt INTEGER NOT NULL,
+  reached_success BOOLEAN NOT NULL,
+  pruned_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY (configuration_id, revision_id)
+);
+
+
+ALTER TABLE adcp_reporting_destination_authorizations
+  ADD COLUMN IF NOT EXISTS cleanup_lease_issued_at TIMESTAMPTZ;
 `.trim();
 
 const GENERIC_RECEIPT_MESSAGE = 'Receipt does not match authorized current reporting evidence';
@@ -425,6 +444,16 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(input.account_id));
+      // One cutoff for every statement below, taken once. Re-evaluating
+      // clock_timestamp() per statement moves the boundary mid-prune, which is
+      // how a receipt could be skipped by the tombstone pass and then deleted
+      // by the next — leaving fewer tombstones than deletes.
+      const cutoff = (
+        await client.query<QueryRow & { cutoff: string }>(
+          `SELECT (clock_timestamp() - ($1::bigint * INTERVAL '1 day'))::text AS cutoff`,
+          [days]
+        )
+      ).rows[0]!.cutoff;
       // Batches first, so a replay row that has itself expired stops pinning
       // the receipts it names before those receipts are considered.
       const batches = await client.query(
@@ -433,74 +462,77 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 millisecond')`,
         [input.account_id, RECEIPT_BATCH_RETENTION_MS]
       );
-      // Identity outlives the body. Record it before the delete so a pruned
-      // receipt id can never bind different content later, and a subject that
-      // reached a terminal accepted leaf can never reopen because the row
-      // proving it was terminal has expired.
-      await client.query(
-        `INSERT INTO adcp_reporting_receipt_tombstones
-           (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
-            status, was_current, semantic_fingerprint)
-         SELECT receipt.account_id, receipt.consumer_id, receipt.reporting_receipt_id, receipt.receipt_kind,
-                receipt.subject_id, COALESCE(receipt.data ->> 'status', 'unknown'), receipt.is_current,
-                receipt.semantic_fingerprint
-           FROM adcp_reporting_receipts receipt
-          WHERE receipt.account_id = $1
-            AND receipt.recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
-            AND NOT EXISTS (
-              SELECT 1 FROM adcp_reporting_receipt_batches batch
-               WHERE batch.account_id = receipt.account_id
-                 AND batch.consumer_id = receipt.consumer_id
-                 AND batch.results @> jsonb_build_array(
-                       jsonb_build_object('id', receipt.reporting_receipt_id))
-            )
-         ON CONFLICT (account_id, consumer_id, reporting_receipt_id) DO NOTHING`,
-        [input.account_id, days]
-      );
-      // A receipt may be older than the batch that replays it — a later key
-      // can name an earlier receipt, and `unchanged` results do exactly that —
-      // so age alone is not sufficient. Keep any receipt a surviving replay row
-      // still references, or that replay would rehydrate a body that no longer
-      // exists and answer a repeated key with a spurious failure.
+      // Delete and tombstone in one statement, against the frozen cutoff.
+      // Two statements each re-evaluating clock_timestamp() moved the boundary
+      // between them, so a receipt the tombstone pass had skipped could still
+      // be deleted by the next — fewer tombstones than deletes, and exactly
+      // the rows left with no permanent identity.
       const receipts = await client.query(
-        `DELETE FROM adcp_reporting_receipts target
-          WHERE (target.account_id, target.consumer_id, target.reporting_receipt_id) IN (
-            SELECT receipt.account_id, receipt.consumer_id, receipt.reporting_receipt_id
-              FROM adcp_reporting_receipts receipt
-             WHERE receipt.account_id = $1
-               AND receipt.recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
-               AND NOT EXISTS (
-                 SELECT 1 FROM adcp_reporting_receipt_batches batch
-                  WHERE batch.account_id = receipt.account_id
-                    AND batch.consumer_id = receipt.consumer_id
-                    AND batch.results @> jsonb_build_array(
-                          jsonb_build_object('id', receipt.reporting_receipt_id))
-               )
-             ORDER BY receipt.recorded_at LIMIT $3)`,
-        [input.account_id, days, limit]
+        `WITH doomed AS (
+           SELECT receipt.* FROM adcp_reporting_receipts receipt
+            WHERE receipt.account_id = $1
+              AND receipt.recorded_at < $3::timestamptz
+              AND NOT EXISTS (
+                SELECT 1 FROM adcp_reporting_receipt_batches batch
+                 WHERE batch.account_id = receipt.account_id
+                   AND batch.consumer_id = receipt.consumer_id
+                   AND batch.results @> jsonb_build_array(
+                         jsonb_build_object('id', receipt.reporting_receipt_id))
+              )
+            ORDER BY receipt.recorded_at LIMIT $2
+         ), tombstoned AS (
+           INSERT INTO adcp_reporting_receipt_tombstones
+             (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+              status, was_current, semantic_fingerprint)
+           SELECT account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+                  COALESCE(data ->> 'status', 'unknown'), is_current, semantic_fingerprint
+             FROM doomed
+           ON CONFLICT (account_id, consumer_id, reporting_receipt_id) DO NOTHING
+         )
+         DELETE FROM adcp_reporting_receipts target USING doomed
+          WHERE target.account_id = doomed.account_id
+            AND target.consumer_id = doomed.consumer_id
+            AND target.reporting_receipt_id = doomed.reporting_receipt_id`,
+        [input.account_id, limit, cutoff]
       );
-      // Never drop a materialization whose resource is still readable, nor one
-      // a retained receipt names as its evidence: both are horizons this
-      // deployment is still advertising.
+      // Attempt history is control state, not evidence. Dropping it let a
+      // revision whose attempts were exhausted, or which had already
+      // succeeded, restart at attempt 1 once its rows aged out.
       const materializations = await client.query(
-        `DELETE FROM adcp_reporting_materializations target
-          WHERE target.materialization_id IN (
-            SELECT materialization.materialization_id
-              FROM adcp_reporting_materializations materialization
-             WHERE materialization.account_id = $1
-               AND materialization.recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
-               AND materialization.status <> 'pending'
-               AND materialization.lease_owner IS NULL
-               AND COALESCE(
-                     (materialization.data -> 'resource' ->> 'expires_at')::timestamptz <= clock_timestamp(),
-                     true)
-               AND NOT EXISTS (
-                 SELECT 1 FROM adcp_reporting_receipts receipt
-                  WHERE receipt.account_id = materialization.account_id
-                    AND receipt.data ->> 'reporting_materialization_id' = materialization.materialization_id
-               )
-             ORDER BY materialization.recorded_at LIMIT $3)`,
-        [input.account_id, days, limit]
+        `WITH doomed AS (
+           SELECT materialization.* FROM adcp_reporting_materializations materialization
+            WHERE materialization.account_id = $1
+              AND materialization.recorded_at < $3::timestamptz
+              AND materialization.status <> 'pending'
+              AND materialization.lease_owner IS NULL
+              -- Retention decides what is old enough to consider; the
+              -- resource horizon decides what is still promised. They are
+              -- different clocks-worth of question, so this one is against
+              -- now rather than against the retention cutoff.
+              AND COALESCE(
+                    (materialization.data -> 'resource' ->> 'expires_at')::timestamptz <= clock_timestamp(),
+                    true)
+              AND NOT EXISTS (
+                SELECT 1 FROM adcp_reporting_receipts receipt
+                 WHERE receipt.account_id = materialization.account_id
+                   AND receipt.data ->> 'reporting_materialization_id' = materialization.materialization_id
+              )
+            ORDER BY materialization.recorded_at LIMIT $2
+         ), tombstoned AS (
+           INSERT INTO adcp_reporting_materialization_tombstones
+             (configuration_id, revision_id, account_id, obligation_id, highest_attempt, reached_success)
+           SELECT configuration_id, revision_id, account_id, obligation_id,
+                  MAX(attempt), BOOL_OR(status IN ('available', 'delivered'))
+             FROM doomed GROUP BY configuration_id, revision_id, account_id, obligation_id
+           ON CONFLICT (configuration_id, revision_id) DO UPDATE SET
+             highest_attempt = GREATEST(
+               adcp_reporting_materialization_tombstones.highest_attempt, EXCLUDED.highest_attempt),
+             reached_success =
+               adcp_reporting_materialization_tombstones.reached_success OR EXCLUDED.reached_success
+         )
+         DELETE FROM adcp_reporting_materializations target USING doomed
+          WHERE target.materialization_id = doomed.materialization_id`,
+        [input.account_id, limit, cutoff]
       );
       return {
         materializations: materializations.rowCount ?? 0,
@@ -582,10 +614,17 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         throw new Error('Destination authorization generation must increase after revocation');
       }
       await client.query(
+        // Both ends of the authorization window come from the committing
+        // database. Mixing a caller's `authorized_at` with a DB-clock
+        // `revoked_at` also violates the table's own ordering check whenever
+        // the caller's clock runs ahead.
         `INSERT INTO adcp_reporting_destination_authorizations
           (account_id, destination_ref, generation, authorized_at, data)
-         VALUES ($1, $2, $3, $4, $5::jsonb)`,
-        [input.account_id, input.destination_ref, input.generation, input.authorized_at, JSON.stringify(input)]
+         VALUES ($1, $2, $3, clock_timestamp(),
+                 $4::jsonb || jsonb_build_object(
+                   'authorized_at', ${rfc3339Micro('clock_timestamp()')},
+                   'requested_authorized_at', $5::text))`,
+        [input.account_id, input.destination_ref, input.generation, JSON.stringify(input), input.authorized_at]
       );
     });
   }
@@ -600,10 +639,17 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       await advisoryLock(client, accountLock(input.account_id));
       await advisoryLock(client, authLock(input.account_id, input.destination_ref));
       const updated = await client.query(
+        // The SLA is measured from this instant and evaluated against
+        // clock_timestamp() everywhere else, so recording a caller's host
+        // clock let a fast host shorten the promised window and a slow one
+        // extend it. The caller's value is kept only as stated intent.
         `UPDATE adcp_reporting_destination_authorizations
-            SET revoked_at = $4::timestamptz,
+            SET revoked_at = clock_timestamp(),
                 changed_at = clock_timestamp(),
-                data = data || jsonb_build_object('revoked_at', $4::text)
+                data = data || jsonb_build_object(
+                  'revoked_at', ${rfc3339Micro('clock_timestamp()')},
+                  'requested_revoked_at', $4::text
+                )
           WHERE account_id = $1 AND destination_ref = $2 AND generation = $3
             AND revoked_at IS NULL`,
         [input.account_id, input.destination_ref, input.generation, input.revoked_at]
@@ -612,12 +658,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         `UPDATE adcp_reporting_materializations SET
             status = 'failed',
             data = data || jsonb_build_object(
-              'status', 'failed', 'failed_at', $4::text, 'failure_code', 'AUTHORIZATION_REVOKED'
+              'status', 'failed',
+              'failed_at', ${rfc3339Micro('clock_timestamp()')},
+              'failure_code', 'AUTHORIZATION_REVOKED'
             ),
             changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
           WHERE account_id = $1 AND destination_ref = $2 AND authorization_generation = $3
             AND status = 'pending'`,
-        [input.account_id, input.destination_ref, input.generation, input.revoked_at]
+        [input.account_id, input.destination_ref, input.generation]
       );
       return updated.rowCount === 1;
     });
@@ -700,6 +748,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           );
         }
       }
+      // RC3 has no way to describe a billing feed without consumer
+      // agreement, so this pairing reports a schema-clean complete /
+      // not_required that no capability document can justify.
+      if (binding.feed_purpose === 'billing' && binding.reconciliation_mode !== 'consumer_receipt') {
+        throw new Error('Billing managed bindings require consumer-receipt reconciliation');
+      }
       if (configuration.feedPurpose !== binding.feed_purpose) {
         throw new Error('Managed binding feed purpose differs from the exact Core configuration');
       }
@@ -780,7 +834,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         }
       >(
         `SELECT binding.data AS binding, obligation.data AS obligation, revision.data AS revision,
-                COALESCE(MAX(existing.attempt), 0)::integer + 1 AS attempt
+                GREATEST(COALESCE(MAX(existing.attempt), 0), COALESCE(MAX(tomb.highest_attempt), 0))::integer + 1
+                  AS attempt
            FROM adcp_reporting_managed_bindings binding
            JOIN adcp_reporting_destination_authorizations authz
              ON authz.account_id = binding.account_id
@@ -791,11 +846,18 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
            JOIN adcp_reporting_revisions revision ON revision.obligation_id = obligation.obligation_id
       LEFT JOIN adcp_reporting_materializations existing
              ON existing.configuration_id = binding.configuration_id AND existing.revision_id = revision.revision_id
+      -- Pruned attempts still count. Without this a revision that exhausted
+      -- its attempts, or already succeeded, restarts at attempt 1 as soon as
+      -- its rows age out of retention.
+      LEFT JOIN adcp_reporting_materialization_tombstones tomb
+             ON tomb.configuration_id = binding.configuration_id AND tomb.revision_id = revision.revision_id
           WHERE ($1::text IS NULL OR binding.account_id = $1)
           GROUP BY binding.configuration_id, binding.data, obligation.obligation_id, obligation.data,
                    revision.revision_id, revision.data
          HAVING NOT COALESCE(BOOL_OR(existing.status IN ('pending','available','delivered')), false)
-            AND COALESCE(MAX(existing.attempt), 0) < ${MAX_MATERIALIZATION_ATTEMPTS}
+            AND NOT COALESCE(BOOL_OR(tomb.reached_success), false)
+            AND GREATEST(COALESCE(MAX(existing.attempt), 0), COALESCE(MAX(tomb.highest_attempt), 0))
+                < ${MAX_MATERIALIZATION_ATTEMPTS}
           ORDER BY MIN(revision.recorded_at), revision.revision_id
           LIMIT $2`,
         [input.account_id ?? null, limit]
@@ -950,7 +1012,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         `UPDATE adcp_reporting_materializations SET status = $5, data = $6::jsonb,
              changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
           WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3
-            AND lease_expires_at > clock_timestamp() AND status = 'pending' AND authorization_generation = $4`,
+            AND lease_expires_at > clock_timestamp() AND status = 'pending' AND authorization_generation = $4
+            -- Expiry is judged by the clock that stores it. A worker running
+            -- behind could otherwise publish a resource the database already
+            -- considers expired, leaving a delivered materialization whose
+            -- bytes no reader can fetch.
+            AND ($7::timestamptz IS NULL OR $7::timestamptz > clock_timestamp())`,
         [
           lease.materialization.reporting_materialization_id,
           lease.owner,
@@ -958,6 +1025,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           lease.binding.authorization_generation,
           outcome.status,
           JSON.stringify(materialization),
+          outcome.status === 'failed' ? null : outcome.resource.expires_at,
         ]
       );
       return updated.rowCount === 1 && authorized.rowCount === 1 && outcome.status !== 'failed';
@@ -970,6 +1038,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     lease_milliseconds: number;
     account_id?: string;
     authorization_revocation_seconds?: number;
+    steal_after_milliseconds?: number;
   }): Promise<ReportingDestinationRevocationLeaseV1 | null> {
     positiveInteger(input.lease_milliseconds, 'lease_milliseconds');
     return this.transaction(async client => {
@@ -996,16 +1065,27 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               -- unreclaimable for the rest of that lease while the advertised
               -- window elapsed. Lease generation fences the old holder, so its
               -- late completion cannot commit over the new one.
+              -- One stable policy. Reclaiming purely because the SLA had
+              -- elapsed let every worker steal from every other on an already
+              -- late grant: generations bumped each pass and each holder's
+              -- completion was invalidated by the next, so cleanup never
+              -- committed at all. A holder is displaced only once it has had a
+              -- full attempt's worth of time and still not finished, which
+              -- recovers a crashed worker without disturbing a live one.
               AND (cleanup_lease_expires_at IS NULL
                    OR cleanup_lease_expires_at <= clock_timestamp()
                    OR ($4::bigint IS NOT NULL
-                       AND revoked_at + ($4::bigint * INTERVAL '1 second') <= clock_timestamp()))
+                       AND revoked_at + ($4::bigint * INTERVAL '1 second') <= clock_timestamp()
+                       AND cleanup_lease_issued_at IS NOT NULL
+                       AND cleanup_lease_issued_at + ($5::bigint * INTERVAL '1 millisecond')
+                           <= clock_timestamp()))
               AND ($3::text IS NULL OR account_id = $3)
             ORDER BY cleanup_lease_generation, revoked_at, account_id, destination_ref
             FOR UPDATE SKIP LOCKED LIMIT 1
          )
          UPDATE adcp_reporting_destination_authorizations target SET
            cleanup_lease_owner = $1, cleanup_lease_generation = target.cleanup_lease_generation + 1,
+           cleanup_lease_issued_at = clock_timestamp(),
            cleanup_lease_expires_at = clock_timestamp() + ($2::bigint * INTERVAL '1 millisecond')
           FROM candidate
          WHERE target.account_id = candidate.account_id AND target.destination_ref = candidate.destination_ref
@@ -1025,6 +1105,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           input.lease_milliseconds,
           input.account_id ?? null,
           input.authorization_revocation_seconds ?? null,
+          input.steal_after_milliseconds ?? input.lease_milliseconds,
         ]
       );
       const row = result.rows[0];
@@ -1071,7 +1152,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   async releaseRevocation(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean> {
     const result = await this.query(
       `UPDATE adcp_reporting_destination_authorizations
-          SET cleanup_lease_owner = NULL, cleanup_lease_expires_at = NULL
+          SET cleanup_lease_owner = NULL, cleanup_lease_expires_at = NULL, cleanup_lease_issued_at = NULL
         WHERE account_id = $1 AND destination_ref = $2 AND generation = $3
           AND cleanup_lease_owner = $4 AND cleanup_lease_generation = $5
           AND cleanup_completed_at IS NULL`,
@@ -1581,6 +1662,11 @@ async function advisoryLock(client: PgClient, key: string): Promise<void> {
 
 function authLock(accountId: string, destinationRef: string): string {
   return `adcp-reporting-auth:${accountId}:${destinationRef}`;
+}
+
+/** Renders a timestamptz as an RFC 3339 UTC instant without losing microseconds. */
+function rfc3339Micro(expression: string): string {
+  return `to_char(${expression} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 }
 
 function accountLock(accountId: string): string {

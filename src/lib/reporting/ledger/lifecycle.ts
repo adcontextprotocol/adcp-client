@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { canonicalJsonV1 } from '../source';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
+import { compareReportingInstants } from './instant';
 import { projectReportingObligationHealthV1 } from './health';
 import type { ReportingAdjustmentReceipt, ReportingReceipt } from '../../types';
 import type {
@@ -29,7 +30,46 @@ async function resolveLedgerAsOf(
   if (attempt === 0 && input.ledgerAsOf !== undefined) return input.ledgerAsOf;
   const resolved = (await input.store.readLedgerInstant?.()) ?? (input.now ?? (() => new Date()))().toISOString();
   if (input.ledgerAsOf === undefined) return resolved;
-  return Date.parse(resolved) > Date.parse(input.ledgerAsOf) ? resolved : input.ledgerAsOf;
+  // `compareReportingInstants`, never `Date.parse`. Date truncates to
+  // milliseconds, so a retry moving .123500Z to .123600Z compared equal and
+  // kept the old cutoff — the projection then excluded a .123550Z write while
+  // the digest, which is not cutoff-bounded, included it. That is exactly the
+  // pairing the CAS cannot catch.
+  return compareReportingInstants(resolved, input.ledgerAsOf) > 0 ? resolved : input.ledgerAsOf;
+}
+
+/**
+ * Reconciles each obligation independently.
+ *
+ * A sweep spans tenants, so one obligation's failure — a failing external
+ * roster callback, an unreachable subscriber, a corrupt row — must not stop
+ * the obligations queued behind it, which in a fair-ordered sweep are the
+ * ones that have waited longest. Errors are contained per obligation and
+ * never carried across accounts; the count returned is what was attempted, so
+ * a caller paging through a backlog still advances.
+ */
+async function reconcileEachIsolated(
+  input: {
+    store: ReportingLedgerStore;
+    ledgerAsOf: string;
+    subscribers?: readonly ReportingLedgerSubscriberV1[];
+  },
+  obligationIds: readonly string[]
+): Promise<number> {
+  for (const reporting_obligation_id of obligationIds) {
+    try {
+      await reconcileReportingStatusLifecycleV1({
+        store: input.store,
+        reporting_obligation_id,
+        ledgerAsOf: input.ledgerAsOf,
+        subscribers: input.subscribers,
+      });
+    } catch {
+      // Intentionally swallowed per obligation. Surfacing it would abort the
+      // sweep, and the obligation stays a candidate for the next pass.
+    }
+  }
+  return obligationIds.length;
 }
 
 /** Bounded so a contended obligation falls back to the sweep instead of spinning. */
@@ -107,7 +147,7 @@ export async function reconcileReportingStatusLifecycleV1(
     }
   }
   const latest = transitions.at(-1);
-  if (latest && Date.parse(ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
+  if (latest && compareReportingInstants(ledgerAsOf, latest.occurredAt) < 0) return null;
   const previousHealth = latest?.health ?? 'waiting';
   const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
   const transition: ReportingLedgerStatusTransitionV1 | undefined =
@@ -156,7 +196,13 @@ export async function reconcileReportingStatusLifecycleV1(
     ledgerAsOf: ledgerAsOf,
     ...(transition ? { transition } : {}),
     ...(composed.managedStateVersion !== undefined
-      ? { expectedManagedStateVersion: composed.managedStateVersion }
+      ? {
+          expectedManagedStateVersion: composed.managedStateVersion,
+          processedManagedStateVersion: composed.managedStateVersion,
+        }
+      : {}),
+    ...(composed.obligatedConsumerRosterVersion !== undefined
+      ? { processedObligatedConsumerRosterVersion: composed.obligatedConsumerRosterVersion }
       : {}),
   });
   if (!applied.applied) return retryLifecycle(input, attempt);
@@ -319,15 +365,7 @@ export async function retryReportingStatusNotificationsV1(input: {
     limit: input.limit ?? 100,
   });
   const obligationIds = [...new Set(pending.map(value => value.reporting_obligation_id))];
-  for (const reporting_obligation_id of obligationIds) {
-    await reconcileReportingStatusLifecycleV1({
-      store: input.store,
-      reporting_obligation_id,
-      ledgerAsOf: input.ledgerAsOf,
-      subscribers: input.subscribers,
-    });
-  }
-  return obligationIds.length;
+  return reconcileEachIsolated(input, obligationIds);
 }
 
 /** Reconcile bounded clock-driven waiting→delayed→action_required transitions. */
@@ -349,15 +387,7 @@ export async function reconcileReportingStatusDeadlinesV1(input: {
       limit,
     })
   ).map(value => value.reporting_obligation_id);
-  for (const reporting_obligation_id of due) {
-    await reconcileReportingStatusLifecycleV1({
-      store: input.store,
-      reporting_obligation_id,
-      ledgerAsOf: input.ledgerAsOf,
-      subscribers: input.subscribers,
-    });
-  }
-  return due.length;
+  return reconcileEachIsolated(input, due);
 }
 
 async function notifyTransition(

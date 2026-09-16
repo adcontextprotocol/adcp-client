@@ -1595,11 +1595,25 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(freed.receipts, 1, 'the receipt goes once nothing live references it');
     assert.equal(freed.materializations, 1, 'the materialization goes once its resource horizon has passed');
 
+    // Capacity is freed, but a revision that already succeeded must not be
+    // replanned: the attempt tombstone is what stops a pruned success from
+    // restarting at attempt 1 and re-delivering.
     assert.equal(
       await retaining.planMaterializations({ account_id: aged.accountId }),
-      1,
-      'the account keeps working after reaching and clearing its cap'
+      0,
+      'a pruned successful revision does not restart'
     );
+    const attemptTombstone = await pool.query(
+      `SELECT highest_attempt, reached_success FROM adcp_reporting_materialization_tombstones
+        WHERE account_id = $1`,
+      [aged.accountId]
+    );
+    assert.equal(attemptTombstone.rowCount, 1, 'attempt history survives the prune');
+    assert.equal(attemptTombstone.rows[0].reached_success, true);
+    assert.ok(attemptTombstone.rows[0].highest_attempt >= 1);
+    // And the account is not wedged: a different obligation still plans.
+    const liveAgain = await seedSkewLedger('retentionlive');
+    assert.equal(await retaining.planMaterializations({ account_id: liveAgain.accountId }), 1);
 
     // Without the option the store keeps lifetime accounting and refuses to
     // prune rather than silently deleting retained evidence.
@@ -2166,11 +2180,27 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         lease_milliseconds: 60_000,
         account_id: crashed.accountId,
         authorization_revocation_seconds: 3_600,
+        steal_after_milliseconds: 500,
       }),
       null
     );
-
+    // Nor may a live holder be displaced merely because the SLA has passed:
+    // without a stable steal grace every worker bumps the generation and
+    // invalidates the previous holder's completion, so cleanup never lands.
     await new Promise(resolve => setTimeout(resolve, 1100));
+    assert.equal(
+      await managed.claimRevocation({
+        owner: 'thrash-worker',
+        now: new Date().toISOString(),
+        lease_milliseconds: 60_000,
+        account_id: crashed.accountId,
+        authorization_revocation_seconds: 1,
+        steal_after_milliseconds: 3_600_000,
+      }),
+      null,
+      'an overdue grant is not stolen from a holder still inside its attempt budget'
+    );
+
     // Past the 1s SLA the grant is reclaimable even though the hour-long lease
     // has not expired, and the database reports it overdue.
     const reclaimed = await managed.claimRevocation({
@@ -2179,6 +2209,8 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       lease_milliseconds: 60_000,
       account_id: crashed.accountId,
       authorization_revocation_seconds: 1,
+      // The crashed holder has had its full attempt budget and not finished.
+      steal_after_milliseconds: 500,
     });
     assert.ok(reclaimed, 'the SLA boundary reclaims a crashed lease');
     assert.equal(reclaimed.overdue, true, 'overdue is computed on the DB clock, not the skewed caller');
@@ -2263,6 +2295,234 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       context
     );
     assert.equal(reopen.results[0].result, 'failed', 'a terminal subject stays terminal after its body expires');
+  });
+
+  test('advances a reconciliation watermark even when health does not move', async () => {
+    const wm = await seedSkewLedger('watermark', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(wm),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: wm.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: wm.accountId });
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: wm.obligation.reporting_obligation_id,
+    });
+    const first = await pool.query(
+      `SELECT processed_at, processed_state_version FROM adcp_reporting_lifecycle_state
+        WHERE obligation_id = $1`,
+      [wm.obligation.reporting_obligation_id]
+    );
+    assert.equal(first.rowCount, 1, 'a reconcile records that it looked');
+    assert.ok(first.rows[0].processed_state_version);
+
+    const dueBefore = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: wm.accountId,
+      limit: 100,
+    });
+    assert.equal(
+      dueBefore.some(value => value.reporting_obligation_id === wm.obligation.reporting_obligation_id),
+      false,
+      'a reconciled obligation stops being due even though its health never changed'
+    );
+
+    // A managed change makes it due again; reconciling it clears it again,
+    // so it cannot sit at the head of a fair-ordered page forever.
+    await managed.revokeDestination({
+      account_id: wm.accountId,
+      destination_ref: wm.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    const dueAfter = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: wm.accountId,
+      limit: 100,
+    });
+    assert.ok(dueAfter.some(value => value.reporting_obligation_id === wm.obligation.reporting_obligation_id));
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: wm.obligation.reporting_obligation_id,
+    });
+    const second = await pool.query(
+      `SELECT processed_at FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
+      [wm.obligation.reporting_obligation_id]
+    );
+    assert.ok(
+      second.rows[0].processed_at > first.rows[0].processed_at,
+      'the watermark advances, so the obligation drains instead of starving newer work'
+    );
+    const drained = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: wm.accountId,
+      limit: 1,
+    });
+    assert.equal(
+      drained.some(value => value.reporting_obligation_id === wm.obligation.reporting_obligation_id),
+      false,
+      'at limit 1 it no longer occupies the only slot'
+    );
+  });
+
+  test('isolates one tenant failure from the rest of a sweep', async () => {
+    const healthy = await seedSkewLedger('sweephealthy', 'consumer_receipt');
+    const poison = await seedSkewLedger('sweeppoison', 'consumer_receipt');
+    // A roster callback that throws only for the poisoned tenant. Before
+    // isolation this aborted the whole sweep at that obligation.
+    let healthyReconciled = 0;
+    const sweepStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async input => {
+        if (input.account_id === poison.accountId) throw new Error('authorization service unavailable');
+        healthyReconciled += 1;
+        return { ids: [], complete: true, version: 'v1' };
+      },
+    });
+    // A direct reconcile still surfaces the error to its caller — only the
+    // sweep contains it, and only per obligation.
+    await assert.rejects(() =>
+      ledger.reconcileReportingStatusLifecycleV1({
+        store: sweepStore,
+        reporting_obligation_id: poison.obligation.reporting_obligation_id,
+      })
+    );
+    // Drive the real sweep path and confirm it reports what it attempted.
+    const swept = await ledger.reconcileReportingStatusDeadlinesV1({
+      store: sweepStore,
+      ledgerAsOf: await core.readLedgerInstant(),
+      limit: 100,
+    });
+    assert.ok(swept >= 1, 'the sweep completes despite a failing tenant');
+    assert.ok(healthyReconciled >= 1, 'the healthy tenant was still reconciled');
+    const poisonState = await pool.query(`SELECT 1 FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`, [
+      poison.obligation.reporting_obligation_id,
+    ]);
+    assert.equal(poisonState.rowCount, 0, 'the failing tenant records no watermark, so it is retried');
+  });
+
+  test('retries managed readiness after a transient database failure', async () => {
+    let failNext = true;
+    const flaky = {
+      connect: () => pool.connect(),
+      query: (sql, values) => {
+        if (failNext && typeof sql === 'string' && sql.includes('to_regclass')) {
+          failNext = false;
+          return Promise.reject(new Error('transient connection reset'));
+        }
+        return pool.query(sql, values);
+      },
+      end: async () => {},
+    };
+    const store = new ledger.PostgresReportingLedgerStore(flaky, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+    });
+    const asOf = await core.readLedgerInstant();
+    await assert.rejects(() => store.listLifecycleDueObligations({ ledgerAsOf: asOf, limit: 10 }));
+    // A cached rejection would have disabled every later sweep until restart.
+    const recovered = await store.listLifecycleDueObligations({ ledgerAsOf: asOf, limit: 10 });
+    assert.ok(Array.isArray(recovered), 'readiness is re-probed rather than permanently poisoned');
+  });
+
+  test('keeps an authoritative roster free of unlisted principals', async () => {
+    const authoritative = await seedSkewLedger('authroster', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(authoritative),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: authoritative.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 2,
+      account_id: authoritative.accountId,
+    });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [authoritative.obligation.reporting_obligation_id]
+    );
+    authoritative.materialization = settled.rows[0].data;
+
+    // A principal on the same account that is NOT on the authoritative roster
+    // posts a receipt. It must not thereby join the obligated set.
+    const rogue = { account: { id: authoritative.accountId }, agent: { agent_url: 'https://rogue.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    await sync(
+      {
+        idempotency_key: 'receipt-rogue-0001',
+        receipts: [receipt(authoritative, { reporting_receipt_id: 'receipt-rogue-0001' })],
+      },
+      rogue
+    );
+
+    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids: ['https://listed.example'], complete: true }),
+    });
+    const projection = await rosterStore.getManagedLifecycleProjection({
+      reporting_obligation_id: authoritative.obligation.reporting_obligation_id,
+    });
+    assert.deepEqual(
+      projection.obligatedConsumerIds,
+      ['https://listed.example'],
+      'a complete roster excludes principals it does not list'
+    );
+    assert.equal(
+      projection.obligatedConsumerIds.includes('https://rogue.example'),
+      false,
+      'a same-account rogue principal cannot insert itself into the obligated set'
+    );
+    // The version the reconciler re-reads must match what the projection
+    // hashed, or an unversioned roster burns its retry budget every pass.
+    assert.equal(
+      await rosterStore.readObligatedConsumerRosterVersion({
+        reporting_obligation_id: authoritative.obligation.reporting_obligation_id,
+      }),
+      projection.obligatedConsumerRosterVersion,
+      'projection and re-check agree, so an unversioned roster converges'
+    );
+
+    // An incomplete roster is only a hint, so observed principals still count.
+    const hintStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids: ['https://listed.example'], complete: false }),
+    });
+    const hinted = await hintStore.getManagedLifecycleProjection({
+      reporting_obligation_id: authoritative.obligation.reporting_obligation_id,
+    });
+    assert.ok(hinted.obligatedConsumerIds.includes('https://rogue.example'));
+    assert.equal(
+      await hintStore.readObligatedConsumerRosterVersion({
+        reporting_obligation_id: authoritative.obligation.reporting_obligation_id,
+      }),
+      hinted.obligatedConsumerRosterVersion
+    );
+  });
+
+  test('refuses a billing binding without consumer-receipt reconciliation', async () => {
+    const illegal = await seedSkewLedger('illegalbilling', 'delivery_only', { install: false, stopAfterBinding: true });
+    const billingBinding = ledger.reportingManagedDeliveryBindingV1({
+      ...illegal.binding,
+      feed_purpose: 'billing',
+      reconciliation_mode: 'delivery_only',
+    });
+    await assert.rejects(
+      () => managed.installBinding(billingBinding),
+      error => /Billing managed bindings require consumer-receipt reconciliation/.test(String(error.cause))
+    );
+    const absent = await pool.query('SELECT 1 FROM adcp_reporting_managed_bindings WHERE configuration_id = $1', [
+      illegal.configuration.configurationId,
+    ]);
+    assert.equal(absent.rowCount, 0, 'the illegal pairing never lands');
   });
 
   async function seedCoreLedger() {

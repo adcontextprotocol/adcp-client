@@ -266,7 +266,8 @@ export function createReportingStatusHandler<TContext = unknown>(
           page.snapshot.receiptProjection ?? page.snapshot.receipts ?? [],
           page.snapshot.adjustmentReceiptProjection ?? page.snapshot.adjustmentReceipts ?? [],
           baseProjection,
-          page.snapshot.ledgerAsOf
+          page.snapshot.ledgerAsOf,
+          page.snapshot.tombstonedAcceptedSubjects ?? []
         );
         return {
           obligation,
@@ -648,7 +649,15 @@ export function projectManagedDelivery(
   receipts: ReportingReceipt[],
   adjustmentReceipts: ReportingAdjustmentReceipt[],
   base: ReturnType<typeof projectReportingObligationHealthV1>,
-  ledgerAsOf: string
+  ledgerAsOf: string,
+  /**
+   * Subjects whose accepted receipt body has aged out of retention.
+   *
+   * An accepted leaf is terminal, so the acceptance keeps counting after the
+   * body is gone — otherwise letting evidence expire silently reopens a
+   * settled subject and the obligation degrades on its own.
+   */
+  tombstonedAcceptedSubjects: ReadonlyArray<{ kind: 'revision' | 'adjustment'; subjectId: string }> = []
 ) {
   if (!binding) return undefined;
   const supersededRevisionIds = new Set(
@@ -733,9 +742,20 @@ export function projectManagedDelivery(
         value.resource !== undefined &&
         value.verification !== undefined
     );
+    const revisionAcceptedByTombstone = tombstonedAcceptedSubjects.some(
+      value => value.kind === 'revision' && value.subjectId === requiredRevision.reporting_revision_id
+    );
+    const missingAdjustmentAfterTombstones = adjustments.some(
+      (adjustment, index) =>
+        adjustmentLeaves[index] === undefined &&
+        !tombstonedAcceptedSubjects.some(
+          value => value.kind === 'adjustment' && value.subjectId === adjustment.reporting_adjustment_id
+        )
+    );
+    const revisionAccepted = revisionLeaf?.status === 'accepted' || revisionAcceptedByTombstone;
     if (revisionLeaf?.status === 'rejected' || rejectedAdjustment) reconciliationStatus = 'rejected';
     else if (!deliveredEver) reconciliationStatus = 'pending';
-    else if (revisionLeaf?.status !== 'accepted' || missingAdjustment) reconciliationStatus = 'pending';
+    else if (!revisionAccepted || missingAdjustmentAfterTombstones) reconciliationStatus = 'pending';
     else reconciliationStatus = 'accepted';
     if (reconciliationStatus !== 'accepted') {
       const revisionRejected = revisionLeaf?.status === 'rejected';
@@ -743,7 +763,7 @@ export function projectManagedDelivery(
         ? 'RECEIPT_REJECTED'
         : rejectedAdjustment
           ? 'ADJUSTMENT_RECEIPT_REJECTED'
-          : revisionLeaf?.status !== 'accepted'
+          : !revisionAccepted
             ? 'RECEIPT_REQUIRED'
             : 'ADJUSTMENT_RECEIPT_REQUIRED';
       const sellerAction = code === 'RECEIPT_REJECTED' || code === 'ADJUSTMENT_RECEIPT_REJECTED';

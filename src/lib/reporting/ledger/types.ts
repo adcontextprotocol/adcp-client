@@ -473,6 +473,14 @@ export interface ReportingLedgerSnapshotV1 {
   receiptProjection?: ReportingReceipt[];
   adjustmentReceipts?: ReportingAdjustmentReceipt[];
   adjustmentReceiptProjection?: ReportingAdjustmentReceipt[];
+  /**
+   * Subjects whose accepted receipt body has been pruned.
+   *
+   * Retention removes bodies past the advertised horizon, but an accepted
+   * leaf is terminal forever. Without this the projection stops seeing the
+   * acceptance and reopens a settled subject.
+   */
+  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>;
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   /** Full scoped histories retained across changes_after for complete counts and current-leaf projection. */
   consumerStatusProjection?: ReportingLedgerConsumerStatementV1[];
@@ -694,6 +702,15 @@ export interface ReportingLedgerStore {
      * concurrent managed write cannot be overwritten by a stale health.
      */
     expectedManagedStateVersion?: string;
+    /**
+     * Watermark to record for this obligation, even when health did not move.
+     *
+     * Without it a managed change with no health effect leaves the obligation
+     * due forever, and a fair-ordered sweep keeps returning it ahead of work
+     * that has waited less.
+     */
+    processedManagedStateVersion?: string;
+    processedObligatedConsumerRosterVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }>;
   markTransitionNotified(transitionId: string, notifiedAt: string): Promise<void>;
   /**

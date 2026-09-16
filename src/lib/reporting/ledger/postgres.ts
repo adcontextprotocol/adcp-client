@@ -243,6 +243,19 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_issues (
 CREATE INDEX IF NOT EXISTS adcp_reporting_issues_obligation
   ON adcp_reporting_issues (obligation_id, observed_at, issue_id);
 
+-- Per-obligation reconciliation watermark. A reconcile that changes nothing
+-- still has to record that it looked, or a change with no health effect stays
+-- a candidate forever and starves newer work behind it. Core, not managed:
+-- the lifecycle sweep is a Core concern and must not depend on the add-on.
+CREATE TABLE IF NOT EXISTS adcp_reporting_lifecycle_state (
+  obligation_id TEXT PRIMARY KEY REFERENCES adcp_reporting_obligations(obligation_id),
+  processed_state_version TEXT,
+  processed_roster_version TEXT,
+  processed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS adcp_reporting_lifecycle_state_processed
+  ON adcp_reporting_lifecycle_state (processed_at, obligation_id);
+
 CREATE TABLE IF NOT EXISTS adcp_reporting_transitions (
   transition_id TEXT PRIMARY KEY,
   transition_sequence BIGSERIAL NOT NULL UNIQUE,
@@ -550,6 +563,17 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           WHERE transition.obligation_id = obligation.obligation_id
           ORDER BY transition.transition_sequence DESC LIMIT 1
        ) latest ON TRUE
+       LEFT JOIN adcp_reporting_lifecycle_state state
+              ON state.obligation_id = obligation.obligation_id
+       CROSS JOIN LATERAL (
+         -- A reconcile that changed no health still has to count as work done,
+         -- or a managed change with no health effect keeps the obligation due
+         -- forever and, at small page sizes, starves everything behind it.
+         SELECT GREATEST(
+                  COALESCE(state.processed_at, obligation.created_at),
+                  COALESCE(latest.occurred_at, obligation.created_at)
+                ) AS since
+       ) watermark
        WHERE ($1::text IS NULL OR obligation.account_id = $1)
          AND ((COALESCE(latest.health, 'waiting') = 'waiting'
                AND (obligation.data->>'expectedAt')::timestamptz <= $2)
@@ -562,7 +586,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                   WHERE revision.obligation_id = obligation.obligation_id
                ))
 ${managedDueArm}       )
-       ORDER BY LEAST(
+       ORDER BY watermark.since, LEAST(
          (obligation.data->>'expectedAt')::timestamptz,
          (obligation.data->>'recoveryDeadlineAt')::timestamptz
        ), obligation.obligation_id
@@ -1285,6 +1309,8 @@ ${managedDueArm}       )
     ledgerAsOf: string;
     transition?: ReportingLedgerStatusTransitionV1;
     expectedManagedStateVersion?: string;
+    processedManagedStateVersion?: string;
+    processedObligatedConsumerRosterVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }> {
     const lock = await this.accountLockForObligation(input.reporting_obligation_id);
     return this.transaction(
@@ -1343,6 +1369,28 @@ ${managedDueArm}       )
           );
           if (inserted.rowCount !== 1) return { applied: false, transitionInserted: false };
           transitionInserted = true;
+        }
+        // Record the watermark inside the same fenced transaction as the
+        // projection it describes, so it can only advance for state that was
+        // actually applied.
+        {
+          await client.query(
+            `INSERT INTO adcp_reporting_lifecycle_state
+               (obligation_id, processed_state_version, processed_roster_version, processed_at)
+             VALUES ($1, $2, $3, clock_timestamp())
+             ON CONFLICT (obligation_id) DO UPDATE SET
+               processed_state_version = EXCLUDED.processed_state_version,
+               processed_roster_version = EXCLUDED.processed_roster_version,
+               processed_at = EXCLUDED.processed_at`,
+            [
+              input.reporting_obligation_id,
+              input.processedManagedStateVersion ?? null,
+              // Empty string, not null: null means "never reconciled", which
+              // is a due condition. A deployment with no roster source would
+              // otherwise stay due forever.
+              input.processedObligatedConsumerRosterVersion ?? '',
+            ]
+          );
         }
         const projectedIds = input.projectedIssues.map(issue => issue.issueId);
         for (const issue of input.projectedIssues) {
@@ -1554,6 +1602,11 @@ ${managedDueArm}       )
           managedInstalled && query.consumer_id
             ? await this.listSnapshotReceipts(client, query, obligationIds, ledgerAsOf, changesAfter, 'adjustment')
             : [];
+        // Terminal acceptances whose bodies have aged out. The projection
+        // needs them or a settled subject reopens the moment retention bites.
+        const tombstonedAcceptedSubjects = managedInstalled
+          ? await this.listTombstonedAcceptedSubjects(client, query, obligationIds)
+          : [];
         const materializationProjection = managedInstalled
           ? await this.listSnapshotMaterializationProjection(client, obligationIds, ledgerAsOf)
           : [];
@@ -1698,6 +1751,7 @@ ${managedDueArm}       )
           adjustments,
           ...(managedInstalled
             ? {
+                tombstonedAcceptedSubjects,
                 managedBindings,
                 materializations,
                 materializationHistoryProjection,
@@ -2227,7 +2281,14 @@ ${managedDueArm}       )
       OBLIGATED_CONSUMERS_DEADLINE_MS,
       'Reporting obligated-consumer lookup deadline elapsed'
     );
-    const ids = [...new Set([...supplied.ids, ...(base.obligatedConsumerIds ?? [])])].sort();
+    // A roster declared complete is authoritative: it is exactly who owes a
+    // receipt. Merging observed principals into it meant any same-account
+    // principal that had ever posted a status or receipt inserted itself into
+    // the obligated set, so one rogue consumer could hold the whole account's
+    // billing permanently unreconciled. Observed principals are still folded
+    // in when the roster is NOT complete, where the union is the conservative
+    // answer rather than a widening of an authority.
+    const ids = obligatedConsumerIdsFor(supplied, base.obligatedConsumerIds ?? []);
     if (ids.length > MAX_SNAPSHOT_ITEMS) {
       throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
     }
@@ -2235,10 +2296,7 @@ ${managedDueArm}       )
       ...base,
       obligatedConsumerIds: ids,
       obligatedConsumerRosterComplete: supplied.complete === true,
-      // Falls back to the roster content itself when the adopter supplies no
-      // version, so a roster change is still detectable rather than silently
-      // unfenced.
-      obligatedConsumerRosterVersion: supplied.version ?? digest({ ids, complete: supplied.complete === true }),
+      obligatedConsumerRosterVersion: obligatedConsumerRosterVersionFor(supplied, ids),
     };
   }
 
@@ -2320,7 +2378,31 @@ ${managedDueArm}       )
       OBLIGATED_CONSUMERS_DEADLINE_MS,
       'Reporting obligated-consumer lookup deadline elapsed'
     );
-    return supplied.version ?? digest({ ids: [...supplied.ids].sort(), complete: supplied.complete === true });
+    // Must hash exactly what the projection hashed, or an unversioned roster
+    // never matches and every reconcile burns its retry budget and gives up.
+    const observed = await this.observedConsumerIds(input.reporting_obligation_id);
+    return obligatedConsumerRosterVersionFor(supplied, obligatedConsumerIdsFor(supplied, observed));
+  }
+
+  /** Principals that have engaged with this obligation, as the projection sees them. */
+  private async observedConsumerIds(obligationId: string): Promise<string[]> {
+    const result = await this.query<QueryResultRow & { consumer_id: string }>(
+      `SELECT DISTINCT consumer_id FROM (
+         SELECT receipt.consumer_id
+           FROM adcp_reporting_receipts receipt
+          WHERE (receipt.receipt_kind = 'revision' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_revisions revision
+                    WHERE revision.revision_id = receipt.subject_id AND revision.obligation_id = $1))
+             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_adjustments adjustment
+                    WHERE adjustment.adjustment_id = receipt.subject_id AND adjustment.obligation_id = $1))
+         UNION
+         SELECT status.consumer_id FROM adcp_reporting_consumer_statuses status
+          WHERE status.obligation_id = $1 AND status.consumer_id <> '__legacy_unscoped_consumer__'
+       ) engaged ORDER BY consumer_id`,
+      [obligationId]
+    );
+    return result.rows.map(row => row.consumer_id);
   }
 
   private managedDueTablesReadyCache: Promise<boolean> | undefined;
@@ -2328,12 +2410,55 @@ ${managedDueArm}       )
   /** Whether the managed schema exists, resolved once per store instance. */
   private managedDueTablesReady(): Promise<boolean> {
     if (!this.managedDelivery) return Promise.resolve(false);
+    // Only a resolved answer is memoised. Caching the rejection made one
+    // transient connection failure disable every later sweep until restart.
     this.managedDueTablesReadyCache ??= this.query<QueryResultRow & { ready: boolean }>(
       `SELECT to_regclass('adcp_reporting_managed_bindings') IS NOT NULL
           AND to_regclass('adcp_reporting_materializations') IS NOT NULL
           AND to_regclass('adcp_reporting_receipts') IS NOT NULL AS ready`
-    ).then(result => result.rows[0]?.ready === true);
+    )
+      .then(result => result.rows[0]?.ready === true)
+      .catch(cause => {
+        this.managedDueTablesReadyCache = undefined;
+        throw cause;
+      });
     return this.managedDueTablesReadyCache;
+  }
+
+  /**
+   * Terminal receipt subjects whose bodies have been pruned.
+   *
+   * The projection decides reconciliation from the receipt rows it can see,
+   * so once an accepted leaf ages out the subject looks unreconciled again
+   * and a settled billing period reopens. The tombstone is the only remaining
+   * proof, so the projection has to consult it.
+   */
+  private async listTombstonedAcceptedSubjects(
+    client: ReportingPgClient,
+    query: ReportingLedgerSnapshotQueryV1,
+    obligationIds: string[]
+  ): Promise<Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>> {
+    if (!obligationIds.length || !query.consumer_id) return [];
+    const result = await client.query<QueryResultRow & { receipt_kind: string; subject_id: string }>(
+      `SELECT tombstone.receipt_kind, tombstone.subject_id
+         FROM adcp_reporting_receipt_tombstones tombstone
+        WHERE tombstone.account_id = $1 AND tombstone.consumer_id = $2
+          AND tombstone.status = 'accepted' AND tombstone.was_current
+          AND ((tombstone.receipt_kind = 'revision' AND EXISTS (
+                  SELECT 1 FROM adcp_reporting_revisions revision
+                   WHERE revision.revision_id = tombstone.subject_id
+                     AND revision.obligation_id = ANY($3::text[])))
+            OR (tombstone.receipt_kind = 'adjustment' AND EXISTS (
+                  SELECT 1 FROM adcp_reporting_adjustments adjustment
+                   WHERE adjustment.adjustment_id = tombstone.subject_id
+                     AND adjustment.obligation_id = ANY($3::text[]))))
+        LIMIT $4`,
+      [query.account_id, query.consumer_id, obligationIds, MAX_SNAPSHOT_ITEMS + 1]
+    );
+    return result.rows.map(row => ({
+      kind: row.receipt_kind === 'adjustment' ? ('adjustment' as const) : ('revision' as const),
+      subjectId: row.subject_id,
+    }));
   }
 
   private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {
@@ -2944,18 +3069,27 @@ const MANAGED_DUE_ARM = `           OR (EXISTS (
                       EXISTS (
                         SELECT 1 FROM adcp_reporting_materializations m
                          WHERE m.obligation_id = obligation.obligation_id
-                           AND m.changed_at > COALESCE(latest.occurred_at, obligation.created_at)
+                           AND m.changed_at > watermark.since
                            AND m.changed_at <= $2)
+                      OR EXISTS (
+                        -- Adjustments are managed health inputs too: after an
+                        -- accepted billing receipt, a correction makes the live
+                        -- read action_required while the persisted health and
+                        -- its webhook stayed complete.
+                        SELECT 1 FROM adcp_reporting_adjustments adj
+                         WHERE adj.obligation_id = obligation.obligation_id
+                           AND adj.recorded_at > watermark.since
+                           AND adj.recorded_at <= $2)
                       OR EXISTS (
                         SELECT 1 FROM adcp_reporting_destination_authorizations authz
                          WHERE authz.account_id = binding.account_id
                            AND authz.destination_ref = binding.destination_ref
                            AND GREATEST(authz.changed_at, COALESCE(authz.cleanup_completed_at, authz.changed_at))
-                               > COALESCE(latest.occurred_at, obligation.created_at)
+                               > watermark.since
                            AND authz.changed_at <= $2)
                       OR EXISTS (
                         SELECT 1 FROM adcp_reporting_receipts receipt
-                         WHERE receipt.recorded_at > COALESCE(latest.occurred_at, obligation.created_at)
+                         WHERE receipt.recorded_at > watermark.since
                            AND receipt.recorded_at <= $2
                            AND ((receipt.receipt_kind = 'revision' AND EXISTS (
                                   SELECT 1 FROM adcp_reporting_revisions rv
@@ -2968,8 +3102,12 @@ const MANAGED_DUE_ARM = `           OR (EXISTS (
                       OR EXISTS (
                         SELECT 1 FROM adcp_reporting_consumer_statuses status
                          WHERE status.obligation_id = obligation.obligation_id
-                           AND status.created_at > COALESCE(latest.occurred_at, obligation.created_at)
+                           AND status.created_at > watermark.since
                            AND status.created_at <= $2)
+                      -- An external roster change writes nothing here at all,
+                      -- so the only durable trace is the version recorded at
+                      -- the last reconcile. A null one means never reconciled.
+                      OR state.processed_roster_version IS NULL
                       -- A retained resource expiring is a health change with
                       -- no row written anywhere, so nothing else can notice it.
                       OR EXISTS (
@@ -2978,10 +3116,33 @@ const MANAGED_DUE_ARM = `           OR (EXISTS (
                            AND m.status IN ('available', 'delivered')
                            AND (m.data -> 'resource' ->> 'expires_at')::timestamptz <= $2
                            AND (m.data -> 'resource' ->> 'expires_at')::timestamptz
-                               > COALESCE(latest.occurred_at, obligation.created_at))
+                               > watermark.since)
                     )
                ))
 `;
+
+/**
+ * The obligated roster the projection and the version must both agree on.
+ *
+ * A complete roster is authoritative and excludes anyone it does not list.
+ * An incomplete one is only a hint, so observed principals are unioned in.
+ */
+function obligatedConsumerIdsFor(
+  supplied: { ids: readonly string[]; complete: boolean },
+  observed: readonly string[]
+): string[] {
+  return supplied.complete === true
+    ? [...new Set(supplied.ids)].sort()
+    : [...new Set([...supplied.ids, ...observed])].sort();
+}
+
+/** Falls back to hashing the resolved roster when the adopter supplies no version. */
+function obligatedConsumerRosterVersionFor(
+  supplied: { ids: readonly string[]; complete: boolean; version?: string },
+  ids: readonly string[]
+): string {
+  return supplied.version ?? digest({ ids, complete: supplied.complete === true });
+}
 
 /** Renders a timestamptz as an RFC 3339 UTC instant without losing microseconds. */
 function rfc3339Microseconds(expression: string): string {
