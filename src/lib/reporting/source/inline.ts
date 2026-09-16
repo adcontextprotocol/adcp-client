@@ -90,6 +90,13 @@ type ExecutionEntry = {
   controller: AbortController;
   pending: boolean;
   waiters: number;
+  /**
+   * Claimed by an in-flight admission transaction. The entry stays fully
+   * replayable while reserved — only `commit()` removes it — but no other
+   * admission may plan it, so concurrent admissions cannot both count the same
+   * victim toward their own ceiling.
+   */
+  reserved?: boolean;
 };
 
 type StoredObject = {
@@ -262,40 +269,32 @@ export function createInlineReportingSourceExecutor(
       if (activeExecutions >= INLINE_MAX_CONCURRENT_EXECUTIONS_V1) {
         return failure('RATE_LIMITED', 'retryable', 'Inline reporting concurrency capacity is exhausted');
       }
-      // Plan every reclamation before mutating anything. Reclaiming for the
-      // global ceiling first and only then discovering the scope cannot be
-      // satisfied would return a terminal refusal having already destroyed a
-      // replay entry, its staged evidence, and its generation state. The scope
-      // recount also has to account for what the global plan already freed, or
-      // a victim in this scope is paid for twice.
-      const planned: string[] = [];
-      if (exhaustedGlobally) {
-        const victim = planReclaim(executions, planned);
-        if (victim === undefined) {
-          return failure(
-            'QUOTA_EXHAUSTED',
-            'terminal',
-            'Inline reporting replay capacity is exhausted; supply a durable executor or an explicit ' +
-              'replayRetention policy for long-lived feeds'
-          );
-        }
-        planned.push(victim);
+      // One plan-only transaction for the whole admission. The count ceilings
+      // and byte pressure both reclaim through it, and nothing is deleted until
+      // staging: a slice refused by a later check releases its victims intact.
+      // Only an explicit retention policy may trade replay for capacity.
+      const reclaimer = evictSettled ? createAdmissionReclaimer(executions, storage) : undefined;
+      if (exhaustedGlobally && reclaimer?.plan(scopeKey, false) === undefined) {
+        reclaimer?.release();
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          'Inline reporting replay capacity is exhausted; supply a durable executor or an explicit ' +
+            'replayRetention policy for long-lived feeds'
+        );
       }
-      const freedFromScope = planned.filter(key => executions.get(key)?.scopeKey === scopeKey).length;
-      if (scopeCount - freedFromScope >= INLINE_MAX_EXECUTIONS_PER_SCOPE_V1) {
-        const victim = planReclaim(executions, planned, scopeKey);
-        if (victim === undefined) {
-          return failure(
-            'QUOTA_EXHAUSTED',
-            'terminal',
-            'Inline reporting scope replay capacity is exhausted; supply a durable executor or an explicit ' +
-              'replayRetention policy for long-lived feeds'
-          );
-        }
-        planned.push(victim);
+      if (
+        scopeCount - (reclaimer?.plannedInScope(scopeKey) ?? 0) >= INLINE_MAX_EXECUTIONS_PER_SCOPE_V1 &&
+        reclaimer?.plan(scopeKey, true) === undefined
+      ) {
+        reclaimer?.release();
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          'Inline reporting scope replay capacity is exhausted; supply a durable executor or an explicit ' +
+            'replayRetention policy for long-lived feeds'
+        );
       }
-      // Admission is certain; commit the planned reclamations.
-      for (const victim of planned) commitReclaim(executions, storage, victim);
 
       activeExecutions += 1;
       const controller = new AbortController();
@@ -313,9 +312,7 @@ export function createInlineReportingSourceExecutor(
             storage,
             key,
             scopeKey,
-            // Only an explicit retention policy may trade replay for capacity;
-            // the default must never evict silently.
-            evictSettled ? createByteReclaimer(executions, storage, scopeKey) : undefined
+            reclaimer
           )
         )
         .then(result => ({ requestFingerprint, result }))
@@ -326,6 +323,8 @@ export function createInlineReportingSourceExecutor(
         .finally(() => {
           activeExecutions -= 1;
           entry.pending = false;
+          // Staging commits; every other outcome leaves the victims intact.
+          reclaimer?.release();
         });
       const entry: ExecutionEntry = {
         scopeKey,
@@ -382,7 +381,7 @@ async function executeAndSeal(
   },
   executionNamespace: string,
   scopeKey: string,
-  byteReclaimer?: { plan(): number; commit(): void }
+  reclaimer?: InlineAdmissionReclaimerV1
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
   try {
@@ -553,17 +552,22 @@ async function executeAndSeal(
   // the slice, so a failed admission cost retained work. The planned bytes are
   // credited to capacity so the slice can proceed as if they were already
   // reclaimed, and the deletions land only once staging is certain.
-  let plannedCredit = 0;
-  const capacity = (): number =>
-    Math.min(
-      INLINE_MAX_OBJECT_BYTES_V1,
-      INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes + plannedCredit,
-      INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedCredit
-    );
+  // Credits are tracked separately because an out-of-scope victim relieves only
+  // the global budget. Reclaiming inside the requesting scope when the global
+  // budget is what binds would find no victims at all for a fresh scope whose
+  // siblings hold the 256 MiB total.
+  let plannedGlobalCredit = 0;
+  let plannedScopeCredit = 0;
+  const globalRoom = (): number => INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes + plannedGlobalCredit;
+  const scopeRoom = (): number =>
+    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedScopeCredit;
+  const capacity = (): number => Math.min(INLINE_MAX_OBJECT_BYTES_V1, globalRoom(), scopeRoom());
   const planMoreCapacity = (): boolean => {
-    const freed = byteReclaimer?.plan() ?? 0;
-    if (freed <= 0) return false;
-    plannedCredit += freed;
+    // Reclaim where the pressure actually is.
+    const freed = reclaimer?.plan(scopeKey, scopeRoom() <= globalRoom());
+    if (freed === undefined || freed.bytes <= 0) return false;
+    plannedGlobalCredit += freed.bytes;
+    if (freed.sameScope) plannedScopeCredit += freed.bytes;
     return true;
   };
   let remainingCapacity = capacity();
@@ -720,7 +724,7 @@ async function executeAndSeal(
   // Nothing below can refuse the slice, so the planned reclamations commit here
   // — after every failure-capable check, immediately before the evidence they
   // made room for is installed.
-  byteReclaimer?.commit();
+  reclaimer?.commit();
   storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
   storage.totalBytes += bytes.byteLength;
   storage.scopeBytes.set(scopeKey, (storage.scopeBytes.get(scopeKey) ?? 0) + bytes.byteLength);
@@ -980,7 +984,7 @@ function planReclaim(
   scopeKey?: string
 ): string | undefined {
   for (const [key, entry] of executions) {
-    if (entry.pending || entry.waiters > 0) continue;
+    if (entry.pending || entry.waiters > 0 || entry.reserved) continue;
     if (scopeKey !== undefined && entry.scopeKey !== scopeKey) continue;
     if (planned.includes(key)) continue;
     return key;
@@ -997,27 +1001,60 @@ function planReclaim(
  * never recovered.
  */
 /**
- * A per-execution planner: it selects victims and reports the bytes they would
- * free, and only `commit()` actually deletes anything.
+ * One plan-only transaction for a single admission.
+ *
+ * Both the execution-count ceilings and byte pressure reclaim through here, so
+ * the whole admission either commits its victims at staging or releases them
+ * untouched. Committing the count victims before `executeAndSeal` meant a slice
+ * refused by a later check — invalid temporal evidence, the deadline — had
+ * already deleted a valid replay.
  */
-function createByteReclaimer(
+export interface InlineAdmissionReclaimerV1 {
+  /** Plan one victim. `scopeOnly` keeps it inside the requesting scope. */
+  plan(scopeKey: string, scopeOnly: boolean): { bytes: number; sameScope: boolean } | undefined;
+  /** Victims planned so far that belong to `scopeKey`. */
+  plannedInScope(scopeKey: string): number;
+  commit(): void;
+  release(): void;
+}
+
+function createAdmissionReclaimer(
   executions: Map<string, ExecutionEntry>,
-  storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> },
-  scopeKey: string
-): { plan(): number; commit(): void } {
+  storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> }
+): InlineAdmissionReclaimerV1 {
   const planned: string[] = [];
+  let settled = false;
   return {
-    plan(): number {
-      for (;;) {
-        const victim = planReclaim(executions, planned, scopeKey);
-        if (victim === undefined) return 0;
-        planned.push(victim);
-        const freed = storage.objects.get(stagedObjectRef(victim))?.bytes.byteLength ?? 0;
-        if (freed > 0) return freed;
-      }
+    plan(scopeKey, scopeOnly) {
+      // A scope-bound victim relieves both the scope and the global budget; an
+      // out-of-scope victim relieves only the global one, which is exactly what
+      // a fresh scope needs when other scopes hold the global budget.
+      const victim = planReclaim(executions, planned, scopeOnly ? scopeKey : undefined);
+      if (victim === undefined) return undefined;
+      planned.push(victim);
+      const entry = executions.get(victim);
+      if (entry) entry.reserved = true;
+      return {
+        bytes: storage.objects.get(stagedObjectRef(victim))?.bytes.byteLength ?? 0,
+        sameScope: entry?.scopeKey === scopeKey,
+      };
     },
-    commit(): void {
+    plannedInScope(scopeKey) {
+      return planned.filter(key => executions.get(key)?.scopeKey === scopeKey).length;
+    },
+    commit() {
+      if (settled) return;
+      settled = true;
       for (const victim of planned) commitReclaim(executions, storage, victim);
+      planned.length = 0;
+    },
+    release() {
+      if (settled) return;
+      settled = true;
+      for (const victim of planned) {
+        const entry = executions.get(victim);
+        if (entry) entry.reserved = false;
+      }
       planned.length = 0;
     },
   };

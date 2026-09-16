@@ -2626,21 +2626,6 @@ function thrownAdcpErrorRecovery(response: McpToolResponse): ErrorRecovery {
  * finalize path adds trusted session/account identity; other tool/session
  * special cases preserve their established scopes.
  */
-/** Stable identity of the authenticated caller, for per-caller replay scopes. */
-function callerIdempotencyPrincipal(context: unknown): string | undefined {
-  const ctx = context as {
-    authInfo?: { credential?: { key_id?: unknown }; clientId?: unknown };
-    agent?: { agent_url?: unknown };
-  };
-  const keyId = ctx.authInfo?.credential?.key_id;
-  if (typeof keyId === 'string' && keyId.length > 0) return `key:${keyId}`;
-  const clientId = ctx.authInfo?.clientId;
-  if (typeof clientId === 'string' && clientId.length > 0) return `client:${clientId}`;
-  const agentUrl = ctx.agent?.agent_url;
-  if (typeof agentUrl === 'string' && agentUrl.length > 0) return `agent:${agentUrl}`;
-  return undefined;
-}
-
 function resolveExtraScope(
   toolName: string,
   params: Record<string, unknown>,
@@ -6870,7 +6855,9 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             ctx.sessionKey,
             ctx.proposalRefinementScope,
             ctx.callerMutationScope,
-            callerIdempotencyPrincipal(ctx)
+            // The canonical authenticated identity, so OAuth callers differing
+            // only by client_id do not share a replay namespace.
+            authenticatedPrincipalForContext(ctx.authInfo, ctx.agent)
           );
           const idempotencyPayload = buildIdempotencyPayload(toolName, params, ctx.account, ctx.sessionKey);
 

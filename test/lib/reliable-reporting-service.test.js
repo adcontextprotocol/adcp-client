@@ -2400,6 +2400,101 @@ describe('ReliableReportingService', () => {
     );
   });
 
+  test('does not destroy count-reclaimed replay when the slice then fails', async () => {
+    // The count ceilings reclaimed before executeAndSeal ran, so a slice
+    // refused by a later check had already deleted a valid replay.
+    let invalidTemporal = false;
+    const retained = createInlineReportingSourceExecutor(
+      request =>
+        invalidTemporal
+          ? {
+              reporting_period: { start: request.start_date, end: request.end_date },
+              currency: 'USD',
+              reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
+              data_through: '2020-01-01T00:00:00.000Z',
+              observed_at: '2020-01-01T00:00:00.000Z',
+            }
+          : [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `count-slice-${String(index).padStart(4, '0')}`;
+
+    // Fill the scope to its 100-execution ceiling, keeping the first readable.
+    const first = redactedReportingSourceRequestV1({ sourceExecutionKey: key(0) });
+    const sealed = await retained.execute(first, ctx());
+    assert.equal(sealed.ok, true);
+    const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+    const readFirst = () =>
+      retained.read({
+        objectRef: object.objectRef,
+        objectGeneration: object.objectGeneration,
+        sourceScope: first.sourceScope,
+        account: first.account,
+        delivery_config_id: first.delivery_config_id,
+        delivery_config_version: first.delivery_config_version,
+        report_definition_id: first.report_definition_id,
+        reporting_obligation_id: first.reporting_obligation_id,
+        maxBytes: 1024 * 1024,
+        signal: new AbortController().signal,
+      });
+    assert.ok((await readFirst()).byteLength > 0, 'the first execution is replayable');
+    for (let index = 1; index < 100; index += 1) {
+      assert.equal(
+        (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }), ctx())).ok,
+        true,
+        `slice ${index}`
+      );
+    }
+
+    // The 101st needs a count reclamation and is then refused.
+    invalidTemporal = true;
+    const refused = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(100) }), ctx());
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, 'SOURCE_PERMANENT');
+
+    assert.ok((await readFirst()).byteLength > 0, 'a slice refused after admission must leave the count victim intact');
+  });
+
+  test('reclaims global byte pressure from whichever scope holds it', async () => {
+    // A fresh scope has no victims of its own, so searching only its own scope
+    // left it STAGING_FAILED while other scopes held the global budget.
+    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    const retained = createInlineReportingSourceExecutor(
+      () => rows,
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const scoped = (scope, index) => {
+      const value = redactedReportingSourceRequestV1({
+        sourceExecutionKey: `global-${scope}-${String(index).padStart(4, '0')}`,
+      });
+      value.sourceScope = { connection: `fixture-global-${scope}`, region: 'test' };
+      return value;
+    };
+
+    // Consume the global budget across other scopes, each staying under its
+    // own per-scope ceiling.
+    let staged = 0;
+    for (let scope = 0; scope < 12; scope += 1) {
+      for (let index = 0; index < 46; index += 1) {
+        const result = await retained.execute(scoped(scope, index), ctx());
+        if (result.ok) staged += 1;
+      }
+    }
+    assert.ok(staged > 0, 'the other scopes must hold staged evidence');
+
+    // A fresh scope must still be able to stage, by reclaiming globally.
+    const fresh = await retained.execute(scoped(99, 0), ctx());
+    assert.equal(fresh.ok, true, `a fresh scope must reclaim globally, got ${fresh.ok ? '' : fresh.error.code}`);
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];

@@ -1095,7 +1095,7 @@ describe('createAdcpServer', () => {
         resolveAccount: async ref => ({ id: ref.account_id }),
         mediaBuy: {
           syncReportingStatus: async (params, ctx) => {
-            callers.push(ctx.authInfo?.credential?.key_id);
+            callers.push(ctx.authInfo?.credential?.key_id ?? ctx.authInfo?.credential?.client_id);
             return {
               status: 'completed',
               results: params.statuses.map(status => ({
@@ -1120,13 +1120,24 @@ describe('createAdcpServer', () => {
       }
       assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b'], 'each caller must reach the handler');
 
+      // OAuth callers carry their identity on credential.client_id, not
+      // key_id or a top-level clientId, so that is the field the replay
+      // namespace has to read.
+      for (const client_id of ['oauth-a', 'oauth-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'oauth', client_id, scopes: [], expires_at: null } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.strictEqual(callers.length, 4, 'two OAuth callers differing only by client_id must not collide');
+
       // The same caller repeating its own key still replays, so the namespace
       // is narrowed by caller rather than simply disabled.
       const replay = await callToolRaw(server, 'sync_reporting_status', params, {
         authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } },
       });
       assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
-      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b'], 'a caller replaying its own key must not re-run');
+      assert.strictEqual(callers.length, 4, 'a caller replaying its own key must not re-run');
     });
   });
 
