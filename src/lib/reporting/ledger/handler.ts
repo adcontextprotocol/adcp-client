@@ -832,16 +832,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function wireSchedule(obligation: ReportingLedgerObligationV1) {
   const anchorMs = Date.parse(obligation.schedule.anchor);
-  const alignment = reportingDeriveScheduleAlignmentV1({
-    periodMilliseconds: obligation.schedule.periodMilliseconds,
-    anchorMs,
-    sourceTimezone: obligation.period.sourceTimezone,
-  });
+  // Echo the identity the configuration was installed with. Only a generation
+  // that predates the stored identity falls back to deriving one, which keeps
+  // pre-existing ledgers projecting exactly as they did before.
+  const alignment =
+    obligation.schedule.alignment ??
+    reportingDeriveScheduleAlignmentV1({
+      periodMilliseconds: obligation.schedule.periodMilliseconds,
+      anchorMs,
+      sourceTimezone: obligation.period.sourceTimezone,
+    });
+  const periodTimezone = obligation.schedule.periodTimezone ?? obligation.period.sourceTimezone;
   return {
-    period_duration: `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
+    period_duration: obligation.schedule.periodDuration ?? `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
     alignment,
     ...(alignment === 'billing_cycle' ? { period_anchor: obligation.schedule.anchor } : {}),
-    ...(alignment === 'utc' ? {} : { period_timezone: obligation.period.sourceTimezone }),
+    ...(alignment === 'utc' ? {} : { period_timezone: periodTimezone }),
     delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
   };
 }

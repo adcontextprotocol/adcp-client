@@ -370,14 +370,18 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         ...structuredClone(route.sourceScope),
         [ADAPTER_SCOPE_KEY]: route.adapterId,
       });
-      const sourceScope =
-        (await keylessPredecessorScope(
-          options.store,
-          context.account.id,
-          frozenInput,
-          route.sourceScope,
-          sources.size
-        )) ?? routedScope;
+      const predecessor = await predecessorGeneration(options.store, context.account.id, frozenInput);
+      const sourceScope = keylessPredecessorScope(predecessor, route.sourceScope, sources.size) ?? routedScope;
+      // A generation installed before the identity was stored keeps its shape,
+      // or replaying it would change the semantic fingerprint.
+      const scheduleIdentity =
+        predecessor && predecessor.schedule.alignment === undefined
+          ? {}
+          : {
+              periodDuration: deliveryOffering.schedule.period_duration,
+              alignment: deliveryOffering.schedule.alignment,
+              ...(deliveryOffering.schedule.alignment === 'utc' ? {} : { periodTimezone: normalizedTimezone }),
+            };
       const {
         expectedCurrency: _currency,
         expectedSourceTimezone: _timezone,
@@ -390,6 +394,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       void _mediaBuyIds;
       return producer.installConfiguration({
         ...ledgerInput,
+        schedule: { ...ledgerInput.schedule, ...scheduleIdentity },
         account: { account_id: context.account.id },
         sourceScope,
         sourceTimezone: normalizedTimezone,
@@ -508,19 +513,16 @@ async function schedulerLoop<TCtxMeta>(
   // tenant early in that order can consume the whole per-pass budget and the
   // tenants behind it never produce.
   let rotation = 0;
-  const perAccountBudget =
-    options.maxObligationsPerAccount !== undefined || options.maxWorkerIterationsPerAccount !== undefined;
   while (!signal.aborted) {
     let accountIds: Array<string | undefined> = [];
     try {
       accountIds = options.deploymentWide
-        ? // A single deployment-wide sweep would apply the per-account budgets
-          // once across every tenant, which is not what those options name.
-          // Enumerate the ledger's accounts so each one gets its own bounded
-          // cycle, and rotate the starting point every pass.
-          perAccountBudget
-          ? rotate(await deploymentWideAccountIds(store), rotation)
-          : [undefined]
+        ? // A single deployment-wide sweep shares one budget across every
+          // tenant, so whichever account the ledger returns first can consume
+          // it — the producer's own default cap starves the rest just as an
+          // explicit per-account cap would. Enumerate the roster so each tenant
+          // gets its own bounded cycle, and rotate the starting point each pass.
+          rotate(await deploymentWideAccountIds(store), rotation)
         : rotate(
             validateAccountIds(
               typeof options.accountIds === 'function' ? await options.accountIds() : options.accountIds
@@ -654,18 +656,24 @@ function cycleAccountId(cycle: ReliableReportingCycleOptionsV1): string | undefi
  * install if any other semantic field moved, and a keyless generation can never
  * be created here because only an existing record is ever reused.
  */
-async function keylessPredecessorScope(
+/** The stored generation this install would replay, if any. */
+async function predecessorGeneration(
   store: ReportingLedgerStore,
   accountId: string,
-  configuration: Pick<ReliableReportingConfigurationInputV1, 'delivery_config_id' | 'delivery_config_version'>,
-  resolvedScope: Record<string, unknown>,
-  adapterCount: number
-): Promise<Record<string, unknown> | undefined> {
-  const predecessor = (await store.listConfigurations(accountId)).find(
+  configuration: Pick<ReliableReportingConfigurationInputV1, 'delivery_config_id' | 'delivery_config_version'>
+): Promise<ReportingLedgerConfigurationV1 | undefined> {
+  return (await store.listConfigurations(accountId)).find(
     value =>
       value.delivery_config_id === configuration.delivery_config_id &&
       value.delivery_config_version === configuration.delivery_config_version
   );
+}
+
+function keylessPredecessorScope(
+  predecessor: ReportingLedgerConfigurationV1 | undefined,
+  resolvedScope: Record<string, unknown>,
+  adapterCount: number
+): Record<string, unknown> | undefined {
   if (!predecessor || Object.prototype.hasOwnProperty.call(predecessor.sourceScope, ADAPTER_SCOPE_KEY)) {
     return undefined;
   }
@@ -707,6 +715,15 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   ) {
     throw new TypeError('ReliableReportingService currently installs Core API delivery only');
   }
+  // Refused here rather than at install: capabilities are built from these
+  // offerings, so accepting one whose alignment can never be installed would
+  // advertise a schedule to every buyer that the service always rejects.
+  if (delivery.schedule.alignment !== 'utc' && delivery.schedule.alignment !== 'source_timezone') {
+    throw new TypeError(
+      `ReliableReportingService cannot honor '${delivery.schedule.alignment}' period alignment; ` +
+        'it generates fixed-length periods from the utc and source_timezone origins'
+    );
+  }
   if (delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
     throw new TypeError('Official delivery finality requires an authoritative source offering');
   }
@@ -719,7 +736,9 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
     const readyOffset =
       finalization.schedule.daysAfterPeriodEnd * 86_400_000 +
       localTimeOfDayMilliseconds(finalization.schedule.sourceLocalReadyTime);
-    const earliest = readyOffset + reportingIsoDurationMillisecondsV1(finalization.expectedAvailabilityLag);
+    // Worst case, not expected: the SLA is a maximum the seller promises for
+    // every period, so a deadline only the typical period meets is untruthful.
+    const earliest = readyOffset + reportingIsoDurationMillisecondsV1(finalization.worstCaseAvailabilityLag);
     if (reportingIsoDurationMillisecondsV1(delivery.schedule.delivery_sla) < earliest) {
       throw new TypeError(
         'Official reporting delivery SLA is shorter than the source can finalize and publish; ' +
@@ -731,6 +750,16 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   const min = reportingIsoDurationMillisecondsV1(source.windowing.minimumWindow);
   const max = reportingIsoDurationMillisecondsV1(source.windowing.maximumWindow);
   if (period < min || period > max) throw new TypeError('Delivery schedule is outside source window bounds');
+  // The offering's declared window bounds and the executor's per-request
+  // ceiling are separate limits. A period inside the window but over the
+  // request ceiling would install cleanly and then fail on every execution.
+  const executorCeiling = source.sourceExecution.maximumWindowDaysPerRequest * 86_400_000;
+  if (period > executorCeiling) {
+    throw new TypeError(
+      'Delivery schedule period exceeds the source executor maximumWindowDaysPerRequest; ' +
+        'no single request could cover one period'
+    );
+  }
   if (delivery.reporting_profile.primary_keys.length === 0) {
     throw new TypeError('Delivery offering requires at least one reporting primary key');
   }
@@ -902,7 +931,10 @@ function assertSupportedScheduleSemantics(
   // check below is what catches an offset change between the origin and today.
   const now = Date.now();
   const spanStartMs = Math.max(anchorMs, now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS);
-  const spanEndMs = now + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
+  // Anchor from the later of now and the anchor itself. Ending the span at
+  // `now + horizon` would put spanEnd before spanStart for a future-dated
+  // generation, so the scan body would never run and a DST zone would install.
+  const spanEndMs = Math.max(now, anchorMs) + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
   const ordinal = Math.ceil((spanStartMs - originMs) / schedule.periodMilliseconds);
   const firstBoundaryMs = originMs + ordinal * schedule.periodMilliseconds;
   if (!reportingIsSourceLocalMidnightV1(firstBoundaryMs, sourceTimezone)) {

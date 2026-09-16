@@ -10,6 +10,7 @@ const {
 const {
   redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
+  reportingScheduleOriginV1,
 } = require('../../dist/lib/reporting/source/index.js');
 const { createAdcpServerFromPlatform } = require('../../dist/lib/server/decisioning/runtime/from-platform.js');
 const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.js');
@@ -127,6 +128,14 @@ function zonedFixture(
       sourceTimezone: timezone,
     }),
   });
+}
+
+/** The first protocol period boundary at/after `isoInstant` for a zone. */
+function protocolBoundaryAfter(timezone, isoInstant) {
+  const origin = reportingScheduleOriginV1('source_timezone', timezone);
+  const target = Date.parse(isoInstant);
+  const ordinal = Math.ceil((target - origin) / 86_400_000);
+  return new Date(origin + ordinal * 86_400_000).toISOString();
 }
 
 function serviceFixture(overrides = {}) {
@@ -794,11 +803,11 @@ describe('ReliableReportingService', () => {
   test('refuses schedule semantics the installed executor cannot satisfy', async () => {
     const context = { account: { id: 'account-a', ctx_metadata: {} } };
 
-    // Alignment the service does not generate periods for.
+    // Alignment the service does not generate periods for. Refused at
+    // construction so discovery never advertises an uninstallable schedule.
     for (const alignment of ['billing_cycle', 'account_timezone']) {
-      const { service } = zonedFixture('UTC', { alignment });
-      await assert.rejects(
-        service.installConfiguration(configuration(), context),
+      assert.throws(
+        () => zonedFixture('UTC', { alignment }),
         /cannot honor '.*' period alignment/,
         `${alignment} must be refused`
       );
@@ -1020,11 +1029,19 @@ describe('ReliableReportingService', () => {
       { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
     );
     const [obligation] = status.periods;
-    // A UTC source timezone whose boundaries sit on the 1970 UTC origin is
-    // exactly the `utc` alignment, and `utc` forbids both extra fields.
-    assert.equal(obligation.schedule.alignment, 'utc');
+    // installed_schedule_match: the status must echo exactly what was
+    // installed. A source_timezone offering must not be reported as `utc`
+    // merely because a UTC source clock also sits on the UTC origin, and P1D
+    // must not be re-expressed as PT86400S.
+    assert.equal(obligation.schedule.alignment, 'source_timezone');
+    assert.equal(obligation.schedule.period_duration, 'P1D');
+    assert.equal(obligation.schedule.period_timezone, 'UTC');
     assert.equal(obligation.schedule.period_anchor, undefined, 'period_anchor is forbidden outside billing_cycle');
-    assert.equal(obligation.schedule.period_timezone, undefined, 'period_timezone is forbidden for utc');
+    assert.equal(
+      obligation.schedule.delivery_sla,
+      service.capabilities.offerings[0].schedule.delivery_sla,
+      'the echoed SLA must match the advertised offering'
+    );
   });
 
   test('refuses an official delivery SLA the source cannot finalize within', async () => {
@@ -1034,10 +1051,12 @@ describe('ReliableReportingService', () => {
       ...sourceOffering,
       publicationClass: 'AUTHORITATIVE',
       finalization: {
-        // Finalizes 06:00 source-local one day after period end, then PT15M.
-        schedule: { sourceLocalReadyTime: '06:00', daysAfterPeriodEnd: 1 },
-        expectedAvailabilityLag: cadence.expectedAvailabilityLag,
-        worstCaseAvailabilityLag: cadence.worstCaseAvailabilityLag,
+        // Finalizes 01:00 source-local the same day. The typical publish lag is
+        // PT15M, but the worst case is PT6H — so the honest floor is 7h, and a
+        // PT2H SLA is only ever met on a good day.
+        schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
+        expectedAvailabilityLag: 'PT15M',
+        worstCaseAvailabilityLag: 'PT6H',
         triggerSupport: cadence.triggerSupport,
         correctionWindow: 'P7D',
         correctionPolicy: 'immutable_correction',
@@ -1048,13 +1067,14 @@ describe('ReliableReportingService', () => {
     infeasible.deliveryOffering.schedule.delivery_sla = 'PT2H';
     assert.throws(
       () => serviceFixture({ adapters: { fixture: infeasible } }),
-      /shorter than the source can finalize and publish/
+      /shorter than the source can finalize and publish/,
+      'the expected lag is not the promise; the worst case is'
     );
 
-    // Widening the advertised SLA past the finalization moment makes it honest.
-    infeasible.deliveryOffering.schedule.delivery_sla = 'PT30H15M';
+    // Widening the advertised SLA past the worst-case publish makes it honest.
+    infeasible.deliveryOffering.schedule.delivery_sla = 'PT7H';
     const feasible = serviceFixture({ adapters: { fixture: infeasible } });
-    assert.equal(feasible.service.capabilities.offerings[0].schedule.delivery_sla, 'PT30H15M');
+    assert.equal(feasible.service.capabilities.offerings[0].schedule.delivery_sla, 'PT7H');
   });
 
   test('applies per-account budgets and rotates tenants in deployment-wide mode', async () => {
@@ -1212,6 +1232,182 @@ describe('ReliableReportingService', () => {
     );
   });
 
+  test('still checks offset behavior for an anchor beyond the forward horizon', async () => {
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    // A 2030 anchor sits past now + forward horizon. Ending the scan at
+    // "now + horizon" would put the span end before its start, so the loop body
+    // would never run and a DST zone would install.
+    for (const timezone of ['America/Santiago', 'Australia/Sydney']) {
+      const zone = zonedFixture(timezone);
+      await assert.rejects(
+        zone.service.installConfiguration(
+          configuration({
+            expectedSourceTimezone: timezone,
+            schedule: {
+              anchor: protocolBoundaryAfter(timezone, '2030-01-01T00:00:00.000Z'),
+              periodMilliseconds: 86_400_000,
+              deliverySlaMilliseconds: 0,
+              recoveryWindowMilliseconds: 86_400_000,
+            },
+          }),
+          context
+        ),
+        /UTC offset/,
+        `${timezone} observes DST and must be refused even when anchored in the future`
+      );
+    }
+  });
+
+  test('refuses a period wider than the executor can fetch in one request', async () => {
+    // P2D sits inside the offering's declared window bounds but above the
+    // executor's per-request ceiling, so every execution would fail.
+    const wide = adapter();
+    wide.sourceOffering.windowing = {
+      ...wide.sourceOffering.windowing,
+      minimumWindow: 'P1D',
+      maximumWindow: 'P2D',
+    };
+    wide.sourceOffering.sourceExecution = {
+      ...wide.sourceOffering.sourceExecution,
+      maximumWindowDaysPerRequest: 1,
+    };
+    wide.deliveryOffering.schedule.period_duration = 'P2D';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: wide } }),
+      /maximumWindowDaysPerRequest/,
+      'a period no single request can cover must fail at install, not at every execution'
+    );
+
+    // Raising the executor ceiling to match makes the same period installable.
+    wide.sourceOffering.sourceExecution = {
+      ...wide.sourceOffering.sourceExecution,
+      maximumWindowDaysPerRequest: 2,
+    };
+    const ok = serviceFixture({ adapters: { fixture: wide } });
+    assert.equal(ok.service.capabilities.offerings[0].schedule.period_duration, 'P2D');
+  });
+
+  test('rotates tenants under the producer default cap, not only explicit budgets', async () => {
+    const { service } = serviceFixture({ resolveCurrency: () => 'USD' });
+    for (const id of ['account-a', 'account-b']) {
+      await service.installConfiguration(configuration(), { account: { id, ctx_metadata: {} } });
+    }
+
+    // account-a has far more due work than one pass can drain; account-b has
+    // one obligation. Under a single deployment-wide sweep with the producer's
+    // default cap, account-a consumes the pass every time and account-b never
+    // produces.
+    const planned = [];
+    service.producer.planObligations = async (_now, options) => {
+      planned.push(options?.account_id);
+      return options?.account_id === 'account-a' ? new Array(1_000).fill({}) : [{}];
+    };
+    service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+
+    service.start({ intervalMilliseconds: 20, deploymentWide: true });
+    for (let tick = 0; tick < 300 && planned.length < 6; tick += 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    await service.stop();
+
+    assert.ok(planned.length >= 4, `expected repeated passes, saw ${planned.length}`);
+    assert.ok(planned.includes('account-b'), 'the smaller tenant must still be planned');
+    const firstOfEachPass = [planned[0], planned[2]];
+    assert.notDeepEqual(firstOfEachPass[0], firstOfEachPass[1], 'the starting tenant must rotate between passes');
+  });
+
+  test('composes the reporting/legacy delivery split under strict merge-seam mode', async () => {
+    const { service } = serviceFixture();
+    const seen = [];
+    // strict mode rejects an un-migrated override. This split is deliberate —
+    // the ledger owns exact revision reads, the adopter owns cumulative ones —
+    // so it must compose rather than be reported as a collision.
+    const server = createAdcpServerFromPlatform(
+      service.install({
+        capabilities: { specialisms: [], config: {} },
+        accounts: {
+          resolution: 'explicit',
+          resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+          upsert: async () => [],
+        },
+      }),
+      {
+        name: 'strict-merge-seam-test',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.3',
+        validation: { requests: 'off', responses: 'off' },
+        mergeSeam: 'strict',
+        legacyHandlers: {
+          mediaBuy: {
+            getMediaBuyDelivery: async request => {
+              seen.push(request.media_buy_ids);
+              return {
+                reporting_period: { start: '2026-09-01', end: '2026-09-02' },
+                currency: 'USD',
+                media_buy_deliveries: [],
+              };
+            },
+          },
+        },
+      }
+    );
+
+    const cumulative = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: {
+            account: { account_id: 'account-a' },
+            media_buy_ids: ['media-buy-account-a'],
+            start_date: '2026-09-01',
+            end_date: '2026-09-02',
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.notEqual(cumulative.isError, true, JSON.stringify(cumulative.structuredContent));
+    assert.deepEqual(seen, [['media-buy-account-a']]);
+
+    const exact = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: { account: { account_id: 'account-a' }, reporting_revision_id: 'revision-unknown' },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.equal(seen.length, 1, 'exact revision reads stay with the ledger under strict mode');
+    assert.equal(exact.isError, true);
+  });
+
+  test('never advertises a schedule offering it would refuse to install', async () => {
+    // Discovery-to-install consistency: every alignment reachable in
+    // capabilities must be installable, and the unsupported ones must be
+    // unreachable because construction refused them.
+    for (const alignment of ['billing_cycle', 'account_timezone']) {
+      assert.throws(() => zonedFixture('UTC', { alignment }), /cannot honor/);
+    }
+
+    const { service } = serviceFixture();
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    for (const offering of service.capabilities.offerings) {
+      assert.ok(
+        ['utc', 'source_timezone'].includes(offering.schedule.alignment),
+        `advertised alignment ${offering.schedule.alignment} must be installable`
+      );
+      const installed = await service.installConfiguration(
+        configuration({ delivery_config_id: `dc-${offering.offering_id}` }),
+        context
+      );
+      assert.equal(installed.schedule.alignment, offering.schedule.alignment);
+      assert.equal(installed.schedule.periodDuration, offering.schedule.period_duration);
+    }
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];
@@ -1255,7 +1451,9 @@ describe('ReliableReportingService', () => {
         // reachable inside the PT2H official SLA advertised below.
         schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
         expectedAvailabilityLag: cadence.expectedAvailabilityLag,
-        worstCaseAvailabilityLag: cadence.worstCaseAvailabilityLag,
+        // Worst case 1h after a 01:00 finalization = a 2h floor, exactly the
+        // PT2H the offering advertises below.
+        worstCaseAvailabilityLag: 'PT1H',
         triggerSupport: cadence.triggerSupport,
         correctionWindow: 'P7D',
         correctionPolicy: 'immutable_correction',
@@ -1373,6 +1571,9 @@ describe('ReliableReportingService', () => {
 
   test('runs explicitly per account and shuts down a deployment-wide scheduler gracefully', async () => {
     const { service } = serviceFixture();
+    // The deployment-wide scheduler works off the ledger's account roster, so
+    // give it one installed tenant to find.
+    await service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } });
     const seen = [];
     service.producer.planObligations = async (_now, options) => {
       seen.push(['plan', options?.account_id]);
@@ -1389,13 +1590,18 @@ describe('ReliableReportingService', () => {
     ]);
 
     seen.length = 0;
+    // A deployment-wide scheduler now enumerates the ledger's roster so each
+    // tenant gets its own bounded cycle; `runCycle({ deploymentWide: true })`
+    // remains the single unscoped sweep for callers that want it.
     service.start({ intervalMilliseconds: 60_000, deploymentWide: true });
-    await new Promise(resolve => setImmediate(resolve));
+    for (let tick = 0; tick < 200 && seen.length < 2; tick += 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
     await service.stop();
     assert.equal(service.running, false);
     assert.deepEqual(seen, [
-      ['plan', undefined],
-      ['worker', undefined],
+      ['plan', 'account-a'],
+      ['worker', 'account-a'],
     ]);
 
     const errors = [];

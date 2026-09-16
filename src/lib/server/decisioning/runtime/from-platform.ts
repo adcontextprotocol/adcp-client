@@ -4436,7 +4436,11 @@ function mergeHandlers<T extends object>(
   custom: T | undefined,
   platform: T | undefined,
   domain: string,
-  opts: { mode: MergeSeamMode; logger: AdcpLogger }
+  opts: { mode: MergeSeamMode; logger: AdcpLogger },
+  // Keys the caller composes into a single routed handler instead of letting
+  // one side shadow the other. They are not a migration-seam collision, so
+  // strict mode must not reject them.
+  composedKeys: ReadonlySet<string> = new Set()
 ): T | undefined {
   if (!custom && !platform) return undefined;
   if (!custom) return platform;
@@ -4445,6 +4449,7 @@ function mergeHandlers<T extends object>(
   if (opts.mode !== 'silent') {
     const collisions: string[] = [];
     for (const key of Object.keys(platform)) {
+      if (composedKeys.has(key)) continue;
       if (key in (custom as Record<string, unknown>)) collisions.push(key);
     }
     if (collisions.length > 0) {
@@ -4489,7 +4494,21 @@ function mergeMediaBuyHandlers(
   fallbackWireMode: 'canonical' | 'legacy',
   platformServesCumulativeDelivery: boolean
 ): MediaBuyHandlers<Account> | undefined {
-  const merged = mergeHandlers(custom, platform, domain, opts);
+  // Decide the composition first so collision enforcement can see it: a
+  // reporting-only platform contributes `getMediaBuyDelivery` solely for exact
+  // revision reads, which is a deliberate split of one tool across two owners
+  // rather than an un-migrated override for strict mode to reject.
+  const composesDelivery =
+    !platformServesCumulativeDelivery &&
+    typeof custom?.getMediaBuyDelivery === 'function' &&
+    typeof platform?.getMediaBuyDelivery === 'function';
+  const merged = mergeHandlers(
+    custom,
+    platform,
+    domain,
+    opts,
+    composesDelivery ? new Set(['getMediaBuyDelivery']) : undefined
+  );
   if (!custom || !platform || !merged) return merged;
 
   const routed = { ...merged } as Record<string, unknown>;
@@ -4500,11 +4519,7 @@ function mergeMediaBuyHandlers(
   // handler keeps receiving the raw HandlerContext it is written against.
   const customDelivery = custom.getMediaBuyDelivery;
   const platformDelivery = platform.getMediaBuyDelivery;
-  if (
-    !platformServesCumulativeDelivery &&
-    typeof customDelivery === 'function' &&
-    typeof platformDelivery === 'function'
-  ) {
+  if (composesDelivery && typeof customDelivery === 'function' && typeof platformDelivery === 'function') {
     routed.getMediaBuyDelivery = (...args: unknown[]) => {
       const revisionId = (args[0] as { reporting_revision_id?: unknown } | undefined)?.reporting_revision_id;
       const exactRevisionRead = typeof revisionId === 'string' && revisionId.length > 0;
