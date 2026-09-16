@@ -1129,6 +1129,346 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.deepEqual(unrelated.adjustment_receipts ?? [], []);
   });
 
+  test('keeps the prune account lock off the expensive selection', async () => {
+    const heavy = await seedSkewLedger('prunelock', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(heavy),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: heavy.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: heavy.accountId });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [heavy.accountId ? heavy.obligation.reporting_obligation_id : null]
+    );
+    heavy.materialization = settled.rows[0].data;
+
+    // A replay cache with real breadth. The previous shape asked a JSONB
+    // containment question per candidate receipt, which the planner answered
+    // with a join filter over all of it.
+    const context = { account: { id: heavy.accountId }, agent: { agent_url: 'https://prunelock-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    await sync(
+      {
+        idempotency_key: 'receipt-prunelock-0001',
+        receipts: [receipt(heavy, { reporting_receipt_id: 'receipt-prunelock-0001' })],
+      },
+      context
+    );
+    const filler = [];
+    for (let index = 0; index < 400; index += 1) {
+      filler.push([
+        heavy.accountId,
+        'https://prunelock-buyer.example',
+        `filler-key-${String(index).padStart(6, '0')}`,
+        'fingerprint',
+        JSON.stringify([{ kind: 'recorded', id: `filler-receipt-${index}`, entry: 'revision' }]),
+      ]);
+    }
+    for (const row of filler) {
+      await pool.query(
+        `INSERT INTO adcp_reporting_receipt_batches
+           (account_id, consumer_id, idempotency_key, request_fingerprint, results)
+         VALUES ($1,$2,$3,$4,$5::jsonb)`,
+        row
+      );
+    }
+    // Enough candidate receipts that a per-candidate question is visible as
+    // repeated scans rather than one pass.
+    for (let index = 0; index < 200; index += 1) {
+      await pool.query(
+        `INSERT INTO adcp_reporting_receipts
+           (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+            is_current, semantic_fingerprint, data, received_at, recorded_at)
+         VALUES ($1,$2,$3,'revision',$4,false,'fingerprint','{}'::jsonb,
+                 clock_timestamp() - INTERVAL '300 days', clock_timestamp() - INTERVAL '300 days')`,
+        [
+          heavy.accountId,
+          'https://prunelock-buyer.example',
+          `aged-receipt-${String(index).padStart(6, '0')}`,
+          heavy.revision.reporting_revision_id,
+        ]
+      );
+    }
+    await pool.query('ANALYZE adcp_reporting_receipt_batches');
+    await pool.query('ANALYZE adcp_reporting_receipts');
+
+    // The shape that shipped before: one containment question per candidate
+    // receipt. Shown here so the difference is a measurement, not a claim.
+    const previousShape = await pool.query(
+      `EXPLAIN (ANALYZE, FORMAT JSON)
+       SELECT receipt.consumer_id, receipt.reporting_receipt_id
+         FROM adcp_reporting_receipts receipt
+        WHERE receipt.account_id = $1
+          AND NOT EXISTS (
+            SELECT 1 FROM adcp_reporting_receipt_batches batch
+             WHERE batch.account_id = receipt.account_id
+               AND batch.consumer_id = receipt.consumer_id
+               AND batch.results @> jsonb_build_array(
+                     jsonb_build_object('id', receipt.reporting_receipt_id))
+          )`,
+      [heavy.accountId]
+    );
+    const previousLoops = [];
+    const walkPrevious = node => {
+      if (!node || typeof node !== 'object') return;
+      if (node['Relation Name'] === 'adcp_reporting_receipt_batches') {
+        previousLoops.push(Number(node['Actual Loops'] ?? 1));
+      }
+      for (const child of node.Plans ?? []) walkPrevious(child);
+    };
+    walkPrevious(previousShape.rows[0]['QUERY PLAN'][0].Plan);
+    // Containment cannot be a hash key, so every candidate/row pair is
+    // evaluated by the join filter — that is where the reviewer's six
+    // million removals came from. Equality on the expanded ids can hash.
+    const joinFilterRemovals = plannedJson => {
+      const matches = [...JSON.stringify(plannedJson).matchAll(/"Rows Removed by Join Filter":\s*(\d+)/g)];
+      return matches.reduce((total, match) => total + Number(match[1]), 0);
+    };
+    const previousRemovals = joinFilterRemovals(previousShape.rows[0]['QUERY PLAN']);
+    assert.ok(previousRemovals > 0, 'the previous containment shape filters pairwise');
+
+    // The selection must not be a join filter over the whole cache.
+    const plan = await pool.query(
+      `EXPLAIN (ANALYZE, FORMAT JSON)
+       WITH live_referenced AS (
+         SELECT DISTINCT batch.consumer_id,
+                COALESCE(elem ->> 'id', elem ->> 'reporting_receipt_id') AS reporting_receipt_id
+           FROM adcp_reporting_receipt_batches batch,
+                LATERAL jsonb_array_elements(batch.results) elem
+          WHERE batch.account_id = $1
+       )
+       SELECT receipt.consumer_id, receipt.reporting_receipt_id
+         FROM adcp_reporting_receipts receipt
+        WHERE receipt.account_id = $1
+          AND NOT EXISTS (
+            SELECT 1 FROM live_referenced
+             WHERE live_referenced.consumer_id = receipt.consumer_id
+               AND live_referenced.reporting_receipt_id = receipt.reporting_receipt_id
+          )`,
+      [heavy.accountId]
+    );
+    // The property that matters is how many times the replay cache is read.
+    // The old containment shape asked the question per candidate receipt, so
+    // the cache was rescanned for each one; expanding it once is a single
+    // pass no matter how many receipts are in scope.
+    const loopsOverCache = [];
+    const walk = node => {
+      if (!node || typeof node !== 'object') return;
+      if (node['Relation Name'] === 'adcp_reporting_receipt_batches') {
+        loopsOverCache.push(Number(node['Actual Loops'] ?? 1));
+      }
+      for (const child of node.Plans ?? []) walk(child);
+    };
+    walk(plan.rows[0]['QUERY PLAN'][0].Plan);
+    assert.ok(loopsOverCache.length >= 1, 'the replay cache is read');
+    const currentRemovals = joinFilterRemovals(plan.rows[0]['QUERY PLAN']);
+    assert.ok(
+      currentRemovals < previousRemovals,
+      `the expanded shape must not filter pairwise: ${currentRemovals} vs ${previousRemovals}`
+    );
+    assert.deepEqual(
+      loopsOverCache.filter(loops => loops > 1),
+      [],
+      `the replay cache must be read once, not per receipt: loops ${JSON.stringify(loopsOverCache)}`
+    );
+
+    // And a concurrent Core write must not be blocked out while it runs.
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    const started = Date.now();
+    const [pruned, concurrent] = await Promise.all([
+      retaining.pruneExpiredEvidence({ account_id: heavy.accountId }),
+      (async () => {
+        await core.putIssue({
+          issueId: `reporting-issue.prunelock.${heavy.obligation.reporting_obligation_id}`,
+          reporting_obligation_id: heavy.obligation.reporting_obligation_id,
+          code: 'REPORT_OVERDUE',
+          severity: 'delayed',
+          responsibleParty: 'seller',
+          recommendedAction: 'wait_for_retry',
+          openedAt: heavy.now,
+          observedAt: heavy.now,
+        });
+        return Date.now() - started;
+      })(),
+    ]);
+    assert.ok(pruned, 'the prune completed');
+    assert.ok(concurrent < 5_000, `a concurrent Core write must not wait out the account lock, waited ${concurrent}ms`);
+  });
+
+  test('fails materializations that used every delivery attempt during the worker run', async () => {
+    const drained = await seedSkewLedger('workerexhaust');
+    assert.equal(await managed.planMaterializations({ account_id: drained.accountId }), 1);
+    for (let round = 0; round < 5; round += 1) {
+      const claimed = await managed.claimMaterialization({
+        owner: `pre-crash-${round}`,
+        now: new Date().toISOString(),
+        lease_milliseconds: 1,
+        account_id: drained.accountId,
+      });
+      assert.ok(claimed, `claim ${round} should succeed`);
+      await new Promise(resolve => setTimeout(resolve, 3));
+    }
+    const stuck = await pool.query(
+      `SELECT status, lease_generation FROM adcp_reporting_materializations WHERE account_id = $1`,
+      [drained.accountId]
+    );
+    assert.equal(stuck.rows[0].status, 'pending');
+    assert.equal(Number(stuck.rows[0].lease_generation), 5);
+
+    // The worker itself has to clear it. Nothing else does: the claim
+    // predicate refuses it and the planner skips an obligation with any
+    // pending row, so the revision was stuck with replan 0 and claim null.
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(drained),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    const run = await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 3,
+      account_id: drained.accountId,
+    });
+    assert.equal(run.exhausted, 1, 'the worker fails the exhausted row');
+    assert.equal(run.planned, 1, 'and the revision can be planned again');
+    assert.equal(run.delivered, 1, 'and delivered');
+  });
+
+  test('advances the roster refresh cursor past a tenant whose lookup fails', async () => {
+    const { Pool } = require('pg');
+    const failSchema = `${schema}_rosterfail`;
+    await bootstrap.query(`CREATE SCHEMA "${failSchema}"`);
+    const failPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${failSchema}"` });
+    try {
+      await failPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await failPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const failCore = new ledger.PostgresReportingLedgerStore(failPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const failManaged = new ledger.PostgresReportingManagedDeliveryStore(failPool);
+      assert.equal(await failManaged.probe(failCore), true);
+      const first = await seedSkewLedgerInto(failCore, failManaged, 'rosterfailone', 'consumer_receipt');
+      const second = await seedSkewLedgerInto(failCore, failManaged, 'rosterfailtwo', 'consumer_receipt');
+      const seen = [];
+      const rosterStore = new ledger.PostgresReportingLedgerStore(failPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+        obligatedConsumers: async input => {
+          seen.push(input.reporting_obligation_id);
+          throw new Error('authorization service unavailable');
+        },
+      });
+      // At limit 1 a failing first obligation used to be re-selected every
+      // sweep, because the cursor only advanced on success — the healthy one
+      // behind it was never reached at all.
+      await rosterStore.refreshObligatedConsumerRosterVersions({ limit: 1 });
+      await rosterStore.refreshObligatedConsumerRosterVersions({ limit: 1 });
+      assert.deepEqual(
+        [...seen].sort(),
+        [first.obligation.reporting_obligation_id, second.obligation.reporting_obligation_id].sort(),
+        'a failing tenant yields its slot to the next one'
+      );
+    } finally {
+      await failPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${failSchema}" CASCADE`);
+    }
+  });
+
+  test('resolves a stale managed issue once delivery succeeds again', async () => {
+    const stale = await seedSkewLedger('staleissue');
+    let failFirst = true;
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => {
+        if (failFirst) {
+          failFirst = false;
+          throw new Error('provider unavailable');
+        }
+        return materializationOutcome(stale);
+      },
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: stale.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: stale.accountId });
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: stale.obligation.reporting_obligation_id,
+    });
+    const failed = await pool.query(
+      `SELECT data ->> 'code' AS code, resolved_at FROM adcp_reporting_issues WHERE obligation_id = $1`,
+      [stale.obligation.reporting_obligation_id]
+    );
+    assert.ok(
+      failed.rows.some(row => row.code === 'DELIVERY_FAILED' && row.resolved_at === null),
+      'the delivery failure is persisted'
+    );
+
+    // Redeliver successfully. The resolve sweep only covered Core codes, so
+    // this stayed open and the status kept publishing a delivery failure
+    // that no longer described anything.
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 3, account_id: stale.accountId });
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: stale.obligation.reporting_obligation_id,
+    });
+    const after = await pool.query(
+      `SELECT data ->> 'code' AS code, resolved_at FROM adcp_reporting_issues WHERE obligation_id = $1`,
+      [stale.obligation.reporting_obligation_id]
+    );
+    assert.equal(
+      after.rows.some(row => row.code === 'DELIVERY_FAILED' && row.resolved_at === null),
+      false,
+      'a managed issue is resolved once it stops being true'
+    );
+  });
+
+  test('does not poison the durable policy when startup validation refuses', async () => {
+    const { Pool } = require('pg');
+    const poisonSchema = `${schema}_poison`;
+    await bootstrap.query(`CREATE SCHEMA "${poisonSchema}"`);
+    const poisonPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${poisonSchema}"` });
+    try {
+      await poisonPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await poisonPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const poisonCore = new ledger.PostgresReportingLedgerStore(poisonPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const poisonManaged = new ledger.PostgresReportingManagedDeliveryStore(poisonPool);
+      assert.equal(await poisonManaged.probe(poisonCore), true);
+      // A tenant on a 900 second recovery window.
+      await seedSkewLedgerInto(poisonCore, poisonManaged, 'poison', 'delivery_only', {
+        recoveryWindowMilliseconds: 900_000,
+      });
+      // A runtime that would advertise 60s must be refused...
+      await assert.rejects(
+        () => poisonManaged.adoptAdvertisedRecoveryWindowSeconds(60),
+        error => /at least the widest installed managed Core recovery window \(900s\)/.test(String(error.cause))
+      );
+      // ...and must leave nothing behind. Persisting first meant the correct
+      // 900s restart was then refused as conflicting with a durable 60.
+      const registry = await poisonPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS value FROM adcp_reporting_managed_policy`
+      );
+      assert.equal(registry.rowCount, 0, 'a refused adoption writes nothing');
+      await poisonManaged.adoptAdvertisedRecoveryWindowSeconds(900);
+      const settledRegistry = await poisonPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS value FROM adcp_reporting_managed_policy`
+      );
+      assert.equal(settledRegistry.rows[0].value, '900', 'the correct value then registers cleanly');
+    } finally {
+      await poisonPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${poisonSchema}" CASCADE`);
+    }
+  });
+
   async function seedSkewLedger(suffix = 'skew', reconciliationMode = 'delivery_only', seedOptions = {}) {
     return seedSkewLedgerInto(core, managed, suffix, reconciliationMode, seedOptions);
   }
@@ -1172,7 +1512,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         anchor: period.start,
         periodMilliseconds: 1_800_000,
         deliverySlaMilliseconds: 0,
-        recoveryWindowMilliseconds: 60_000,
+        recoveryWindowMilliseconds: seedOptions.recoveryWindowMilliseconds ?? 60_000,
       },
       sourceSettings: {},
       contract: { reportingProfile: 'analytics-v1' },
@@ -3283,6 +3623,36 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         }),
       /non-negative safe integer/
     );
+    // An explicit value may tighten the requirement, never waive it. Taking
+    // the caller's number outright let an explicit 0 accept a one-day
+    // resource against a thirty-day binding. A fresh row, because the claim
+    // above has already been spent by the refusal it was testing.
+    const undercut = await seedSkewLedger('retentionundercut');
+    await managed.planMaterializations({ account_id: undercut.accountId });
+    const freshClaim = await managed.claimMaterialization({
+      owner: 'undercut-worker',
+      now: new Date().toISOString(),
+      lease_milliseconds: 120_000,
+      account_id: undercut.accountId,
+    });
+    assert.ok(freshClaim);
+    assert.equal(freshClaim.binding.resource_retention_days, 30);
+    const shortLived = materializationOutcome(undercut);
+    shortLived.resource.expires_at = new Date(Date.now() + 86_400_000).toISOString();
+    assert.equal(
+      await managed.settleMaterialization({
+        lease: freshClaim,
+        now: new Date().toISOString(),
+        outcome: shortLived,
+        minimum_resource_retention_days: 0,
+      }),
+      false,
+      'an explicit zero cannot undercut the binding promise'
+    );
+    const undercutRow = await pool.query(`SELECT status FROM adcp_reporting_materializations WHERE account_id = $1`, [
+      undercut.accountId,
+    ]);
+    assert.equal(undercutRow.rows[0].status, 'failed', 'and the refused attempt is spent, not left pending');
   });
 
   async function seedCoreLedger() {

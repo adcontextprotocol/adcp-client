@@ -142,12 +142,10 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_batches (
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (account_id, consumer_id, idempotency_key)
 );
--- Pruning asks "does any live replay row still name this receipt", which is a
--- JSONB containment test. Unindexed it is a sequential scan of the whole
--- replay cache per prune, which is what pushed the account lock past the Core
--- store's five-second timeout on a long history.
-CREATE INDEX IF NOT EXISTS adcp_reporting_receipt_batches_results
-  ON adcp_reporting_receipt_batches USING GIN (results jsonb_path_ops);
+-- Pruning used to ask "does any live replay row contain this receipt id" per
+-- candidate, which no index could serve for a correlated operand. It now
+-- expands the account's replay rows once instead, so no GIN index is needed
+-- and the batches table is not burdened with maintaining one.
 
 -- Agent-wide promises, durable and shared by every store instance and process
 -- that talks to this database. An in-memory bound only constrains the process
@@ -306,7 +304,30 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
    */
   async adoptAdvertisedRecoveryWindowSeconds(seconds: number): Promise<void> {
     nonnegativeSafeInteger(seconds, 'automatedRecoveryWindowSeconds');
-    await this.upsertPolicy('advertised_recovery_window_seconds', seconds, 'advertised recovery window', 's');
+    await this.upsertPolicy('advertised_recovery_window_seconds', seconds, 'advertised recovery window', 's', {
+      // Checked inside the same transaction that would persist it. Writing
+      // first and validating afterwards poisoned the registry: a rejected
+      // 60s startup against an installed 900s binding still left a durable
+      // 60, and the correct 900s restart was then refused as a conflict.
+      validate: async client => {
+        const widest = await client.query<QueryRow & { widest: string | null }>(
+          `SELECT MAX(CEIL(
+                    (configuration.data->'schedule'->>'recoveryWindowMilliseconds')::numeric / 1000
+                  ))::text AS widest
+             FROM adcp_reporting_managed_bindings binding
+             JOIN adcp_reporting_configurations configuration
+               ON configuration.configuration_id = binding.configuration_id`
+        );
+        const widestInstalled = Number(widest.rows[0]?.widest ?? 0);
+        if (Number.isFinite(widestInstalled) && seconds < widestInstalled) {
+          throw new Error(
+            `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
+              `(${widestInstalled}s); advertising ${seconds}s would promise a recovery bound this deployment ` +
+              `does not keep for every tenant`
+          );
+        }
+      },
+    });
   }
 
   /**
@@ -338,11 +359,20 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     this.policyRegistered = true;
   }
 
-  private async upsertPolicy(column: string, value: number, label: string, unit: string): Promise<void> {
+  private async upsertPolicy(
+    column: string,
+    value: number,
+    label: string,
+    unit: string,
+    options: { validate?: (client: PgClient) => Promise<void> } = {}
+  ): Promise<void> {
     await this.transaction(async client => {
       // Serialize adopters so two racing runtimes cannot both read "absent"
       // and each install their own value.
       await advisoryLock(client, 'adcp-reporting-managed-policy');
+      // Any precondition runs here, under the same lock and in the same
+      // transaction, so a refusal rolls the write back with it.
+      await options.validate?.(client);
       const existing = await client.query<QueryRow & { value: string | null }>(
         `SELECT ${column}::text AS value FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
       );
@@ -457,24 +487,102 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             `advertised horizon`
         );
       }
-      // Deliberately after the selection below, not before it: the receipt
-      // scan uses JSONB containment over the replay cache, which is not
-      // cheap on a long history, and holding the account lock across it
-      // pushed unrelated writes past the Core store's five-second
-      // account-lock timeout. Selection is read-only, so it is safe outside
-      // the lock; the deletes re-check their predicates by primary key.
       // One cutoff for every statement below, taken once. Re-evaluating
-      // clock_timestamp() per statement moves the boundary mid-prune, which is
-      // how a receipt could be skipped by the tombstone pass and then deleted
-      // by the next — leaving fewer tombstones than deletes.
+      // clock_timestamp() per statement moves the boundary mid-prune, which
+      // is how a receipt could be skipped by the tombstone pass and then
+      // deleted by the next — leaving fewer tombstones than deletes.
       const cutoff = (
         await client.query<QueryRow & { cutoff: string }>(
           `SELECT (clock_timestamp() - ($1::bigint * INTERVAL '1 day'))::text AS cutoff`,
           [days]
         )
       ).rows[0]!.cutoff;
-      // Batches first, so a replay row that has itself expired stops pinning
-      // the receipts it names before those receipts are considered.
+
+      // Selection runs BEFORE the account lock, and is read-only.
+      //
+      // The previous shape asked, per candidate receipt, "does any live
+      // replay row contain this id" as a JSONB containment test. The planner
+      // would not use the GIN index for that correlated operand, so it
+      // degenerated into a join filter over the whole replay cache — seconds
+      // of work with the account lock held, which pushed unrelated Core
+      // writes past their five-second lock timeout and failed them with
+      // 55P03. Expanding the account's live replay rows once into the ids
+      // they name is a single pass and needs no index at all.
+      const doomedReceipts = await client.query<QueryRow & { consumer_id: string; reporting_receipt_id: string }>(
+        `WITH live_referenced AS (
+           SELECT DISTINCT batch.consumer_id,
+                  COALESCE(
+                    elem ->> 'id',
+                    elem ->> 'reporting_receipt_id',
+                    elem -> 'receipt' ->> 'reporting_receipt_id',
+                    elem -> 'adjustment_receipt' ->> 'reporting_receipt_id'
+                  ) AS reporting_receipt_id
+             FROM adcp_reporting_receipt_batches batch,
+                  LATERAL jsonb_array_elements(batch.results) elem
+            -- Only a replay row still inside its own retention pins anything.
+            -- Selection now runs before the batch delete, so without this an
+            -- already-expired row kept holding its receipts alive forever.
+            WHERE batch.account_id = $1
+              AND batch.recorded_at >= clock_timestamp() - ($4::bigint * INTERVAL '1 millisecond')
+         )
+         SELECT receipt.consumer_id, receipt.reporting_receipt_id
+           FROM adcp_reporting_receipts receipt
+          WHERE receipt.account_id = $1
+            AND receipt.recorded_at < $3::timestamptz
+            AND NOT EXISTS (
+              SELECT 1 FROM live_referenced
+               WHERE live_referenced.consumer_id = receipt.consumer_id
+                 AND live_referenced.reporting_receipt_id = receipt.reporting_receipt_id
+            )
+            -- An acceptance outlives its own age while the resource it
+            -- accepts is still readable. Pruning it sooner produced a period
+            -- that reads complete with no receipt to show for it.
+            AND NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_materializations live
+               WHERE live.account_id = receipt.account_id
+                 AND live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                 AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
+            )
+          ORDER BY receipt.recorded_at
+          LIMIT $2`,
+        [input.account_id, limit, cutoff, RECEIPT_BATCH_RETENTION_MS]
+      );
+      const doomedMaterializations = await client.query<QueryRow & { materialization_id: string }>(
+        `SELECT materialization.materialization_id
+           FROM adcp_reporting_materializations materialization
+          WHERE materialization.account_id = $1
+            AND materialization.recorded_at < $3::timestamptz
+            AND materialization.status <> 'pending'
+            AND materialization.lease_owner IS NULL
+            AND COALESCE(
+                  (materialization.data -> 'resource' ->> 'expires_at')::timestamptz <= clock_timestamp(),
+                  true)
+            -- No SURVIVING receipt may still name it. Selection runs before
+            -- the receipt delete now, so a receipt already doomed in this
+            -- same pass must not keep its materialization alive forever.
+            AND NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_receipts receipt
+               WHERE receipt.account_id = materialization.account_id
+                 AND receipt.data ->> 'reporting_materialization_id' = materialization.materialization_id
+                 AND NOT EXISTS (
+                   SELECT 1 FROM unnest($4::text[], $5::text[]) AS doomed(consumer_id, reporting_receipt_id)
+                    WHERE doomed.consumer_id = receipt.consumer_id
+                      AND doomed.reporting_receipt_id = receipt.reporting_receipt_id
+                 )
+            )
+          ORDER BY materialization.recorded_at
+          LIMIT $2`,
+        [
+          input.account_id,
+          limit,
+          cutoff,
+          doomedReceipts.rows.map(row => row.consumer_id),
+          doomedReceipts.rows.map(row => row.reporting_receipt_id),
+        ]
+      );
+
+      // Everything below is keyed, so the account lock is held only across
+      // the writes.
       await advisoryLock(client, accountLock(input.account_id));
       const batches = await client.query(
         `DELETE FROM adcp_reporting_receipt_batches
@@ -482,35 +590,21 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 millisecond')`,
         [input.account_id, RECEIPT_BATCH_RETENTION_MS]
       );
-      // Delete and tombstone in one statement, against the frozen cutoff.
-      // Two statements each re-evaluating clock_timestamp() moved the boundary
-      // between them, so a receipt the tombstone pass had skipped could still
-      // be deleted by the next — fewer tombstones than deletes, and exactly
-      // the rows left with no permanent identity.
+      // Parallel arrays rather than a delimited composite key: a consumer id
+      // is an arbitrary principal string, and PostgreSQL text cannot carry a
+      // NUL separator at all.
+      const doomedConsumerIds = doomedReceipts.rows.map(row => row.consumer_id);
+      const doomedReceiptIds = doomedReceipts.rows.map(row => row.reporting_receipt_id);
+      // Delete and tombstone in one statement so a row can never lose its
+      // body without leaving its permanent identity behind.
       const receipts = await client.query(
-        `WITH doomed AS (
+        `WITH doomed_keys AS (
+           SELECT * FROM unnest($2::text[], $3::text[]) AS pair(consumer_id, reporting_receipt_id)
+         ), doomed AS (
            SELECT receipt.* FROM adcp_reporting_receipts receipt
+             JOIN doomed_keys ON doomed_keys.consumer_id = receipt.consumer_id
+              AND doomed_keys.reporting_receipt_id = receipt.reporting_receipt_id
             WHERE receipt.account_id = $1
-              AND receipt.recorded_at < $3::timestamptz
-              AND NOT EXISTS (
-                SELECT 1 FROM adcp_reporting_receipt_batches batch
-                 WHERE batch.account_id = receipt.account_id
-                   AND batch.consumer_id = receipt.consumer_id
-                   AND batch.results @> jsonb_build_array(
-                         jsonb_build_object('id', receipt.reporting_receipt_id))
-              )
-              -- An acceptance outlives its own age while the resource it
-              -- accepts is still readable. Pruning it sooner produced a
-              -- period that reads complete with no receipt to show for it,
-              -- which the wire schema forbids and a buyer recomputing the
-              -- association reports as ASSOCIATED_HISTORY_INCOMPLETE.
-              AND NOT EXISTS (
-                SELECT 1 FROM adcp_reporting_materializations live
-                 WHERE live.account_id = receipt.account_id
-                   AND live.materialization_id = receipt.data ->> 'reporting_materialization_id'
-                   AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
-              )
-            ORDER BY receipt.recorded_at LIMIT $2
          ), tombstoned AS (
            INSERT INTO adcp_reporting_receipt_tombstones
              (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
@@ -524,7 +618,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           WHERE target.account_id = doomed.account_id
             AND target.consumer_id = doomed.consumer_id
             AND target.reporting_receipt_id = doomed.reporting_receipt_id`,
-        [input.account_id, limit, cutoff]
+        [input.account_id, doomedConsumerIds, doomedReceiptIds]
       );
       // Attempt history is control state, not evidence. Dropping it let a
       // revision whose attempts were exhausted, or which had already
@@ -532,23 +626,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       const materializations = await client.query(
         `WITH doomed AS (
            SELECT materialization.* FROM adcp_reporting_materializations materialization
-            WHERE materialization.account_id = $1
-              AND materialization.recorded_at < $3::timestamptz
-              AND materialization.status <> 'pending'
-              AND materialization.lease_owner IS NULL
-              -- Retention decides what is old enough to consider; the
-              -- resource horizon decides what is still promised. They are
-              -- different clocks-worth of question, so this one is against
-              -- now rather than against the retention cutoff.
-              AND COALESCE(
-                    (materialization.data -> 'resource' ->> 'expires_at')::timestamptz <= clock_timestamp(),
-                    true)
-              AND NOT EXISTS (
-                SELECT 1 FROM adcp_reporting_receipts receipt
-                 WHERE receipt.account_id = materialization.account_id
-                   AND receipt.data ->> 'reporting_materialization_id' = materialization.materialization_id
-              )
-            ORDER BY materialization.recorded_at LIMIT $2
+            WHERE materialization.materialization_id = ANY($1::text[])
          ), tombstoned AS (
            INSERT INTO adcp_reporting_materialization_tombstones
              (configuration_id, revision_id, account_id, obligation_id, highest_attempt, reached_success)
@@ -563,7 +641,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
          )
          DELETE FROM adcp_reporting_materializations target USING doomed
           WHERE target.materialization_id = doomed.materialization_id`,
-        [input.account_id, limit, cutoff]
+        [doomedMaterializations.rows.map(row => row.materialization_id)]
       );
       return {
         materializations: materializations.rowCount ?? 0,
@@ -1076,10 +1154,16 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // Defaulting to zero silently accepted a resource that satisfies no
     // retention at all, including one already expired, whenever a caller
     // drove the store directly. The binding's own promise is the floor.
-    const minimumRetentionDays = input.minimum_resource_retention_days ?? input.lease.binding.resource_retention_days;
-    if (!Number.isSafeInteger(minimumRetentionDays) || minimumRetentionDays < 0) {
+    const requested = input.minimum_resource_retention_days;
+    if (requested !== undefined && (!Number.isSafeInteger(requested) || requested < 0)) {
       throw new RangeError('minimum_resource_retention_days must be a non-negative safe integer');
     }
+    // The binding's promise is a floor, not a default. Taking the caller's
+    // value outright let an explicit 0 accept a one-day resource against a
+    // thirty-day binding — a caller cannot waive a retention the deployment
+    // already published. A larger value is a caller tightening its own
+    // requirement, which is always allowed.
+    const minimumRetentionDays = Math.max(requested ?? 0, input.lease.binding.resource_retention_days);
     return this.transaction(async client => {
       const { lease } = input;
       await advisoryLock(client, accountLock(lease.binding.account_id));

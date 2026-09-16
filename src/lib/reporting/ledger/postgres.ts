@@ -1442,7 +1442,17 @@ ${managedDueArm}       )
                   data = data || jsonb_build_object('resolvedAt', $2::text),
                   changed_at = clock_timestamp()
             WHERE obligation_id = $1 AND resolved_at IS NULL
-              AND data->>'code' IN ('REPORT_OVERDUE', 'REPORTING_COVERAGE_INCOMPLETE')
+              -- Every code this projection can emit, not only the Core two.
+              -- A managed DELIVERY_FAILED persisted by an earlier reconcile
+              -- was never cleared, so after a successful redelivery the
+              -- status kept publishing a stale delivery failure for as long
+              -- as Core stayed degraded for some unrelated reason.
+              AND data->>'code' IN (
+                'REPORT_OVERDUE', 'REPORTING_COVERAGE_INCOMPLETE',
+                'DELIVERY_FAILED', 'RESOURCE_EXPIRED',
+                'RECEIPT_REQUIRED', 'RECEIPT_REJECTED',
+                'ADJUSTMENT_RECEIPT_REQUIRED', 'ADJUSTMENT_RECEIPT_REJECTED'
+              )
               AND NOT (issue_id = ANY($3::text[]))`,
           [input.reporting_obligation_id, input.ledgerAsOf, projectedIds]
         );
@@ -2455,6 +2465,11 @@ ${managedDueArm}       )
     if (!this.managedDelivery || !this.obligatedConsumers) return 0;
     positiveInteger(input.limit, 'limit');
     if (!(await this.managedDueTablesReady())) return 0;
+    // Deliberately a small slice of the sweep's page. Each refresh is a
+    // bounded-but-real external call, so refreshing a thousand of them
+    // before any reconciliation ran could delay the sweep by the callback
+    // deadline times the page size. The cursor carries the rest forward.
+    const budget = Math.min(input.limit, MAX_ROSTER_REFRESH_PER_SWEEP);
     const candidates = await this.query<QueryResultRow & { obligation_id: string }>(
       `SELECT obligation.obligation_id
          FROM adcp_reporting_obligations obligation
@@ -2470,7 +2485,7 @@ ${managedDueArm}       )
         -- re-arm.
         ORDER BY state.roster_refreshed_at NULLS FIRST, obligation.obligation_id
         LIMIT $2`,
-      [input.account_id ?? null, input.limit]
+      [input.account_id ?? null, budget]
     );
     let refreshed = 0;
     for (const row of candidates.rows) {
@@ -2478,8 +2493,16 @@ ${managedDueArm}       )
         await this.readObligatedConsumerRosterVersion({ reporting_obligation_id: row.obligation_id });
         refreshed += 1;
       } catch {
-        // One tenant's authorization service being down must not stop the
-        // rest of the refresh; the obligation simply keeps its last version.
+        // Advance the cursor anyway. Leaving it untouched on failure meant a
+        // tenant whose authorization service was down was re-selected every
+        // sweep — at limit 1 it occupied the only slot forever and the
+        // healthy obligation behind it was never refreshed at all.
+        await this.query(
+          `INSERT INTO adcp_reporting_lifecycle_state (obligation_id, roster_refreshed_at, processed_at)
+           VALUES ($1, clock_timestamp(), clock_timestamp())
+           ON CONFLICT (obligation_id) DO UPDATE SET roster_refreshed_at = clock_timestamp()`,
+          [row.obligation_id]
+        ).catch(() => undefined);
       }
     }
     return refreshed;
@@ -3309,6 +3332,9 @@ function obligatedConsumerRosterVersionFor(
 ): string {
   return supplied.version ?? digest({ ids, complete: supplied.complete === true });
 }
+
+/** Bounds how much of a sweep is spent re-reading external rosters. */
+const MAX_ROSTER_REFRESH_PER_SWEEP = 25;
 
 /** Caps exponential lifecycle backoff so a recovered tenant is retried promptly. */
 const MAX_LIFECYCLE_BACKOFF_SECONDS = 900;

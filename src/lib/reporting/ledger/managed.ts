@@ -127,6 +127,14 @@ export interface ReportingManagedDeliveryStore {
   }): Promise<boolean>;
   installBinding(binding: ReportingManagedDeliveryBindingV1): Promise<{ inserted: boolean }>;
   planMaterializations(input?: { account_id?: string; limit?: number }): Promise<number>;
+  /**
+   * Fails materializations that have used every delivery attempt.
+   *
+   * The claim predicate stops handing them out, so without a sweep they stay
+   * `pending` forever — and the planner skips any obligation with a pending
+   * row, so the revision is never retried or replanned either.
+   */
+  failExhaustedMaterializations?(input?: { account_id?: string; limit?: number }): Promise<number>;
   claimMaterialization(input: {
     owner: string;
     now: string;
@@ -263,6 +271,8 @@ export interface ReportingManagedDeliveryRuntimeV1<TContext extends { account?: 
     failed: number;
     revocationsCompleted: number;
     revocationsOverdue: number;
+    /** Materializations failed for using every delivery attempt. */
+    exhausted: number;
   }>;
   readResource(input: {
     account_id: string;
@@ -640,7 +650,15 @@ export async function runManagedDeliveryWorker(
       ? leaseMilliseconds
       : Math.min(leaseMilliseconds, deadlineMilliseconds + MINIMUM_SETTLEMENT_GRACE_MILLISECONDS);
   const owner = `managed-reporting-${randomUUID()}`;
+  // Before planning: a row that used every attempt is still `pending`, and
+  // the planner skips an obligation that has one. Without this the revision
+  // was stuck — not claimable, not replannable, not visibly failed.
+  const exhausted =
+    (await store.failExhaustedMaterializations?.({
+      ...(options.account_id ? { account_id: options.account_id } : {}),
+    })) ?? 0;
   const counts = {
+    exhausted,
     planned: await store.planMaterializations({ ...(options.account_id ? { account_id: options.account_id } : {}) }),
     claimed: 0,
     delivered: 0,
