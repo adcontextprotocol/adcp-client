@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-15
+> Generated at: 2026-09-16
 > @adcp/sdk v14.0.0-rc.38
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -2838,9 +2838,36 @@ const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact repo
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });
+
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  subscriptions: { acknowledgeIsolatedDatabase: true },
+  ...notificationOptions,
+});
+const reportingActivity = createPostgresReportingNotificationActivityRuntime({
+  db: pool,
+  notifications,
+  namespace: 'seller-production',
+  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),
+});
+const transactionalStore = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  notificationActivityPort: reportingActivity.port,
+});
+await reportingActivity.probe();
+// Run repeatedly from a durable scheduler; this call is bounded.
+await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });
+const activityPage = await reportingActivity.listActivity({
+  tenantId: trustedTenant,
+  accountId: resolvedAccountId,
+  limit: 100,
+});
 ```
 
 The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+
+`ReportingLedgerNotificationActivityPortV1<TTransaction>` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through `PersistentNotificationRuntime`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. `listActivity()` is adopter-facing only because no public AdCP account-activity read task exists.
 
 ## Key Enums
 

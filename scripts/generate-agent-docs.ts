@@ -2120,10 +2120,39 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);
+  ln();
+  ln(`const notifications = createPostgresPersistentNotificationRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  publisherScope: 'seller-production',`);
+  ln(`  subscriptions: { acknowledgeIsolatedDatabase: true },`);
+  ln(`  ...notificationOptions,`);
+  ln(`});`);
+  ln(`const reportingActivity = createPostgresReportingNotificationActivityRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  notifications,`);
+  ln(`  namespace: 'seller-production',`);
+  ln(`  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),`);
+  ln(`});`);
+  ln(`const transactionalStore = new PostgresReportingLedgerStore(pool, {`);
+  ln(`  acknowledgeIsolatedDatabase: true,`);
+  ln(`  notificationActivityPort: reportingActivity.port,`);
+  ln(`});`);
+  ln(`await reportingActivity.probe();`);
+  ln(`// Run repeatedly from a durable scheduler; this call is bounded.`);
+  ln(`await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });`);
+  ln(`const activityPage = await reportingActivity.listActivity({`);
+  ln(`  tenantId: trustedTenant,`);
+  ln(`  accountId: resolvedAccountId,`);
+  ln(`  limit: 100,`);
+  ln(`});`);
   ln('```');
   ln();
   ln(
     `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
+  );
+  ln();
+  ln(
+    `\`ReportingLedgerNotificationActivityPortV1<TTransaction>\` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through \`PersistentNotificationRuntime\`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. \`listActivity()\` is adopter-facing only because no public AdCP account-activity read task exists.`
   );
   ln();
 

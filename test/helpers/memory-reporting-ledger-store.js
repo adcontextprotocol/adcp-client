@@ -180,12 +180,25 @@ class MemoryLedgerStore {
     );
     const latest = (await this.listTransitions(input.reporting_obligation_id)).at(-1);
     const obligation = await this.getObligation(input.reporting_obligation_id);
+    const visibleBeforeLatest = latest
+      ? (await this.listRevisions(input.reporting_obligation_id)).filter(
+          value => Date.parse(value.createdAt) <= Date.parse(latest.occurredAt)
+        )
+      : [];
+    const previousFinality =
+      latest?.finality ??
+      (visibleBeforeLatest.some(value => value.finality === 'official')
+        ? 'official'
+        : visibleBeforeLatest.length
+          ? 'snapshot'
+          : 'none');
     if (
       !obligation ||
       obligation.state !== input.expectedObligationState ||
       obligation.attemptCount !== input.expectedAttemptCount ||
       JSON.stringify(revisionIds) !== JSON.stringify(input.expectedRevisionIds) ||
-      (latest?.health ?? 'waiting') !== input.expectedPreviousHealth
+      (latest?.health ?? 'waiting') !== input.expectedPreviousHealth ||
+      (input.expectedPreviousFinality !== undefined && previousFinality !== input.expectedPreviousFinality)
     ) {
       return { applied: false, transitionInserted: false };
     }

@@ -16,6 +16,7 @@ import type {
 
 export type ReportingHealthV1 = 'waiting' | 'healthy' | 'delayed' | 'action_required' | 'complete';
 export type ReportingFinalityV1 = 'snapshot' | 'official';
+export type ReportingObservedFinalityV1 = 'none' | ReportingFinalityV1;
 
 export type ReportingLedgerAccountV1 = Readonly<{ account_id: string }>;
 
@@ -406,9 +407,37 @@ export interface ReportingLedgerStatusTransitionV1 {
   reporting_obligation_id: string;
   previousHealth: ReportingHealthV1;
   health: ReportingHealthV1;
+  /** Finality visible immediately before this transition. Added in SDK 14. */
+  previousFinality?: ReportingObservedFinalityV1;
+  /** Finality visible at this transition. Added in SDK 14. */
+  finality?: ReportingObservedFinalityV1;
   issueIds: string[];
   occurredAt: string;
   notifiedAt?: string;
+}
+
+/** Minimum transaction surface used by the bundled PostgreSQL ledger. */
+export interface ReportingLedgerTransactionV1 {
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: unknown[]
+  ): Promise<{ rows: Row[]; rowCount: number | null }>;
+}
+
+/**
+ * Persists the durable consequence of a reporting lifecycle transition.
+ *
+ * The ledger store MUST call this port with its active authoritative
+ * transaction. Implementations must not perform network I/O from this method.
+ */
+export interface ReportingLedgerNotificationActivityPortV1<TTransaction = unknown> {
+  recordTransition(
+    input: {
+      transition: Readonly<ReportingLedgerStatusTransitionV1>;
+      obligation: Readonly<ReportingLedgerObligationV1>;
+    },
+    transaction: TTransaction
+  ): Promise<void>;
 }
 
 export interface ReportingLedgerSubscriberV1 {
@@ -491,6 +520,11 @@ export class ReportingConsumerStatusConflictError extends Error {
 }
 
 export interface ReportingLedgerStore {
+  /**
+   * True when durable notification/activity intent is committed with transitions.
+   * Such stores must atomically stamp `notifiedAt` as the durable handoff marker.
+   */
+  readonly transactionalNotificationActivity?: boolean;
   putConfiguration(
     configuration: ReportingLedgerConfigurationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConfigurationV1 }>;
@@ -547,6 +581,8 @@ export interface ReportingLedgerStore {
     reporting_obligation_id: string;
     expectedRevisionIds: string[];
     expectedPreviousHealth: ReportingHealthV1;
+    /** Optional for callers compiled against the pre-finality lifecycle port. */
+    expectedPreviousFinality?: ReportingObservedFinalityV1;
     expectedObligationState: ReportingLedgerObligationV1['state'];
     expectedAttemptCount: number;
     projectedIssues: ReportingLedgerIssueV1[];

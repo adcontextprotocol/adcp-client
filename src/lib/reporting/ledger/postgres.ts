@@ -37,6 +37,9 @@ import type {
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerSnapshotV1,
   ReportingLedgerStatusTransitionV1,
+  ReportingLedgerNotificationActivityPortV1,
+  ReportingLedgerTransactionV1,
+  ReportingObservedFinalityV1,
   ReportingLedgerStore,
   ReportingConsumerStatusBatchInputV1,
   ReportingConsumerStatusBatchResultV1,
@@ -310,6 +313,11 @@ export interface PostgresReportingLedgerStoreOptions {
    * the unfiltered read shows.
    */
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  /**
+   * Durable notification/activity port invoked inside the authoritative
+   * lifecycle transaction. Its tables must be migrated before transitions run.
+   */
+  notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -371,6 +379,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
    * contradict the summary.
    */
   readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  readonly transactionalNotificationActivity: boolean;
+  private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
 
   constructor(
     private readonly pool: ReportingPgPool,
@@ -383,6 +393,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       );
     }
     this.consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(options.consumerMismatchEscalation);
+    this.notificationActivityPort = options.notificationActivityPort;
+    this.transactionalNotificationActivity = options.notificationActivityPort !== undefined;
   }
 
   async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
@@ -1205,23 +1217,70 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     const lock = await this.accountLockForObligation(transition.reporting_obligation_id);
     return this.transaction(
       async client => {
+        if (this.notificationActivityPort) {
+          await assertNoLegacyPendingTransitions(client, transition.reporting_obligation_id);
+        }
+        const latest = await client.query<
+          QueryResultRow & {
+            health: string;
+            finality: ReportingObservedFinalityV1 | null;
+            occurred_at: Date | string;
+          }
+        >(
+          `SELECT data->>'health' AS health, data->>'finality' AS finality, occurred_at
+             FROM adcp_reporting_transitions
+            WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1`,
+          [transition.reporting_obligation_id]
+        );
+        const previous = latest.rows[0];
+        let previousFinality: ReportingObservedFinalityV1 = 'none';
+        if (previous?.finality) {
+          previousFinality = previous.finality;
+        } else if (previous) {
+          const revisions = await client.query<
+            QueryResultRow & { finality: ReportingObservedFinalityV1; created_at: Date | string }
+          >(
+            `SELECT finality, created_at FROM adcp_reporting_revisions
+              WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
+            [transition.reporting_obligation_id]
+          );
+          previousFinality = observedStoredFinality(
+            revisions.rows.filter(
+              revision => instantMilliseconds(revision.created_at) <= instantMilliseconds(previous.occurred_at)
+            )
+          );
+        }
+        if (
+          (previous?.health ?? 'waiting') !== transition.previousHealth ||
+          (transition.previousFinality !== undefined && previousFinality !== transition.previousFinality)
+        ) {
+          return { inserted: false };
+        }
+        const storedTransition = this.notificationActivityPort
+          ? { ...transition, notifiedAt: transition.occurredAt }
+          : transition;
         const result = await client.query(
           `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
-       SELECT $1, $2, $3::jsonb, $4
-        WHERE COALESCE((
-          SELECT previous.data->>'health' FROM adcp_reporting_transitions previous
-           WHERE previous.obligation_id = $2
-           ORDER BY previous.transition_sequence DESC LIMIT 1
-        ), 'waiting') = $5
-       ON CONFLICT DO NOTHING RETURNING transition_id`,
+           VALUES ($1, $2, $3::jsonb, $4)
+           ON CONFLICT DO NOTHING RETURNING transition_id`,
           [
             transition.transitionId,
             transition.reporting_obligation_id,
-            JSON.stringify(transition),
+            JSON.stringify(storedTransition),
             transition.occurredAt,
-            transition.previousHealth,
           ]
         );
+        if (result.rowCount === 1 && this.notificationActivityPort) {
+          const obligation = await client.query<JsonRow<ReportingLedgerObligationV1>>(
+            'SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1',
+            [transition.reporting_obligation_id]
+          );
+          if (!obligation.rows[0]) throw new Error('Reporting obligation is unavailable');
+          await this.notificationActivityPort.recordTransition(
+            { transition, obligation: obligation.rows[0].data },
+            client
+          );
+        }
         return { inserted: result.rowCount === 1 };
       },
       { preBeginAdvisoryLock: lock }
@@ -1232,6 +1291,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     reporting_obligation_id: string;
     expectedRevisionIds: string[];
     expectedPreviousHealth: import('./types').ReportingHealthV1;
+    expectedPreviousFinality?: ReportingObservedFinalityV1;
     expectedObligationState: ReportingLedgerObligationV1['state'];
     expectedAttemptCount: number;
     projectedIssues: ReportingLedgerIssueV1[];
@@ -1245,30 +1305,60 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           `SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1 FOR UPDATE`,
           [input.reporting_obligation_id]
         );
-        const revisions = await client.query<QueryResultRow & { revision_id: string }>(
-          `SELECT revision_id FROM adcp_reporting_revisions
+        if (this.notificationActivityPort) {
+          await assertNoLegacyPendingTransitions(client, input.reporting_obligation_id);
+        }
+        const revisions = await client.query<
+          QueryResultRow & {
+            revision_id: string;
+            finality: ReportingObservedFinalityV1;
+            created_at: Date | string;
+          }
+        >(
+          `SELECT revision_id, finality, created_at FROM adcp_reporting_revisions
             WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
           [input.reporting_obligation_id]
         );
-        const latest = await client.query<QueryResultRow & { health: string }>(
-          `SELECT data->>'health' AS health FROM adcp_reporting_transitions
+        const latest = await client.query<
+          QueryResultRow & {
+            health: string;
+            finality: ReportingObservedFinalityV1 | null;
+            occurred_at: Date | string;
+          }
+        >(
+          `SELECT data->>'health' AS health, data->>'finality' AS finality, occurred_at
+             FROM adcp_reporting_transitions
             WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1`,
           [input.reporting_obligation_id]
         );
         const revisionIds = revisions.rows.map(value => value.revision_id);
         const previousHealth = latest.rows[0]?.health ?? 'waiting';
         const obligation = obligations.rows[0]?.data;
+        const previousFinality =
+          latest.rows[0]?.finality ??
+          (latest.rows[0]
+            ? observedStoredFinality(
+                revisions.rows.filter(
+                  revision =>
+                    instantMilliseconds(revision.created_at) <= instantMilliseconds(latest.rows[0]!.occurred_at)
+                )
+              )
+            : 'none');
         if (
           !obligation ||
           obligation.state !== input.expectedObligationState ||
           obligation.attemptCount !== input.expectedAttemptCount ||
           canonicalJsonV1(revisionIds) !== canonicalJsonV1(input.expectedRevisionIds) ||
-          previousHealth !== input.expectedPreviousHealth
+          previousHealth !== input.expectedPreviousHealth ||
+          (input.expectedPreviousFinality !== undefined && previousFinality !== input.expectedPreviousFinality)
         ) {
           return { applied: false, transitionInserted: false };
         }
         let transitionInserted = false;
         if (input.transition) {
+          const storedTransition = this.notificationActivityPort
+            ? { ...input.transition, notifiedAt: input.ledgerAsOf }
+            : input.transition;
           const inserted = await client.query(
             `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
              VALUES ($1, $2, $3::jsonb, $4)
@@ -1276,12 +1366,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             [
               input.transition.transitionId,
               input.reporting_obligation_id,
-              JSON.stringify(input.transition),
+              JSON.stringify(storedTransition),
               input.transition.occurredAt,
             ]
           );
           if (inserted.rowCount !== 1) return { applied: false, transitionInserted: false };
           transitionInserted = true;
+          if (this.notificationActivityPort) {
+            await this.notificationActivityPort.recordTransition({ transition: input.transition, obligation }, client);
+          }
         }
         const projectedIds = input.projectedIssues.map(issue => issue.issueId);
         for (const issue of input.projectedIssues) {
@@ -2146,6 +2239,34 @@ function adjustmentIdentityFingerprint(value: ReportingLedgerAdjustmentV1): stri
 
 function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
+}
+
+function observedStoredFinality(
+  revisions: readonly { finality: ReportingObservedFinalityV1 }[]
+): ReportingObservedFinalityV1 {
+  if (revisions.some(value => value.finality === 'official')) return 'official';
+  return revisions.length > 0 ? 'snapshot' : 'none';
+}
+
+async function assertNoLegacyPendingTransitions(
+  transaction: ReportingLedgerTransactionV1,
+  obligationId: string
+): Promise<void> {
+  const pending = await transaction.query(
+    `SELECT transition_id FROM adcp_reporting_transitions
+      WHERE obligation_id = $1 AND data->>'notifiedAt' IS NULL
+      LIMIT 1`,
+    [obligationId]
+  );
+  if (pending.rowCount !== 0) {
+    throw new Error(
+      'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
+    );
+  }
+}
+
+function instantMilliseconds(value: Date | string): number {
+  return value instanceof Date ? value.getTime() : Date.parse(value);
 }
 
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {

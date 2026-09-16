@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 
 import { canonicalJsonV1 } from '../source';
 import { projectReportingObligationHealthV1 } from './health';
-import type { ReportingLedgerStatusTransitionV1, ReportingLedgerStore, ReportingLedgerSubscriberV1 } from './types';
+import type {
+  ReportingLedgerRevisionV1,
+  ReportingLedgerStatusTransitionV1,
+  ReportingLedgerStore,
+  ReportingLedgerSubscriberV1,
+  ReportingObservedFinalityV1,
+} from './types';
 
 export async function reconcileReportingStatusLifecycleV1(input: {
   store: ReportingLedgerStore;
@@ -12,6 +18,10 @@ export async function reconcileReportingStatusLifecycleV1(input: {
 }): Promise<ReportingLedgerStatusTransitionV1 | null> {
   const obligation = await input.store.getObligation(input.reporting_obligation_id);
   if (!obligation) throw new Error('Reporting obligation is unavailable');
+  const transactionalNotifications = input.store.transactionalNotificationActivity === true;
+  if (transactionalNotifications && (input.subscribers?.length ?? 0) > 0) {
+    throw new Error('Transactional reporting notification activity and legacy subscribers are mutually exclusive');
+  }
   const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
   const projection = projectReportingObligationHealthV1(
     obligation,
@@ -20,7 +30,17 @@ export async function reconcileReportingStatusLifecycleV1(input: {
     Date.parse(obligation.period.end) <= Date.parse(input.ledgerAsOf)
   );
   const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
-  for (const pending of transitions.filter(value => !value.notifiedAt)) {
+  const pendingTransitions = transitions.filter(value => !value.notifiedAt);
+  if (transactionalNotifications && pendingTransitions.length > 0) {
+    throw new Error(
+      'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
+    );
+  }
+  for (const pending of pendingTransitions) {
+    if (pending.previousHealth === pending.health) {
+      await input.store.markTransitionNotified(pending.transitionId, input.ledgerAsOf);
+      continue;
+    }
     if (await notifyTransition(pending, obligation.account.account_id, input.subscribers)) {
       await input.store.markTransitionNotified(pending.transitionId, input.ledgerAsOf);
     }
@@ -28,9 +48,14 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   const latest = transitions.at(-1);
   if (latest && Date.parse(input.ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
   const previousHealth = latest?.health ?? 'waiting';
+  const finality = observedFinality(revisions);
+  // Pre-SDK-14 transition rows have no finality. Treat the currently visible
+  // finality as their baseline so an upgrade does not invent a historical
+  // finality-only event. Every newly written row carries the exact value.
+  const previousFinality = latest?.finality ?? (latest ? observedFinality(revisions, latest.occurredAt) : 'none');
   const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
   const transition: ReportingLedgerStatusTransitionV1 | undefined =
-    previousHealth === projection.health
+    previousHealth === projection.health && previousFinality === finality
       ? undefined
       : {
           transitionId: `rst_${createHash('sha256')
@@ -39,6 +64,8 @@ export async function reconcileReportingStatusLifecycleV1(input: {
                 obligation.reporting_obligation_id,
                 previousHealth,
                 projection.health,
+                previousFinality,
+                finality,
                 [...nextIssueIds].sort(),
                 input.ledgerAsOf,
               ])
@@ -48,6 +75,8 @@ export async function reconcileReportingStatusLifecycleV1(input: {
           reporting_obligation_id: obligation.reporting_obligation_id,
           previousHealth,
           health: projection.health,
+          previousFinality,
+          finality,
           issueIds: [...nextIssueIds].sort(),
           occurredAt: input.ledgerAsOf,
         };
@@ -55,6 +84,7 @@ export async function reconcileReportingStatusLifecycleV1(input: {
     reporting_obligation_id: obligation.reporting_obligation_id,
     expectedRevisionIds: revisions.map(value => value.reporting_revision_id),
     expectedPreviousHealth: previousHealth,
+    expectedPreviousFinality: previousFinality,
     expectedObligationState: obligation.state,
     expectedAttemptCount: obligation.attemptCount,
     projectedIssues: projection.issues,
@@ -62,9 +92,24 @@ export async function reconcileReportingStatusLifecycleV1(input: {
     ...(transition ? { transition } : {}),
   });
   if (!applied.applied || !transition || !applied.transitionInserted) return null;
+  if (transactionalNotifications) return { ...transition, notifiedAt: input.ledgerAsOf };
+  if (transition.previousHealth === transition.health) {
+    await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
+    return { ...transition, notifiedAt: input.ledgerAsOf };
+  }
   const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
   if (notified) await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
   return notified ? { ...transition, notifiedAt: input.ledgerAsOf } : transition;
+}
+
+function observedFinality(
+  revisions: readonly Pick<ReportingLedgerRevisionV1, 'finality' | 'createdAt'>[],
+  at?: string
+): ReportingObservedFinalityV1 {
+  const visible =
+    at === undefined ? revisions : revisions.filter(value => Date.parse(value.createdAt) <= Date.parse(at));
+  if (visible.some(value => value.finality === 'official')) return 'official';
+  return visible.length > 0 ? 'snapshot' : 'none';
 }
 
 export async function retryReportingStatusNotificationsV1(input: {
@@ -126,6 +171,7 @@ async function notifyTransition(
   configured: readonly ReportingLedgerSubscriberV1[] | undefined
 ): Promise<boolean> {
   const subscribers = (configured ?? []).filter(value => value.account_id === accountId);
+  if (subscribers.length === 0) return true;
   if (subscribers.length > 64) throw new Error('Reporting status subscriber fanout exceeds 64');
   const results = await Promise.allSettled(
     subscribers.map(subscriber =>

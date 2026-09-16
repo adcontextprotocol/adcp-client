@@ -43,11 +43,177 @@ Official configurations also pin a `finalityPolicy` (`policyId` plus `source_fin
 
 Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and exact decimal control totals for requested numeric metrics. A revision number and obligation are immutable. Official revisions are terminal; later source corrections are immutable adjustments bound to the official revision, never superseding revisions. Status snapshots omit row payloads, are capped at 8 MiB, expire after 15 minutes, and keep cursor pages stable over the flat obligation/revision/adjustment union. A periods response returns an opaque `changes_checkpoint`; echo that value verbatim as `changes_after` rather than supplying a timestamp. Account-scoped write/snapshot locks make those checkpoints gap-free for SDK store writes. The default table set is deployment-wide; use a dedicated database/schema and acknowledge that boundary explicitly. `sourceScope` must contain opaque routing identities only—never credentials or bearer tokens—because it is retained with the obligation.
 
+## Transactional status notifications and account activity
+
+Production deployments can join every health or observed-finality transition to
+a compact account-operator activity record. Health transitions additionally
+create one durable, schema-conformant `reporting.status_changed` intent;
+finality-only changes remain internal activity because the AdCP event is defined
+only for health changes:
+
+```ts
+import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
+import {
+  createPostgresReportingNotificationActivityRuntime,
+  PostgresReportingLedgerStore,
+  REPORTING_LEDGER_MIGRATION,
+} from '@adcp/sdk/reporting/ledger';
+
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  subscriptions: { acknowledgeIsolatedDatabase: true },
+  ...notificationOptions, // proof, protected credentials, webhooks, authorization
+});
+const reportingActivity = createPostgresReportingNotificationActivityRuntime({
+  db: pool,
+  notifications,
+  // Use a deployment-unique value whenever a PostgreSQL schema is shared.
+  namespace: 'seller-production',
+  // Pure host-owned mapping from an internal ledger account. Never derive
+  // this from transition data, an incoming request body, or ctx_metadata.
+  tenantScopeForAccount: accountId => durableAccountDirectory.tenantFor(accountId),
+});
+
+// Rolling-deployment order: ledger and notification tables, activity table,
+// drain legacy pending transitions, then application code configured with the port.
+await pool.query(REPORTING_LEDGER_MIGRATION);
+for (const sql of notifications.migrations.all) await pool.query(sql);
+for (const sql of reportingActivity.migrations.all) await pool.query(sql);
+
+// Before enabling the port, keep legacy subscribers configured and run
+// retryReportingStatusNotificationsV1() until listPendingTransitions() is empty.
+// The transactional store fails closed if legacy pending rows remain.
+
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  notificationActivityPort: reportingActivity.port,
+});
+
+// Do not also pass legacy ReportingLedgerSubscriberV1 callbacks to lifecycle
+// reconciliation. The transactional port is the sole notification handoff.
+
+await reportingActivity.probe();
+await notifications.probe();
+
+// Run both bounded calls repeatedly from the deployment's durable scheduler.
+await reportingActivity.recoverOnce({
+  ownerToken: process.env.INSTANCE_ID!,
+  onError: (error, claim) => operationalLogger.error({ error, claim }),
+});
+await notifications.recoverOnce({ ownerToken: process.env.INSTANCE_ID! });
+```
+
+`applyLifecycleProjection()` owns the transaction. After locking and rechecking
+the obligation and revision evidence, the PostgreSQL store inserts the
+transition, updates its issues, and calls `notificationActivityPort` with that
+same transaction client. A port error rolls the whole unit back. The port does
+no network I/O and stores no destination or authentication material. Only after
+commit does `recoverOnce()` call the existing persistent-notification runtime,
+which reads current subscriptions, enforces tenant/account matching and live
+authorization, resolves opaque credential bindings, and checkpoints the normal
+encrypted webhook outbox before POSTing. The activity queue is not a second
+sender, credential authority, retry engine, or reporting ledger.
+The store atomically stamps the transition's `notifiedAt` field as a durable
+handoff marker in that same transaction. In transactional mode this field means
+the activity intent is durable, not that a recipient matched or network delivery
+occurred. A legacy deployment with unnotified transitions must drain or
+explicitly resolve them before enabling the port; the lifecycle rejects the
+cutover rather than silently abandoning those rows.
+
+The logical notification identity is derived from the immutable transition and
+is reused through ambiguous crashes. Intent insertion is exactly once;
+delivery remains at least once. A crash before commit exposes neither the
+transition nor its activity. A crash after commit leaves pending work. A crash
+after webhook checkpointing may replay projection, but the existing webhook
+delivery identity prevents rebinding. The bridge intentionally binds recipients
+when the existing notification runtime checkpoints each per-subscriber webhook
+delivery, not while the ledger transaction is open: that keeps subscription
+credentials and destination authority out of the ledger transaction and ensures
+a replacement or revocation that wins before checkpointing is honored. From
+that checkpoint onward the subscriber and destination generation are stable;
+the runtime rechecks live authorization on every attempt and suppresses stale
+or revoked generations. Already-authorized in-flight POSTs cannot be retracted.
+This explicit drain-time rule is what the replacement and revocation crash tests
+assert.
+
+Account operators can read a bounded keyset page without loading report rows:
+
+```ts
+const page = await reportingActivity.listActivity({
+  tenantId: authenticatedTenant.id,
+  accountId: resolvedInternalAccount.id,
+  limit: 100, // 1..200
+  cursor: previousPage.nextCursor,
+});
+```
+
+Both scope values must come from authenticated server context. Cursors are
+scope-bound and cannot be moved between accounts or tenants; the runtime also
+revalidates the account-to-tenant mapping on every read. Pagination is a
+newest-first operator view, not a gap-free change feed: a transaction that
+commits after a page was read may have an earlier PostgreSQL sequence, so
+refresh from the first page to discover concurrent late commits. Records include
+the transition identity, health and observed-finality change, occurrence and
+projection timestamps, issue IDs, period, and non-secret configuration/report
+correlation references. They never embed revision rows, `sourceScope`,
+subscriber destinations, credential handles, credentials, or `ctx_metadata`.
+Each compact activity intent is capped at 64 KiB.
+The runtime also applies atomic per-tenant backpressure at 100,000 pending
+health notifications by default; tune `maxPendingPerTenant` to deployment
+capacity and alert on the operational error instead of dropping durable intent.
+This is an SDK/adopter API only: AdCP defines the complete health-notification
+wire payload but no public account-activity read task, so do not expose `listActivity()`
+as an invented wire extension.
+
+Projected activity defaults to 90-day retention measured from projection (or
+from commit for finality-only records that require no wire projection). Override `retentionMs` only to
+match an explicit operator policy, schedule bounded `pruneProjected()` calls,
+and retain pending rows until they have been projected. The reporting worker
+retries failed projection without a terminal attempt cap; once the notification
+runtime has durably accepted every matched subscriber, its own webhook outbox
+owns delivery retry and retention. Supply `recoverOnce({ onError })` to report a
+failed projection attempt without changing lease or retry semantics.
+`matched` reports how many active subscribers were checkpointed; a projected
+row with `matched: 0` is expected after revocation and does not claim network
+delivery. Each recovery poll claims one row at a time so work waiting behind a
+slow fanout is never left under an expiring pre-claimed lease.
+The host remains responsible for a database-level retained-row/byte quota and
+storage alerting per tenant or isolated deployment; the runtime's pending cap
+protects delivery backlog but is not a general PostgreSQL storage quota.
+
+Custom ledger stores implement
+`ReportingLedgerNotificationActivityPortV1<TTransaction>` over their existing
+authority transaction. Their `applyLifecycleProjection` equivalent must call
+`recordTransition({ transition, obligation }, tx)` after its compare/lock and
+before commit, and must roll back the authoritative transition if the port
+fails. In the same transaction they must stamp `notifiedAt` as the durable
+handoff marker. Stores must also compare `expectedPreviousFinality` with the latest
+stored transition before applying a finality-only projection; this field is
+optional only so pre-v14 implementations continue to compile during migration.
+The transaction argument must be one BEGIN/COMMIT-bound connection, never a
+pool or autocommit queryable; the per-tenant advisory transaction lock provides
+capacity serialization under READ COMMITTED. Never call the port in a
+post-commit subscriber callback. The bundled
+PostgreSQL activity runtime accepts only the active queryable transaction and
+can therefore be reused by a custom PostgreSQL ledger without adopting the SDK
+ledger tables.
+
+The transactional port and legacy `ReportingLedgerSubscriberV1` callbacks are
+mutually exclusive. The bundled store exposes that mode to lifecycle
+reconciliation and fails closed if both are supplied, preventing double fire;
+the port's pending rows, rather than `listPendingTransitions()`, own retry.
+
+The activity table is deliberately separate from Core revision and obligation
+rows. Managed Delivery/Reconciled Billing work in #2944 can add immutable
+materialization and receipt tables without changing this transition identity,
+queue schema, or migration ordering.
+
 `planObligations()` creates at most 1,000 obligations per call by default. Use its `account_id` and `maxObligations` options from a resumable scheduler when catching up dense or old schedules. Source executions are bounded to 10,000 objects, 1,000,000 rows, and 64 MiB per revision.
 
 When `get_reporting_status` omits a period, the operational default horizon is the 24 hours ending at `ledger_as_of`. The `health` and `finality` arrays filter periods-view output only; they do not rewrite summary health or the underlying obligation projection.
 
-`projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and `reporting.status_changed` transitions, then calls only subscribers already authorized and supplied by the host.
+`projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and lifecycle transitions. In legacy mode it then calls only subscribers already authorized and supplied by the host; with the transactional port, finality-only changes stay in internal activity and health changes flow through the durable AdCP notification runtime.
 
 ## Consumer status ingest
 

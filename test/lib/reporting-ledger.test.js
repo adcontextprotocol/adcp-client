@@ -4,6 +4,7 @@ const { describe, test } = require('node:test');
 
 const {
   REPORTING_LEDGER_MIGRATION,
+  REPORTING_NOTIFICATION_ACTIVITY_MIGRATION,
   ReportingLedgerSnapshotUnavailableError,
   aggregateReportingCoverageV1,
   aggregateReportingHealthV1,
@@ -205,6 +206,128 @@ describe('seller reporting ledger', () => {
     assert.equal(result, null);
     assert.equal((await store.getObligation(obligation.reporting_obligation_id)).state, 'terminal');
     assert.deepEqual(await store.listTransitions(obligation.reporting_obligation_id), []);
+  });
+
+  test('records a finality-only transition with stable predecessor finality', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.revisions.set('revision-snapshot', {
+      reporting_revision_id: 'revision-snapshot',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      createdAt: '2026-09-02T01:15:00.000Z',
+    });
+    const first = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.equal(first.previousFinality, 'none');
+    assert.equal(first.finality, 'snapshot');
+    store.revisions.set('revision-official', {
+      reporting_revision_id: 'revision-official',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 2,
+      finality: 'official',
+      createdAt: '2026-09-02T01:45:00.000Z',
+    });
+    const second = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:00:00.000Z',
+    });
+    assert.equal(second.previousHealth, 'complete');
+    assert.equal(second.health, 'complete');
+    assert.equal(second.previousFinality, 'snapshot');
+    assert.equal(second.finality, 'official');
+  });
+
+  test('reconstructs a pre-v14 finality baseline without firing a health subscriber', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.revisions.set('revision-snapshot-upgrade', {
+      reporting_revision_id: 'revision-snapshot-upgrade',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      createdAt: '2026-09-02T01:15:00.000Z',
+    });
+    store.transitions.set('transition-before-v14', {
+      transitionId: 'transition-before-v14',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'complete',
+      issueIds: [],
+      occurredAt: '2026-09-02T01:30:00.000Z',
+      notifiedAt: '2026-09-02T01:30:00.000Z',
+    });
+    store.revisions.set('revision-official-upgrade', {
+      reporting_revision_id: 'revision-official-upgrade',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 2,
+      finality: 'official',
+      createdAt: '2026-09-02T01:45:00.000Z',
+    });
+    let notifications = 0;
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T02:00:00.000Z',
+      subscribers: [
+        {
+          subscriberId: 'upgrade-subscriber',
+          account_id: obligation.account.account_id,
+          notify: () => {
+            notifications += 1;
+          },
+        },
+      ],
+    });
+    assert.equal(transition.previousFinality, 'snapshot');
+    assert.equal(transition.finality, 'official');
+    assert.equal(transition.previousHealth, transition.health);
+    assert.equal(transition.notifiedAt, '2026-09-02T02:00:00.000Z');
+    assert.equal(notifications, 0);
+  });
+
+  test('treats a legacy transition with no configured recipient as disposition complete', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.equal(transition.notifiedAt, '2026-09-02T01:30:00.000Z');
+    assert.deepEqual(await store.listPendingTransitions(), []);
+  });
+
+  test('fails closed when transactional notification activity is enabled before legacy pending work is drained', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.transitions.set('legacy-pending-transition', {
+      transitionId: 'legacy-pending-transition',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      issueIds: [],
+      occurredAt: '2026-09-02T01:15:00.000Z',
+    });
+    store.transactionalNotificationActivity = true;
+    await assert.rejects(
+      () =>
+        reconcileReportingStatusLifecycleV1({
+          store,
+          reporting_obligation_id: obligation.reporting_obligation_id,
+          ledgerAsOf: '2026-09-02T01:30:00.000Z',
+        }),
+      /Drain or explicitly resolve legacy pending reporting transitions/
+    );
   });
 
   test('does not freeze a superseded generation until its straddling period closes', async () => {
@@ -1157,5 +1280,9 @@ describe('seller reporting ledger', () => {
     ]) {
       assert.match(REPORTING_LEDGER_MIGRATION, new RegExp(`CREATE TABLE IF NOT EXISTS adcp_reporting_${table}`));
     }
+    assert.match(
+      REPORTING_NOTIFICATION_ACTIVITY_MIGRATION,
+      /CREATE TABLE IF NOT EXISTS "adcp_reporting_notification_activity"/
+    );
   });
 });
