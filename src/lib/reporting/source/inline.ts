@@ -784,6 +784,58 @@ async function executeAndSeal(
   ) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the work budget');
   }
+  const admittedMediaBuyIds = new Set(
+    request.coverage.constituents.flatMap(constituent => (constituent.mediaBuyId ? [constituent.mediaBuyId] : []))
+  );
+  const sourceSnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(sourceSnapshots, admittedMediaBuyIds);
+  const auxiliarySnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(auxiliarySnapshots, admittedMediaBuyIds);
+  if (sourceSnapshots.length > 0) {
+    // The auxiliary collection is scope-checked too, including on the legacy path where
+    // it is intentionally left unprojected.
+    if (allSnapshots.some(snapshot => !admittedMediaBuyIds.has(snapshot?.mediaBuyId ?? ''))) {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
+    }
+    if (
+      request.coverage.constituents.some(constituent => {
+        if (constituent.constituentKind !== 'media_buy' || !constituent.mediaBuyId) return true;
+        const constituentRows = sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS;
+        return (
+          constituentRows.some(snapshot =>
+            request.requestedDimensions.some(dimension => !snapshotHasDimension(snapshot, dimension))
+          ) ||
+          (availabilityEvidence === undefined &&
+            (constituentRows.length === 0 ||
+              constituentRows.some(snapshot =>
+                request.requestedMetrics.some(metric => snapshotFieldValue(snapshot, metric) === undefined)
+              )))
+        );
+      })
+    ) {
+      return failure(
+        'PARTIAL_RESULT',
+        'retryable',
+        'Inline delivery fetch did not prove every requested constituent-metric cell'
+      );
+    }
+  }
+  if (availabilityEvidence !== undefined) {
+    const rowEvidenceFailure = validateSnapshotsAgainstAvailabilityEvidence(
+      sourceSnapshotsByMediaBuyId,
+      auxiliarySnapshotsByMediaBuyId,
+      request,
+      availabilityEvidence.cells
+    );
+    if (rowEvidenceFailure === 'partial') {
+      return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery rows do not prove every metric marked present');
+    }
+    if (rowEvidenceFailure === 'integrity') {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery rows contradict availability evidence');
+    }
+  }
+  // Only once every semantic verdict is settled is the response projected. Projecting
+  // first spent the staging budget proving nothing: a response missing a requested metric
+  // came back terminal STAGING_FAILED instead of the retryable PARTIAL_RESULT its
+  // incompleteness earns, and an out-of-scope row was masked the same way.
   const remainingCapacity = Math.min(
     INLINE_MAX_OBJECT_BYTES_V1,
     INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
@@ -839,54 +891,6 @@ async function executeAndSeal(
       return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
     }
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
-  }
-  const admittedMediaBuyIds = new Set(
-    request.coverage.constituents.flatMap(constituent => (constituent.mediaBuyId ? [constituent.mediaBuyId] : []))
-  );
-  const sourceSnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(sourceSnapshots, admittedMediaBuyIds);
-  const auxiliarySnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(auxiliarySnapshots, admittedMediaBuyIds);
-  if (rows.length > 0) {
-    // The auxiliary collection is scope-checked too, including on the legacy path where
-    // it is intentionally left unprojected.
-    if (allSnapshots.some(snapshot => !admittedMediaBuyIds.has(snapshot?.mediaBuyId ?? ''))) {
-      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
-    }
-    if (
-      request.coverage.constituents.some(constituent => {
-        if (constituent.constituentKind !== 'media_buy' || !constituent.mediaBuyId) return true;
-        const constituentRows = sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS;
-        return (
-          constituentRows.some(snapshot =>
-            request.requestedDimensions.some(dimension => !snapshotHasDimension(snapshot, dimension))
-          ) ||
-          (availabilityEvidence === undefined &&
-            (constituentRows.length === 0 ||
-              constituentRows.some(snapshot =>
-                request.requestedMetrics.some(metric => snapshotFieldValue(snapshot, metric) === undefined)
-              )))
-        );
-      })
-    ) {
-      return failure(
-        'PARTIAL_RESULT',
-        'retryable',
-        'Inline delivery fetch did not prove every requested constituent-metric cell'
-      );
-    }
-  }
-  if (availabilityEvidence !== undefined) {
-    const rowEvidenceFailure = validateSnapshotsAgainstAvailabilityEvidence(
-      sourceSnapshotsByMediaBuyId,
-      auxiliarySnapshotsByMediaBuyId,
-      request,
-      availabilityEvidence.cells
-    );
-    if (rowEvidenceFailure === 'partial') {
-      return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery rows do not prove every metric marked present');
-    }
-    if (rowEvidenceFailure === 'integrity') {
-      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery rows contradict availability evidence');
-    }
   }
   const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
   if (

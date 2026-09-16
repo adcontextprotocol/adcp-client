@@ -1968,6 +1968,220 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('settles semantic verdicts before spending the staging budget', async () => {
+    // Projecting first spent the staging budget proving nothing: an incomplete response
+    // came back terminal STAGING_FAILED instead of the retryable PARTIAL_RESULT its
+    // incompleteness earns, and an out-of-scope row was masked the same way. The values
+    // are wide enough that projecting 100,000 of them exhausts the budget.
+    const wide = 'x'.repeat(60);
+    const incomplete = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        // `spend` is requested but never supplied.
+        reporting_rows: Array.from({ length: 100_000 }, () => ({
+          media_buy_id: 'fixture-media-buy',
+          impressions: wide,
+        })),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await incomplete.execute(request('fixture-inline-verdict-before-projection'), context()),
+        'PARTIAL_RESULT'
+      ).code,
+      'PARTIAL_RESULT'
+    );
+
+    const outOfScope = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: 100_000 }, () => ({
+          media_buy_id: 'some-other-media-buy',
+          impressions: wide,
+          spend: wide,
+        })),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await outOfScope.execute(request('fixture-inline-scope-before-projection'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+  });
+
+  test('observes the totals slot once across every field of a row', async () => {
+    // The slot is latched per row. Without the latch it is observed once per field that
+    // needs it, so a stateful descriptor can answer with a contradictory `totals` while
+    // one metric is reconciled and an agreeing one while the next is, and the
+    // contradiction seals.
+    let slotReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const row = new Proxy(
+        { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' },
+        {
+          getOwnPropertyDescriptor(target, property) {
+            if (property !== 'totals') return Reflect.getOwnPropertyDescriptor(target, property);
+            slotReads += 1;
+            return {
+              configurable: true,
+              enumerable: true,
+              writable: true,
+              // First answer contradicts `spend`; a second answer would agree with it.
+              value: slotReads === 1 ? { spend: '999.99' } : { spend: '1.25' },
+            };
+          },
+        }
+      );
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [row],
+        availability_evidence: presentAvailability(input),
+      };
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-totals-latched'), context());
+    assert.equal(slotReads, 1, 'the totals slot is observed once for the whole row');
+    // The one observation contradicts `spend`, and that verdict stands.
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+  });
+
+  test('checks auxiliary rows against availability evidence', async () => {
+    // The auxiliary collection carries claims that evidence must still reconcile. A
+    // `media_buy_deliveries` row reporting spend contradicts a `missing` spend cell even
+    // when the source rows are silent about it.
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10 }],
+        media_buy_deliveries: [{ media_buy_id: 'fixture-media-buy', spend: '1.25' }],
+        availability_evidence: {
+          version: '1.0',
+          cells: [
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'impressions',
+              status: 'present',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'spend',
+              status: 'missing',
+              reason: 'Provider did not return spend',
+            },
+          ],
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-auxiliary-evidence-checked');
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+
+    // An auxiliary collection that agrees with the evidence still seals.
+    const agreeing = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10 }],
+        media_buy_deliveries: [{ media_buy_id: 'fixture-media-buy' }],
+        availability_evidence: {
+          version: '1.0',
+          cells: [
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'impressions',
+              status: 'present',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'spend',
+              status: 'missing',
+              reason: 'Provider did not return spend',
+            },
+          ],
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const agreeingSlice = request('fixture-inline-auxiliary-evidence-agrees');
+    agreeingSlice.coverage.expected = 'partial';
+    const sealed = await agreeing.execute(agreeingSlice, context());
+    assert.equal(sealed.ok, true, 'an auxiliary collection consistent with the evidence seals');
+  });
+
+  test('observes a response watermark once across every call site', async () => {
+    // `data_through` is consulted twice: once to prove temporal evidence exists for a
+    // partial-period cutoff, and once as the watermark itself. Without memoization the
+    // first answer is checked and the second, unchecked, is what gets sealed.
+    let watermarkReads = 0;
+    const cutoff = '2026-09-01T12:00:00.000Z';
+    const source = createInlineReportingSourceExecutor(input => {
+      const response = {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        media_buy_deliveries: [{ media_buy_id: 'fixture-media-buy', totals: { impressions: 10, spend: '1.25' } }],
+        observed_at: input.source_read_cutoff_at,
+      };
+      Object.defineProperty(response, 'data_through', {
+        enumerable: true,
+        get: () => {
+          watermarkReads += 1;
+          // A later answer would move the watermark past the read cutoff unchecked.
+          return watermarkReads === 1 ? input.source_read_cutoff_at : input.end_date;
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const slice = request('fixture-inline-watermark-latched');
+    slice.period.sourceReadCutoffAt = cutoff;
+    const result = await source.execute(slice, context());
+    assert.equal(watermarkReads, 1, 'the response watermark is observed once');
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    // The sealed watermark is the one observation, not a later restatement.
+    assert.equal(manifest.period.dataThrough, cutoff);
+  });
+
+  test('never case-folds an over-long row status', async () => {
+    // Every row is examined here -- none of them settles the outcome -- so the length
+    // guard is what keeps the work bounded. The longest status this adapter recognizes is
+    // seventeen characters, so a two million character one cannot match and is never
+    // folded. These 20,000 rows share one status, which is 40 GB of characters to fold:
+    // measured at 12.4 s folded against under 100 ms guarded.
+    const longStatus = `delivered-${'S'.repeat(2_000_000)}`;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: 20_000 }, () => ({
+          media_buy_id: 'fixture-media-buy',
+          impressions: 10,
+          spend: '1.25',
+          status: longStatus,
+        })),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const started = process.hrtime.bigint();
+    const result = await source.execute(request('fixture-inline-long-status-guard'), context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    // The status is not one the adapter recognizes, so every row is admitted.
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.objects[0].rowCount, 20_000);
+    assert.ok(elapsedMs < 3_000, `long-status rows took ${elapsedMs.toFixed(1)}ms`);
+  });
+
   test('charges numeric claims for measuring, not for expanding', async () => {
     // A number is canonicalized into plain decimal only to reconcile a duplicate claim.
     // Charging that expanded width for merely measuring refused direct-only numeric
