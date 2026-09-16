@@ -150,7 +150,24 @@ const INLINE_MAX_OBJECT_BYTES_V1 = 64 * 1_024 * 1_024;
 const INLINE_MAX_TOTAL_OBJECT_BYTES_V1 = 256 * 1_024 * 1_024;
 const INLINE_MAX_SCOPE_OBJECT_BYTES_V1 = 32 * 1_024 * 1_024;
 const INLINE_MAX_ROWS_V1 = 100_000;
-const INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 = 5_000_000;
+// One comprehensive budget for every per-row check availability verification performs:
+// each requested metric and each requested dimension, once per row, once per constituent
+// that names the row's media buy. Metrics alone left dimensions and constituent fanout
+// unpriced, which admitted shapes demanding three orders of magnitude more work.
+const INLINE_MAX_VALIDATION_WORK_UNITS_V1 = 5_000_000;
+// Cumulative bytes validation may scan while measuring and canonicalizing claims. Held
+// at the per-object staging ceiling: no response may be scanned more than a single
+// staged object's worth, however the claims are distributed across rows and metrics.
+const INLINE_MAX_VALIDATION_SCAN_BYTES_V1 = INLINE_MAX_OBJECT_BYTES_V1;
+const INLINE_UNAVAILABLE_ROW_STATUSES_V1 = [
+  'failed',
+  'reporting_delayed',
+  'not_ready',
+  'pending',
+  'unavailable',
+  'error',
+];
+const INLINE_UNAVAILABLE_CELL_STATUSES_V1 = ['unsupported', 'delayed', 'missing'];
 const INLINE_MAX_PROTOTYPE_CHAIN_DEPTH_V1 = 64;
 const INLINE_MAX_DECIMAL_EXPONENT_V1 = 400;
 
@@ -561,30 +578,59 @@ async function executeAndSeal(
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
     }
   }
+  // Settle the observation budget from counts alone, before a single row is read: one
+  // identity read plus one read per requested metric and dimension, per row.
   if (
-    availabilityEvidence !== undefined &&
-    (sourceRowInputs.length + auxiliaryRowInputs.length >
-      Math.floor(INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 / request.requestedMetrics.length) ||
-      availabilityRowCellWorkExceedsCap(
-        sourceRowInputs,
-        auxiliaryRowInputs,
-        request,
-        INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1
-      ))
+    workUnitsExceedCap(
+      sourceRowInputs.length + auxiliaryRowInputs.length,
+      1 + request.requestedMetrics.length + request.requestedDimensions.length,
+      INLINE_MAX_VALIDATION_WORK_UNITS_V1
+    )
   ) {
-    return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the row-cell limit');
+    return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the work budget');
   }
-  const allRowInputs = [...sourceRowInputs, ...auxiliaryRowInputs];
-  if (allRowInputs.some(row => rowIsUnavailable(row))) {
+  // Observe every row exactly once. Budgeting, scope and currency checks, availability
+  // validation, projection and the staged bytes all read these snapshots, so a row that
+  // answers differently on a second read cannot charge one shape and perform another.
+  let scanBudget = INLINE_MAX_VALIDATION_SCAN_BYTES_V1;
+  const chargeScan = (units: number) => {
+    if (units > scanBudget) throw new InlineWorkBudgetExhaustedError();
+    scanBudget -= units;
+  };
+  let sourceSnapshots: readonly (RowSnapshotV1 | undefined)[];
+  let auxiliarySnapshots: readonly (RowSnapshotV1 | undefined)[];
+  try {
+    sourceSnapshots = sourceRowInputs.map(row => captureRowSnapshot(row, request, chargeScan));
+    auxiliarySnapshots = auxiliaryRowInputs.map(row => captureRowSnapshot(row, request, chargeScan));
+  } catch (error) {
+    if (error instanceof InlineWorkBudgetExhaustedError) {
+      return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the scan budget');
+    }
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+  }
+  const allSnapshots = [...sourceSnapshots, ...auxiliarySnapshots];
+  if (allSnapshots.some(snapshot => snapshot?.unavailable === true)) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
   }
   if (
-    allRowInputs.some(row => {
-      const currency = rowCurrency(row);
-      return currency !== undefined && currency !== request.sourceSettings.currency;
-    })
+    allSnapshots.some(
+      snapshot => snapshot?.currency !== undefined && snapshot.currency !== request.sourceSettings.currency
+    )
   ) {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
+  }
+  // Now that the identities are captured, price the fanout from them: every constituent
+  // naming a media buy re-checks that media buy's rows against its own cells.
+  if (
+    validationWorkExceedsCap(
+      sourceSnapshots,
+      auxiliarySnapshots,
+      request,
+      availabilityEvidence !== undefined,
+      INLINE_MAX_VALIDATION_WORK_UNITS_V1
+    )
+  ) {
+    return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the work budget');
   }
   const remainingCapacity = Math.min(
     INLINE_MAX_OBJECT_BYTES_V1,
@@ -596,9 +642,9 @@ async function executeAndSeal(
   let rows: readonly Record<string, unknown>[];
   let auxiliaryRows: readonly Record<string, unknown>[];
   try {
-    rows = sourceRowInputs.map(row =>
-      projectEvidenceRow(
-        row,
+    rows = sourceSnapshots.map(snapshot =>
+      projectSnapshotRow(
+        snapshot,
         request,
         upperBound => {
           if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
@@ -618,9 +664,9 @@ async function executeAndSeal(
     auxiliaryRows =
       availabilityEvidence === undefined
         ? []
-        : auxiliaryRowInputs.map(row =>
-            projectEvidenceRow(
-              row,
+        : auxiliarySnapshots.map(snapshot =>
+            projectSnapshotRow(
+              snapshot,
               request,
               upperBound => {
                 if (upperBound > auxiliaryProjectionBudget) {
@@ -642,35 +688,30 @@ async function executeAndSeal(
     }
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
   }
-  const evidenceRows = [...rows, ...auxiliaryRows];
-  const rowsByMediaBuyId = new Map<string, Record<string, unknown>[]>();
-  for (const row of rows) {
-    const mediaBuyId = rowMediaBuyId(row);
-    if (!mediaBuyId) continue;
-    const grouped = rowsByMediaBuyId.get(mediaBuyId) ?? [];
-    grouped.push(row);
-    rowsByMediaBuyId.set(mediaBuyId, grouped);
-  }
+  const admittedMediaBuyIds = new Set(
+    request.coverage.constituents.flatMap(constituent => (constituent.mediaBuyId ? [constituent.mediaBuyId] : []))
+  );
+  const sourceSnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(sourceSnapshots, admittedMediaBuyIds);
+  const auxiliarySnapshotsByMediaBuyId = groupSnapshotsByMediaBuyId(auxiliarySnapshots, admittedMediaBuyIds);
   if (rows.length > 0) {
-    const admittedMediaBuyIds = new Set(
-      request.coverage.constituents.flatMap(constituent => (constituent.mediaBuyId ? [constituent.mediaBuyId] : []))
-    );
-    // Read from the raw inputs so the auxiliary collection is still scope-checked on the
-    // legacy path, where it is intentionally left unprojected.
-    if (allRowInputs.some(row => !admittedMediaBuyIds.has(rowMediaBuyId(row) ?? ''))) {
+    // The auxiliary collection is scope-checked too, including on the legacy path where
+    // it is intentionally left unprojected.
+    if (allSnapshots.some(snapshot => !admittedMediaBuyIds.has(snapshot?.mediaBuyId ?? ''))) {
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
     }
     if (
       request.coverage.constituents.some(constituent => {
         if (constituent.constituentKind !== 'media_buy' || !constituent.mediaBuyId) return true;
-        const constituentRows = rowsByMediaBuyId.get(constituent.mediaBuyId) ?? [];
+        const constituentRows = sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS;
         return (
-          constituentRows.some(row =>
-            request.requestedDimensions.some(dimension => !rowHasDimension(row, dimension))
+          constituentRows.some(snapshot =>
+            request.requestedDimensions.some(dimension => !snapshotHasDimension(snapshot, dimension))
           ) ||
           (availabilityEvidence === undefined &&
             (constituentRows.length === 0 ||
-              constituentRows.some(row => request.requestedMetrics.some(metric => !rowHasField(row, metric)))))
+              constituentRows.some(snapshot =>
+                request.requestedMetrics.some(metric => snapshotField(snapshot, metric).value === undefined)
+              )))
         );
       })
     ) {
@@ -682,9 +723,9 @@ async function executeAndSeal(
     }
   }
   if (availabilityEvidence !== undefined) {
-    const rowEvidenceFailure = validateRowsAgainstAvailabilityEvidence(
-      rows,
-      evidenceRows,
+    const rowEvidenceFailure = validateSnapshotsAgainstAvailabilityEvidence(
+      sourceSnapshotsByMediaBuyId,
+      auxiliarySnapshotsByMediaBuyId,
       request,
       availabilityEvidence.cells
     );
@@ -761,7 +802,7 @@ async function executeAndSeal(
   const declaredMetrics = new Map(offering.metrics.map(metric => [metric.name, metric]));
   const constituentIdsWithRows = new Set(
     request.coverage.constituents
-      .filter(constituent => constituent.mediaBuyId && rowsByMediaBuyId.has(constituent.mediaBuyId))
+      .filter(constituent => constituent.mediaBuyId && sourceSnapshotsByMediaBuyId.has(constituent.mediaBuyId))
       .map(constituent => constituent.constituentId)
   );
   let projectedAvailability: InlineAvailabilityProjection;
@@ -907,119 +948,295 @@ function parseInlineAvailabilityEvidence(
   };
 }
 
-const NO_ROWS: readonly unknown[] = [];
+const NO_SNAPSHOTS: readonly RowSnapshotV1[] = [];
 
-/** Group rows by `media_buy_id`, keeping only media buys the request admits. */
-function groupRowsByMediaBuyId(
-  rows: readonly unknown[],
-  admittedMediaBuyIds: ReadonlySet<string>
-): Map<string, unknown[]> {
-  const grouped = new Map<string, unknown[]>();
-  for (const row of rows) {
-    const mediaBuyId = rowMediaBuyId(row);
-    if (mediaBuyId === undefined || !admittedMediaBuyIds.has(mediaBuyId)) continue;
-    const existing = grouped.get(mediaBuyId);
-    if (existing) existing.push(row);
-    else grouped.set(mediaBuyId, [row]);
+/** Raised when a bounded validation budget is spent. Never escapes `executeAndSeal`. */
+class InlineWorkBudgetExhaustedError extends Error {}
+
+/** One claim for one field, from a single descriptor observation. */
+type RowClaimV1 = { readonly claimed: boolean; readonly value?: unknown };
+
+/**
+ * One field of one row, fully resolved from a single observation.
+ *
+ * Every derivation that costs a scan -- byte length, the zero test, and the decimal
+ * canonicalization behind a duplicate-claim comparison -- is computed here, once, while
+ * the scan budget is being charged. Validation then visits a field any number of times
+ * (once per cell, per constituent sharing the media buy) at constant cost, so the work
+ * the budget charges is the work that is performed.
+ */
+type RowFieldClaimsV1 = {
+  readonly direct: RowClaimV1;
+  readonly nested: RowClaimV1;
+  /** The claim that governs the field: the direct one when present, else the `totals` one. */
+  readonly claim: RowClaimV1;
+  readonly directValid: boolean;
+  readonly nestedValid: boolean;
+  readonly claimValid: boolean;
+  /** The usable value: the direct one when valid, else the `totals` one. */
+  readonly value: string | number | undefined;
+  readonly valueIsZero: boolean;
+  readonly claimIsZero: boolean;
+  /** False only when both claims are present and state different quantities. */
+  readonly claimsAgree: boolean;
+};
+
+const UNCLAIMED_V1: RowClaimV1 = { claimed: false };
+const NO_FIELD_CLAIMS_V1: RowFieldClaimsV1 = {
+  direct: UNCLAIMED_V1,
+  nested: UNCLAIMED_V1,
+  claim: UNCLAIMED_V1,
+  directValid: false,
+  nestedValid: false,
+  claimValid: false,
+  value: undefined,
+  valueIsZero: false,
+  claimIsZero: false,
+  claimsAgree: true,
+};
+
+/**
+ * One delivery row observed exactly once.
+ *
+ * Work budgeting, scope and currency checks, availability validation, projection and the
+ * staged bytes all read this snapshot rather than the adopter row. Re-reading a row let a
+ * stateful proxy answer differently per observation: a `media_buy_id` reporting a unique
+ * value while the fanout budget was counted and a shared value while the rows were
+ * grouped charged one constituent's work and then performed every constituent's.
+ */
+type RowSnapshotV1 = {
+  readonly mediaBuyId: string | undefined;
+  readonly currency: string | undefined;
+  readonly unavailable: boolean;
+  /** Claims for every requested metric and dimension, keyed by field name. */
+  readonly fieldClaims: ReadonlyMap<string, RowFieldClaimsV1>;
+};
+
+/**
+ * Capture one row. Returns undefined when the value is not a row object at all, so the
+ * unavailable and currency checks keep their precedence over the projection's rejection.
+ */
+function captureRowSnapshot(
+  row: unknown,
+  request: ReportingSourceSliceRequestV1,
+  chargeScan: (units: number) => void
+): RowSnapshotV1 | undefined {
+  if (typeof row !== 'object' || row === null || Array.isArray(row)) return undefined;
+  const record = row as Record<string, unknown>;
+  const mediaBuyId = ownDataValue(record, 'media_buy_id');
+  const currency = ownDataValue(record, 'currency');
+  const status = ownDataValue(record, 'status');
+  const partialData = ownDataValue(record, 'partial_data');
+  const totals = ownDataValue(record, 'totals');
+  const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
+  const fieldClaims = new Map<string, RowFieldClaimsV1>();
+  for (const field of [...request.requestedMetrics, ...request.requestedDimensions]) {
+    if (field === 'media_buy_id' || fieldClaims.has(field)) continue;
+    fieldClaims.set(field, captureFieldClaims(record, totalsRecord, field, chargeScan));
   }
-  return grouped;
+  return {
+    mediaBuyId: typeof mediaBuyId === 'string' ? mediaBuyId : undefined,
+    currency: typeof currency === 'string' ? currency : undefined,
+    unavailable:
+      (typeof status === 'string' && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status.toLowerCase())) ||
+      partialData === true,
+    fieldClaims,
+  };
+}
+
+function captureFieldClaims(
+  record: Record<string, unknown>,
+  totalsRecord: Record<string, unknown> | undefined,
+  field: string,
+  chargeScan: (units: number) => void
+): RowFieldClaimsV1 {
+  const direct = ownDataClaim(record, field);
+  const nested = totalsRecord ? ownDataClaim(totalsRecord, field) : UNCLAIMED_V1;
+  // Charge both claims before anything measures or canonicalizes either one. A string's
+  // `length` is O(1), while its byte length, the zero test and the decimal trims are all
+  // O(length). Only the retained value is charged against the projection budget, so a
+  // long string appearing as the discarded half of a duplicate claim -- a tiny direct
+  // value beside a huge `totals` restatement -- otherwise bought a full scan per row at
+  // no cost, and the same string reused across rows bought one scan per occurrence.
+  chargeScan(scanUnits(direct.value) + scanUnits(nested.value));
+
+  const directValid = isEvidenceValue(direct.value);
+  const nestedValid = isEvidenceValue(nested.value);
+  const claim = direct.claimed ? direct : nested;
+  const claimValid = claim === direct ? directValid : nestedValid;
+  const value: string | number | undefined = directValid
+    ? (direct.value as string | number)
+    : nestedValid
+      ? (nested.value as string | number)
+      : undefined;
+  return {
+    direct,
+    nested,
+    claim,
+    directValid,
+    nestedValid,
+    claimValid,
+    value,
+    valueIsZero: value !== undefined && isZeroEvidenceValue(value),
+    claimIsZero: claimValid && isZeroEvidenceValue(claim.value as string | number),
+    // Only a duplicate claim can disagree, and only then is a canonical decimal form
+    // needed -- so the comparison happens here, once, rather than once per projection.
+    claimsAgree:
+      !direct.claimed || !nested.claimed || !directValid || !nestedValid
+        ? true
+        : metricClaimsAgree(direct.value, nested.value),
+  };
+}
+
+function scanUnits(value: unknown): number {
+  return typeof value === 'string' ? value.length + 1 : 1;
+}
+
+/** True when `count` items at `unitsEach` each would exceed `cap`, without multiplying. */
+function workUnitsExceedCap(count: number, unitsEach: number, cap: number): boolean {
+  return unitsEach > 0 && count > Math.floor(cap / unitsEach);
 }
 
 /**
- * True when the cumulative row-by-cell comparison work exceeds `cap`.
+ * True when the cumulative per-constituent validation work exceeds `cap`.
  *
- * Every row is compared against the cells of each constituent naming its
+ * Every row is checked against the cells and dimensions of each constituent naming its
  * `media_buy_id`, so one media buy shared by many constituents multiplies the work by
- * that fanout. Bounding rows x metrics alone missed it entirely: 1,000 constituents
- * sharing one media buy, one requested metric and 100,000 rows charges 100,000 against
- * a 5,000,000 cap while actually performing 100,000,000 comparisons.
+ * that fanout, and each visit costs one unit per requested metric and one per requested
+ * dimension. Pricing metrics without dimensions or fanout admitted a request inside every
+ * declared limit -- 1,000 constituents sharing one media buy, 100,000 rows, 1,000
+ * requested dimensions -- that demanded around 10^11 checks against a 5,000,000 cap.
  *
- * The per-constituent contribution is checked against the cap before it is multiplied
- * out, and the running total returns as soon as it passes the cap, so neither value can
- * grow beyond `cap` plus one constituent's contribution -- both stay far inside the
- * safe-integer range regardless of how large the declared coverage is.
+ * Identities come from the captured snapshots, so the shape priced here is the shape
+ * performed. The per-constituent contribution is bounded before it is multiplied out and
+ * the running total returns at the cap, so neither value leaves the safe-integer range.
  */
-function availabilityRowCellWorkExceedsCap(
-  sourceRows: readonly unknown[],
-  auxiliaryRows: readonly unknown[],
+function validationWorkExceedsCap(
+  sourceSnapshots: readonly (RowSnapshotV1 | undefined)[],
+  auxiliarySnapshots: readonly (RowSnapshotV1 | undefined)[],
   request: ReportingSourceSliceRequestV1,
+  includeAuxiliary: boolean,
   cap: number
 ): boolean {
-  const metricCount = request.requestedMetrics.length;
-  const perConstituentCap = Math.floor(cap / metricCount);
-  const sourceRowCounts = countRowsByMediaBuyId(sourceRows);
-  const auxiliaryRowCounts = countRowsByMediaBuyId(auxiliaryRows);
+  const unitsPerVisit = request.requestedMetrics.length + request.requestedDimensions.length;
+  if (unitsPerVisit === 0) return false;
+  const perConstituentCap = Math.floor(cap / unitsPerVisit);
+  const sourceCounts = countSnapshotsByMediaBuyId(sourceSnapshots);
+  const auxiliaryCounts = includeAuxiliary ? countSnapshotsByMediaBuyId(auxiliarySnapshots) : undefined;
   let work = 0;
   for (const constituent of request.coverage.constituents) {
     if (!constituent.mediaBuyId) continue;
-    const rowVisits =
-      (sourceRowCounts.get(constituent.mediaBuyId) ?? 0) + (auxiliaryRowCounts.get(constituent.mediaBuyId) ?? 0);
-    if (rowVisits > perConstituentCap) return true;
-    work += rowVisits * metricCount;
+    const visits =
+      (sourceCounts.get(constituent.mediaBuyId) ?? 0) + (auxiliaryCounts?.get(constituent.mediaBuyId) ?? 0);
+    if (visits > perConstituentCap) return true;
+    work += visits * unitsPerVisit;
     if (work > cap) return true;
   }
   return false;
 }
 
-function countRowsByMediaBuyId(rows: readonly unknown[]): Map<string, number> {
+function countSnapshotsByMediaBuyId(snapshots: readonly (RowSnapshotV1 | undefined)[]): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const row of rows) {
-    const mediaBuyId = rowMediaBuyId(row);
-    if (mediaBuyId === undefined) continue;
-    counts.set(mediaBuyId, (counts.get(mediaBuyId) ?? 0) + 1);
+  for (const snapshot of snapshots) {
+    if (snapshot?.mediaBuyId === undefined) continue;
+    counts.set(snapshot.mediaBuyId, (counts.get(snapshot.mediaBuyId) ?? 0) + 1);
   }
   return counts;
 }
 
-function validateRowsAgainstAvailabilityEvidence(
-  sourceRows: readonly unknown[],
-  evidenceRows: readonly unknown[],
+/**
+ * Group snapshots by captured `media_buy_id`, keeping only admitted media buys. Every
+ * constituent naming a media buy reads the same array, so the fanout costs no copies.
+ */
+function groupSnapshotsByMediaBuyId(
+  snapshots: readonly (RowSnapshotV1 | undefined)[],
+  admittedMediaBuyIds: ReadonlySet<string>
+): Map<string, RowSnapshotV1[]> {
+  const grouped = new Map<string, RowSnapshotV1[]>();
+  for (const snapshot of snapshots) {
+    if (!snapshot) continue;
+    const mediaBuyId = snapshot.mediaBuyId;
+    if (mediaBuyId === undefined || !admittedMediaBuyIds.has(mediaBuyId)) continue;
+    const existing = grouped.get(mediaBuyId);
+    if (existing) existing.push(snapshot);
+    else grouped.set(mediaBuyId, [snapshot]);
+  }
+  return grouped;
+}
+
+function snapshotField(snapshot: RowSnapshotV1, field: string): RowFieldClaimsV1 {
+  return snapshot.fieldClaims.get(field) ?? NO_FIELD_CLAIMS_V1;
+}
+
+function snapshotHasDimension(snapshot: RowSnapshotV1, dimension: string): boolean {
+  return dimension === 'media_buy_id'
+    ? snapshot.mediaBuyId !== undefined
+    : snapshotField(snapshot, dimension).value !== undefined;
+}
+
+/**
+ * Check every cell against the rows of each constituent that names its media buy.
+ *
+ * Each row is visited once per cell. The `present`/`explicit_zero` proof and the
+ * duplicate-claim check used to be separate passes over the source rows, so a source row
+ * was inspected twice per cell while the budget charged it once. Both checks now happen
+ * on the single visit, which makes the charged work and the performed work the same
+ * quantity.
+ *
+ * Verdict precedence is preserved: a `present` cell with no value anywhere in the source
+ * rows is `partial` even when another row of the same cell also contradicts the claim, so
+ * an integrity verdict is held until the pass completes rather than returned early.
+ */
+function validateSnapshotsAgainstAvailabilityEvidence(
+  sourceSnapshotsByMediaBuyId: ReadonlyMap<string, readonly RowSnapshotV1[]>,
+  auxiliarySnapshotsByMediaBuyId: ReadonlyMap<string, readonly RowSnapshotV1[]>,
   request: ReportingSourceSliceRequestV1,
   cells: readonly z.output<typeof InlineReportingMetricEvidenceV1Schema>[]
 ): 'partial' | 'integrity' | undefined {
   const cellsByConstituent = new Map<string, Array<(typeof cells)[number]>>();
-  const admittedMediaBuyIds = new Set<string>();
-  for (const constituent of request.coverage.constituents) {
-    cellsByConstituent.set(constituent.constituentId, []);
-    if (constituent.mediaBuyId) admittedMediaBuyIds.add(constituent.mediaBuyId);
-  }
+  for (const constituent of request.coverage.constituents) cellsByConstituent.set(constituent.constituentId, []);
   for (const cell of cells) cellsByConstituent.get(cell.constituent_id)?.push(cell);
-  // One media buy can back several constituents, and each of them must be held to its
-  // own cells against that media buy's rows. Grouping by media buy once and sharing the
-  // array keeps that fanout free of copies: pushing every row into a per-constituent
-  // array instead allocated the rows again for each constituent sharing the media buy.
-  const sourceRowsByMediaBuyId = groupRowsByMediaBuyId(sourceRows, admittedMediaBuyIds);
-  const evidenceRowsByMediaBuyId = groupRowsByMediaBuyId(evidenceRows, admittedMediaBuyIds);
+
+  let integrity = false;
   for (const constituent of request.coverage.constituents) {
-    const sourceConstituentRows = constituent.mediaBuyId
-      ? (sourceRowsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_ROWS)
-      : NO_ROWS;
-    const allConstituentRows = constituent.mediaBuyId
-      ? (evidenceRowsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_ROWS)
-      : NO_ROWS;
+    const sourceRows = constituent.mediaBuyId
+      ? (sourceSnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
+      : NO_SNAPSHOTS;
+    const auxiliaryRows = constituent.mediaBuyId
+      ? (auxiliarySnapshotsByMediaBuyId.get(constituent.mediaBuyId) ?? NO_SNAPSHOTS)
+      : NO_SNAPSHOTS;
     for (const cell of cellsByConstituent.get(constituent.constituentId) ?? []) {
-      if (cell.status === 'present') {
-        if (sourceConstituentRows.length === 0) return 'partial';
-        for (const row of sourceConstituentRows) {
-          if (!rowHasField(row, cell.metric)) return 'partial';
-        }
+      if (cell.status === 'present' && sourceRows.length === 0) return 'partial';
+      for (const snapshot of sourceRows) {
+        const verdict = cellVerdictForSnapshot(cell, snapshot, true);
+        if (verdict === 'partial') return 'partial';
+        if (verdict === 'integrity') integrity = true;
       }
-      if (cell.status === 'explicit_zero' && sourceConstituentRows.length > 0) {
-        for (const row of sourceConstituentRows) {
-          const value = rowFieldValue(row, cell.metric);
-          if (value === undefined || !isZeroEvidenceValue(value)) return 'integrity';
-        }
-      }
-      for (const row of allConstituentRows) {
-        const claim = rowFieldClaim(row, cell.metric);
-        if (claim.claimed && !isEvidenceValue(claim.value)) return 'integrity';
-        if (!isEvidenceValue(claim.value)) continue;
-        if (cell.status === 'explicit_zero' && !isZeroEvidenceValue(claim.value)) return 'integrity';
-        if (['unsupported', 'delayed', 'missing'].includes(cell.status)) return 'integrity';
+      for (const snapshot of auxiliaryRows) {
+        const verdict = cellVerdictForSnapshot(cell, snapshot, false);
+        if (verdict === 'partial') return 'partial';
+        if (verdict === 'integrity') integrity = true;
       }
     }
   }
-  return undefined;
+  return integrity ? 'integrity' : undefined;
+}
+
+/** One row, one cell, one visit: the availability proof and the claim check together. */
+function cellVerdictForSnapshot(
+  cell: z.output<typeof InlineReportingMetricEvidenceV1Schema>,
+  snapshot: RowSnapshotV1,
+  isSourceRow: boolean
+): 'partial' | 'integrity' | undefined {
+  const field = snapshotField(snapshot, cell.metric);
+  if (isSourceRow) {
+    if (cell.status === 'present' && field.value === undefined) return 'partial';
+    if (cell.status === 'explicit_zero' && !field.valueIsZero) return 'integrity';
+  }
+  if (field.claim.claimed && !field.claimValid) return 'integrity';
+  if (!field.claimValid) return undefined;
+  if (cell.status === 'explicit_zero' && !field.claimIsZero) return 'integrity';
+  return INLINE_UNAVAILABLE_CELL_STATUSES_V1.includes(cell.status) ? 'integrity' : undefined;
 }
 
 function projectInlineAvailabilityEvidence(
@@ -1292,37 +1509,6 @@ async function awaitInlineExecution(
   }
 }
 
-function rowMediaBuyId(row: unknown): string | undefined {
-  if (typeof row !== 'object' || row === null) return undefined;
-  const value = ownDataValue(row as Record<string, unknown>, 'media_buy_id');
-  return typeof value === 'string' ? value : undefined;
-}
-
-function rowHasField(row: unknown, field: string): boolean {
-  return rowFieldValue(row, field) !== undefined;
-}
-
-function rowFieldValue(row: unknown, field: string): string | number | undefined {
-  if (typeof row !== 'object' || row === null) return undefined;
-  const record = row as Record<string, unknown>;
-  const direct = ownDataValue(record, field);
-  if (isEvidenceValue(direct)) return direct;
-  const totals = ownDataValue(record, 'totals');
-  if (typeof totals !== 'object' || totals === null) return undefined;
-  const nested = ownDataValue(totals as Record<string, unknown>, field);
-  return isEvidenceValue(nested) ? nested : undefined;
-}
-
-function rowFieldClaim(row: unknown, field: string): { claimed: boolean; value?: unknown } {
-  if (typeof row !== 'object' || row === null) return { claimed: false };
-  const record = row as Record<string, unknown>;
-  const direct = ownDataClaim(record, field);
-  if (direct.claimed) return direct;
-  const totals = ownDataValue(record, 'totals');
-  if (typeof totals !== 'object' || totals === null) return { claimed: false };
-  return ownDataClaim(totals as Record<string, unknown>, field);
-}
-
 function isEvidenceValue(value: unknown): value is string | number {
   return (
     (typeof value === 'number' && Number.isFinite(value)) ||
@@ -1415,10 +1601,6 @@ function isZeroEvidenceValue(value: string | number): boolean {
   return typeof value === 'number' ? value === 0 : /^-?0(?:\.0+)?$/.test(value);
 }
 
-function rowHasDimension(row: unknown, dimension: string): boolean {
-  return dimension === 'media_buy_id' ? rowMediaBuyId(row) !== undefined : rowHasField(row, dimension);
-}
-
 function isRows(value: InlineReportingDeliveryResultV1): value is readonly unknown[] {
   return Array.isArray(value);
 }
@@ -1493,25 +1675,12 @@ function resolveOwnDataSlot(record: Record<string, unknown>, field: string): Own
   return { kind: 'absent' };
 }
 
-function rowCurrency(row: unknown): string | undefined {
-  if (typeof row !== 'object' || row === null) return undefined;
-  const value = ownDataValue(row as Record<string, unknown>, 'currency');
-  return typeof value === 'string' ? value : undefined;
-}
-
-function rowIsUnavailable(row: unknown): boolean {
-  if (typeof row !== 'object' || row === null) return false;
-  const record = row as Record<string, unknown>;
-  const status = ownDataValue(record, 'status');
-  return (
-    (typeof status === 'string' &&
-      ['failed', 'reporting_delayed', 'not_ready', 'pending', 'unavailable', 'error'].includes(status.toLowerCase())) ||
-    ownDataValue(record, 'partial_data') === true
-  );
-}
-
-function projectEvidenceRow(
-  row: unknown,
+/**
+ * Build the staged record for one captured row. Every value comes from the snapshot, so
+ * the row that was budgeted and validated is the row that is staged.
+ */
+function projectSnapshotRow(
+  snapshot: RowSnapshotV1 | undefined,
   request: ReportingSourceSliceRequestV1,
   consumeBudget: (upperBound: number) => void,
   options: Readonly<{
@@ -1521,14 +1690,13 @@ function projectEvidenceRow(
     includeDimensions: boolean;
   }>
 ): Record<string, unknown> {
-  if (typeof row !== 'object' || row === null || Array.isArray(row)) throw new TypeError('Invalid row');
-  const record = row as Record<string, unknown>;
-  const projected: Record<string, unknown> = { media_buy_id: rowMediaBuyId(row) };
+  if (!snapshot) throw new TypeError('Invalid row');
+  const projected: Record<string, unknown> = { media_buy_id: snapshot.mediaBuyId };
   if (options.includeDimensions) {
     for (const dimension of request.requestedDimensions) {
       if (dimension === 'media_buy_id') continue;
-      const value = rowFieldValue(record, dimension);
-      if (!isEvidenceValue(value)) {
+      const { value } = snapshotField(snapshot, dimension);
+      if (value === undefined) {
         if (options.allowMissingDimensions) continue;
         throw new TypeError('Invalid dimension evidence');
       }
@@ -1536,40 +1704,31 @@ function projectEvidenceRow(
       projected[dimension] = value;
     }
   }
-  const totals = ownDataValue(record, 'totals');
-  const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
   const projectedTotals: Record<string, unknown> = {};
   for (const metric of request.requestedMetrics) {
-    let value: unknown;
+    const field = snapshotField(snapshot, metric);
+    const { direct, nested } = field;
+    let value: string | number | undefined;
     let directValue = false;
     if (options.strictMetricClaims) {
-      const direct = ownDataClaim(record, metric);
-      const nested: { claimed: boolean; value?: unknown } = totalsRecord
-        ? ownDataClaim(totalsRecord, metric)
-        : { claimed: false };
-      if (direct.claimed && !isEvidenceValue(direct.value)) throw new TypeError('Invalid metric evidence');
-      if (nested.claimed && !isEvidenceValue(nested.value)) throw new TypeError('Invalid metric evidence');
+      if (direct.claimed && !field.directValid) throw new TypeError('Invalid metric evidence');
+      if (nested.claimed && !field.nestedValid) throw new TypeError('Invalid metric evidence');
       // A row that claims the same metric twice must not let the direct value mask a
-      // contradictory totals claim — the sealed evidence would misrepresent the source.
-      if (direct.claimed && nested.claimed && !metricClaimsAgree(direct.value, nested.value)) {
-        throw new TypeError('Contradictory metric evidence');
-      }
+      // contradictory totals claim -- the sealed evidence would misrepresent the source.
+      if (!field.claimsAgree) throw new TypeError('Contradictory metric evidence');
       if (direct.claimed) {
-        value = direct.value;
+        value = direct.value as string | number | undefined;
         directValue = true;
       } else {
-        value = nested.value;
+        value = nested.value as string | number | undefined;
       }
+    } else if (field.directValid) {
+      value = direct.value as string | number;
+      directValue = true;
     } else {
-      const direct = ownDataValue(record, metric);
-      if (isEvidenceValue(direct)) {
-        value = direct;
-        directValue = true;
-      } else if (totalsRecord) {
-        value = ownDataValue(totalsRecord, metric);
-      }
+      value = field.nestedValid ? (nested.value as string | number) : undefined;
     }
-    if (!isEvidenceValue(value)) {
+    if (value === undefined) {
       if (options.allowMissingMetrics) continue;
       throw new TypeError('Invalid metric evidence');
     }

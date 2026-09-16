@@ -1731,6 +1731,208 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(validateReportingSourceFailureV1(result, 'STAGING_FAILED').code, 'STAGING_FAILED');
   });
 
+  // Shared-media-buy slice with `constituentCount` constituents and tunable metric and
+  // dimension breadth. The offering is widened to declare whatever is requested.
+  function fanoutFixture({ key, constituentCount, rowCount, metricCount = 1, dimensionCount = 1, rowFor }) {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    const metrics = ['impressions', 'spend'].slice(0, Math.min(metricCount, 2));
+    for (let index = metrics.length; index < metricCount; index += 1) {
+      const name = `metric_${String(index).padStart(4, '0')}`;
+      offering.metrics.push({ ...offering.metrics[0], name, semanticContractId: `delivery.${name}` });
+      metrics.push(name);
+    }
+    const dimensions = ['media_buy_id'];
+    for (let index = 1; index < dimensionCount; index += 1) {
+      const name = `dimension_${String(index).padStart(4, '0')}`;
+      offering.dimensions.push({ name, support: 'exact' });
+      dimensions.push(name);
+    }
+
+    const slice = request(key);
+    const base = slice.coverage.constituents[0];
+    slice.requestedMetrics = metrics;
+    slice.requestedDimensions = dimensions;
+    slice.coverage.constituents = Array.from({ length: constituentCount }, (unused, index) => ({
+      ...base,
+      constituentId: `fixture-constituent-${String(index).padStart(4, '0')}`,
+    }));
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+
+    const buildRow =
+      rowFor ??
+      (() => {
+        const row = { media_buy_id: 'fixture-media-buy' };
+        for (const metric of metrics) row[metric] = 10;
+        for (const dimension of dimensions.slice(1)) row[dimension] = 'value';
+        return row;
+      });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: rowCount }, (unused, index) => buildRow(index)),
+        availability_evidence: {
+          version: '1.0',
+          cells: input.constituents.flatMap(constituent =>
+            input.requested_metrics.map(metric => ({
+              constituent_id: constituent.constituent_id,
+              metric,
+              status: 'present',
+              data_through: input.end_date,
+            }))
+          ),
+        },
+      }),
+      offering
+    );
+    return { source, slice };
+  }
+
+  test('resolves each row identity from one observation', async () => {
+    // The fanout budget read `media_buy_id` from the adopter row and the grouping read it
+    // again. A row reporting a unique id on the first read and the shared id afterwards
+    // was priced as if it belonged to no constituent and then processed as if it belonged
+    // to all of them.
+    let identityReads = 0;
+    const rowCount = 6_000;
+    const { source, slice } = fanoutFixture({
+      key: 'fixture-inline-mutable-row-identity',
+      constituentCount: 1_000,
+      rowCount,
+      rowFor: index =>
+        new Proxy(
+          { media_buy_id: 'fixture-media-buy', impressions: 10 },
+          {
+            getOwnPropertyDescriptor(target, property) {
+              if (property !== 'media_buy_id') return Reflect.getOwnPropertyDescriptor(target, property);
+              identityReads += 1;
+              return {
+                configurable: true,
+                enumerable: true,
+                writable: true,
+                // Unique on the first observation, shared on every later one.
+                value: identityReads <= rowCount ? `unpriced-media-buy-${index}` : 'fixture-media-buy',
+              };
+            },
+          }
+        ),
+    });
+    const started = process.hrtime.bigint();
+    const result = await source.execute(slice, context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    // The one observation reports an unadmitted media buy, so the row is out of scope.
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(identityReads, rowCount, 'each row identity is observed exactly once');
+    assert.ok(elapsedMs < 2_000, `single-observation identity took ${elapsedMs.toFixed(1)}ms`);
+  });
+
+  test('charges exactly the validation visits it performs', async () => {
+    // 1,000 constituents sharing one media buy, one metric and one dimension: two units
+    // per row visit. 2,500 rows is exactly the 5,000,000 unit cap and must be admitted;
+    // one row more must not be.
+    const atCap = fanoutFixture({
+      key: 'fixture-inline-work-cap-at',
+      constituentCount: 1_000,
+      rowCount: 2_500,
+    });
+    const sealed = await atCap.source.execute(atCap.slice, context());
+    assert.equal(sealed.ok, true, 'a shape landing exactly on the cap is admitted');
+    const manifest = parseVerifiedReportingSourceManifestV1(sealed.response.manifest, sealed.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.equal(manifest.metricAvailability.length, 1_000);
+
+    const overCap = fanoutFixture({
+      key: 'fixture-inline-work-cap-over',
+      constituentCount: 1_000,
+      rowCount: 2_501,
+    });
+    const refused = await overCap.source.execute(overCap.slice, context());
+    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+  });
+
+  test('prices requested dimensions in the shared fanout budget', async () => {
+    // Dimensions are checked per row per constituent just as metrics are, so leaving them
+    // out of the budget let one metric stand in for 200 checks per visit.
+    const over = fanoutFixture({
+      key: 'fixture-inline-dimension-fanout-over',
+      constituentCount: 1_000,
+      rowCount: 100,
+      metricCount: 1,
+      dimensionCount: 200,
+    });
+    const started = process.hrtime.bigint();
+    const refused = await over.source.execute(over.slice, context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    assert.ok(elapsedMs < 2_000, `dimension fanout refusal took ${elapsedMs.toFixed(1)}ms`);
+
+    // The same shape inside the budget still seals, with every dimension retained.
+    const under = fanoutFixture({
+      key: 'fixture-inline-dimension-fanout-under',
+      constituentCount: 100,
+      rowCount: 10,
+      metricCount: 1,
+      dimensionCount: 200,
+    });
+    const sealed = await under.source.execute(under.slice, context());
+    assert.equal(sealed.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(sealed.response.manifest, sealed.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.equal(manifest.requestedDimensions.length, 200);
+  });
+
+  test('charges reused long claims before scanning them', async () => {
+    // One long string reused as the discarded half of a duplicate claim: the retained
+    // direct value is a single digit, so the projection budget only ever saw 32 bytes
+    // while every row measured and canonicalized two million characters.
+    const reused = `0.${'0'.repeat(2_000_000)}`;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: 1_000 }, () => ({
+          media_buy_id: 'fixture-media-buy',
+          impressions: 10,
+          spend: 0,
+          totals: { spend: reused },
+        })),
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-reused-long-claim');
+    slice.coverage.expected = 'partial';
+    const started = process.hrtime.bigint();
+    const refused = await source.execute(slice, context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.equal(validateReportingSourceFailureV1(refused, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    // The scan budget stops after a single staged object's worth of characters; without
+    // it every row was scanned in full.
+    assert.ok(elapsedMs < 5_000, `reused long claim refusal took ${elapsedMs.toFixed(1)}ms`);
+
+    // An ordinary long decimal is still reconciled exactly and still seals.
+    const ordinary = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          {
+            media_buy_id: 'fixture-media-buy',
+            impressions: 10,
+            spend: 0.5,
+            totals: { spend: `0.5${'0'.repeat(100_000)}` },
+          },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const sealed = await ordinary.execute(request('fixture-inline-ordinary-long-claim'), context());
+    assert.equal(sealed.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(sealed.response.manifest, sealed.manifestBytes, 'basic');
+    assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'spend').status, 'present');
+  });
+
   test('bounds row-by-cell work across shared constituent fanout', async () => {
     // One media buy backing many constituents multiplies the comparison work by that
     // fanout. The rows x metrics bound never saw it, so a request well inside every
