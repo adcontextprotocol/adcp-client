@@ -381,6 +381,19 @@ export interface WebhookEmitParams {
    * never serialized into the webhook payload.
    */
   attemptAuthorizationContext?: Record<string, unknown>;
+  /**
+   * Durable barrier awaited once per emission, after `authorizeAttempt` allows
+   * the delivery and immediately before the first external POST. Nothing is
+   * sent until it resolves.
+   *
+   * It exists so an emission owner can durably record that an attempt is about
+   * to happen. A suppression fails closed *before* this point, so an owner that
+   * freezes a recipient set can still safely re-resolve it after a suppressed
+   * emission while knowing that a crash after this point must be treated as an
+   * ambiguous send. Rejecting aborts the delivery without any external attempt
+   * and reports a retryable, non-terminal outcome with `attempts: 0`.
+   */
+  beforeExternalAttempt?: () => Promise<void>;
 }
 
 export interface WebhookEmitAttempt {
@@ -588,6 +601,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
         let lastStatus: number | undefined;
         let finalTerminal = false;
         let attempts = 0;
+        let externalAttemptBarrierPassed = false;
 
         for (let attempt = 1; attempt <= retries.maxAttempts; attempt++) {
           await recoveryHeartbeat?.renewNow();
@@ -640,6 +654,18 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             if ('authentication' in authorization) {
               attemptAuthentication =
                 authorization.authentication == null ? null : structuredClone(authorization.authentication);
+            }
+          }
+          if (params.beforeExternalAttempt && !externalAttemptBarrierPassed) {
+            try {
+              await params.beforeExternalAttempt();
+              externalAttemptBarrierPassed = true;
+            } catch {
+              // Nothing has been sent. Report a retryable outcome with no
+              // external attempt so the owner can retry or re-resolve.
+              errors.push(`attempt ${attempt}: delivery attempt barrier did not commit`);
+              finalTerminal = false;
+              break;
             }
           }
           attempts = attempt;

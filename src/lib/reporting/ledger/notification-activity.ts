@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { NotificationRecipientRef, PersistentNotificationRuntime } from '../../server/notification-subscriptions';
+import { notificationSuppressionDisposition } from '../../server/notification-subscriptions';
+import type { WebhookAttemptSuppressionReason } from '../../server/webhook-emitter';
 import type { ReportingStatusChangedWebhook } from '../../types/core.generated';
 import { canonicalJsonSha256 } from '../../utils/jcs';
 import type {
@@ -61,6 +63,18 @@ export interface ReportingNotificationRecoveryMetricsV1 {
   leaseLost: number;
 }
 
+/**
+ * Raised when live delivery authority failed closed for an operational reason
+ * rather than a deliberate one. The claim is released and retried; the activity
+ * is never projected as delivered.
+ */
+export class ReportingNotificationRetryableSuppressionError extends Error {
+  override readonly name = 'ReportingNotificationRetryableSuppressionError';
+  constructor(readonly reason: WebhookAttemptSuppressionReason) {
+    super(`Reporting notification delivery authority failed closed (${reason}); no external attempt was made`);
+  }
+}
+
 export interface ReportingNotificationProjectionErrorV1 {
   transitionId: string;
   tenantId: string;
@@ -87,6 +101,15 @@ export interface PostgresReportingNotificationActivityOptions {
   retentionMs?: number;
   /** Atomic pending-intent backpressure per tenant. Defaults to 100,000. */
   maxPendingPerTenant?: number;
+  /**
+   * Largest recipient fanout whose frozen intent this runtime will store.
+   * Defaults to 10,000 — the ceiling the persistent notification runtime
+   * enforces on `maxFanoutCandidates` — so a valid fanout can never exceed it.
+   * Lower it only below that runtime's configured `maxFanoutCandidates`, never
+   * above: a fanout larger than this cannot be committed and would retry until
+   * it aged out.
+   */
+  maxRecipients?: number;
 }
 
 export interface PostgresReportingNotificationActivityRuntime {
@@ -111,9 +134,35 @@ export interface PostgresReportingNotificationActivityRuntime {
   pruneProjected(options?: { limit?: number }): Promise<number>;
 }
 
+/**
+ * Largest fanout the persistent notification runtime will ever resolve; its
+ * `maxFanoutCandidates` is validated to 1..10,000. Defaulting to the ceiling
+ * means a valid fanout can never exceed what the activity runtime will store.
+ */
+const MAX_SUPPORTED_RECIPIENTS = 10_000;
+/**
+ * PostgreSQL refuses a btree entry wider than roughly a third of a page. Only
+ * the recipient primary key is indexed, so this is what has to fit — and it is
+ * fixed-width in everything except the namespace and transition id, both of
+ * which the parent table's own primary key already bounds.
+ */
+const MAX_BTREE_ENTRY_BYTES = 2_704;
+const RECIPIENT_FINGERPRINT_BYTES = 64;
+const RECIPIENT_ROUND_BYTES = 4;
+/** Transition ids are ledger-generated `rst_<32 base64url>`; bounded generously. */
+const MAX_TRANSITION_ID_BYTES = 512;
+/**
+ * The derived recipient table adds `_recipients` to a base name already capped
+ * at 42 bytes. Its own constraints use three-byte suffixes, so the longest
+ * identifier stays inside PostgreSQL's 63-byte limit without truncation.
+ */
+const MAX_RECIPIENT_TABLE_BYTES = 53;
+
 export function getReportingNotificationActivityMigration(options: { tableName?: string } = {}): string {
   const raw = options.tableName ?? DEFAULT_TABLE;
   const table = quoteIdentifier(raw);
+  const rawRecipients = recipientTableName(raw);
+  const recipientTable = quoteIdentifier(rawRecipients, MAX_RECIPIENT_TABLE_BYTES);
   return `
 CREATE TABLE IF NOT EXISTS ${table} (
   namespace              TEXT NOT NULL,
@@ -134,8 +183,9 @@ CREATE TABLE IF NOT EXISTS ${table} (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   projected_at           TIMESTAMPTZ,
   retain_until           TIMESTAMPTZ,
-  delivery_intent        JSONB,
+  delivery_intent_round  INTEGER NOT NULL DEFAULT 0,
   delivery_intent_at     TIMESTAMPTZ,
+  delivery_attempt_at    TIMESTAMPTZ,
   PRIMARY KEY (namespace, transition_id),
   CONSTRAINT ${raw}_valid_state CHECK (state IN ('pending', 'projected')),
   CONSTRAINT ${raw}_valid_fingerprint CHECK (intent_fingerprint ~ '^[a-f0-9]{64}$'),
@@ -145,13 +195,38 @@ CREATE TABLE IF NOT EXISTS ${table} (
     (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL)
   ),
   CONSTRAINT ${raw}_valid_delivery_intent CHECK (
-    (delivery_intent IS NULL AND delivery_intent_at IS NULL) OR
-    (jsonb_typeof(delivery_intent) = 'array' AND delivery_intent_at IS NOT NULL)
+    (delivery_intent_round = 0 AND delivery_intent_at IS NULL AND delivery_attempt_at IS NULL) OR
+    (delivery_intent_round > 0 AND delivery_intent_at IS NOT NULL)
+  ),
+  CONSTRAINT ${raw}_attempt_follows_intent CHECK (
+    delivery_attempt_at IS NULL OR delivery_intent_at IS NOT NULL
   )
 );
 
-ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent JSONB;
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_round INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_at TIMESTAMPTZ;
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_attempt_at TIMESTAMPTZ;
+
+-- One row per frozen recipient. A relational representation is what lets a
+-- maximum fanout (10,000 recipients, each with maximum-length scope,
+-- subscriber and destination-generation identifiers) be stored at all: a single
+-- serialized document would need a size cap, and a fanout that legitimately
+-- exceeded it could never be committed and would retry until it aged out.
+-- Only the bounded 64-hex fingerprint enters the index, so an individual
+-- recipient reference has no length limit of its own.
+CREATE TABLE IF NOT EXISTS ${recipientTable} (
+  namespace              TEXT NOT NULL,
+  transition_id          TEXT NOT NULL,
+  intent_round           INTEGER NOT NULL,
+  recipient_fingerprint  TEXT NOT NULL,
+  recipient              JSONB NOT NULL,
+  PRIMARY KEY (namespace, transition_id, intent_round, recipient_fingerprint),
+  CONSTRAINT ${rawRecipients}_fk FOREIGN KEY (namespace, transition_id)
+    REFERENCES ${table}(namespace, transition_id) ON DELETE CASCADE,
+  CONSTRAINT ${rawRecipients}_fp CHECK (recipient_fingerprint ~ '^[a-f0-9]{64}$'),
+  CONSTRAINT ${rawRecipients}_obj CHECK (jsonb_typeof(recipient) = 'object'),
+  CONSTRAINT ${rawRecipients}_rnd CHECK (intent_round > 0)
+);
 
 CREATE INDEX IF NOT EXISTS idx_${raw}_pending
   ON ${table}(namespace, next_attempt_at, lease_expires_at, activity_sequence)
@@ -165,6 +240,11 @@ CREATE INDEX IF NOT EXISTS idx_${raw}_retention
   ON ${table}(namespace, retain_until, activity_sequence)
   WHERE state = 'projected';
 `.trim();
+}
+
+/** Child table holding one row per frozen recipient. */
+export function recipientTableName(tableName: string = DEFAULT_TABLE): string {
+  return `${tableName}_recipients`;
 }
 
 export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificationActivityMigration();
@@ -197,6 +277,24 @@ export function createPostgresReportingNotificationActivityRuntime(
   positiveInteger(retentionMs, 'retentionMs');
   const maxPendingPerTenant = options.maxPendingPerTenant ?? DEFAULT_MAX_PENDING_PER_TENANT;
   boundedInteger(maxPendingPerTenant, 'maxPendingPerTenant', 1, 1_000_000);
+  const maxRecipients = options.maxRecipients ?? MAX_SUPPORTED_RECIPIENTS;
+  boundedInteger(maxRecipients, 'maxRecipients', 1, MAX_SUPPORTED_RECIPIENTS);
+  const recipientRawTable = recipientTableName(rawTable);
+  const recipientTable = quoteIdentifier(recipientRawTable, MAX_RECIPIENT_TABLE_BYTES);
+  // Reject an unstorable configuration at construction instead of discovering it
+  // as a poisoned claim under load. Only the recipient primary key is indexed,
+  // and everything in it except namespace and transition id is fixed width.
+  const worstCaseIndexBytes =
+    Buffer.byteLength(namespace, 'utf8') +
+    MAX_TRANSITION_ID_BYTES +
+    RECIPIENT_ROUND_BYTES +
+    RECIPIENT_FINGERPRINT_BYTES;
+  if (worstCaseIndexBytes > MAX_BTREE_ENTRY_BYTES) {
+    throw new TypeError(
+      `Reporting notification activity namespace is too long to index recipient intent ` +
+        `(${worstCaseIndexBytes} of ${MAX_BTREE_ENTRY_BYTES} bytes); shorten namespace`
+    );
+  }
 
   const port: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1> = {
     async recordTransition(input, transaction) {
@@ -205,6 +303,7 @@ export function createPostgresReportingNotificationActivityRuntime(
       }
       const accountId = input.obligation.account.account_id;
       assertIdentifier(accountId, 'accountId', 512);
+      assertIdentifier(input.transition.transitionId, 'transitionId', MAX_TRANSITION_ID_BYTES);
       const tenantId = options.tenantScopeForAccount(accountId);
       if (isPromiseLike(tenantId)) {
         throw new TypeError('tenantScopeForAccount must be synchronous and side-effect free');
@@ -313,8 +412,13 @@ export function createPostgresReportingNotificationActivityRuntime(
         await options.db.query(
           `SELECT namespace, transition_id, tenant_scope, account_id, obligation_id,
                   activity, intent_fingerprint, state, notification_required, lease_owner, lease_version,
-                  lease_expires_at, projected_at, retain_until, delivery_intent, delivery_intent_at
+                  lease_expires_at, projected_at, retain_until, delivery_intent_round, delivery_intent_at,
+                  delivery_attempt_at
              FROM ${table} LIMIT 0`
+        );
+        await options.db.query(
+          `SELECT namespace, transition_id, intent_round, recipient_fingerprint, recipient
+             FROM ${recipientTable} LIMIT 0`
         );
       } catch (cause) {
         throw new Error(
@@ -379,12 +483,26 @@ export function createPostgresReportingNotificationActivityRuntime(
             accountId: claim.accountId,
             payload: notificationPayload(claim.activity),
             // Commit the recipient set under this lease before anything leaves
-            // the process, and replay the committed set verbatim afterwards.
-            freezeRecipients: candidates => freezeClaimRecipients(options.db, table, namespace, claim, candidates),
+            // the process. Revisable until the first attempt, immutable after.
+            freezeRecipients: candidates =>
+              freezeClaimRecipients(options.db, table, recipientTable, namespace, claim, maxRecipients, candidates),
+            beforeExternalAttempt: () => markClaimAttempted(options.db, table, namespace, claim),
           });
           metrics.matched += result.matched;
           if (result.deliveries.some(delivery => delivery.failure !== undefined)) {
             throw new Error('Persistent notification runtime could not durably bind every matched delivery');
+          }
+          // A suppression is the live delivery authority failing closed before
+          // any external attempt. Deliberate suppressions settle the emission;
+          // operational ones say nothing about the subscriber, so recording the
+          // notification as delivered would silently drop it.
+          const retryableSuppression = result.deliveries.find(
+            delivery =>
+              delivery.result?.suppression !== undefined &&
+              notificationSuppressionDisposition(delivery.result.suppression.reason) === 'retryable'
+          );
+          if (retryableSuppression?.result?.suppression) {
+            throw new ReportingNotificationRetryableSuppressionError(retryableSuppression.result.suppression.reason);
           }
           const projected = !leaseLost && (await projectClaim(options.db, table, namespace, claim, retentionMs));
           if (projected) metrics.projected += 1;
@@ -591,65 +709,156 @@ async function claimPending(
   }));
 }
 
-const MAX_DELIVERY_INTENT_BYTES = 256 * 1024;
-
 /**
- * Commits the recipient set for a claim before its first external send, and
- * returns the committed set on every later attempt.
+ * Commits — or, while nothing has been sent, re-resolves — the recipient set for
+ * a claim, and returns the set the emission must use.
  *
- * `COALESCE` makes the first writer authoritative: the set resolved for the
- * first attempt is the set every replay uses. That is what keeps each
- * subscriber's `delivery_id` — and so the idempotency key it dedupes on —
- * identical across an ambiguous retry. If the buyer replaces or revokes the
- * subscription after that first send, the replacement simply is not in the
- * committed set, so recovery skips it instead of addressing the same
- * notification again under a new destination generation.
+ * The set is revisable until the first external attempt and immutable after it.
+ * That closes the window between candidate enumeration and the first POST: if a
+ * buyer replaces its destination in that window, the emission is suppressed as
+ * `subscription_stale` with no attempt, the claim is released, and the next pass
+ * commits a fresh round for the new generation. Once `delivery_attempt_at` is
+ * set, a crash is an ambiguous send, so the committed round is replayed verbatim
+ * and a replacement can never be added as a second delivery.
  *
- * The write is fenced on the lease, so a worker whose lease was stolen can
- * neither commit an intent nor send against one.
+ * Each commit bumps `delivery_intent_round` and writes its own recipient rows.
+ * Rounds are never mutated in place, so a crash midway through writing one
+ * leaves a partial round that is simply never read — the attempt marker is only
+ * set after this function returns, so an unfinished round can never be attempted.
  */
 async function freezeClaimRecipients(
   db: ReportingLedgerTransactionV1,
   table: string,
+  recipientTable: string,
   namespace: string,
   claim: ClaimedActivity,
+  maxRecipients: number,
   candidates: readonly NotificationRecipientRef[]
 ): Promise<readonly NotificationRecipientRef[]> {
-  const proposed = canonicalRecipients(candidates);
-  const encoded = JSON.stringify(proposed);
-  if (Buffer.byteLength(encoded, 'utf8') > MAX_DELIVERY_INTENT_BYTES) {
-    throw new RangeError('Reporting notification recipient intent exceeds 256 KiB');
+  if (candidates.length > maxRecipients) {
+    throw new Error(
+      `Reporting notification fanout of ${candidates.length} recipients exceeds maxRecipients ${maxRecipients}; ` +
+        'raise maxRecipients to at least the notification runtime maxFanoutCandidates'
+    );
   }
-  const result = await reportingActivityDatabaseOperation(
+  const committed = await reportingActivityDatabaseOperation(
     'Reporting notification recipient intent could not be committed',
     () =>
-      db.query<{ delivery_intent: NotificationRecipientRef[] }>(
+      db.query<{ intent_round: number }>(
         `UPDATE ${table} SET
-         delivery_intent = COALESCE(delivery_intent, $5::jsonb),
-         delivery_intent_at = COALESCE(delivery_intent_at, clock_timestamp())
+         delivery_intent_round = ${table}.delivery_intent_round + 1,
+         delivery_intent_at = clock_timestamp()
        WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
          AND lease_owner = $3 AND lease_version = $4::bigint
          AND lease_expires_at >= clock_timestamp()
-       RETURNING delivery_intent`,
-        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion, encoded]
+         AND delivery_attempt_at IS NULL
+       RETURNING delivery_intent_round AS intent_round`,
+        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
       )
   );
-  const committed = result.rows[0]?.delivery_intent;
-  if (!committed) {
-    throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
+  const round = committed.rows[0]?.intent_round;
+  if (round === undefined) {
+    // Either an attempt already happened — in which case the committed round is
+    // authoritative and must be replayed — or the lease is gone.
+    return replayCommittedRecipients(db, table, recipientTable, namespace, claim);
   }
-  return committed;
+  const rows = canonicalRecipients(candidates);
+  // Chunked so a maximum fanout never builds one oversized statement. A partial
+  // round is unreachable, so chunking cannot expose a half-frozen intent.
+  for (let index = 0; index < rows.length; index += RECIPIENT_INSERT_CHUNK) {
+    const chunk = rows.slice(index, index + RECIPIENT_INSERT_CHUNK);
+    await reportingActivityDatabaseOperation('Reporting notification recipient intent could not be committed', () =>
+      db.query(
+        `INSERT INTO ${recipientTable} (namespace, transition_id, intent_round, recipient_fingerprint, recipient)
+         SELECT $1, $2, $3::integer, entry.fingerprint, entry.recipient::jsonb
+           FROM unnest($4::text[], $5::text[]) AS entry(fingerprint, recipient)
+         ON CONFLICT DO NOTHING`,
+        [
+          namespace,
+          claim.transitionId,
+          round,
+          chunk.map(entry => entry.fingerprint),
+          chunk.map(entry => JSON.stringify(entry.recipient)),
+        ]
+      )
+    );
+  }
+  return rows.map(entry => entry.recipient);
 }
 
-/** Deterministic ordering so a committed intent is byte-stable across replays. */
-function canonicalRecipients(candidates: readonly NotificationRecipientRef[]): NotificationRecipientRef[] {
-  return [...candidates]
-    .map(candidate => ({
-      scope: candidate.scope,
-      subscriberId: candidate.subscriberId,
-      destinationGeneration: candidate.destinationGeneration,
-    }))
-    .sort((left, right) => (canonicalJsonSha256(left) < canonicalJsonSha256(right) ? -1 : 1));
+/** Reads back the authoritative committed round after an attempt has started. */
+async function replayCommittedRecipients(
+  db: ReportingLedgerTransactionV1,
+  table: string,
+  recipientTable: string,
+  namespace: string,
+  claim: ClaimedActivity
+): Promise<readonly NotificationRecipientRef[]> {
+  const result = await reportingActivityDatabaseOperation(
+    'Reporting notification recipient intent could not be read',
+    () =>
+      db.query<{ recipient: NotificationRecipientRef }>(
+        `SELECT recipient.recipient FROM ${recipientTable} recipient
+           JOIN ${table} activity
+             ON activity.namespace = recipient.namespace
+            AND activity.transition_id = recipient.transition_id
+            AND activity.delivery_intent_round = recipient.intent_round
+          WHERE recipient.namespace = $1 AND recipient.transition_id = $2
+            AND activity.delivery_intent_at IS NOT NULL
+            AND activity.lease_owner = $3 AND activity.lease_version = $4::bigint
+          ORDER BY recipient.recipient_fingerprint`,
+        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
+      )
+  );
+  if (result.rowCount === 0) {
+    throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
+  }
+  return result.rows.map(row => row.recipient);
+}
+
+/**
+ * Durably records that an external attempt is about to happen, freezing the
+ * committed round. Fenced on the lease so a worker that lost it cannot send.
+ */
+async function markClaimAttempted(
+  db: ReportingLedgerTransactionV1,
+  table: string,
+  namespace: string,
+  claim: ClaimedActivity
+): Promise<void> {
+  const result = await reportingActivityDatabaseOperation(
+    'Reporting notification delivery attempt could not be recorded',
+    () =>
+      db.query(
+        `UPDATE ${table} SET delivery_attempt_at = COALESCE(delivery_attempt_at, clock_timestamp())
+       WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+         AND lease_owner = $3 AND lease_version = $4::bigint
+         AND lease_expires_at >= clock_timestamp()
+         AND delivery_intent_at IS NOT NULL`,
+        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
+      )
+  );
+  if (result.rowCount !== 1) {
+    throw new Error('Reporting notification delivery attempt was not recorded; the recovery lease was lost');
+  }
+}
+
+const RECIPIENT_INSERT_CHUNK = 500;
+
+/** Deterministic ordering so a committed round is byte-stable across replays. */
+function canonicalRecipients(
+  candidates: readonly NotificationRecipientRef[]
+): { fingerprint: string; recipient: NotificationRecipientRef }[] {
+  return candidates
+    .map(candidate => {
+      const recipient = {
+        scope: candidate.scope,
+        subscriberId: candidate.subscriberId,
+        destinationGeneration: candidate.destinationGeneration,
+      };
+      return { fingerprint: canonicalJsonSha256(recipient), recipient };
+    })
+    .sort((left, right) => (left.fingerprint < right.fingerprint ? -1 : 1));
 }
 
 async function renewClaim(
@@ -747,10 +956,10 @@ function decodeCursor(
   }
 }
 
-function quoteIdentifier(value: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/.test(value) || Buffer.byteLength(value, 'utf8') > 42) {
+function quoteIdentifier(value: string, maxBytes = 42): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(value) || Buffer.byteLength(value, 'utf8') > maxBytes) {
     throw new TypeError(
-      `Invalid reporting activity table name ${JSON.stringify(value)}: use at most 42 lowercase characters`
+      `Invalid reporting activity table name ${JSON.stringify(value)}: use at most ${maxBytes} lowercase characters`
     );
   }
   return `"${value}"`;

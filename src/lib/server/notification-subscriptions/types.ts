@@ -246,7 +246,37 @@ export interface NotificationEvent {
   freezeRecipients?: (
     candidates: readonly NotificationRecipientRef[]
   ) => MaybePromise<readonly NotificationRecipientRef[]>;
+  /**
+   * Durable barrier awaited once per emission, after live delivery authority
+   * allows the first delivery and immediately before the first external POST.
+   *
+   * It is what makes a frozen recipient set safely revisable. Suppression fails
+   * closed before this point, so an emitter that sees `attempts: 0` on every
+   * delivery knows nothing was sent and may re-resolve the frozen set — closing
+   * the window where a replacement lands between candidate enumeration and the
+   * first POST. Once this barrier has committed, the frozen set must never
+   * change again, because a crash after it is an ambiguous send.
+   *
+   * Rejecting aborts the delivery with no external attempt and a retryable,
+   * non-terminal outcome.
+   */
+  beforeExternalAttempt?: () => Promise<void>;
 }
+
+/**
+ * Whether a live-authority suppression is a deliberate decision not to deliver
+ * or an operational failure that says nothing about the subscriber.
+ *
+ * `terminal` — the subscriber must not receive this event: it is gone, inactive,
+ * not subscribed to the type, or the adopter denied it. Settle the emission.
+ *
+ * `retryable` — the runtime could not establish authority: a store read failed,
+ * an authorization or credential callback threw or timed out, or the
+ * subscription generation moved while the emission was in flight. Nothing was
+ * sent (`attempts: 0`), so the owner must release and retry rather than record
+ * the notification as delivered.
+ */
+export type NotificationSuppressionDisposition = 'terminal' | 'retryable';
 
 export interface NotificationSubscriptionView {
   subscriber_id: string;

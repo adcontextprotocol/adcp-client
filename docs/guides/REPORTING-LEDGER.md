@@ -188,19 +188,62 @@ The host remains responsible for a database-level retained-row/byte quota and
 storage alerting per tenant or isolated deployment; the runtime's pending cap
 protects delivery backlog but is not a general PostgreSQL storage quota.
 
-Recipient sets are frozen before anything leaves the process. The recovery
-worker commits the resolved recipients onto the claimed activity row — fenced on
-its lease, first writer wins — and every later attempt replays that committed
-set through `NotificationEvent.freezeRecipients`, which restricts fanout to the
-intersection of what is resolvable now and what was committed. That keeps each
-subscriber's `delivery_id`, and therefore the `idempotency_key` it dedupes on,
-identical across an ambiguous retry. A subscription replaced or revoked *after*
-the first send is skipped rather than addressed under a new destination
+### Recipient intent is frozen before any send, and revisable until one happens
+
+The recovery worker commits its resolved recipients before anything leaves the
+process, via `NotificationEvent.freezeRecipients`. The runtime then delivers
+only the intersection of what is resolvable now and what was committed, so each
+subscriber's `delivery_id` — and therefore the `idempotency_key` it dedupes on —
+is identical across an ambiguous retry. A subscription replaced or revoked
+*after* the first send is skipped rather than addressed under a new destination
 generation, so a crash between send and settlement can never become a second
-logical delivery under a second idempotency key. A replacement that lands
-*before* the first send is still honoured, because the set is resolved at that
-first attempt. Custom notification runtimes that re-enumerate subscriptions per
-attempt must implement the same barrier.
+logical delivery under a second idempotency key.
+
+A second barrier, `NotificationEvent.beforeExternalAttempt`, marks the moment an
+external POST is about to happen. It is what makes the frozen set safely
+revisable: suppression fails closed *before* that barrier, so a recipient set
+frozen from a stale enumeration — the buyer replaced its destination between
+candidate resolution and the first POST — is re-resolved on the next pass
+instead of stranding the notification. Once the barrier has committed, the set
+is immutable. Concretely:
+
+| When the replacement lands | Outcome |
+| --- | --- |
+| Before candidate enumeration | New generation is enumerated and delivered |
+| Between enumeration and the first POST | Suppressed `subscription_stale`, claim released, next pass commits a fresh intent round for the new generation; the superseded generation gets nothing |
+| After an attempt has started | Committed round replayed verbatim; a replay may repeat the POST but only to the same generation under the same idempotency key |
+| Revoked entirely | Empty recipient set is committed and the activity settles undelivered |
+
+Intent is stored relationally, one row per recipient in
+`<activity_table>_recipients`, keyed by intent round. A single serialized
+document would need a size cap, and a fanout that legitimately exceeded it could
+never be committed — it would suppress, release and retry until it aged out.
+Only the bounded 64-hex fingerprint is indexed, so an individual recipient
+reference has no length limit of its own, and `maxRecipients` defaults to
+10,000: the ceiling the notification runtime enforces on `maxFanoutCandidates`.
+Set it lower only if your `maxFanoutCandidates` is lower.
+
+### Suppression is not the same as delivery
+
+Live delivery authority fails closed before every POST. Use
+`notificationSuppressionDisposition(reason)` to tell the two kinds apart:
+
+- **terminal** — `subscription_missing`, `subscription_inactive`,
+  `event_not_allowed`, `authorization_denied`. The subscriber must not receive
+  this event. Settle the emission.
+- **retryable** — `authorization_error`, `credential_unavailable`,
+  `subscription_stale`. The runtime could not establish authority: a store read
+  failed, an authorization or credential callback threw or timed out, or the
+  generation moved mid-flight. Nothing was sent (`attempts: 0`), so release and
+  retry.
+
+Treating every suppression as terminal silently drops a notification whenever a
+store or credential backend has a bad minute; treating every suppression as
+retryable poisons the queue for a subscriber that was legitimately revoked. The
+bundled runtime raises `ReportingNotificationRetryableSuppressionError` for the
+retryable set, which releases the claim without projecting the activity as
+delivered. Custom notification runtimes that re-enumerate subscriptions per
+attempt must implement both barriers and the same classification.
 
 Custom ledger stores implement
 `ReportingLedgerNotificationActivityPortV1<TTransaction>` over their existing

@@ -5,6 +5,7 @@ import { enforceSsrfPolicy, enforceSsrfPolicyResolved } from '../../substitution
 import { WEBHOOK_SSRF_POLICY } from '../pin-and-bind-fetch';
 import type {
   WebhookAttemptAuthorizationDecision,
+  WebhookAttemptSuppressionReason,
   WebhookEmitAttempt,
   WebhookAuthentication,
 } from '../webhook-emitter';
@@ -18,6 +19,7 @@ import type {
   NotificationSubscriptionScope,
   NotificationSubscriptionSet,
   NotificationSubscriptionView,
+  NotificationSuppressionDisposition,
   PersistentNotificationRuntime,
   PersistentNotificationRuntimeOptions,
   StoredNotificationAuthentication,
@@ -414,6 +416,7 @@ export function createPersistentNotificationRuntime(
             delivery_id: deliveryId,
             authentication: null,
             attemptAuthorizationContext: context as unknown as Record<string, unknown>,
+            ...(event.beforeExternalAttempt ? { beforeExternalAttempt: event.beforeExternalAttempt } : {}),
           });
           return { ...delivery, result } satisfies NotificationFanoutDelivery;
         } catch {
@@ -786,6 +789,40 @@ async function pinResolvedRecipients<
       })
     )
   );
+}
+
+/**
+ * Classifies a live-authority suppression so an emission owner can tell a
+ * deliberate decision not to deliver from an operational failure.
+ *
+ * Treating every suppression as terminal silently drops notifications whenever
+ * a store read or an authorization/credential callback has a bad minute, and
+ * treating every suppression as retryable poisons the queue for a subscriber
+ * that was legitimately revoked or denied.
+ */
+export function notificationSuppressionDisposition(
+  reason: WebhookAttemptSuppressionReason
+): NotificationSuppressionDisposition {
+  switch (reason) {
+    case 'authorization_error':
+    case 'credential_unavailable':
+      // The runtime could not establish authority. Says nothing about the
+      // subscriber, and nothing was sent.
+      return 'retryable';
+    case 'subscription_stale':
+      // A newer destination generation exists and nothing was sent. The owner
+      // re-resolves rather than re-addressing this generation.
+      return 'retryable';
+    case 'subscription_missing':
+    case 'subscription_inactive':
+    case 'event_not_allowed':
+    case 'authorization_denied':
+      return 'terminal';
+    default:
+      // Unknown reasons fail closed as retryable: dropping a health
+      // notification is worse than re-attempting one.
+      return 'retryable';
+  }
 }
 
 function recipientKey(recipient: Readonly<NotificationRecipientRef>): string {

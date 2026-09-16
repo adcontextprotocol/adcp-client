@@ -2,6 +2,7 @@ export {
   ACCOUNT_NOTIFICATION_TYPES,
   CALLER_NOTIFICATION_TYPES,
   createPersistentNotificationRuntime,
+  notificationSuppressionDisposition,
   projectNotificationSubscriptionReadback,
   validatePersistentNotificationDestination,
 } from './runtime';
@@ -38,6 +39,7 @@ export type {
   NotificationSubscriptionSet,
   NotificationSubscriptionStore,
   NotificationSubscriptionStoreReplaceResult,
+  NotificationSuppressionDisposition,
   NotificationSubscriptionView,
   PersistentNotificationRuntime,
   PersistentNotificationRuntimeOptions,
