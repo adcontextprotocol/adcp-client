@@ -7117,8 +7117,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getMediaBuyDelivery']>>
       ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
-        const exactRevisionRequested =
-          (params as { reporting_revision_id?: unknown }).reporting_revision_id !== undefined;
+        const requestedRevisionId = (params as { reporting_revision_id?: unknown }).reporting_revision_id;
+        const exactRevisionRequested = requestedRevisionId !== undefined;
+        // The raw-passthrough gate below must never rest on handler identity
+        // alone: an adopter may legitimately wire one function into both the
+        // sales and reporting delivery slots, and an unbound cumulative read
+        // would then inherit the exact-revision bypass. Require the exact-read
+        // request shape too — a present, non-empty revision id.
+        const exactRevisionRead = typeof requestedRevisionId === 'string' && requestedRevisionId.length > 0;
         const reportingRevisionRequested = exactRevisionRequested && reporting !== undefined;
         const reqCtx = reportingRevisionRequested
           ? reportingContext('get_media_buy_delivery', params, ctx)
@@ -7155,7 +7161,9 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
               });
             }
             const servedByReportingLedger =
-              reporting?.getMediaBuyDelivery !== undefined && selectedDelivery === reporting.getMediaBuyDelivery;
+              exactRevisionRead &&
+              reporting?.getMediaBuyDelivery !== undefined &&
+              selectedDelivery === reporting.getMediaBuyDelivery;
             const result = await selectedDelivery(asValidatedDomainRequest(params), reqCtx);
             if (servedByReportingLedger) {
               // An exact reporting revision is hash-bound: its rows are an

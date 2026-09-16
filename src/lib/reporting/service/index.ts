@@ -721,9 +721,15 @@ function sameIdMembers(left: readonly string[], right: readonly string[]): boole
 }
 
 const DAY_MILLISECONDS = 86_400_000;
-/** Long enough to straddle both transitions of any DST-observing zone. */
-const OFFSET_PROBE_DAYS = 400;
+/**
+ * Shorter than any real IANA offset era, so no offset change can hide between
+ * two probes.
+ */
 const OFFSET_PROBE_STEP_DAYS = 10;
+/** Probe past today so periods the planner has not generated yet are covered. */
+const OFFSET_FORWARD_HORIZON_DAYS = 400;
+/** Bounded work, and a fail-closed refusal for pathologically old anchors. */
+const MAX_OFFSET_PROBE_DAYS = 40 * 365;
 
 /**
  * Refuse a schedule the installed executor could never satisfy.
@@ -760,19 +766,39 @@ function assertSupportedScheduleSemantics(
   if (offering.schedule.period_anchor !== undefined && Date.parse(offering.schedule.period_anchor) !== anchorMs) {
     throw new TypeError('Reporting configuration anchor does not match the anchor its offering advertises');
   }
+  // A fixed-millisecond period only tracks local days in a zone whose UTC
+  // offset never moves. Under a DST or statutory offset change `anchor + n *
+  // 24h` lands at 23:00 or 01:00 local, so every period after the transition is
+  // refused at execution time.
+  //
+  // The span has to run from the anchor all the way through the periods the
+  // planner will generate, not a fixed window after the anchor: a generation
+  // anchored in 2022 in Asia/Almaty looks stable for its first year and then
+  // breaks on that zone's 2024 UTC+6 → UTC+5 change, which every currently
+  // generated boundary sits after.
+  const anchorOffset = utcOffsetMinutes(sourceTimezone, anchorMs);
+  const probeEndMs = Math.max(anchorMs, Date.now()) + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
+  const probeDays = Math.ceil((probeEndMs - anchorMs) / DAY_MILLISECONDS);
+  if (probeDays > MAX_OFFSET_PROBE_DAYS) {
+    throw new TypeError(
+      'Reporting configuration anchor is too far in the past to verify its source timezone offset; ' +
+        'anchor the generation within the last 40 years'
+    );
+  }
   if (!isSourceLocalMidnight(anchorMs, sourceTimezone)) {
     throw new TypeError('Reporting configuration anchor must fall on source-local midnight in the source timezone');
   }
-  // A fixed-millisecond period only tracks local days in a zone whose UTC
-  // offset never moves. Under DST `anchor + n * 24h` lands at 23:00 or 01:00
-  // local, so every period after the transition is refused at execution time.
-  const anchorOffset = utcOffsetMinutes(sourceTimezone, anchorMs);
-  for (let day = OFFSET_PROBE_STEP_DAYS; day <= OFFSET_PROBE_DAYS; day += OFFSET_PROBE_STEP_DAYS) {
+  for (let day = OFFSET_PROBE_STEP_DAYS; day <= probeDays; day += OFFSET_PROBE_STEP_DAYS) {
     if (utcOffsetMinutes(sourceTimezone, anchorMs + day * DAY_MILLISECONDS) !== anchorOffset) {
       throw new TypeError(
         'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
       );
     }
+  }
+  if (utcOffsetMinutes(sourceTimezone, probeEndMs) !== anchorOffset) {
+    throw new TypeError(
+      'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
+    );
   }
   if (alignment === 'utc' && anchorOffset !== 0) {
     throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
@@ -791,20 +817,32 @@ function utcOffsetMinutes(timeZone: string, instantMs: number): number {
   return Math.round((asUtc - (instantMs - (instantMs % 1_000))) / 60_000);
 }
 
+const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Constructing a formatter per probe would dominate the offset scan. */
+function zonedFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = zonedFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    zonedFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function localParts(
   timeZone: string,
   instantMs: number
 ): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).formatToParts(new Date(instantMs));
+  const parts = zonedFormatter(timeZone).formatToParts(new Date(instantMs));
   const field = (type: Intl.DateTimeFormatPartTypes): number => Number(parts.find(part => part.type === type)?.value);
   return {
     year: field('year'),

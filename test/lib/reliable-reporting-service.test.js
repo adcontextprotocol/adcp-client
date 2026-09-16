@@ -677,6 +677,115 @@ describe('ReliableReportingService', () => {
     assert.equal(rebound, wireRevision.revision_content_sha256);
   });
 
+  test('projects unbound delivery even when sales and reporting share one handler', async () => {
+    // An adopter may legitimately wire a single function into both delivery
+    // slots. Handler identity alone must not decide the raw-passthrough gate.
+    const rows = [
+      {
+        media_buy_id: 'media-buy-account-a',
+        creative_id: 'creative-1',
+        format_kind: 'display_300x250',
+        impressions: 1000,
+        spend: 12.34,
+      },
+    ];
+    const reportingAdapter = adapter();
+    reportingAdapter.sourceOffering.dimensions = [
+      { name: 'media_buy_id', support: 'exact' },
+      { name: 'creative_id', support: 'exact' },
+      { name: 'format_kind', support: 'exact' },
+    ];
+    reportingAdapter.fetchSlice = (request, context) => ({
+      reporting_period: { start: request.start_date, end: request.end_date },
+      currency: context.sourceSettings.currency,
+      reporting_rows: structuredClone(rows),
+    });
+    const { service, store } = serviceFixture({ adapters: { fixture: reportingAdapter } });
+
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration({ requestedDimensions: ['media_buy_id', 'creative_id', 'format_kind'] });
+    input.schedule.anchor = anchor;
+    const installed = await service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+    const obligation = (await store.listObligations('account-a'))[0];
+    const revision = (await store.listRevisions(obligation.reporting_obligation_id))[0];
+
+    // One function reference in both slots: exact reads delegate to the
+    // ledger, cumulative reads return an ordinary creative-bearing delivery.
+    const shared = async (request, context) =>
+      request.reporting_revision_id
+        ? service.platform.getMediaBuyDelivery(request, context)
+        : {
+            reporting_period: { start: '2026-09-01', end: '2026-09-02' },
+            currency: 'USD',
+            media_buy_deliveries: [
+              { media_buy_id: 'media-buy-account-a', creative_id: 'creative-1', format_kind: 'display_300x250' },
+            ],
+          };
+    const server = createAdcpServerFromPlatform(
+      {
+        capabilities: { specialisms: [], config: {} },
+        accounts: {
+          resolution: 'explicit',
+          resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+          upsert: async () => [],
+        },
+        sales: { getMediaBuyDelivery: shared },
+        reporting: {
+          capabilities: service.capabilities,
+          getReportingStatus: service.platform.getReportingStatus,
+          getMediaBuyDelivery: shared,
+        },
+      },
+      {
+        name: 'shared-delivery-handler-test',
+        version: '1.0.0',
+        adcpVersion: '3.2.0-rc.3',
+        // Projection, not schema validation, is the behavior under test.
+        validation: { requests: 'off', responses: 'off' },
+      }
+    );
+
+    const cumulative = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: {
+            account: { account_id: 'account-a' },
+            media_buy_ids: ['media-buy-account-a'],
+            start_date: '2026-09-01',
+            end_date: '2026-09-02',
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.equal(cumulative.isError, true, 'an unbound delivery read must still be projected');
+    assert.equal(cumulative.structuredContent.adcp_error.code, 'INVALID_REQUEST');
+
+    const exact = await server.dispatchTestRequest(
+      {
+        method: 'tools/call',
+        params: {
+          name: 'get_media_buy_delivery',
+          arguments: {
+            account: { account_id: 'account-a' },
+            reporting_revision_id: revision.reporting_revision_id,
+          },
+        },
+      },
+      { authInfo: { clientId: 'buyer-a' } }
+    );
+    assert.notEqual(exact.isError, true, JSON.stringify(exact.structuredContent));
+    assert.deepEqual(exact.structuredContent.reporting_rows, rows);
+  });
+
   test('refuses schedule semantics the installed executor cannot satisfy', async () => {
     const context = { account: { id: 'account-a', ctx_metadata: {} } };
 
@@ -773,22 +882,67 @@ describe('ReliableReportingService', () => {
       /whole source-day fixed windows/
     );
 
-    // Positive control: a fixed-offset non-UTC zone is still installable, so
-    // the rule is "no offset changes", not "UTC only".
-    const kolkata = zonedFixture('Asia/Kolkata');
-    const installed = await kolkata.service.installConfiguration(
-      configuration({
-        expectedSourceTimezone: 'Asia/Kolkata',
-        schedule: {
-          anchor: '2026-09-01T18:30:00.000Z',
-          periodMilliseconds: 86_400_000,
-          deliverySlaMilliseconds: 0,
-          recoveryWindowMilliseconds: 86_400_000,
-        },
-      }),
-      context
+    // A historical anchor whose offset change lands between the anchor and the
+    // periods being generated now. Asia/Almaty held UTC+6 through 2023 and
+    // moved to UTC+5 on 2024-03-01, so a 2022 generation looks stable for its
+    // first year and every currently generated boundary sits at 23:00 local.
+    const almaty = zonedFixture('Asia/Almaty');
+    await assert.rejects(
+      almaty.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: 'Asia/Almaty',
+          schedule: {
+            anchor: '2021-12-31T18:00:00.000Z', // 2022-01-01T00:00 +06:00
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      ),
+      /changes its UTC offset/,
+      'the probe must span the anchor through the current planning horizon'
     );
-    assert.equal(installed.sourceTimezone, 'Asia/Kolkata');
+
+    // An anchor older than the verifiable horizon fails closed rather than
+    // scanning unbounded history.
+    const ancient = zonedFixture('Asia/Kolkata');
+    await assert.rejects(
+      ancient.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: 'Asia/Kolkata',
+          schedule: {
+            anchor: '1900-01-01T18:30:00.000Z',
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      ),
+      /too far in the past to verify/
+    );
+
+    // Positive controls: a fixed-offset non-UTC zone is installable at both a
+    // current and a historical anchor, so the rule is "no offset change across
+    // the span", not "UTC only" or "recent anchors only".
+    const kolkata = zonedFixture('Asia/Kolkata');
+    for (const anchor of ['2026-09-01T18:30:00.000Z', '2021-12-31T18:30:00.000Z']) {
+      const installed = await kolkata.service.installConfiguration(
+        configuration({
+          delivery_config_id: `delivery-config-${anchor}`,
+          expectedSourceTimezone: 'Asia/Kolkata',
+          schedule: {
+            anchor,
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        context
+      );
+      assert.equal(installed.sourceTimezone, 'Asia/Kolkata');
+    }
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
