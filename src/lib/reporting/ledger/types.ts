@@ -480,7 +480,7 @@ export interface ReportingLedgerSnapshotV1 {
    * leaf is terminal forever. Without this the projection stops seeing the
    * acceptance and reopens a settled subject.
    */
-  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>;
+  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>;
   /** Revisions whose successful materialization row has been pruned. */
   tombstonedDeliveredRevisionIds?: readonly string[];
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
@@ -594,7 +594,7 @@ export interface ReportingManagedLifecycleProjectionV1 {
    * the lifecycle recomputes an accepted subject as outstanding and a
    * delivered revision as never delivered.
    */
-  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>;
+  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>;
   tombstonedDeliveredRevisionIds?: readonly string[];
   /**
    * The cutoff this projection actually used, at full database precision.
@@ -760,6 +760,16 @@ export interface ReportingLedgerStore {
    * reconciliation watermark: the work is still unresolved.
    */
   recordLifecycleFailure?(input: { reporting_obligation_id: string }): Promise<void>;
+  /**
+   * Refreshes the recorded roster version for obligations that have one.
+   *
+   * The roster lives outside the database, so nothing here changes when it
+   * does. Publishing the version only during a reconcile is circular — a
+   * reconcile happens because the obligation is due, and a roster change is
+   * what should have made it due. A sweep calls this first so a change made
+   * while nothing was scheduled can still schedule something.
+   */
+  refreshObligatedConsumerRosterVersions?(input: { account_id?: string; limit: number }): Promise<number>;
   listTransitions(reporting_obligation_id: string): Promise<ReportingLedgerStatusTransitionV1[]>;
   listPendingTransitions(input?: { account_id?: string; limit?: number }): Promise<ReportingLedgerStatusTransitionV1[]>;
   createSnapshot(query: ReportingLedgerSnapshotQueryV1): Promise<ReportingLedgerSnapshotV1>;

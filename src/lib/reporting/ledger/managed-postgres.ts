@@ -435,22 +435,22 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // just this instance's option. Another runtime may advertise a longer
     // status horizon, and pruning inside it would break a promise this
     // process never made but the deployment did.
-    // Read the registry under the adoption lock, and hold it for the prune:
-    // approving 90 days while another replica is registering 365 would delete
-    // inside a horizon that is about to be advertised.
-    const registered = await this.transaction(async client => {
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
-      return this.readPolicy(client);
-    });
     const days = this.evidenceRetentionDays;
-    if (registered.statusRetentionDays !== null && days < registered.statusRetentionDays) {
-      throw new Error(
-        `evidenceRetentionDays ${days} is shorter than the advertised statusRetentionDays ` +
-          `${registered.statusRetentionDays} registered for this database; pruning would cut inside an ` +
-          `advertised horizon`
-      );
-    }
     return this.transaction(async client => {
+      // The registry lock is taken inside the deleting transaction and held
+      // to commit. Reading the policy in its own transaction released the
+      // lock at that commit, so a 365-day adoption could land between the
+      // check and the delete and this prune would cut inside a horizon that
+      // had just been advertised.
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
+      const registered = await this.readPolicy(client);
+      if (registered.statusRetentionDays !== null && days < registered.statusRetentionDays) {
+        throw new Error(
+          `evidenceRetentionDays ${days} is shorter than the advertised statusRetentionDays ` +
+            `${registered.statusRetentionDays} registered for this database; pruning would cut inside an ` +
+            `advertised horizon`
+        );
+      }
       await advisoryLock(client, accountLock(input.account_id));
       // One cutoff for every statement below, taken once. Re-evaluating
       // clock_timestamp() per statement moves the boundary mid-prune, which is

@@ -472,6 +472,65 @@ describe('seller reporting ledger', () => {
     assert.equal(store.configurations.size, 0);
   });
 
+  test('replays an immutable pre-rule billing generation instead of revalidating it', async () => {
+    const store = new MemoryLedgerStore();
+    const request = redactedReportingSourceRequestV1();
+    const producer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+      offerings: [redactedReportingSourceOfferingV1],
+      contact: { name: 'Reporting operations' },
+    });
+    const legacyBilling = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: request.offeringId,
+      report_definition_id: request.report_definition_id,
+      // billing with snapshot finality: installable before the rule existed,
+      // refused by installConfiguration today.
+      feedPurpose: 'billing',
+      requiredFinality: 'snapshot',
+      canonicalization: {
+        id: 'billing-rows-v1',
+        uri: 'https://schemas.fixture.example/canonicalization.json',
+        sha256: 'c'.repeat(64),
+        primaryKeys: request.requestedDimensions.slice(0, 1),
+      },
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: new Date(Date.parse(request.period.start)).toISOString(),
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    // A fresh generation is still held to the current rule.
+    await assert.rejects(
+      () => producer.installConfiguration(legacyBilling),
+      /Billing reporting requires official ledger finality/
+    );
+    // The row that predates the rule is immutable, so reinstalling it must
+    // return the stored generation. Validating before resolving the replay
+    // made an idempotent reinstall impossible and left no way to name it.
+    await store.putConfiguration({
+      ...legacyBilling,
+      configurationId: 'configuration-legacy-billing',
+      installedAt: legacyBilling.schedule.anchor,
+      semanticFingerprint: `sha256:${sha(legacyBilling)}`,
+    });
+    const replayed = await producer.installConfiguration(legacyBilling);
+    assert.equal(replayed.configurationId, 'configuration-legacy-billing');
+    assert.equal(store.configurations.size, 1, 'no second generation is written');
+  });
+
   test('replays a configuration fingerprinted before instant normalization', async () => {
     const store = new MemoryLedgerStore();
     const request = redactedReportingSourceRequestV1();

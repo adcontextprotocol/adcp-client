@@ -1304,4 +1304,54 @@ describe('seller managed reporting runtime', () => {
       'an unproven roster never reports a consumer_receipt obligation reconciled'
     );
   });
+
+  test('backs off when the compare-and-set retry budget is exhausted', async () => {
+    const period = { start: '2026-08-27T03:00:00.000Z', end: '2026-08-27T04:00:00.000Z', sourceTimezone: 'UTC' };
+    const obligation = {
+      reporting_obligation_id: 'obligation-contended-1',
+      configurationId: 'config-1',
+      account: { account_id: 'account-1' },
+      requiredFinality: 'official',
+      period,
+      expectedAt: period.end,
+      recoveryDeadlineAt: '2026-08-27T04:30:00.000Z',
+      state: 'pending',
+      attemptCount: 1,
+      coverage: { status: 'full' },
+    };
+    const failures = [];
+    let applies = 0;
+    const contended = {
+      getObligation: async () => structuredClone(obligation),
+      listRevisions: async () => [],
+      listAdjustments: async () => [],
+      listTransitions: async () => [],
+      listIssues: async () => [],
+      markTransitionNotified: async () => {},
+      readLedgerInstant: async () => new Date().toISOString(),
+      getManagedLifecycleProjection: async () => ({
+        binding: lease().binding,
+        materializations: [],
+        materializationHistory: [],
+        consumers: [],
+        managedStateVersion: `v${applies}`,
+      }),
+      // Always refuses, as a permanently contended obligation would.
+      applyLifecycleProjection: async () => {
+        applies += 1;
+        return { applied: false, transitionInserted: false };
+      },
+      recordLifecycleFailure: async input => void failures.push(input.reporting_obligation_id),
+    };
+    const result = await ledger.reconcileReportingStatusLifecycleV1({
+      store: contended,
+      reporting_obligation_id: 'obligation-contended-1',
+    });
+    assert.equal(result, null);
+    assert.equal(applies, 3, 'the retry budget is bounded');
+    // Exhausting the budget is a failure, not a completion. Without recording
+    // it the obligation kept no watermark and no backoff, so a contended one
+    // stayed at the head of every oldest-first page and starved the rest.
+    assert.deepEqual(failures, ['obligation-contended-1'], 'exhaustion records a backoff');
+  });
 });

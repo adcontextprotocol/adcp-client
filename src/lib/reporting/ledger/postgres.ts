@@ -2436,6 +2436,42 @@ ${managedDueArm}       )
   }
 
   /**
+   * Re-reads the external roster for managed obligations and publishes what
+   * it saw, so a change made while nothing was scheduled can re-arm.
+   *
+   * Ordered by least-recently-refreshed and bounded, so a large account is
+   * swept over successive passes rather than in one burst of callbacks.
+   */
+  async refreshObligatedConsumerRosterVersions(input: { account_id?: string; limit: number }): Promise<number> {
+    if (!this.managedDelivery || !this.obligatedConsumers) return 0;
+    positiveInteger(input.limit, 'limit');
+    if (!(await this.managedDueTablesReady())) return 0;
+    const candidates = await this.query<QueryResultRow & { obligation_id: string }>(
+      `SELECT obligation.obligation_id
+         FROM adcp_reporting_obligations obligation
+         JOIN adcp_reporting_managed_bindings binding
+           ON binding.configuration_id = obligation.configuration_id
+         LEFT JOIN adcp_reporting_lifecycle_state state
+           ON state.obligation_id = obligation.obligation_id
+        WHERE ($1::text IS NULL OR obligation.account_id = $1)
+        ORDER BY state.processed_at NULLS FIRST, obligation.obligation_id
+        LIMIT $2`,
+      [input.account_id ?? null, input.limit]
+    );
+    let refreshed = 0;
+    for (const row of candidates.rows) {
+      try {
+        await this.readObligatedConsumerRosterVersion({ reporting_obligation_id: row.obligation_id });
+        refreshed += 1;
+      } catch {
+        // One tenant's authorization service being down must not stop the
+        // rest of the refresh; the obligation simply keeps its last version.
+      }
+    }
+    return refreshed;
+  }
+
+  /**
    * Records a failed reconcile so the obligation backs off instead of
    * re-occupying the head of every sweep, without ever hiding it: the
    * watermark is untouched, so it stays unresolved work.
@@ -2539,10 +2575,12 @@ ${managedDueArm}       )
     query: ReportingLedgerSnapshotQueryV1,
     obligationIds: string[],
     allConsumers = false
-  ): Promise<Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>> {
+  ): Promise<Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>> {
     if (!obligationIds.length || (!query.consumer_id && !allConsumers)) return [];
-    const result = await client.query<QueryResultRow & { receipt_kind: string; subject_id: string }>(
-      `SELECT tombstone.receipt_kind, tombstone.subject_id
+    const result = await client.query<
+      QueryResultRow & { receipt_kind: string; subject_id: string; consumer_id: string }
+    >(
+      `SELECT tombstone.receipt_kind, tombstone.subject_id, tombstone.consumer_id
          FROM adcp_reporting_receipt_tombstones tombstone
         WHERE tombstone.account_id = $1 AND ($2::text IS NULL OR tombstone.consumer_id = $2)
           AND tombstone.status = 'accepted' AND tombstone.was_current
@@ -2560,6 +2598,10 @@ ${managedDueArm}       )
     return result.rows.map(row => ({
       kind: row.receipt_kind === 'adjustment' ? ('adjustment' as const) : ('revision' as const),
       subjectId: row.subject_id,
+      // Carried through deliberately. An acceptance belongs to the consumer
+      // that gave it, so a lifecycle fold that runs per consumer must not let
+      // A's pruned acceptance settle the obligation on B's behalf.
+      consumerId: row.consumer_id,
     }));
   }
 

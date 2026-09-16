@@ -51,6 +51,8 @@ async function resolveLedgerAsOf(
 async function reconcileEachIsolated(
   input: {
     store: ReportingLedgerStore;
+    /** Only pinned when the caller explicitly asked for a synthetic cutoff. */
+    pinnedLedgerAsOf?: string;
     ledgerAsOf: string;
     subscribers?: readonly ReportingLedgerSubscriberV1[];
   },
@@ -61,7 +63,13 @@ async function reconcileEachIsolated(
       await reconcileReportingStatusLifecycleV1({
         store: input.store,
         reporting_obligation_id,
-        ledgerAsOf: input.ledgerAsOf,
+        // Selection needs one instant; each reconcile resolves its own so the
+        // watermark it writes is the cutoff it actually read at. The sweep's
+        // instant is handed down only as a fallback clock, for a store that
+        // has none of its own — pinning it would put the sweep's cutoff into
+        // every watermark, which is the skew problem over again.
+        ...(input.pinnedLedgerAsOf !== undefined ? { ledgerAsOf: input.pinnedLedgerAsOf } : {}),
+        now: () => new Date(input.ledgerAsOf),
         subscribers: input.subscribers,
       });
     } catch {
@@ -97,7 +105,16 @@ async function retryLifecycle(
   input: Parameters<typeof reconcileReportingStatusLifecycleV1>[0],
   attempt: number
 ): Promise<ReportingLedgerStatusTransitionV1 | null> {
-  if (attempt + 1 >= MAX_LIFECYCLE_CAS_ATTEMPTS) return null;
+  if (attempt + 1 >= MAX_LIFECYCLE_CAS_ATTEMPTS) {
+    // Exhausting the retry budget is a failure, not a completion. Returning
+    // null quietly left the obligation with no watermark and no backoff, so a
+    // continuously contended one stayed at the head of every oldest-first
+    // page and starved every tenant behind it.
+    await input.store
+      .recordLifecycleFailure?.({ reporting_obligation_id: input.reporting_obligation_id })
+      .catch(() => undefined);
+    return null;
+  }
   return reconcileReportingStatusLifecycleV1(input, attempt + 1);
 }
 
@@ -280,9 +297,11 @@ async function composeManagedLifecycleProjection(
       byConsumer.set(consumerId, submitted ?? { consumer_id: consumerId, receipts: [], adjustmentReceipts: [] });
     }
   }
-  const consumers: Array<{ receipts: ReportingReceipt[]; adjustmentReceipts: ReportingAdjustmentReceipt[] }> = [
-    ...byConsumer.values(),
-  ];
+  const consumers: Array<{
+    consumer_id?: string;
+    receipts: ReportingReceipt[];
+    adjustmentReceipts: ReportingAdjustmentReceipt[];
+  }> = [...byConsumer.values()];
   // Fail safe while the roster is not provably complete: keep one zero-receipt
   // consumer in the fold so a `consumer_receipt` obligation is never called
   // reconciled on the strength of the consumers that happened to be observed.
@@ -309,7 +328,12 @@ async function composeManagedLifecycleProjection(
       consumer.adjustmentReceipts,
       coreProjection,
       input.ledgerAsOf,
-      managed.tombstonedAcceptedSubjects ?? [],
+      // Scoped to the consumer being projected. An acceptance A left behind
+      // must never settle the obligation for B, which would let a webhook go
+      // complete while B's own read still says action_required.
+      (managed.tombstonedAcceptedSubjects ?? []).filter(
+        value => consumer.consumer_id === undefined || value.consumerId === consumer.consumer_id
+      ),
       managed.tombstonedDeliveredRevisionIds ?? []
     );
     if (!projected) continue;
@@ -368,7 +392,17 @@ async function composeManagedLifecycleProjection(
 
 export async function retryReportingStatusNotificationsV1(input: {
   store: ReportingLedgerStore;
-  ledgerAsOf: string;
+  /** Omit to let the store supply an authoritative instant. */
+  ledgerAsOf?: string;
+  /**
+   * Clock to use only when the store cannot supply its own instant.
+   *
+   * A store backed by a database is authoritative and this is ignored. An
+   * in-memory or simulated-time store has no clock of its own, so a driver
+   * that advances time must still be able to say what "now" means without
+   * pinning a cutoff that would be written into the watermark verbatim.
+   */
+  fallbackLedgerAsOf?: string;
   account_id?: string;
   subscribers?: readonly ReportingLedgerSubscriberV1[];
   limit?: number;
@@ -377,30 +411,61 @@ export async function retryReportingStatusNotificationsV1(input: {
     ...(input.account_id ? { account_id: input.account_id } : {}),
     limit: input.limit ?? 100,
   });
+  const ledgerAsOf =
+    input.ledgerAsOf ??
+    (await input.store.readLedgerInstant?.()) ??
+    input.fallbackLedgerAsOf ??
+    new Date().toISOString();
   const obligationIds = [...new Set(pending.map(value => value.reporting_obligation_id))];
-  return reconcileEachIsolated(input, obligationIds);
+  return reconcileEachIsolated({ ...input, ledgerAsOf, pinnedLedgerAsOf: input.ledgerAsOf }, obligationIds);
 }
 
 /** Reconcile bounded clock-driven waiting→delayed→action_required transitions. */
 export async function reconcileReportingStatusDeadlinesV1(input: {
   store: ReportingLedgerStore;
-  ledgerAsOf: string;
+  /** Omit to let the store supply an authoritative instant. */
+  ledgerAsOf?: string;
+  /**
+   * Clock to use only when the store cannot supply its own instant.
+   *
+   * A store backed by a database is authoritative and this is ignored. An
+   * in-memory or simulated-time store has no clock of its own, so a driver
+   * that advances time must still be able to say what "now" means without
+   * pinning a cutoff that would be written into the watermark verbatim.
+   */
+  fallbackLedgerAsOf?: string;
   account_id?: string;
   subscribers?: readonly ReportingLedgerSubscriberV1[];
   limit?: number;
 }): Promise<number> {
   const limit = input.limit ?? 1_000;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) throw new RangeError('limit must be 1..1000');
-  const asOf = Date.parse(input.ledgerAsOf);
-  if (!Number.isFinite(asOf)) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+  // Prefer the ledger's own clock. A production sweep that pinned host time
+  // wrote that instant straight into the watermark, so a host running even a
+  // minute fast permanently buried every database-timestamped receipt
+  // committed inside that minute.
+  const ledgerAsOf =
+    input.ledgerAsOf ??
+    (await input.store.readLedgerInstant?.()) ??
+    input.fallbackLedgerAsOf ??
+    new Date().toISOString();
+  if (!Number.isFinite(Date.parse(ledgerAsOf))) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+  // Publish current roster versions first. A roster change is only visible to
+  // due selection once someone records it, and recording it only inside a
+  // reconcile is circular: the reconcile needs the obligation to already be
+  // due, which is what the roster change was supposed to cause.
+  await input.store.refreshObligatedConsumerRosterVersions?.({
+    ...(input.account_id ? { account_id: input.account_id } : {}),
+    limit,
+  });
   const due = (
     await input.store.listLifecycleDueObligations({
-      ledgerAsOf: input.ledgerAsOf,
+      ledgerAsOf,
       ...(input.account_id ? { account_id: input.account_id } : {}),
       limit,
     })
   ).map(value => value.reporting_obligation_id);
-  return reconcileEachIsolated(input, due);
+  return reconcileEachIsolated({ ...input, ledgerAsOf, pinnedLedgerAsOf: input.ledgerAsOf }, due);
 }
 
 async function notifyTransition(

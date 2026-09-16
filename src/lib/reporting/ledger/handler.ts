@@ -658,7 +658,11 @@ export function projectManagedDelivery(
    * body is gone — otherwise letting evidence expire silently reopens a
    * settled subject and the obligation degrades on its own.
    */
-  tombstonedAcceptedSubjects: ReadonlyArray<{ kind: 'revision' | 'adjustment'; subjectId: string }> = [],
+  tombstonedAcceptedSubjects: ReadonlyArray<{
+    kind: 'revision' | 'adjustment';
+    subjectId: string;
+    consumerId?: string;
+  }> = [],
   /**
    * Revisions whose successful materialization row has been pruned.
    *
@@ -729,6 +733,18 @@ export function projectManagedDelivery(
       adjustmentReceipts.filter(value => value.reporting_adjustment_id === adjustment.reporting_adjustment_id)
     )
   );
+  // Hoisted: the reconciliation verdict and the counters below must agree
+  // about which conclusions survived their evidence.
+  const revisionAcceptedByTombstone =
+    requiredRevision !== undefined &&
+    tombstonedAcceptedSubjects.some(
+      value => value.kind === 'revision' && value.subjectId === requiredRevision.reporting_revision_id
+    );
+  const tombstonedAdjustmentIds = new Set(
+    adjustments
+      .map(adjustment => adjustment.reporting_adjustment_id)
+      .filter(id => tombstonedAcceptedSubjects.some(value => value.kind === 'adjustment' && value.subjectId === id))
+  );
   let reconciliationStatus: 'not_required' | 'pending' | 'accepted' | 'rejected' = 'not_required';
   if (binding.reconciliation_mode === 'consumer_receipt' && requiredRevision) {
     const missingAdjustment = adjustmentLeaves.some(value => value === undefined);
@@ -753,15 +769,9 @@ export function projectManagedDelivery(
           value.resource !== undefined &&
           value.verification !== undefined
       );
-    const revisionAcceptedByTombstone = tombstonedAcceptedSubjects.some(
-      value => value.kind === 'revision' && value.subjectId === requiredRevision.reporting_revision_id
-    );
     const missingAdjustmentAfterTombstones = adjustments.some(
       (adjustment, index) =>
-        adjustmentLeaves[index] === undefined &&
-        !tombstonedAcceptedSubjects.some(
-          value => value.kind === 'adjustment' && value.subjectId === adjustment.reporting_adjustment_id
-        )
+        adjustmentLeaves[index] === undefined && !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
     );
     const revisionAccepted = revisionLeaf?.status === 'accepted' || revisionAcceptedByTombstone;
     if (revisionLeaf?.status === 'rejected' || rejectedAdjustment) reconciliationStatus = 'rejected';
@@ -813,17 +823,30 @@ export function projectManagedDelivery(
       .map(value => value.resource!.expires_at)
       .sort(compareReportingInstants)
       .at(-1),
-    receiptCount: relevantReceipts.length,
-    acceptedReceiptCount: relevantReceipts.filter(value => value.status === 'accepted').length,
-    adjustmentReceiptCount: adjustmentReceipts.filter(value =>
-      adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
-    ).length,
-    acceptedAdjustmentReceiptCount: adjustmentReceipts.filter(
-      value =>
-        value.status === 'accepted' &&
+    // Tombstones move the counters as well as the verdict. RC3 requires a
+    // `consumer_receipt` obligation that reads healthy or complete to report
+    // at least one receipt, at least one accepted receipt, and zero pending
+    // adjustments — so counting only live rows emitted a schema-invalid
+    // `complete` with `receipt_count: 0` the moment an acceptance was pruned,
+    // and left a tombstoned adjustment counted as still pending.
+    receiptCount: relevantReceipts.length + (revisionAcceptedByTombstone ? 1 : 0),
+    acceptedReceiptCount:
+      relevantReceipts.filter(value => value.status === 'accepted').length + (revisionAcceptedByTombstone ? 1 : 0),
+    adjustmentReceiptCount:
+      adjustmentReceipts.filter(value =>
         adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
+      ).length + tombstonedAdjustmentIds.size,
+    acceptedAdjustmentReceiptCount:
+      adjustmentReceipts.filter(
+        value =>
+          value.status === 'accepted' &&
+          adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
+      ).length + tombstonedAdjustmentIds.size,
+    pendingAdjustmentReceiptCount: adjustments.filter(
+      (adjustment, index) =>
+        adjustmentLeaves[index]?.status !== 'accepted' &&
+        !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
     ).length,
-    pendingAdjustmentReceiptCount: adjustmentLeaves.filter(value => value?.status !== 'accepted').length,
   };
 }
 

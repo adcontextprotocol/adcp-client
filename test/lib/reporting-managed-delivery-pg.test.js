@@ -1302,6 +1302,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
           package_ids: [],
           covered_package_ids: [],
           unsupported_package_ids: [],
+          unknown_package_ids: [],
           limitations: [],
         },
         period: { ...period, source_timezone: 'UTC' },
@@ -1974,7 +1975,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       const short = new ledger.PostgresReportingManagedDeliveryStore(retentionPool, { evidenceRetentionDays: 30 });
       await assert.rejects(
         () => short.pruneExpiredEvidence({ account_id: 'account-any' }),
-        /shorter than the advertised statusRetentionDays 90/
+        error => /shorter than the advertised statusRetentionDays 90/.test(String(error.cause))
       );
       const sufficient = new ledger.PostgresReportingManagedDeliveryStore(retentionPool, {
         evidenceRetentionDays: 120,
@@ -2646,8 +2647,11 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     // The roster changes outside the database. Publishing the observed
     // version is what makes it visible to due selection at all.
     version = 'r2';
-    await rosterStore.readObligatedConsumerRosterVersion({
-      reporting_obligation_id: rearm.obligation.reporting_obligation_id,
+    // Refresh through the sweep's own path rather than calling the reader
+    // directly: a manual refresh would mask the circularity being tested.
+    await rosterStore.refreshObligatedConsumerRosterVersions({
+      account_id: rearm.accountId,
+      limit: 100,
     });
     const rearmedDue = await rosterStore.listLifecycleDueObligations({
       ledgerAsOf: await core.readLedgerInstant(),
@@ -2807,6 +2811,238 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       legacy.configuration.configurationId,
     ]);
     assert.equal(absent.rowCount, 0, 'the legacy configuration cannot be bound for billing');
+  });
+
+  test('does not let one consumer pruned acceptance settle the obligation for another', async () => {
+    const shared = await seedSkewLedger('twoconsumer', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(shared),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: shared.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: shared.accountId });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [shared.obligation.reporting_obligation_id]
+    );
+    shared.materialization = settled.rows[0].data;
+
+    // Only consumer A accepts. B owes a receipt and never sends one.
+    const contextA = { account: { id: shared.accountId }, agent: { agent_url: 'https://consumer-a.example' } };
+    await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
+      {
+        idempotency_key: 'receipt-two-consumer-a-0001',
+        receipts: [receipt(shared, { reporting_receipt_id: 'receipt-two-consumer-a-0001' })],
+      },
+      contextA
+    );
+    // Prune A's body so only its tombstone remains.
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [shared.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [shared.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: shared.accountId })).receipts, 1);
+
+    const projection = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: shared.obligation.reporting_obligation_id,
+    });
+    assert.deepEqual(
+      projection.tombstonedAcceptedSubjects.map(value => value.consumerId),
+      ['https://consumer-a.example'],
+      'the tombstone remembers whose acceptance it was'
+    );
+
+    // A roster naming both consumers: A is settled by its tombstone, B is not.
+    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({
+        ids: ['https://consumer-a.example', 'https://consumer-b.example'],
+        complete: true,
+        version: 'two',
+      }),
+    });
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: shared.obligation.reporting_obligation_id,
+    });
+    assert.equal(
+      transition?.health ?? 'action_required',
+      'action_required',
+      "A's pruned acceptance must not settle the obligation on B's behalf"
+    );
+    // And B's own read still shows it owes a receipt.
+    const statusB = await ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    })(
+      { account: { account_id: shared.accountId }, view: 'periods', period: shared.period },
+      { account: { id: shared.accountId }, agent: { agent_url: 'https://consumer-b.example' } }
+    );
+    assert.equal(statusB.periods[0].reconciliation_status, 'pending');
+  });
+
+  test('re-arms on a roster change without anyone reconciling first', async () => {
+    const autonomous = await seedSkewLedger('rosterauto', 'consumer_receipt');
+    let version = 'a1';
+    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids: ['https://auto.example'], complete: true, version }),
+    });
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: autonomous.obligation.reporting_obligation_id,
+    });
+    assert.equal(
+      (
+        await rosterStore.listLifecycleDueObligations({
+          ledgerAsOf: await core.readLedgerInstant(),
+          account_id: autonomous.accountId,
+          limit: 100,
+        })
+      ).some(value => value.reporting_obligation_id === autonomous.obligation.reporting_obligation_id),
+      false,
+      'settled on an unchanged roster'
+    );
+
+    // The roster changes outside the database and nobody reconciles. The
+    // sweep itself has to notice — publishing the version only inside a
+    // reconcile was circular, so this never became due.
+    version = 'a2';
+    const swept = await ledger.reconcileReportingStatusDeadlinesV1({
+      store: rosterStore,
+      account_id: autonomous.accountId,
+      limit: 100,
+    });
+    assert.ok(swept >= 0);
+    const stored = await pool.query(
+      `SELECT current_roster_version, processed_roster_version FROM adcp_reporting_lifecycle_state
+        WHERE obligation_id = $1`,
+      [autonomous.obligation.reporting_obligation_id]
+    );
+    assert.equal(
+      stored.rows[0].current_roster_version,
+      stored.rows[0].processed_roster_version,
+      'the sweep both noticed the change and reconciled it'
+    );
+    assert.equal(stored.rows[0].processed_roster_version, 'a2');
+  });
+
+  test('does not let a fast worker host bury database-timestamped work', async () => {
+    const skewed = await seedSkewLedger('hostskew', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(skewed),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: skewed.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: skewed.accountId });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [skewed.obligation.reporting_obligation_id]
+    );
+    skewed.materialization = settled.rows[0].data;
+
+    // A sweep driven with no pinned cutoff resolves the ledger's clock, so a
+    // host running a minute fast cannot stamp a future watermark.
+    await ledger.reconcileReportingStatusDeadlinesV1({ store: core, account_id: skewed.accountId, limit: 100 });
+    const watermark = await pool.query(
+      `SELECT processed_at, clock_timestamp() AS db_now FROM adcp_reporting_lifecycle_state
+        WHERE obligation_id = $1`,
+      [skewed.obligation.reporting_obligation_id]
+    );
+    assert.ok(watermark.rowCount === 1);
+    assert.ok(
+      watermark.rows[0].processed_at <= watermark.rows[0].db_now,
+      'the watermark never runs ahead of the database clock'
+    );
+
+    // A receipt committed now must still be seen, which a host-pinned future
+    // watermark would have buried.
+    const context = { account: { id: skewed.accountId }, agent: { agent_url: 'https://hostskew-buyer.example' } };
+    await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
+      {
+        idempotency_key: 'receipt-host-skew-0001',
+        receipts: [receipt(skewed, { reporting_receipt_id: 'receipt-host-skew-0001' })],
+      },
+      context
+    );
+    const due = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: skewed.accountId,
+      limit: 100,
+    });
+    assert.ok(
+      due.some(value => value.reporting_obligation_id === skewed.obligation.reporting_obligation_id),
+      'work committed after the sweep is still due'
+    );
+  });
+
+  test('counts a pruned acceptance so a settled period stays schema-valid', async () => {
+    const counters = await seedSkewLedger('counters', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(counters),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: counters.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, { maxIterations: 2, account_id: counters.accountId });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [counters.obligation.reporting_obligation_id]
+    );
+    counters.materialization = settled.rows[0].data;
+    const context = { account: { id: counters.accountId }, agent: { agent_url: 'https://counters-buyer.example' } };
+    await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
+      {
+        idempotency_key: 'receipt-counters-0001',
+        receipts: [receipt(counters, { reporting_receipt_id: 'receipt-counters-0001' })],
+      },
+      context
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [counters.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [counters.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: counters.accountId })).receipts, 1);
+
+    const status = await ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    })({ account: { account_id: counters.accountId }, view: 'periods', period: counters.period }, context);
+    const period = status.periods[0];
+    assert.equal(period.reconciliation_status, 'accepted');
+    // RC3 requires a consumer_receipt period reading healthy/complete to
+    // report at least one receipt and one accepted receipt, and no pending
+    // adjustments. Counting only live rows emitted complete with zero.
+    assert.ok(period.receipt_count >= 1, 'the pruned acceptance still counts');
+    assert.ok(period.accepted_receipt_count >= 1);
+    assert.equal(period.pending_adjustment_count, 0);
+    assert.equal(
+      validateResponse('get_reporting_status', status, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.3').issues)
+    );
   });
 
   async function seedCoreLedger() {

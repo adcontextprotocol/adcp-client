@@ -61,22 +61,28 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           : {}),
       };
       const offering = requiredOffering(offeringById, normalizedInput.offeringId);
-      validateConfigurationAgainstOffering(normalizedInput, offering);
       const existing = (await options.store.listConfigurations(normalizedInput.account.account_id)).filter(
         value => value.delivery_config_id === normalizedInput.delivery_config_id
       );
-      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
-        throw new Error('Reporting configuration version cannot regress');
-      }
       const semantic = { ...normalizedInput };
       const semanticFingerprint = prefixedDigest(semantic);
       const predecessorFingerprint = prefixedDigest({ ...input });
+      // Resolve an exact replay before validating. A generation is immutable,
+      // so reinstalling one that predates a rule we have since added must
+      // return the stored generation rather than throw — validating first made
+      // an idempotent reinstall of a legacy billing configuration fail, with
+      // no way to express the row that already exists.
       const replay = existing.find(value => value.delivery_config_version === normalizedInput.delivery_config_version);
       if (replay) {
         if (![semanticFingerprint, predecessorFingerprint].includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
         }
         return replay;
+      }
+      // Only a genuinely new generation is held to current rules.
+      validateConfigurationAgainstOffering(normalizedInput, offering);
+      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
+        throw new Error('Reporting configuration version cannot regress');
       }
       const installedAt = new Date().toISOString();
       const configuration: ReportingLedgerConfigurationV1 = {
@@ -163,15 +169,23 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       }
       const owner = `reporting-worker-${randomUUID()}`;
       const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 };
+      // No host cutoff. The sweeps resolve the ledger's own instant, which is
+      // what lands in each obligation's watermark — a worker host running
+      // fast would otherwise permanently bury database-timestamped work
+      // committed inside the skew.
       await retryReportingStatusNotificationsV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
       await reconcileReportingStatusDeadlinesV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
@@ -342,13 +356,17 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       }
       await retryReportingStatusNotificationsV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
       await reconcileReportingStatusDeadlinesV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
