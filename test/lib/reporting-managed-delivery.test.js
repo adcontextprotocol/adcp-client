@@ -473,4 +473,431 @@ describe('seller managed reporting runtime', () => {
     );
     assert.equal(response.results[1].errors[0].code, 'VALIDATION_ERROR');
   });
+
+  test('does not let managed delivery downgrade Core action_required health', () => {
+    const obligation = {
+      reporting_obligation_id: 'obligation-1',
+      requiredFinality: 'official',
+      expectedAt: '2026-08-27T06:00:00.000Z',
+      recoveryDeadlineAt: '2026-08-27T07:00:00.000Z',
+    };
+    const coverageIssue = {
+      issueId: 'reporting-issue.coverage.obligation-1',
+      reporting_obligation_id: 'obligation-1',
+      code: 'REPORTING_COVERAGE_INCOMPLETE',
+      severity: 'action_required',
+      responsibleParty: 'seller',
+      recommendedAction: 'contact_seller',
+      openedAt: '2026-08-27T04:00:00.000Z',
+      observedAt: '2026-08-27T05:00:00.000Z',
+    };
+    const base = { health: 'action_required', satisfied: false, issues: [coverageIssue] };
+    const managed = ledger.projectManagedDelivery(
+      obligation,
+      { ...lease().binding, reconciliation_mode: 'delivery_only' },
+      [{ reporting_revision_id: 'revision-1', revisionNumber: 1, finality: 'official' }],
+      [],
+      [],
+      [],
+      [],
+      [],
+      base,
+      // Read before expectedAt: the managed rule on its own says `waiting`.
+      '2026-08-27T05:00:00.000Z'
+    );
+    assert.equal(managed.projection.health, 'action_required');
+    assert.ok(
+      managed.projection.issues.some(value => value.code === 'REPORTING_COVERAGE_INCOMPLETE'),
+      'the Core issue that justifies action_required is retained'
+    );
+  });
+
+  test('keeps the receipt verdict when a destination authorization is revoked', () => {
+    const obligation = {
+      reporting_obligation_id: 'obligation-1',
+      requiredFinality: 'official',
+      expectedAt: '2026-08-27T04:00:00.000Z',
+      recoveryDeadlineAt: '2026-08-27T05:00:00.000Z',
+    };
+    const revisions = [{ reporting_revision_id: 'revision-1', revisionNumber: 1, finality: 'official' }];
+    const delivered = {
+      ...lease().materialization,
+      status: 'delivered',
+      ready_at: '2026-08-27T04:00:01.000Z',
+      resource: outcome().resource,
+      verification: outcome().verification,
+    };
+    // What `listSnapshotMaterializationProjection` returns once the grant is
+    // revoked: the same row rewritten to failed.
+    const revoked = [
+      {
+        ...lease().materialization,
+        status: 'failed',
+        failed_at: '2026-08-27T04:30:00.000Z',
+        failure_code: 'AUTHORIZATION_REVOKED',
+      },
+    ];
+    const base = { health: 'healthy', satisfied: true, issues: [] };
+    const receiptFor = status => [
+      {
+        reporting_receipt_id: `receipt-${status}-after-revoke-01`,
+        reporting_obligation_id: 'obligation-1',
+        reporting_revision_id: 'revision-1',
+        reporting_materialization_id: delivered.reporting_materialization_id,
+        status,
+        verification_profile: 'canonical_digest',
+        observed_row_count: 2,
+        observed_control_totals: [],
+        observed_at: '2026-08-27T04:10:00.000Z',
+        ...(status === 'rejected' ? { rejection_codes: ['ROW_COUNT_MISMATCH'] } : {}),
+      },
+    ];
+    const project = status =>
+      ledger.projectManagedDelivery(
+        obligation,
+        lease().binding,
+        revisions,
+        [],
+        revoked,
+        [delivered],
+        receiptFor(status),
+        [],
+        base,
+        '2026-08-27T04:45:00.000Z'
+      );
+
+    const rejected = project('rejected');
+    assert.equal(rejected.reconciliationStatus, 'rejected');
+    assert.ok(
+      rejected.projection.issues.some(value => value.code === 'RECEIPT_REJECTED'),
+      'a rejected obligation must carry a RECEIPT_REJECTED issue per RC3'
+    );
+    assert.equal(
+      rejected.projection.issues.some(value => value.code === 'RECEIPT_REQUIRED'),
+      false,
+      'RC3 forbids pairing a rejected verdict with a receipt-required issue'
+    );
+
+    const accepted = project('accepted');
+    assert.equal(accepted.reconciliationStatus, 'accepted');
+    assert.equal(accepted.acceptedReceiptCount, 1);
+  });
+
+  test('keeps cleanup inside the advertised authorization revocation window', async () => {
+    const revokedAt = Date.parse('2026-08-27T04:00:00.000Z');
+    function revocationStore(claims) {
+      return {
+        planMaterializations: async () => 0,
+        claimMaterialization: async () => null,
+        claimRevocation: async input => {
+          claims.push(input);
+          return claims.length > 1
+            ? null
+            : {
+                authorization: {
+                  account_id: 'account-1',
+                  destination_ref: 'destination-generation-1',
+                  generation: 1,
+                  authorized_at: '2026-08-27T03:00:00.000Z',
+                  revoked_at: new Date(revokedAt).toISOString(),
+                },
+                owner: 'worker-1',
+                generation: 1,
+                expires_at: new Date(revokedAt + 60_000).toISOString(),
+              };
+        },
+        completeRevocation: async () => true,
+      };
+    }
+    const adapter = { revoke: async () => {} };
+
+    // "Maximum delay" is a no-later-than bound, so the exact instant still meets it.
+    const claimsAtBoundary = [];
+    const boundary = await ledger.runManagedDeliveryWorker(revocationStore(claimsAtBoundary), adapter, {
+      now: () => new Date(revokedAt + 60_000),
+      maxIterations: 2,
+      authorizationRevocationSeconds: 60,
+      leaseMilliseconds: 300_000,
+      deliveryDeadlineMilliseconds: 5_000,
+    });
+    assert.equal(boundary.revocationsOverdue, 0);
+    assert.equal(boundary.revocationsCompleted, 1);
+    assert.equal(
+      claimsAtBoundary[0].lease_milliseconds,
+      60_000,
+      'a retry lease may never outlast the whole advertised window'
+    );
+
+    const claimsPastBoundary = [];
+    const past = await ledger.runManagedDeliveryWorker(revocationStore(claimsPastBoundary), adapter, {
+      now: () => new Date(revokedAt + 60_001),
+      maxIterations: 2,
+      authorizationRevocationSeconds: 60,
+      leaseMilliseconds: 300_000,
+      deliveryDeadlineMilliseconds: 5_000,
+    });
+    assert.equal(past.revocationsOverdue, 1);
+
+    // An attempt is never given a budget that would itself run past the promise.
+    const claimsNearBoundary = [];
+    const started = Date.now();
+    const clipped = await ledger.runManagedDeliveryWorker(
+      revocationStore(claimsNearBoundary),
+      { revoke: () => new Promise(() => {}) },
+      {
+        now: () => new Date(revokedAt + 59_970),
+        maxIterations: 2,
+        authorizationRevocationSeconds: 60,
+        leaseMilliseconds: 300_000,
+        deliveryDeadlineMilliseconds: 30_000,
+      }
+    );
+    assert.equal(clipped.revocationsCompleted, 0);
+    assert.ok(
+      Date.now() - started < 5_000,
+      'the attempt is clipped to the 30 ms left in the window, not the 30 s delivery deadline'
+    );
+
+    // Omitting the window keeps the previous unbounded behaviour for a worker
+    // that is not backing an advertised capability.
+    const claimsUnbounded = [];
+    const unbounded = await ledger.runManagedDeliveryWorker(revocationStore(claimsUnbounded), adapter, {
+      now: () => new Date(revokedAt + 86_400_000),
+      maxIterations: 2,
+      leaseMilliseconds: 300_000,
+      deliveryDeadlineMilliseconds: 5_000,
+    });
+    assert.equal(unbounded.revocationsOverdue, 0);
+    assert.equal(claimsUnbounded[0].lease_milliseconds, 300_000);
+  });
+
+  test('applies the RC3 receipt caps per array instead of a combined cap', async () => {
+    let calls = 0;
+    const handler = ledger.createSyncReportingReceiptsHandler(
+      {
+        syncReceiptBatch: async input => {
+          calls += 1;
+          return input.entries.map(entry => ({ result: 'recorded', receipt: entry.receipt }));
+        },
+      },
+      () => 'buyer-1'
+    );
+    const context = { account: { id: 'account-1' } };
+    const revisionReceipt = index => ({
+      reporting_receipt_id: `receipt-bulk-${String(index).padStart(4, '0')}`,
+      reporting_obligation_id: 'obligation-1',
+      reporting_revision_id: 'revision-1',
+      reporting_materialization_id: 'materialization-1',
+      status: 'accepted',
+      verification_profile: 'canonical_digest',
+      observed_row_count: 2,
+      observed_control_totals: [],
+      observed_canonical_content_digest: lease().revision.wireRevision.canonical_content_digest,
+      observed_at: '2026-08-27T04:00:01.000Z',
+    });
+    const adjustmentReceipt = index => ({
+      reporting_receipt_id: `adjustment-receipt-bulk-${String(index).padStart(4, '0')}`,
+      reporting_adjustment_id: 'adjustment-1',
+      adjusts_reporting_revision_id: 'revision-1',
+      status: 'accepted',
+      observed_adjustment_sha256: 'a'.repeat(64),
+      observed_at: '2026-08-27T04:00:01.000Z',
+    });
+
+    const exactlyOneArrayCap = await handler(
+      {
+        idempotency_key: 'receipt-array-cap-0001',
+        receipts: Array.from({ length: 100 }, (_, i) => revisionReceipt(i)),
+      },
+      context
+    );
+    assert.equal(exactlyOneArrayCap.results.length, 100, '100 in one array is legal under RC3');
+    assert.equal(calls, 1);
+
+    await assert.rejects(
+      () =>
+        handler(
+          {
+            idempotency_key: 'receipt-array-cap-0002',
+            receipts: Array.from({ length: 101 }, (_, i) => revisionReceipt(i)),
+          },
+          context
+        ),
+      /at most 100 receipts and 100 adjustment receipts/
+    );
+
+    // Both arrays at their own legal cap: the request is schema-valid, but RC3
+    // also caps `results` at 100, so it cannot be answered per item.
+    await assert.rejects(
+      () =>
+        handler(
+          {
+            idempotency_key: 'receipt-array-cap-0003',
+            receipts: Array.from({ length: 100 }, (_, i) => revisionReceipt(i)),
+            adjustment_receipts: Array.from({ length: 100 }, (_, i) => adjustmentReceipt(i)),
+          },
+          context
+        ),
+      /can return at most 100 results/
+    );
+
+    const mixedUnderCap = await handler(
+      {
+        idempotency_key: 'receipt-array-cap-0004',
+        receipts: Array.from({ length: 60 }, (_, i) => revisionReceipt(i)),
+        adjustment_receipts: Array.from({ length: 40 }, (_, i) => adjustmentReceipt(i)),
+      },
+      context
+    );
+    assert.equal(mixedUnderCap.results.length, 100);
+  });
+
+  test('projects managed health into persisted lifecycle transitions and webhooks', async () => {
+    const period = { start: '2026-08-27T03:00:00.000Z', end: '2026-08-27T04:00:00.000Z', sourceTimezone: 'UTC' };
+    const obligation = {
+      reporting_obligation_id: 'obligation-1',
+      configurationId: 'config-1',
+      account: { account_id: 'account-1' },
+      requiredFinality: 'official',
+      period,
+      expectedAt: period.end,
+      recoveryDeadlineAt: '2026-08-27T04:30:00.000Z',
+      state: 'pending',
+      attemptCount: 1,
+      coverage: { status: 'full' },
+    };
+    const revision = {
+      reporting_revision_id: 'revision-1',
+      reporting_obligation_id: 'obligation-1',
+      revisionNumber: 1,
+      finality: 'official',
+      kind: 'official',
+    };
+    const delivered = {
+      ...lease().materialization,
+      status: 'delivered',
+      ready_at: '2026-08-27T04:00:01.000Z',
+      resource: outcome().resource,
+      verification: outcome().verification,
+    };
+
+    function lifecycleStore(consumers) {
+      const transitions = [];
+      const applied = [];
+      return {
+        transitions,
+        applied,
+        getObligation: async () => structuredClone(obligation),
+        listRevisions: async () => [structuredClone(revision)],
+        listAdjustments: async () => [],
+        listTransitions: async () => structuredClone(transitions),
+        listIssues: async () => [],
+        markTransitionNotified: async () => {},
+        getManagedLifecycleProjection: async () => ({
+          binding: lease().binding,
+          materializations: [delivered],
+          materializationHistory: [delivered],
+          consumers: structuredClone(consumers),
+        }),
+        applyLifecycleProjection: async input => {
+          applied.push(structuredClone(input));
+          if (input.transition) transitions.push(structuredClone(input.transition));
+          return { applied: true, transitionInserted: Boolean(input.transition) };
+        },
+      };
+    }
+
+    const notified = [];
+    const subscribers = [
+      { subscriberId: 'sub-1', account_id: 'account-1', notify: value => void notified.push(value) },
+    ];
+
+    const required = lifecycleStore([]);
+    const requiredTransition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: required,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+      subscribers,
+    });
+    assert.equal(requiredTransition.health, 'action_required');
+    assert.ok(
+      required.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REQUIRED'),
+      'the managed issue is persisted, not only projected at read time'
+    );
+    assert.equal(notified.at(-1).health, 'action_required', 'the webhook carries the composed health');
+
+    const rejected = lifecycleStore([
+      {
+        consumer_id: 'buyer-1',
+        receipts: [
+          {
+            reporting_receipt_id: 'receipt-lifecycle-rejected-01',
+            reporting_obligation_id: 'obligation-1',
+            reporting_revision_id: 'revision-1',
+            reporting_materialization_id: delivered.reporting_materialization_id,
+            status: 'rejected',
+            verification_profile: 'canonical_digest',
+            observed_row_count: 3,
+            observed_control_totals: [],
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+            observed_at: '2026-08-27T04:05:00.000Z',
+          },
+        ],
+        adjustmentReceipts: [],
+      },
+    ]);
+    const rejectedTransition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: rejected,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+      subscribers,
+    });
+    assert.equal(rejectedTransition.health, 'action_required');
+    assert.ok(rejected.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REJECTED'));
+
+    // Two consumers, one still outstanding: the seller's obligation is not
+    // reconciled until every consumer that owes a receipt has accepted.
+    const mixed = lifecycleStore([
+      {
+        consumer_id: 'buyer-1',
+        receipts: [
+          {
+            reporting_receipt_id: 'receipt-lifecycle-accepted-01',
+            reporting_obligation_id: 'obligation-1',
+            reporting_revision_id: 'revision-1',
+            reporting_materialization_id: delivered.reporting_materialization_id,
+            status: 'accepted',
+            verification_profile: 'canonical_digest',
+            observed_row_count: 2,
+            observed_control_totals: [],
+            observed_at: '2026-08-27T04:05:00.000Z',
+          },
+        ],
+        adjustmentReceipts: [],
+      },
+      { consumer_id: 'buyer-2', receipts: [], adjustmentReceipts: [] },
+    ]);
+    const mixedTransition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: mixed,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+      subscribers,
+    });
+    assert.equal(mixedTransition.health, 'action_required');
+
+    // A Core-only store has no managed projection and is left exactly as before.
+    const coreOnly = lifecycleStore([]);
+    delete coreOnly.getManagedLifecycleProjection;
+    const coreTransition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: coreOnly,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+      subscribers,
+    });
+    assert.equal(
+      coreOnly.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REQUIRED'),
+      false
+    );
+    assert.notEqual(coreTransition, undefined);
+  });
 });

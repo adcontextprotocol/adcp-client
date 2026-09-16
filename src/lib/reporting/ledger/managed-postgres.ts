@@ -149,9 +149,42 @@ const MAX_PLAN = 1_000;
 const MAX_MATERIALIZATIONS_PER_ACCOUNT = 100_000;
 const MAX_RECEIPT_BATCHES_PER_CONSUMER = 10_000;
 const MAX_RECEIPTS_PER_CONSUMER = 100_000;
+/** RC3 `maxItems` on `receipts` and on `adjustment_receipts`, applied separately. */
+const MAX_RECEIPTS_PER_ARRAY = 100;
+/** RC3 `maxItems` on the response `results` array. */
+const MAX_RECEIPT_RESULTS = 100;
 const MAX_MATERIALIZATION_ATTEMPTS = 5;
+/**
+ * Idempotent replay is a bounded guarantee, not an unbounded archive. Without a
+ * retention bound a consumer that reached MAX_RECEIPT_BATCHES_PER_CONSUMER was
+ * wedged out of receipt submission forever, and the per-key rows themselves
+ * could hold 100 receipts of up to 64 KiB each. Mirrors the Core ledger's
+ * 30-day CHECKPOINT_RETENTION_MS.
+ */
+const RECEIPT_BATCH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Defence in depth on the compact replay row. The compact form is a few dozen
+ * bytes per entry, so this can only trip if the shape regresses.
+ */
+const MAX_RECEIPT_BATCH_RESULT_BYTES = 64 * 1024;
 
-type StoredBatch = { results: SyncReportingReceiptsResponse['results']; request_fingerprint: string };
+/**
+ * Compact, replay-sufficient record of one batch entry.
+ *
+ * The full receipt bodies are NOT duplicated here: `adcp_reporting_receipts` is
+ * the durable source of truth and its rows are append-only, so a replay
+ * rehydrates byte-identical bodies by id. Storing them twice made a single
+ * idempotency key cost up to 6.4 MiB and the per-consumer cap worth ~64 GiB of
+ * authenticated growth. Same shape the Core consumer-status batch cache uses.
+ */
+type StoredReceiptBatchResult = {
+  kind: 'recorded' | 'unchanged' | 'failed';
+  id: string;
+  entry: ReportingReceiptBatchEntryV1['kind'];
+  errorCode?: 'INVALID_REQUEST';
+};
+
+type StoredBatch = { results: StoredReceiptBatchResult[]; request_fingerprint: string };
 
 export class PostgresReportingManagedDeliveryStore implements ReportingManagedDeliveryStore {
   constructor(private readonly pool: ReportingPgPool) {}
@@ -665,10 +698,16 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   }
 
   async syncReceiptBatch(input: ReportingReceiptBatchInputV1): Promise<SyncReportingReceiptsResponse['results']> {
+    // Mirrors the handler's RC3 caps for callers that drive the store directly:
+    // each kind is capped independently at its own `maxItems`, and the batch as
+    // a whole at the response `results` cap.
+    const revisionCount = input.entries.filter(entry => entry.kind === 'revision').length;
     if (
       !/^[A-Za-z0-9_.:-]{16,255}$/.test(input.idempotency_key) ||
       input.entries.length < 1 ||
-      input.entries.length > 100 ||
+      input.entries.length > MAX_RECEIPT_RESULTS ||
+      revisionCount > MAX_RECEIPTS_PER_ARRAY ||
+      input.entries.length - revisionCount > MAX_RECEIPTS_PER_ARRAY ||
       input.entries.some(
         entry =>
           (entry.kind === 'revision'
@@ -694,12 +733,18 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         if (prior.rows[0].request_fingerprint !== input.request_fingerprint) {
           return input.entries.map(entry => idempotencyConflict(entry.receipt.reporting_receipt_id));
         }
-        return structuredClone(
-          prior.rows[0].results.map((result, index) =>
-            authorization[index] ? result : failed(input.entries[index]!.receipt.reporting_receipt_id)
-          )
-        );
+        return this.replayReceiptBatch(client, input, prior.rows[0].results, authorization);
       }
+      // Age the replay cache out before measuring it, so reaching the cap is a
+      // throttle on burst rather than a permanent lockout that would surface as
+      // a misleading evidence-mismatch on every later batch. Scoped to this
+      // caller's own rows: one consumer can never prune another's.
+      await client.query(
+        `DELETE FROM adcp_reporting_receipt_batches
+          WHERE account_id = $1 AND consumer_id = $2
+            AND recorded_at < clock_timestamp() - ($3::bigint * INTERVAL '1 millisecond')`,
+        [input.account_id, input.consumer_id, RECEIPT_BATCH_RETENTION_MS]
+      );
       const capacity = await client.query<QueryRow & { batches: string; receipts: string }>(
         `SELECT
            (SELECT COUNT(*) FROM adcp_reporting_receipt_batches
@@ -729,14 +774,71 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         results.push(result);
         if (result.result === 'recorded') remainingReceipts -= 1;
       }
+      const stored: StoredReceiptBatchResult[] = results.map((result, index) => ({
+        kind: result.result,
+        id: receiptResultId(result, input.entries[index]!),
+        entry: input.entries[index]!.kind,
+        ...(result.result === 'failed' ? { errorCode: 'INVALID_REQUEST' as const } : {}),
+      }));
+      const storedJson = JSON.stringify(stored);
+      if (Buffer.byteLength(storedJson, 'utf8') > MAX_RECEIPT_BATCH_RESULT_BYTES) {
+        throw new Error('Reporting receipt batch replay record exceeds its byte budget');
+      }
       await client.query(
         `INSERT INTO adcp_reporting_receipt_batches
           (account_id, consumer_id, idempotency_key, request_fingerprint, results)
          VALUES ($1,$2,$3,$4,$5::jsonb)`,
-        [input.account_id, input.consumer_id, input.idempotency_key, input.request_fingerprint, JSON.stringify(results)]
+        [input.account_id, input.consumer_id, input.idempotency_key, input.request_fingerprint, storedJson]
       );
       return results;
     });
+  }
+
+  /**
+   * Rebuilds a prior batch response from the compact replay record plus the
+   * append-only receipt rows, re-checking authorization exactly as the first
+   * call did so a revoked destination cannot be replayed back into disclosure.
+   */
+  private async replayReceiptBatch(
+    client: PgClient,
+    input: ReportingReceiptBatchInputV1,
+    stored: StoredReceiptBatchResult[],
+    authorization: boolean[]
+  ): Promise<SyncReportingReceiptsResponse['results']> {
+    const replay: SyncReportingReceiptsResponse['results'] = [];
+    for (const [index, entry] of input.entries.entries()) {
+      const result = stored[index];
+      // Rows written before the compact form stored the whole response entry.
+      // Serve those verbatim so an idempotency key in flight across the upgrade
+      // still replays instead of turning into a spurious failure.
+      const legacy = legacyReceiptBatchResult(result);
+      if (legacy) {
+        replay.push(authorization[index] ? structuredClone(legacy) : failed(entry.receipt.reporting_receipt_id));
+        continue;
+      }
+      if (!result || !authorization[index] || result.kind === 'failed') {
+        replay.push(failed(entry.receipt.reporting_receipt_id));
+        continue;
+      }
+      const row = await client.query<QueryRow & { data: ReportingReceipt | ReportingAdjustmentReceipt }>(
+        `SELECT data FROM adcp_reporting_receipts
+          WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = $3`,
+        [input.account_id, input.consumer_id, result.id]
+      );
+      const data = row.rows[0]?.data;
+      // The receipt table is append-only, so a recorded id is always still
+      // there. Fail this entry closed rather than invent a body if it is not.
+      if (!data) {
+        replay.push(failed(entry.receipt.reporting_receipt_id));
+        continue;
+      }
+      replay.push(
+        result.kind === 'recorded'
+          ? recorded(result.entry, structuredClone(data))
+          : unchanged(result.entry, structuredClone(data))
+      );
+    }
+    return replay;
   }
 
   private async recordReceipt(
@@ -831,7 +933,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           WHERE materialization.account_id = $1 AND materialization.materialization_id = $2
             AND materialization.revision_id = $3 AND materialization.obligation_id = $4
             AND materialization.status IN ('available','delivered')
-            AND revision.finality = 'official'
+            -- RC3 ties the receiptable revision to the obligation's own
+            -- required_finality, exactly as the read projection does when it
+            -- picks the required revision. Hard-coding 'official' made every
+            -- snapshot-finality consumer_receipt configuration unreconcilable:
+            -- the projection asked for a receipt the store always refused.
+            AND (obligation.data->>'requiredFinality' <> 'official' OR revision.finality = 'official')
             AND binding.data->>'reconciliation_mode' = 'consumer_receipt'`,
         [
           accountId,
@@ -855,7 +962,11 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
            ON authz.account_id = binding.account_id AND authz.destination_ref = binding.destination_ref
           AND authz.generation = binding.authorization_generation AND authz.revoked_at IS NULL
         WHERE binding.account_id = $1 AND adjustment.adjustment_id = $2
-          AND adjustment.adjusts_revision_id = $3 AND revision.finality = 'official'
+          AND adjustment.adjusts_revision_id = $3
+          -- Unlike a revision receipt this arm stays pinned to 'official': an
+          -- adjustment only ever corrects an already-official revision, which
+          -- commitAdjustment enforces at write time.
+          AND revision.finality = 'official'
           AND binding.data->>'reconciliation_mode' = 'consumer_receipt'`,
       [accountId, receipt.reporting_adjustment_id, receipt.adjusts_reporting_revision_id]
     );
@@ -937,6 +1048,22 @@ function idempotencyConflict(reporting_receipt_id: string): SyncReportingReceipt
       },
     ],
   };
+}
+
+function receiptResultId(
+  result: SyncReportingReceiptsResponse['results'][number],
+  entry: ReportingReceiptBatchEntryV1
+): string {
+  if (result.result === 'failed') return result.reporting_receipt_id;
+  const body = 'receipt' in result ? result.receipt : result.adjustment_receipt;
+  return body?.reporting_receipt_id ?? entry.receipt.reporting_receipt_id;
+}
+
+function legacyReceiptBatchResult(
+  value: StoredReceiptBatchResult | undefined
+): SyncReportingReceiptsResponse['results'][number] | undefined {
+  if (!value || typeof value !== 'object' || !('result' in value)) return undefined;
+  return value as unknown as SyncReportingReceiptsResponse['results'][number];
 }
 
 function subjectKey(entry: ReportingReceiptBatchEntryV1): string {

@@ -1,8 +1,14 @@
 import { createHash } from 'node:crypto';
 
 import { canonicalJsonV1 } from '../source';
+import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
 import { projectReportingObligationHealthV1 } from './health';
-import type { ReportingLedgerStatusTransitionV1, ReportingLedgerStore, ReportingLedgerSubscriberV1 } from './types';
+import type {
+  ReportingLedgerIssueV1,
+  ReportingLedgerStatusTransitionV1,
+  ReportingLedgerStore,
+  ReportingLedgerSubscriberV1,
+} from './types';
 
 export async function reconcileReportingStatusLifecycleV1(input: {
   store: ReportingLedgerStore;
@@ -13,12 +19,20 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   const obligation = await input.store.getObligation(input.reporting_obligation_id);
   if (!obligation) throw new Error('Reporting obligation is unavailable');
   const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
-  const projection = projectReportingObligationHealthV1(
+  const coreProjection = projectReportingObligationHealthV1(
     obligation,
     revisions,
     input.ledgerAsOf,
     Date.parse(obligation.period.end) <= Date.parse(input.ledgerAsOf)
   );
+  // Persist and notify the same health `get_reporting_status` returns. Before
+  // this, the transition log carried Core health only: a managed delivery
+  // failure or an outstanding consumer receipt could webhook `complete` with no
+  // issues while a read of the same obligation returned `action_required` with
+  // `RECEIPT_REQUIRED`, and a managed-only change produced no transition at all
+  // so nothing was ever notified. The read path and this path now call the one
+  // `projectManagedDelivery`, so the rule itself cannot drift again.
+  const projection = await composeManagedLifecycleProjection(input, obligation, revisions, coreProjection);
   const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
   for (const pending of transitions.filter(value => !value.notifiedAt)) {
     if (await notifyTransition(pending, obligation.account.account_id, input.subscribers)) {
@@ -65,6 +79,53 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
   if (notified) await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
   return notified ? { ...transition, notifiedAt: input.ledgerAsOf } : transition;
+}
+
+/**
+ * Folds the Managed Delivery projection into the Core projection for one
+ * obligation, per consumer, keeping the most severe result.
+ *
+ * A store without `getManagedLifecycleProjection`, or an obligation with no
+ * managed binding, returns the Core projection untouched.
+ */
+async function composeManagedLifecycleProjection(
+  input: { store: ReportingLedgerStore; ledgerAsOf: string },
+  obligation: Awaited<ReturnType<ReportingLedgerStore['getObligation']>> & object,
+  revisions: Awaited<ReturnType<ReportingLedgerStore['listRevisions']>>,
+  coreProjection: ReturnType<typeof projectReportingObligationHealthV1>
+): Promise<ReturnType<typeof projectReportingObligationHealthV1>> {
+  if (!input.store.getManagedLifecycleProjection) return coreProjection;
+  const managed = await input.store.getManagedLifecycleProjection({
+    reporting_obligation_id: obligation.reporting_obligation_id,
+    ledgerAsOf: input.ledgerAsOf,
+  });
+  if (!managed) return coreProjection;
+  const adjustments = await input.store.listAdjustments(obligation.reporting_obligation_id);
+  // No consumer has submitted anything yet: project once with empty receipts so
+  // a `consumer_receipt` binding still raises RECEIPT_REQUIRED on schedule.
+  const consumers = managed.consumers.length ? managed.consumers : [{ receipts: [], adjustmentReceipts: [] }];
+  let health = coreProjection.health;
+  let satisfied = coreProjection.satisfied;
+  const issues = new Map<string, ReportingLedgerIssueV1>(coreProjection.issues.map(value => [value.issueId, value]));
+  for (const consumer of consumers) {
+    const projected = projectManagedDelivery(
+      obligation,
+      managed.binding,
+      revisions,
+      adjustments,
+      managed.materializations,
+      managed.materializationHistory,
+      consumer.receipts,
+      consumer.adjustmentReceipts,
+      coreProjection,
+      input.ledgerAsOf
+    );
+    if (!projected) continue;
+    health = moreSevereReportingHealthV1(health, projected.projection.health);
+    satisfied = satisfied && projected.projection.satisfied;
+    for (const issue of projected.projection.issues) issues.set(issue.issueId, issue);
+  }
+  return { ...coreProjection, health, satisfied, issues: [...issues.values()] };
 }
 
 export async function retryReportingStatusNotificationsV1(input: {

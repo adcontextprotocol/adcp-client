@@ -18,6 +18,7 @@ import {
   isReportingVerificationEvidence,
 } from '../evidence';
 import type { AdcpToolMap } from '../../server/create-adcp-server';
+import { AdcpError } from '../../server/decisioning/async-outcome';
 import { createReportingDeliveryHandler, createReportingStatusHandler } from './handler';
 import type { ReportingStatusConsumerScopeOptionsV1 } from './handler';
 import type {
@@ -33,6 +34,10 @@ const DEFAULT_DELIVERY_DEADLINE_MILLISECONDS = 60_000;
 const MINIMUM_SETTLEMENT_GRACE_MILLISECONDS = 5_000;
 const DEFAULT_RESOURCE_MAX_BYTES = 64 * 1024 * 1024;
 const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
+/** RC3 `maxItems` on `receipts` and on `adjustment_receipts`, applied separately. */
+const MAX_RECEIPTS_PER_ARRAY = 100;
+/** RC3 `maxItems` on the response `results` array. */
+const MAX_RECEIPT_RESULTS = 100;
 
 export interface ReportingDestinationAuthorizationV1 {
   account_id: string;
@@ -161,6 +166,17 @@ export interface ReportingManagedDeliveryWorkerOptionsV1 {
   resourceMaxBytes?: number;
   /** Capability minimum enforced in addition to each immutable binding. */
   minimumResourceRetentionDays?: number;
+  /**
+   * Mirror of the advertised `authorization_revocation_seconds`. Supplying it
+   * makes the scheduler honour the promise instead of merely printing it: a
+   * cleanup attempt is never given a budget that would run past
+   * `revoked_at + authorizationRevocationSeconds`, a failed attempt never holds
+   * a retry lease longer than the whole promised window, and a grant that has
+   * already outlived the window is counted in `revocationsOverdue` so the
+   * breach is observable rather than silent. Omit it only for a worker that is
+   * not backing an advertised capability.
+   */
+  authorizationRevocationSeconds?: number;
   account_id?: string;
 }
 
@@ -193,6 +209,7 @@ export interface ReportingManagedDeliveryRuntimeV1<TContext extends { account?: 
     delivered: number;
     failed: number;
     revocationsCompleted: number;
+    revocationsOverdue: number;
   }>;
   readResource(input: {
     account_id: string;
@@ -306,6 +323,12 @@ export async function createReportingManagedDeliveryRuntime<
           options.resourceRetentionDays,
           workerOptions?.minimumResourceRetentionDays ?? 0
         ),
+        // The capability block is the promise; the worker is what keeps it.
+        // A caller may only tighten the advertised window, never widen it.
+        authorizationRevocationSeconds: Math.min(
+          options.authorizationRevocationSeconds,
+          workerOptions?.authorizationRevocationSeconds ?? options.authorizationRevocationSeconds
+        ),
       }),
     readResource: input => readManagedReportingResource(options.store, options.adapter, input),
   };
@@ -325,23 +348,47 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
     if (!consumer_id || consumer_id.length > 255) {
       throw new TypeError('resolveConsumerId must return a durable authenticated principal of at most 255 characters');
     }
+    const revisionReceipts = request.receipts ?? [];
+    const adjustmentReceipts = request.adjustment_receipts ?? [];
+    // RC3 caps `receipts` and `adjustment_receipts` at 100 each, independently.
+    // The SDK used to invent a combined cap the spec does not have, so a legal
+    // request was rejected; refusing each array against its own cap is the
+    // contract. Over-cap arrays cannot be answered per item either, because
+    // `results` is itself capped at 100, so they are refused as a request
+    // error rather than as a non-conformant body.
+    if (revisionReceipts.length > MAX_RECEIPTS_PER_ARRAY || adjustmentReceipts.length > MAX_RECEIPTS_PER_ARRAY) {
+      throw new AdcpError('VALIDATION_ERROR', {
+        message:
+          `sync_reporting_receipts accepts at most ${MAX_RECEIPTS_PER_ARRAY} receipts and ` +
+          `${MAX_RECEIPTS_PER_ARRAY} adjustment receipts per request`,
+      });
+    }
     const entries: ReportingReceiptBatchEntryV1[] = [
-      ...(request.receipts ?? []).map(receipt => ({
+      ...revisionReceipts.map(receipt => ({
         kind: 'revision' as const,
         receipt: withoutReceivedAt(receipt) as ReportingReceipt,
       })),
-      ...(request.adjustment_receipts ?? []).map(receipt => ({
+      ...adjustmentReceipts.map(receipt => ({
         kind: 'adjustment' as const,
         receipt: withoutReceivedAt(receipt) as ReportingAdjustmentReceipt,
       })),
     ];
+    // Both arrays can be at their legal cap at once, and RC3 also requires one
+    // result per submitted receipt with `results` capped at 100 — a contract
+    // that cannot be satisfied above 100 combined entries. Refuse with a
+    // conformant error envelope instead of emitting an over-long `results`
+    // array. Tracked upstream as an RC3 request/response cap mismatch.
+    if (entries.length > MAX_RECEIPT_RESULTS) {
+      throw new AdcpError('VALIDATION_ERROR', {
+        message:
+          `sync_reporting_receipts can return at most ${MAX_RECEIPT_RESULTS} results, so a request may carry at most ` +
+          `${MAX_RECEIPT_RESULTS} receipts and adjustment receipts in total`,
+      });
+    }
     if (request.account && 'account_id' in request.account && request.account.account_id !== account_id) {
       return receiptBatchFailure(entries, 'PERMISSION_DENIED', 'Reporting receipt account is unavailable');
     }
     if (!entries.length) return { status: 'completed', results: [] };
-    if (entries.length > 100) {
-      return receiptBatchFailure(entries, 'VALIDATION_ERROR', 'sync_reporting_receipts accepts at most 100 receipts');
-    }
     if (!/^[A-Za-z0-9_.:-]{16,255}$/.test(request.idempotency_key)) {
       return receiptBatchFailure(entries, 'VALIDATION_ERROR', 'sync_reporting_receipts idempotency_key is invalid');
     }
@@ -422,6 +469,17 @@ export async function runManagedDeliveryWorker(
   if (leaseMilliseconds < deadlineMilliseconds + MINIMUM_SETTLEMENT_GRACE_MILLISECONDS) {
     throw new RangeError('leaseMilliseconds must include at least 5 seconds of post-delivery settlement grace');
   }
+  if (options.authorizationRevocationSeconds !== undefined) {
+    nonnegativeInteger(options.authorizationRevocationSeconds, 'authorizationRevocationSeconds');
+  }
+  const revocationWindow =
+    options.authorizationRevocationSeconds === undefined ? undefined : options.authorizationRevocationSeconds * 1_000;
+  // A failed cleanup keeps its lease as the retry delay, so a lease longer than
+  // the whole advertised window would defer the retry past the promise on its
+  // own. Cap it at the window; `claimRevocation` requires at least 1 ms, which
+  // is the correct reading of a zero-second promise: no backoff is permitted.
+  const revocationLeaseMilliseconds =
+    revocationWindow === undefined ? leaseMilliseconds : Math.max(1, Math.min(leaseMilliseconds, revocationWindow));
   const owner = `managed-reporting-${randomUUID()}`;
   const counts = {
     planned: await store.planMaterializations({ ...(options.account_id ? { account_id: options.account_id } : {}) }),
@@ -429,6 +487,7 @@ export async function runManagedDeliveryWorker(
     delivered: 0,
     failed: 0,
     revocationsCompleted: 0,
+    revocationsOverdue: 0,
   };
 
   for (let index = 0; index < maxIterations; index += 1) {
@@ -436,14 +495,25 @@ export async function runManagedDeliveryWorker(
     const revocation = await store.claimRevocation({
       owner,
       now: now().toISOString(),
-      lease_milliseconds: leaseMilliseconds,
+      lease_milliseconds: revocationLeaseMilliseconds,
       ...(options.account_id ? { account_id: options.account_id } : {}),
     });
     if (!revocation) break;
+    // `authorization_revocation_seconds` is a maximum delay measured from the
+    // instant authorization ended, so the bound belongs to the authorization,
+    // not to the worker tick that happens to pick it up.
+    const remaining = remainingRevocationMilliseconds(revocation, revocationWindow, now());
+    if (remaining !== undefined && remaining < 0) counts.revocationsOverdue += 1;
+    // Never give an attempt a budget that would itself run past the promised
+    // instant. Once the window is already spent there is no bound left to
+    // honour and withholding cleanup would strand the grant forever, so the
+    // attempt gets its normal budget and the breach is counted instead.
+    const attemptDeadline =
+      remaining !== undefined && remaining > 0 ? Math.min(deadlineMilliseconds, remaining) : deadlineMilliseconds;
     try {
       await withinDeadline(
         signal => adapter.revoke({ authorization: revocation.authorization }, { signal }),
-        deadlineMilliseconds,
+        attemptDeadline,
         'Reporting revocation deadline elapsed',
         options.signal
       );
@@ -498,6 +568,24 @@ export async function runManagedDeliveryWorker(
   return counts;
 }
 
+/**
+ * Milliseconds left in the advertised revocation window for one claimed grant,
+ * or `undefined` when no window is being enforced or `revoked_at` is unusable.
+ * Negative means the promise has already been broken.
+ */
+function remainingRevocationMilliseconds(
+  revocation: ReportingDestinationRevocationLeaseV1,
+  revocationWindow: number | undefined,
+  now: Date
+): number | undefined {
+  if (revocationWindow === undefined) return undefined;
+  const revokedAt = revocation.authorization.revoked_at;
+  if (!revokedAt) return undefined;
+  const revoked = Date.parse(revokedAt);
+  if (!Number.isFinite(revoked)) return undefined;
+  return revoked + revocationWindow - now.getTime();
+}
+
 export async function readManagedReportingResource(
   store: ReportingManagedDeliveryStore,
   adapter: ReportingManagedDeliveryAdapterV1,
@@ -518,7 +606,13 @@ export async function readManagedReportingResource(
   if (!selected || !resource) return null;
   const { binding, materialization } = selected;
   const bytes = await withinDeadline(
-    signal => adapter.read({ materialization, binding, resource, maxBytes }, { signal }),
+    // Adapter failure messages are provider strings: they vary by SDK version
+    // and can carry endpoint or credential detail. Callers get one stable
+    // sentence; the provider error stays reachable as `cause` for seller logs.
+    signal =>
+      adapter.read({ materialization, binding, resource, maxBytes }, { signal }).catch((cause: unknown) => {
+        throw new Error('Managed reporting resource read failed', { cause });
+      }),
     deadlineMilliseconds,
     'Reporting resource read deadline elapsed',
     input.signal

@@ -738,6 +738,17 @@ function validateManifestFinalityForObligation(
   }
 }
 
+/**
+ * SHA-256 of the RFC 8785 JCS serialization of an adjustment with
+ * `canonical_adjustment_sha256` omitted, per RC3 `core/reporting-adjustment`.
+ *
+ * Exported so the durable store can recognise a pre-upgrade adjustment row that
+ * predates the digest and replay it without a false immutability conflict.
+ */
+export function reportingCanonicalAdjustmentSha256V1(wireAdjustmentWithoutDigest: unknown): string {
+  return createHash('sha256').update(canonicalize(wireAdjustmentWithoutDigest), 'utf8').digest('hex');
+}
+
 function canonicalRowsSha256(rows: readonly Record<string, unknown>[], primaryKeys: readonly string[]): string {
   const encoded = rows.map(row => {
     const keyValues = primaryKeys.map(key => {
@@ -824,9 +835,6 @@ function buildAdjustment(
     correction_observed_at: manifest.period.observedAt,
     created_at: createdAt,
   };
-  const canonicalAdjustmentSha256 = createHash('sha256')
-    .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
-    .digest('hex');
   return {
     reporting_adjustment_id: adjustmentId,
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -840,9 +848,19 @@ function buildAdjustment(
     dataThrough: manifest.period.dataThrough,
     sourceReadCutoffAt: manifest.period.sourceReadCutoffAt,
     createdAt,
+    // `canonical_adjustment_sha256` is optional in RC3 and exists so Reconciled
+    // Billing consumers can recompute the digest before accepting or rejecting
+    // an adjustment. Emitting it unconditionally changed the wire content — and
+    // therefore `adjustmentIdentityFingerprint` — for every Core adopter,
+    // including delivery-only feeds that never read it. Gate it on the same
+    // pinned canonicalization contract that gates the revision's
+    // `canonical_content_digest`, so obligations without one keep byte-identical
+    // output across the upgrade.
     wireAdjustment: ReportingAdjustmentSchema.parse({
       ...wireAdjustmentWithoutDigest,
-      canonical_adjustment_sha256: canonicalAdjustmentSha256,
+      ...(obligation.canonicalization
+        ? { canonical_adjustment_sha256: reportingCanonicalAdjustmentSha256V1(wireAdjustmentWithoutDigest) }
+        : {}),
     }) as unknown as ReportingAdjustment,
   };
 }

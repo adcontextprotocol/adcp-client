@@ -517,6 +517,30 @@ export interface ReportingManagedDeliveryBindingV1 {
   semantic_fingerprint: string;
 }
 
+/**
+ * Managed Delivery inputs the lifecycle reconciler needs to project the same
+ * health the read path projects.
+ *
+ * Reads are scoped to one authenticated consumer; a persisted transition is
+ * account-level, so receipts arrive grouped per consumer and the reconciler
+ * folds the per-consumer projections with `moreSevereReportingHealthV1`. The
+ * seller's obligation is only reconciled once every consumer that owes a
+ * receipt has accepted, so the most severe consumer is the truthful one.
+ */
+export interface ReportingManagedLifecycleProjectionV1 {
+  binding: ReportingManagedDeliveryBindingV1;
+  /** Authorization-aware view: a revoked destination reads as `failed`. */
+  materializations: ReportingMaterialization[];
+  /** Full immutable history, independent of current authorization. */
+  materializationHistory: ReportingMaterialization[];
+  /** One entry per consumer that has submitted receipts; empty when none has. */
+  consumers: Array<{
+    consumer_id: string;
+    receipts: ReportingReceipt[];
+    adjustmentReceipts: ReportingAdjustmentReceipt[];
+  }>;
+}
+
 export interface ReportingLedgerLeaseV1 {
   obligation: ReportingLedgerObligationV1;
   owner: string;
@@ -608,6 +632,20 @@ export interface ReportingLedgerStore {
     transition?: ReportingLedgerStatusTransitionV1;
   }): Promise<{ applied: boolean; transitionInserted: boolean }>;
   markTransitionNotified(transitionId: string, notifiedAt: string): Promise<void>;
+  /**
+   * Managed Delivery projection inputs for one obligation.
+   *
+   * Optional on purpose: a Core-only ledger omits it and the lifecycle stays
+   * Core-only, exactly as before. A store that has the Managed Delivery
+   * migration installed must implement it, otherwise persisted transitions and
+   * webhooks would keep reporting Core health while `get_reporting_status`
+   * reports the composed managed health — the divergence this exists to close.
+   * Return `null` for an obligation whose configuration has no managed binding.
+   */
+  getManagedLifecycleProjection?(input: {
+    reporting_obligation_id: string;
+    ledgerAsOf: string;
+  }): Promise<ReportingManagedLifecycleProjectionV1 | null>;
   listTransitions(reporting_obligation_id: string): Promise<ReportingLedgerStatusTransitionV1[]>;
   listPendingTransitions(input?: { account_id?: string; limit?: number }): Promise<ReportingLedgerStatusTransitionV1[]>;
   createSnapshot(query: ReportingLedgerSnapshotQueryV1): Promise<ReportingLedgerSnapshotV1>;

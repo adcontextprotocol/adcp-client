@@ -17,6 +17,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
   let core;
   let managed;
   let fixture;
+  let snapshotFixture;
   let canonicalize;
   let validateResponse;
 
@@ -607,6 +608,241 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
   });
 
+  test('accepts a receipt for a snapshot-finality obligation its own contract requires', async () => {
+    const snapshot = await seedSnapshotFinalityLedger();
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(snapshot),
+      read: async () => Buffer.from('snapshot bytes'),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: snapshot.accountId });
+    const worker = await ledger.runManagedDeliveryWorker(managed, adapter, {
+      now: () => new Date(Date.parse(snapshot.now) + 1000),
+      maxIterations: 2,
+      account_id: snapshot.accountId,
+    });
+    assert.equal(worker.delivered, 1, 'a snapshot revision is materializable');
+    const stored = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [snapshot.obligation.reporting_obligation_id]
+    );
+    snapshot.materialization = stored.rows[0].data;
+
+    const context = { account: { id: snapshot.accountId }, agent: { agent_url: 'https://snapshot-buyer.example' } };
+    const syncReceipts = ledger.createSyncReportingReceiptsHandler(
+      managed,
+      value => value.agent.agent_url,
+      () => new Date(Date.parse(snapshot.now) + 2000)
+    );
+    const acceptedRequest = {
+      idempotency_key: 'receipt-snapshot-finality-0001',
+      receipts: [receipt(snapshot, { reporting_receipt_id: 'receipt-snapshot-accepted-0001' })],
+    };
+    const accepted = await syncReceipts(acceptedRequest, context);
+    assert.equal(
+      accepted.results[0].result,
+      'recorded',
+      'hard-coding official finality made every snapshot-finality contract unreconcilable'
+    );
+    assert.equal(validateResponse('sync_reporting_receipts', accepted, '3.2.0-rc.3').valid, true);
+
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    const status = await getStatus(
+      { account: { account_id: snapshot.accountId }, view: 'periods', period: snapshot.period },
+      context
+    );
+    assert.equal(status.periods[0].reconciliation_status, 'accepted');
+    assert.equal(
+      validateResponse('get_reporting_status', status, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.3').issues)
+    );
+    snapshotFixture = { ...snapshot, acceptedRequest, acceptedResult: accepted };
+  });
+
+  test('keeps the receipt replay cache compact and replays a pre-upgrade row', async () => {
+    const snapshot = snapshotFixture;
+    const context = { account: { id: snapshot.accountId }, agent: { agent_url: 'https://snapshot-buyer.example' } };
+    const syncReceipts = ledger.createSyncReportingReceiptsHandler(
+      managed,
+      value => value.agent.agent_url,
+      () => new Date(Date.parse(snapshot.now) + 3000)
+    );
+    const cached = await pool.query(`SELECT results FROM adcp_reporting_receipt_batches WHERE idempotency_key = $1`, [
+      snapshot.acceptedRequest.idempotency_key,
+    ]);
+    const stored = cached.rows[0].results;
+    assert.deepEqual(
+      stored.map(value => value.kind),
+      ['recorded'],
+      'the replay row keeps a verdict, not a second copy of the receipt'
+    );
+    assert.equal(stored[0].receipt, undefined, 'receipt bodies are not duplicated into the replay cache');
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(stored), 'utf8') < 512,
+      'a compact replay row cannot grow with receipt size'
+    );
+
+    const replay = await syncReceipts(snapshot.acceptedRequest, context);
+    assert.deepEqual(replay, snapshot.acceptedResult, 'replay is still byte-identical to the original response');
+
+    // A key written by the previous build stored the whole response entry.
+    await pool.query(`UPDATE adcp_reporting_receipt_batches SET results = $2::jsonb WHERE idempotency_key = $1`, [
+      snapshot.acceptedRequest.idempotency_key,
+      JSON.stringify(snapshot.acceptedResult.results),
+    ]);
+    const legacyReplay = await syncReceipts(snapshot.acceptedRequest, context);
+    assert.deepEqual(
+      legacyReplay,
+      snapshot.acceptedResult,
+      'an idempotency key in flight across the upgrade still replays'
+    );
+
+    // Retention ages the cache out, so reaching the per-consumer cap throttles
+    // a burst instead of locking the consumer out permanently.
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE idempotency_key = $1`,
+      [snapshot.acceptedRequest.idempotency_key]
+    );
+    const fresh = await syncReceipts(
+      {
+        idempotency_key: 'receipt-compact-cache-0002',
+        receipts: [receipt(snapshot, { reporting_receipt_id: 'receipt-compact-cache-0002' })],
+      },
+      context
+    );
+    assert.equal(validateResponse('sync_reporting_receipts', fresh, '3.2.0-rc.3').valid, true);
+    const remaining = await pool.query(`SELECT 1 FROM adcp_reporting_receipt_batches WHERE idempotency_key = $1`, [
+      snapshot.acceptedRequest.idempotency_key,
+    ]);
+    assert.equal(remaining.rowCount, 0, 'expired replay rows are pruned for this caller only');
+    const others = await pool.query(
+      `SELECT 1 FROM adcp_reporting_receipt_batches WHERE consumer_id <> 'https://snapshot-buyer.example'`
+    );
+    assert.ok(others.rowCount > 0, 'another consumer replay cache is untouched');
+  });
+
+  test('replays a revision and adjustment stored before the canonical digests existed', async () => {
+    const storedRevision = await pool.query(
+      `UPDATE adcp_reporting_revisions
+          SET data = jsonb_set(data, '{wireRevision}', (data->'wireRevision') - 'canonical_content_digest')
+        WHERE revision_id = $1 RETURNING data`,
+      [fixture.revision.reporting_revision_id]
+    );
+    assert.equal(storedRevision.rows[0].data.wireRevision.canonical_content_digest, undefined);
+    const replayedRevision = await core.commitRevision(fixture.revision, fixture.coreLease);
+    assert.equal(replayedRevision.inserted, false);
+    assert.equal(
+      replayedRevision.value.wireRevision.canonical_content_digest,
+      undefined,
+      'the pre-upgrade row is returned unchanged rather than rewritten'
+    );
+    await assert.rejects(
+      () =>
+        core.commitRevision(
+          { ...fixture.revision, wireRevision: { ...fixture.revision.wireRevision, row_count: 99 } },
+          fixture.coreLease
+        ),
+      /transaction failed/,
+      'the tolerance covers the added digest and nothing else'
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_revisions
+          SET data = jsonb_set(data, '{wireRevision,canonical_content_digest}', $2::jsonb)
+        WHERE revision_id = $1`,
+      [fixture.revision.reporting_revision_id, JSON.stringify(fixture.revision.wireRevision.canonical_content_digest)]
+    );
+
+    const rows = [{ media_buy_id: 'buy-1', impressions: 7 }];
+    const bytes = Buffer.from(canonicalize(rows), 'utf8');
+    const wireAdjustmentWithoutDigest = {
+      reporting_adjustment_id: 'adjustment-legacy-digest-0001',
+      adjusts_reporting_revision_id: fixture.revision.reporting_revision_id,
+      reason_code: 'source_correction',
+      accounting_period: { start: fixture.period.start, end: fixture.period.end },
+      control_total_deltas: [{ name: 'row_count', value: '0', value_type: 'integer' }],
+      correction_observed_at: fixture.now,
+      created_at: fixture.now,
+    };
+    const legacyAdjustment = {
+      reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+      reporting_obligation_id: fixture.obligation.reporting_obligation_id,
+      adjusts_reporting_revision_id: fixture.revision.reporting_revision_id,
+      adjustmentNumber: 2,
+      manifest: { level: 'basic', objectRef: 'legacy-manifest', sha256: 'c'.repeat(64), byteCount: 1 },
+      sourcePublicationId: 'adjustment-publication-legacy',
+      binding: {
+        algorithm: 'rfc8785_jcs_v1',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        byteCount: bytes.byteLength,
+        rowCount: rows.length,
+      },
+      rows,
+      observedAt: fixture.now,
+      dataThrough: fixture.period.end,
+      sourceReadCutoffAt: fixture.now,
+      createdAt: fixture.now,
+      wireAdjustment: wireAdjustmentWithoutDigest,
+    };
+    const inserted = await core.commitAdjustment(legacyAdjustment, fixture.coreLease);
+    assert.equal(inserted.inserted, true);
+
+    const upgraded = {
+      ...legacyAdjustment,
+      wireAdjustment: {
+        ...wireAdjustmentWithoutDigest,
+        canonical_adjustment_sha256: createHash('sha256')
+          .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+          .digest('hex'),
+      },
+    };
+    const replayedAdjustment = await core.commitAdjustment(upgraded, fixture.coreLease);
+    assert.equal(replayedAdjustment.inserted, false);
+    assert.equal(
+      replayedAdjustment.value.wireAdjustment.canonical_adjustment_sha256,
+      undefined,
+      'the pre-upgrade adjustment row survives the replay untouched'
+    );
+    await assert.rejects(
+      () =>
+        core.commitAdjustment(
+          {
+            ...legacyAdjustment,
+            wireAdjustment: { ...wireAdjustmentWithoutDigest, canonical_adjustment_sha256: 'a'.repeat(64) },
+          },
+          fixture.coreLease
+        ),
+      /transaction failed/,
+      'only the digest RC3 derives from the stored content is tolerated'
+    );
+  });
+
+  test('exposes every consumer receipt chain to the lifecycle projection', async () => {
+    const projection = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: snapshotFixture.obligation.reporting_obligation_id,
+      ledgerAsOf: new Date(Date.parse(snapshotFixture.now) + 600_000).toISOString(),
+    });
+    assert.equal(projection.binding.configurationId, snapshotFixture.configuration.configurationId);
+    assert.ok(projection.materializationHistory.length >= 1);
+    assert.deepEqual(
+      projection.consumers.map(value => value.consumer_id),
+      ['https://snapshot-buyer.example']
+    );
+    assert.ok(projection.consumers[0].receipts.length >= 1);
+    assert.equal(
+      await core.getManagedLifecycleProjection({
+        reporting_obligation_id: 'obligation-does-not-exist',
+        ledgerAsOf: snapshotFixture.now,
+      }),
+      null
+    );
+  });
+
   async function seedCoreLedger() {
     const nowMs = Date.now();
     const now = new Date(nowMs).toISOString();
@@ -780,6 +1016,197 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         finality_basis: 'contractual_cutoff',
         finality_policy_id: 'contractual-cutoff-v1',
         finalized_at: now,
+        observed_at: now,
+        data_through: period.end,
+        data_through_precision: 'exact',
+        row_count: 1,
+        control_totals: controlTotals,
+        canonical_content_digest: digest,
+        created_at: now,
+      },
+    };
+    await core.commitRevision(revision, coreLease);
+    return { accountId, now, period, configuration, obligation, revision, binding, coreLease };
+  }
+
+  async function seedSnapshotFinalityLedger() {
+    // A non-billing consumer_receipt contract whose Core configuration requires
+    // only snapshot finality. Legal under RC3 and previously unreconcilable.
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    const period = {
+      start: new Date(nowMs - 7_200_000).toISOString(),
+      end: new Date(nowMs - 5_400_000).toISOString(),
+    };
+    const accountId = 'account-managed-snapshot';
+    const canonicalization = {
+      id: 'analytics-rows-v1',
+      uri: 'https://schemas.fixture.example/canonicalization.json',
+      sha256: 'c'.repeat(64),
+      primaryKeys: ['media_buy_id'],
+    };
+    const configuration = {
+      configurationId: 'configuration-managed-snapshot-1',
+      account: { account_id: accountId },
+      sourceScope: { warehouse: 'fixture' },
+      delivery_config_id: 'analytics-files',
+      delivery_config_version: 1,
+      offeringId: 'analytics-files-v1',
+      report_definition_id: 'analytics-v1',
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      canonicalization,
+      requestedMetrics: ['impressions'],
+      requestedDimensions: ['media_buy_id'],
+      constituents: [],
+      mediaBuyIds: ['buy-2'],
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: period.start,
+        periodMilliseconds: 1_800_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 60_000,
+      },
+      sourceSettings: {},
+      contract: { reportingProfile: 'analytics-v1' },
+      installedAt: period.start,
+      semanticFingerprint: 'configuration-managed-snapshot-fingerprint',
+    };
+    await core.putConfiguration(configuration);
+    await managed.authorizeDestination({
+      account_id: accountId,
+      destination_ref: 'destination-snapshot-1',
+      generation: 1,
+      authorized_at: now,
+    });
+    const binding = ledger.reportingManagedDeliveryBindingV1({
+      configurationId: configuration.configurationId,
+      account_id: accountId,
+      delivery_config_id: configuration.delivery_config_id,
+      delivery_config_version: 1,
+      destination_ref: 'destination-snapshot-1',
+      authorization_generation: 1,
+      feed_purpose: 'analytics',
+      method: 'file_transfer',
+      transport: 'fixture_object_store',
+      verification_profile: 'canonical_digest',
+      reconciliation_mode: 'consumer_receipt',
+      resource_retention_days: 30,
+      created_at: now,
+    });
+    await managed.installBinding(binding);
+    const obligation = {
+      reporting_obligation_id: 'obligation-managed-snapshot-1',
+      configurationId: configuration.configurationId,
+      account: configuration.account,
+      sourceScope: configuration.sourceScope,
+      delivery_config_id: configuration.delivery_config_id,
+      delivery_config_version: 1,
+      offeringId: configuration.offeringId,
+      report_definition_id: configuration.report_definition_id,
+      feedPurpose: 'analytics',
+      requiredFinality: 'snapshot',
+      periodOrdinal: 0,
+      period: { ...period, sourceTimezone: 'UTC' },
+      schedule: configuration.schedule,
+      scopeResolvedAt: period.end,
+      coverage: {
+        status: 'full',
+        evaluatedAt: period.end,
+        mediaBuyIds: ['buy-2'],
+        fullyCoveredMediaBuyIds: ['buy-2'],
+        partiallyCoveredMediaBuyIds: [],
+        unsupportedMediaBuyIds: [],
+        unknownMediaBuyIds: [],
+      },
+      requestedMetrics: ['impressions'],
+      requestedDimensions: ['media_buy_id'],
+      constituents: [],
+      mediaBuyIds: ['buy-2'],
+      sourceSettings: {},
+      contract: configuration.contract,
+      expectedAt: period.end,
+      recoveryDeadlineAt: new Date(Date.parse(period.end) + 60_000).toISOString(),
+      publicationOffsets: [],
+      nextAttemptAt: period.end,
+      attemptCount: 0,
+      state: 'pending',
+      semanticFingerprint: 'obligation-managed-snapshot-fingerprint',
+      createdAt: now,
+    };
+    await core.putObligation(obligation);
+    const coreLease = await core.claimObligation({
+      owner: 'snapshot-core-worker',
+      now,
+      leaseMilliseconds: 600_000,
+      account_id: accountId,
+    });
+    const rows = [{ media_buy_id: 'buy-2', impressions: 9 }];
+    const controlTotals = [{ name: 'impressions', value: '9', value_type: 'integer', unit: 'impressions' }];
+    const revisionBytes = Buffer.from(
+      canonicalize({
+        reporting_revision_id: 'revision-managed-snapshot-1',
+        row_count: rows.length,
+        control_totals: controlTotals,
+        reporting_rows: rows,
+      })
+    );
+    const digest = {
+      algorithm: 'sha256',
+      value: '5'.repeat(64),
+      canonicalization_id: canonicalization.id,
+      canonicalization_uri: canonicalization.uri,
+      canonicalization_sha256: canonicalization.sha256,
+    };
+    const revision = {
+      reporting_revision_id: 'revision-managed-snapshot-1',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      revisionNumber: 1,
+      finality: 'snapshot',
+      kind: 'snapshot',
+      manifest: { level: 'basic', objectRef: 'manifest', sha256: 'a'.repeat(64), byteCount: 1 },
+      sourcePublicationId: 'publication-managed-snapshot-1',
+      binding: {
+        algorithm: 'rfc8785_jcs_v1',
+        sha256: createHash('sha256').update(revisionBytes).digest('hex'),
+        byteCount: revisionBytes.byteLength,
+        rowCount: rows.length,
+      },
+      rows,
+      observedAt: now,
+      dataThrough: period.end,
+      sourceReadCutoffAt: now,
+      createdAt: now,
+      wireRevision: {
+        reporting_revision_id: 'revision-managed-snapshot-1',
+        revision_content_sha256: createHash('sha256').update(revisionBytes).digest('hex'),
+        report_definition_id: 'analytics-v1',
+        report_definition_uri: 'https://schemas.fixture.example/report-definition.json',
+        report_definition_sha256: '9'.repeat(64),
+        reporting_profile: 'analytics-v1',
+        schema_version: '1.0',
+        schema_uri: 'https://schemas.fixture.example/reporting-profile.json',
+        schema_sha256: '8'.repeat(64),
+        schema_dialect: 'https://json-schema.org/draft/2020-12/schema',
+        schema_ref_policy: 'local_fragment_only',
+        account_id: accountId,
+        media_buy_ids: ['buy-2'],
+        coverage: {
+          status: 'full',
+          evaluated_at: now,
+          media_buy_ids: ['buy-2'],
+          fully_covered_media_buy_ids: ['buy-2'],
+          partially_covered_media_buy_ids: [],
+          unsupported_media_buy_ids: [],
+          unknown_media_buy_ids: [],
+          package_ids: [],
+          covered_package_ids: [],
+          unsupported_package_ids: [],
+          unknown_package_ids: [],
+          limitations: [],
+        },
+        period: { ...period, source_timezone: 'UTC' },
+        finality: 'snapshot',
         observed_at: now,
         data_through: period.end,
         data_through_precision: 'exact',

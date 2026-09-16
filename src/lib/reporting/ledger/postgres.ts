@@ -45,11 +45,13 @@ import type {
   ReportingConsumerStatusReplayInputV1,
   ReportingLedgerRevisionMetadataV1,
   ReportingManagedDeliveryBindingV1,
+  ReportingManagedLifecycleProjectionV1,
   ReportingLedgerAuthorityV1,
 } from './types';
 import { ReportingConsumerStatusConflictError } from './types';
 import type { ReportingConsumerMismatchEscalationV1 } from './types';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
+import { reportingCanonicalAdjustmentSha256V1 } from './producer';
 import {
   normalizeReportingConsumerStatusIdsV1,
   reportingConsumerStatusChainKeyFromIdentityV1,
@@ -692,7 +694,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         obligationId: revision.reporting_obligation_id,
         owner: lease.owner,
         generation: lease.generation,
-      }
+      },
+      revisionLegacyCanonicalDigestReplay
     );
   }
 
@@ -770,7 +773,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         obligationId: adjustment.reporting_obligation_id,
         owner: lease.owner,
         generation: lease.generation,
-      }
+      },
+      adjustmentLegacyCanonicalDigestReplay
     );
   }
 
@@ -1992,6 +1996,78 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     return result.rows.map(row => row.data);
   }
 
+  /**
+   * Managed Delivery projection inputs for one obligation, grouped per consumer.
+   *
+   * The lifecycle reconciler folds these through the same
+   * `projectManagedDelivery` the read path uses, so a persisted transition and
+   * its webhook report the health a read of the same obligation would return.
+   * Returns `null` when Managed Delivery is not installed or the obligation's
+   * configuration has no binding, which keeps a Core-only ledger unchanged.
+   */
+  async getManagedLifecycleProjection(input: {
+    reporting_obligation_id: string;
+    ledgerAsOf: string;
+  }): Promise<ReportingManagedLifecycleProjectionV1 | null> {
+    if (!this.managedDelivery) return null;
+    return this.transaction(async client => {
+      if (!(await this.managedTablesInstalled(client))) return null;
+      const obligation = await client.query<QueryResultRow & { configuration_id: string }>(
+        'SELECT configuration_id FROM adcp_reporting_obligations WHERE obligation_id = $1',
+        [input.reporting_obligation_id]
+      );
+      const configurationId = obligation.rows[0]?.configuration_id;
+      if (!configurationId) return null;
+      const [binding] = await this.listSnapshotManagedBindings(client, [configurationId]);
+      if (!binding) return null;
+      const obligationIds = [input.reporting_obligation_id];
+      const [materializations, materializationHistory] = await Promise.all([
+        this.listSnapshotMaterializationProjection(client, obligationIds, input.ledgerAsOf),
+        this.listSnapshotMaterializations(client, obligationIds, input.ledgerAsOf),
+      ]);
+      // Every consumer, not just one authenticated caller: a persisted
+      // transition is account-level, so the reconciler needs each consumer's
+      // own receipt chain to fold the most severe outcome.
+      const receipts = await client.query<
+        JsonRow<ReportingReceipt | ReportingAdjustmentReceipt> & { consumer_id: string; receipt_kind: string }
+      >(
+        `SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
+           FROM adcp_reporting_receipts receipt
+          WHERE receipt.received_at <= $2
+            AND (
+              (receipt.receipt_kind = 'revision' AND EXISTS (
+                 SELECT 1 FROM adcp_reporting_revisions revision
+                  WHERE revision.revision_id = receipt.subject_id
+                    AND revision.obligation_id = $1
+               ))
+              OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                 SELECT 1 FROM adcp_reporting_adjustments adjustment
+                  WHERE adjustment.adjustment_id = receipt.subject_id
+                    AND adjustment.obligation_id = $1
+               ))
+            )
+          ORDER BY receipt.consumer_id, receipt.received_at, receipt.reporting_receipt_id
+          LIMIT $3`,
+        [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+      );
+      if (receipts.rows.length > MAX_SNAPSHOT_ITEMS) {
+        throw new Error('Reporting lifecycle projection exceeds the managed receipt limit');
+      }
+      const byConsumer = new Map<string, ReportingManagedLifecycleProjectionV1['consumers'][number]>();
+      for (const row of receipts.rows) {
+        const consumer = byConsumer.get(row.consumer_id) ?? {
+          consumer_id: row.consumer_id,
+          receipts: [],
+          adjustmentReceipts: [],
+        };
+        if (row.receipt_kind === 'revision') consumer.receipts.push(clone(row.data) as ReportingReceipt);
+        else consumer.adjustmentReceipts.push(clone(row.data) as ReportingAdjustmentReceipt);
+        byConsumer.set(row.consumer_id, consumer);
+      }
+      return { binding, materializations, materializationHistory, consumers: [...byConsumer.values()] };
+    });
+  }
+
   private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {
     const result = await client.query<QueryResultRow & { ready: boolean }>(
       `SELECT to_regclass('adcp_reporting_managed_bindings') IS NOT NULL
@@ -2165,7 +2241,14 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     proposed: T,
     fingerprint: (value: T) => string,
     advisoryLock?: string,
-    leaseFence?: { obligationId: string; owner: string; generation: number }
+    leaseFence?: { obligationId: string; owner: string; generation: number },
+    /**
+     * Narrow cutover escape hatch for a durable row written by an older SDK
+     * that could not emit a field this build now emits. It must accept only the
+     * exact additive difference and nothing else; the stored row is still the
+     * value returned, so a tolerated replay never rewrites history.
+     */
+    legacyReplayEquivalent?: (stored: T, proposed: T) => boolean
   ): Promise<{ inserted: boolean; value: T }> {
     return this.transaction(
       async client => {
@@ -2184,7 +2267,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           }
           throw new Error('Immutable reporting ledger replay could not be resolved');
         }
-        if (fingerprint(value) !== fingerprint(proposed)) {
+        if (fingerprint(value) !== fingerprint(proposed) && !legacyReplayEquivalent?.(value, proposed)) {
           throw new Error('Immutable reporting ledger identity names different content');
         }
         return { inserted: inserted.rowCount === 1, value: clone(value) };
@@ -2491,6 +2574,57 @@ function adjustmentIdentityFingerprint(value: ReportingLedgerAdjustmentV1): stri
       created_at: string;
     };
   return digest(JSON.parse(JSON.stringify({ ...identity, wireAdjustment: stableWireAdjustment })));
+}
+
+/**
+ * Accepts a stored revision that predates the `canonical_content_digest` gate
+ * widening, and nothing else.
+ *
+ * The digest used to be emitted only for `billing` feeds; it is now emitted
+ * whenever the Core configuration pins a canonicalization contract, because a
+ * non-billing `consumer_receipt` binding cannot reconcile without it. That made
+ * an in-flight revision committed by an older SDK replay as a different
+ * identity. Tolerate exactly one shape — the stored row has no digest, the
+ * proposed row does, and the two are otherwise byte-identical.
+ */
+function revisionLegacyCanonicalDigestReplay(
+  stored: ReportingLedgerRevisionV1,
+  proposed: ReportingLedgerRevisionV1
+): boolean {
+  if (stored.wireRevision.canonical_content_digest !== undefined) return false;
+  if (proposed.wireRevision.canonical_content_digest === undefined) return false;
+  const { canonical_content_digest: _digest, ...withoutDigest } = proposed.wireRevision;
+  return (
+    revisionIdentityFingerprint({
+      ...proposed,
+      wireRevision: withoutDigest as ReportingLedgerRevisionV1['wireRevision'],
+    }) === revisionIdentityFingerprint(stored)
+  );
+}
+
+/**
+ * Accepts a stored adjustment that predates `canonical_adjustment_sha256`, and
+ * nothing else.
+ *
+ * Same cutover as {@link revisionLegacyCanonicalDigestReplay}, with one extra
+ * guard: the proposed digest must be the digest RC3 derives from the proposed
+ * content, so a caller cannot smuggle an unrelated value through the tolerance.
+ */
+function adjustmentLegacyCanonicalDigestReplay(
+  stored: ReportingLedgerAdjustmentV1,
+  proposed: ReportingLedgerAdjustmentV1
+): boolean {
+  if (stored.wireAdjustment.canonical_adjustment_sha256 !== undefined) return false;
+  const proposedDigest = proposed.wireAdjustment.canonical_adjustment_sha256;
+  if (proposedDigest === undefined) return false;
+  const { canonical_adjustment_sha256: _digest, ...withoutDigest } = proposed.wireAdjustment;
+  if (reportingCanonicalAdjustmentSha256V1(withoutDigest) !== proposedDigest) return false;
+  return (
+    adjustmentIdentityFingerprint({
+      ...proposed,
+      wireAdjustment: withoutDigest as ReportingLedgerAdjustmentV1['wireAdjustment'],
+    }) === adjustmentIdentityFingerprint(stored)
+  );
 }
 
 function accountLock(accountId: string): string {

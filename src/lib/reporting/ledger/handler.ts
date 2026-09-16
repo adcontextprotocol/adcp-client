@@ -673,7 +673,17 @@ export function projectManagedDelivery(
     };
     projection = {
       ...base,
-      health: afterExpected ? (afterRecovery ? 'action_required' : 'delayed') : 'waiting',
+      // Managed delivery is an independent degradation source, exactly like the
+      // consumer-status mismatch composed at the call sites. Overwriting
+      // `base.health` let an installed managed table suppress Core degradation:
+      // an obligation with incomplete coverage (`action_required`) read before
+      // its `expectedAt` came back `waiting` while still carrying the
+      // action_required issue, which both contradicts itself and makes the
+      // period unreachable under every `health` filter.
+      health: moreSevereReportingHealthV1(
+        base.health,
+        afterExpected ? (afterRecovery ? 'action_required' : 'delayed') : 'waiting'
+      ),
       satisfied: false,
       issues: afterExpected ? uniqueIssues([...base.issues, issue]) : base.issues,
     };
@@ -692,8 +702,26 @@ export function projectManagedDelivery(
   if (binding.reconciliation_mode === 'consumer_receipt' && requiredRevision) {
     const missingAdjustment = adjustmentLeaves.some(value => value === undefined);
     const rejectedAdjustment = adjustmentLeaves.some(value => value?.status === 'rejected');
-    if (!successful.length) reconciliationStatus = 'pending';
-    else if (revisionLeaf?.status === 'rejected' || rejectedAdjustment) reconciliationStatus = 'rejected';
+    // A receipt is durable consumer evidence about a materialization that was
+    // once verified, so the delivery that made it possible must be read from
+    // the full history rather than the authorization-filtered projection.
+    // Destination revocation rewrites live `available`/`delivered` rows to
+    // `failed`, which used to erase the receipt state: an already rejected
+    // revision reverted to `pending` while keeping only its `RECEIPT_REJECTED`
+    // issue, and an accepted one reverted to `pending` next to
+    // `accepted_receipt_count: 1`. RC3 requires a `pending` obligation to carry
+    // a `RECEIPT_REQUIRED`/`ADJUSTMENT_RECEIPT_REQUIRED` issue, so the first
+    // shape was schema-invalid on the wire. Settle the receipt verdict first,
+    // and only then fall back to "no delivery has been verified yet".
+    const deliveredEver = materializationHistory.some(
+      value =>
+        value.reporting_revision_id === requiredRevision.reporting_revision_id &&
+        (value.status === 'available' || value.status === 'delivered') &&
+        value.resource !== undefined &&
+        value.verification !== undefined
+    );
+    if (revisionLeaf?.status === 'rejected' || rejectedAdjustment) reconciliationStatus = 'rejected';
+    else if (!deliveredEver) reconciliationStatus = 'pending';
     else if (revisionLeaf?.status !== 'accepted' || missingAdjustment) reconciliationStatus = 'pending';
     else reconciliationStatus = 'accepted';
     if (reconciliationStatus !== 'accepted') {
