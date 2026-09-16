@@ -82,6 +82,15 @@ await pool.query(REPORTING_LEDGER_MIGRATION);
 for (const sql of notifications.migrations.all) await pool.query(sql);
 for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 
+// Wire the durable pre-POST checkpoint. Build it before the notification
+// runtime; probe() below fails closed if it is missing.
+// const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
+//   db: pool,
+//   namespace: 'seller-production',
+// });
+// ... then pass `checkpointDeliveryAttempt: attemptCheckpoint` to
+// createPostgresPersistentNotificationRuntime above.
+
 // Before enabling the port, keep legacy subscribers configured and run
 // retryReportingStatusNotificationsV1() until listPendingTransitions() is empty.
 // The transactional store fails closed if legacy pending rows remain.
@@ -188,62 +197,82 @@ The host remains responsible for a database-level retained-row/byte quota and
 storage alerting per tenant or isolated deployment; the runtime's pending cap
 protects delivery backlog but is not a general PostgreSQL storage quota.
 
-### Recipient intent is frozen before any send, and revisable until one happens
+### Recipient intent is frozen before any send, and revisable per recipient
 
 The recovery worker commits its resolved recipients before anything leaves the
 process, via `NotificationEvent.freezeRecipients`. The runtime then delivers
 only the intersection of what is resolvable now and what was committed, so each
 subscriber's `delivery_id` — and therefore the `idempotency_key` it dedupes on —
-is identical across an ambiguous retry. A subscription replaced or revoked
-*after* the first send is skipped rather than addressed under a new destination
-generation, so a crash between send and settlement can never become a second
-logical delivery under a second idempotency key.
+is stable across an ambiguous retry.
 
-A second barrier, `NotificationEvent.beforeExternalAttempt`, marks the moment an
-external POST is about to happen. It is what makes the frozen set safely
-revisable: suppression fails closed *before* that barrier, so a recipient set
-frozen from a stale enumeration — the buyer replaced its destination between
-candidate resolution and the first POST — is re-resolved on the next pass
-instead of stranding the notification. Once the barrier has committed, the set
-is immutable. Concretely:
+What makes a frozen set safely revisable is a second durable barrier:
+`PersistentNotificationRuntimeOptions.checkpointDeliveryAttempt`, awaited on the
+allow path of live delivery authority immediately before every external POST.
+Wire `createPostgresReportingNotificationAttemptCheckpoint()` into it;
+`reportingActivity.probe()` fails closed if you forget, because without it a
+recovered outbox delivery could send under a recipient the activity runtime
+still believes unaddressed. It is a runtime-level option keyed on the durable
+attempt context rather than a per-emission closure for exactly that reason: an
+emission snapshot cannot carry a function, so a per-emission barrier would be
+skipped by the recovered outbox path — the path where an ambiguous send is most
+likely.
 
-| When the replacement lands | Outcome |
+Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
+
+- A recipient with no `attempt_at` provably never received a POST, because
+  suppression fails closed before the checkpoint. It is replaced in place when
+  it goes stale, which closes the window where a destination is replaced between
+  candidate enumeration and the first POST.
+- A recipient with `attempt_at` is pinned. Pinning is keyed on the **subscriber**,
+  not the destination generation: once a subscriber has been addressed, a later
+  generation of that subscriber is never addressed for this notification,
+  because that would be one logical delivery under two idempotency keys.
+- One recipient's attempt never pins a sibling. In a fanout, a subscriber
+  suppressed stale before its own first POST is still re-resolved while an
+  already-addressed sibling stays pinned.
+- Unattempted rows are replaced rather than superseded, so a claim that retries
+  many times before any send cannot accumulate rows. A settled recipient is left
+  out of later emissions — it still gates projection, but re-addressing it would
+  be redundant traffic. `maxRecipients` bounds the total stored per notification.
+
+| Replacement lands | Outcome |
 | --- | --- |
-| Before candidate enumeration | New generation is enumerated and delivered |
-| Between enumeration and the first POST | Suppressed `subscription_stale`, claim released, next pass commits a fresh intent round for the new generation; the superseded generation gets nothing |
-| After an attempt has started | Committed round replayed verbatim; a replay may repeat the POST but only to the same generation under the same idempotency key |
+| Before candidate enumeration | New generation enumerated and delivered |
+| Between enumeration and the first POST | Suppressed `subscription_stale`, claim released, next pass replaces that recipient with the new generation; the superseded one gets nothing |
+| After that recipient was checkpointed | Never re-addressed; the pinned recipient settles terminally |
 | Revoked entirely | Empty recipient set is committed and the activity settles undelivered |
 
-Intent is stored relationally, one row per recipient in
-`<activity_table>_recipients`, keyed by intent round. A single serialized
-document would need a size cap, and a fanout that legitimately exceeded it could
-never be committed — it would suppress, release and retry until it aged out.
-Only the bounded 64-hex fingerprint is indexed, so an individual recipient
-reference has no length limit of its own, and `maxRecipients` defaults to
-10,000: the ceiling the notification runtime enforces on `maxFanoutCandidates`.
-Set it lower only if your `maxFanoutCandidates` is lower.
-
-### Suppression is not the same as delivery
+### Suppression is not delivery, and delivery is not settlement
 
 Live delivery authority fails closed before every POST. Use
 `notificationSuppressionDisposition(reason)` to tell the two kinds apart:
 
 - **terminal** — `subscription_missing`, `subscription_inactive`,
   `event_not_allowed`, `authorization_denied`. The subscriber must not receive
-  this event. Settle the emission.
+  this event.
 - **retryable** — `authorization_error`, `credential_unavailable`,
-  `subscription_stale`. The runtime could not establish authority: a store read
-  failed, an authorization or credential callback threw or timed out, or the
-  generation moved mid-flight. Nothing was sent (`attempts: 0`), so release and
-  retry.
+  `subscription_stale`, `attempt_checkpoint_unavailable`. Authority could not be
+  established: a store read failed, an authorization or credential callback threw
+  or timed out, the generation moved mid-flight, or the durable checkpoint could
+  not be written. Nothing was sent (`attempts: 0`).
 
-Treating every suppression as terminal silently drops a notification whenever a
-store or credential backend has a bad minute; treating every suppression as
-retryable poisons the queue for a subscriber that was legitimately revoked. The
-bundled runtime raises `ReportingNotificationRetryableSuppressionError` for the
-retryable set, which releases the claim without projecting the activity as
-delivered. Custom notification runtimes that re-enumerate subscriptions per
-attempt must implement both barriers and the same classification.
+A retryable suppression no longer terminalizes the delivery in the webhook
+outbox either — it releases it, exactly as a retryable exhausted HTTP result
+does, so the only durable record of the send survives for the outbox worker.
+
+Projection requires **every** stored recipient to have reached a terminal
+disposition: delivered, or deliberately not delivered. An outcome that never
+reached a subscriber — a retryable suppression, a transport error, an exhausted
+but retryable HTTP result — leaves the claim unsettled and the activity is not
+recorded as delivered. The bundled runtime raises
+`ReportingNotificationRetryableSuppressionError` for a retryable suppression.
+Custom notification runtimes must implement the same barriers and the same
+classification.
+
+Intent is stored relationally, one row per recipient, keyed by a bounded 64-hex
+fingerprint; only that fingerprint is indexed, so an individual recipient
+reference has no length limit. `maxRecipients` defaults to 10,000 — the ceiling
+the notification runtime enforces on `maxFanoutCandidates`.
 
 Custom ledger stores implement
 `ReportingLedgerNotificationActivityPortV1<TTransaction>` over their existing
@@ -308,6 +337,13 @@ legacy-shaped writes are rejected. Two consequences to plan for:
 - **Any UPDATE must leave the row fence-clean.** The baseline resolver and
   `markTransitionNotified` both write `finality` as part of their update, so a
   historical row is repaired by the same statement that touches it.
+
+A store that implements neither the baseline port nor the optional `finality`
+fields is treated as unable to observe finality at all: the baseline becomes the
+currently observed finality, so the comparison is a no-op and no finality-only
+transition is ever written. Without that, every reconciliation tick would see
+`none -> official` and append another one forever. Such a store behaves exactly
+as it did before finality existed — health transitions still fire.
 
 Custom stores carry the same obligation: after cutover, reject any transition
 write that does not record an observed finality, and enforce it in the storage

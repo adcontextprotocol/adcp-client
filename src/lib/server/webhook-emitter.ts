@@ -381,19 +381,6 @@ export interface WebhookEmitParams {
    * never serialized into the webhook payload.
    */
   attemptAuthorizationContext?: Record<string, unknown>;
-  /**
-   * Durable barrier awaited once per emission, after `authorizeAttempt` allows
-   * the delivery and immediately before the first external POST. Nothing is
-   * sent until it resolves.
-   *
-   * It exists so an emission owner can durably record that an attempt is about
-   * to happen. A suppression fails closed *before* this point, so an owner that
-   * freezes a recipient set can still safely re-resolve it after a suppressed
-   * emission while knowing that a crash after this point must be treated as an
-   * ambiguous send. Rejecting aborts the delivery without any external attempt
-   * and reports a retryable, non-terminal outcome with `attempts: 0`.
-   */
-  beforeExternalAttempt?: () => Promise<void>;
 }
 
 export interface WebhookEmitAttempt {
@@ -406,6 +393,8 @@ export interface WebhookEmitAttempt {
 }
 
 export type WebhookAttemptSuppressionReason =
+  /** A durable pre-POST attempt checkpoint could not be written. */
+  | 'attempt_checkpoint_unavailable'
   | 'authorization_denied'
   | 'authorization_error'
   | 'subscription_missing'
@@ -420,7 +409,17 @@ export type WebhookAttemptAuthorizationDecision =
       /** Optional just-in-time override; `null` explicitly selects RFC 9421. */
       authentication?: WebhookAuthentication;
     }
-  | { decision: 'suppress'; reason: WebhookAttemptSuppressionReason };
+  | {
+      decision: 'suppress';
+      reason: WebhookAttemptSuppressionReason;
+      /**
+       * True when authority could not be established rather than deliberately
+       * withheld. The delivery stays pending for the outbox worker instead of
+       * being terminalized, so a transient store, authorization or credential
+       * failure does not destroy the only durable record of the send.
+       */
+      retryable?: boolean;
+    };
 
 export type WebhookAttemptAuthorizer = (
   info: Readonly<WebhookEmitAttempt>
@@ -444,8 +443,12 @@ export interface WebhookEmitResult {
   final_status?: number;
   /** Sanitized per-attempt failure classifications; nested provider/backend messages are never copied here. */
   errors: string[];
-  /** Present when live delivery authority failed closed before an external attempt. */
-  suppression?: { reason: WebhookAttemptSuppressionReason };
+  /**
+   * Present when live delivery authority failed closed before an external
+   * attempt. `retryable` marks authority that could not be established, which
+   * leaves the delivery pending for the outbox worker.
+   */
+  suppression?: { reason: WebhookAttemptSuppressionReason; retryable?: boolean };
 }
 
 export interface WebhookEmitter {
@@ -601,7 +604,6 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
         let lastStatus: number | undefined;
         let finalTerminal = false;
         let attempts = 0;
-        let externalAttemptBarrierPassed = false;
 
         for (let attempt = 1; attempt <= retries.maxAttempts; attempt++) {
           await recoveryHeartbeat?.renewNow();
@@ -629,15 +631,19 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
               authorization = { decision: 'suppress', reason: 'authorization_error' };
             }
             if (authorization.decision === 'suppress') {
+              const retryableSuppression = authorization.retryable === true;
               await recoveryHeartbeat?.stop();
               const heartbeatError = recoveryHeartbeat?.lossMessage();
               if (heartbeatError) errors.push(heartbeatError);
               if (!recoveredClaim) {
                 if (recoveryClaim) {
-                  if (!heartbeatError && !(await recoveryClaim.settle('terminal'))) {
+                  const settled = retryableSuppression
+                    ? await recoveryClaim.release(backoffDelay(attempt, retries))
+                    : await recoveryClaim.settle('terminal');
+                  if (!heartbeatError && !settled) {
                     errors.push('suppressed delivery could not settle its recovery lease');
                   }
-                } else {
+                } else if (!retryableSuppression) {
                   await options.deliveryRecovery?.settle(deliveryKey, 'terminal');
                 }
               }
@@ -646,26 +652,14 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
                 idempotency_key,
                 attempts,
                 delivered: false,
-                terminal: true,
+                terminal: !retryableSuppression,
                 errors,
-                suppression: { reason: authorization.reason },
+                suppression: { reason: authorization.reason, ...(retryableSuppression ? { retryable: true } : {}) },
               };
             }
             if ('authentication' in authorization) {
               attemptAuthentication =
                 authorization.authentication == null ? null : structuredClone(authorization.authentication);
-            }
-          }
-          if (params.beforeExternalAttempt && !externalAttemptBarrierPassed) {
-            try {
-              await params.beforeExternalAttempt();
-              externalAttemptBarrierPassed = true;
-            } catch {
-              // Nothing has been sent. Report a retryable outcome with no
-              // external attempt so the owner can retry or re-resolve.
-              errors.push(`attempt ${attempt}: delivery attempt barrier did not commit`);
-              finalTerminal = false;
-              break;
             }
           }
           attempts = attempt;
@@ -795,6 +789,7 @@ function assertAttemptAuthorizationDecision(value: unknown): asserts value is We
   if (
     decision.decision !== 'suppress' ||
     ![
+      'attempt_checkpoint_unavailable',
       'authorization_denied',
       'authorization_error',
       'subscription_missing',

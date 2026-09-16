@@ -121,26 +121,62 @@ export function createPersistentNotificationRuntime(
   ]);
   const validateDestination = options.validateDestination ?? validatePersistentNotificationDestination;
 
+  /**
+   * Durably records the imminent POST. Runs after every other authority check so
+   * a suppressed delivery never leaves a checkpoint behind, and before the POST
+   * so a crash afterwards is correctly treated as an ambiguous send. Deliberately
+   * not bounded by `adopterCallbackTimeoutMs`: abandoning a write that may still
+   * commit would be indistinguishable from never having attempted.
+   */
+  const checkpointAttempt = async (context: NotificationAttemptContext): Promise<boolean> => {
+    if (!options.checkpointDeliveryAttempt) return true;
+    const controller = new AbortController();
+    try {
+      await options.checkpointDeliveryAttempt({
+        scope: structuredClone(context.scope),
+        eventAnchor: context.eventAnchor,
+        ...(context.accountId === undefined ? {} : { accountId: context.accountId }),
+        subscriberId: context.subscriberId,
+        destinationGeneration: context.destinationGeneration,
+        eventType: context.eventType,
+        notificationId: context.notificationId,
+        signal: controller.signal,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const suppress = (reason: WebhookAttemptSuppressionReason): WebhookAttemptAuthorizationDecision => ({
+    decision: 'suppress',
+    reason,
+    ...(notificationSuppressionDisposition(reason) === 'retryable' ? { retryable: true } : {}),
+  });
+
   const authorizeWebhookAttempt = async (
     attempt: Readonly<WebhookEmitAttempt>
   ): Promise<WebhookAttemptAuthorizationDecision> => {
     const context = parseAttemptContext(attempt.attemptAuthorizationContext);
+    // A malformed context can never become valid on retry, so it is terminal
+    // regardless of how an unparseable authorization failure is otherwise
+    // classified.
     if (!context) return { decision: 'suppress', reason: 'authorization_error' };
 
     let set: NotificationSubscriptionSet | null;
     try {
       set = await options.store.get(context.scope);
     } catch {
-      return { decision: 'suppress', reason: 'authorization_error' };
+      return suppress('authorization_error');
     }
-    if (!set) return { decision: 'suppress', reason: 'subscription_missing' };
+    if (!set) return suppress('subscription_missing');
     const subscription = set.subscriptions.find(item => item.subscriberId === context.subscriberId);
-    if (!subscription) return { decision: 'suppress', reason: 'subscription_missing' };
+    if (!subscription) return suppress('subscription_missing');
     if (subscription.destinationGeneration !== context.destinationGeneration) {
-      return { decision: 'suppress', reason: 'subscription_stale' };
+      return suppress('subscription_stale');
     }
     if (!subscription.active || subscription.proofGeneration !== subscription.destinationGeneration) {
-      return { decision: 'suppress', reason: 'subscription_inactive' };
+      return suppress('subscription_inactive');
     }
     if (
       !subscription.eventTypes.includes(context.eventType) &&
@@ -150,7 +186,7 @@ export function createPersistentNotificationRuntime(
         subscription.includeFutureEventTypes
       )
     ) {
-      return { decision: 'suppress', reason: 'event_not_allowed' };
+      return suppress('event_not_allowed');
     }
     if (
       (context.eventAnchor === 'account' && !context.accountId) ||
@@ -159,7 +195,7 @@ export function createPersistentNotificationRuntime(
         (context.eventAnchor !== 'account' || context.scope.accountId !== context.accountId)) ||
       (context.scope.kind === 'caller' && context.eventAnchor === 'account' && !subscription.allAuthorizedAccounts)
     ) {
-      return { decision: 'suppress', reason: 'event_not_allowed' };
+      return suppress('event_not_allowed');
     }
 
     let decision: { authorized: true } | { authorized: false };
@@ -177,17 +213,18 @@ export function createPersistentNotificationRuntime(
         })
       );
     } catch {
-      return { decision: 'suppress', reason: 'authorization_error' };
+      return suppress('authorization_error');
     }
-    if (decision?.authorized !== true) return { decision: 'suppress', reason: 'authorization_denied' };
+    if (decision?.authorized !== true) return suppress('authorization_denied');
 
     const authenticationMode = subscription.authentication.mode;
     if (authenticationMode === 'rfc9421') {
+      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
       return { decision: 'allow', authentication: null };
     }
     const bindingId = subscription.authentication.bindingId;
     if (!bindingId || !options.credentialAdapter) {
-      return { decision: 'suppress', reason: 'credential_unavailable' };
+      return suppress('credential_unavailable');
     }
     try {
       const authentication = await runAdopterCallback(adopterCallbackTimeoutMs, 'credentialAdapter.resolve', signal =>
@@ -201,11 +238,12 @@ export function createPersistentNotificationRuntime(
         })
       );
       if (!resolvedAuthenticationMatches(authenticationMode, authentication)) {
-        return { decision: 'suppress', reason: 'credential_unavailable' };
+        return suppress('credential_unavailable');
       }
+      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
       return { decision: 'allow', authentication };
     } catch {
-      return { decision: 'suppress', reason: 'credential_unavailable' };
+      return suppress('credential_unavailable');
     }
   };
 
@@ -218,6 +256,7 @@ export function createPersistentNotificationRuntime(
     store: options.store,
     emitter,
     authorizeWebhookAttempt,
+    hasDeliveryAttemptCheckpoint: options.checkpointDeliveryAttempt !== undefined,
     async replace(scope, configs, replaceOptions = {}): Promise<NotificationReplacementResult> {
       assertScope(scope);
       assertUniqueSubscribers(configs);
@@ -416,7 +455,6 @@ export function createPersistentNotificationRuntime(
             delivery_id: deliveryId,
             authentication: null,
             attemptAuthorizationContext: context as unknown as Record<string, unknown>,
-            ...(event.beforeExternalAttempt ? { beforeExternalAttempt: event.beforeExternalAttempt } : {}),
           });
           return { ...delivery, result } satisfies NotificationFanoutDelivery;
         } catch {
@@ -812,6 +850,9 @@ export function notificationSuppressionDisposition(
     case 'subscription_stale':
       // A newer destination generation exists and nothing was sent. The owner
       // re-resolves rather than re-addressing this generation.
+      return 'retryable';
+    case 'attempt_checkpoint_unavailable':
+      // The durable pre-POST record could not be written, so nothing was sent.
       return 'retryable';
     case 'subscription_missing':
     case 'subscription_inactive':

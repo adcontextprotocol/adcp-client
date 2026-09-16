@@ -565,6 +565,8 @@ export type {
   NotificationAuthenticationMode,
   NotificationCredentialBindingAdapter,
   NotificationDeliveryAuthorizationInput,
+  NotificationDeliveryAttemptCheckpoint,
+  NotificationDeliveryAttemptCheckpointInput,
   NotificationDeliveryAuthorizer,
   NotificationDestinationValidator,
   NotificationEvent,

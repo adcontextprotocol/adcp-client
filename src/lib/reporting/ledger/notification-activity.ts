@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import type { NotificationRecipientRef, PersistentNotificationRuntime } from '../../server/notification-subscriptions';
+import type {
+  NotificationDeliveryAttemptCheckpointInput,
+  NotificationRecipientRef,
+  PersistentNotificationRuntime,
+} from '../../server/notification-subscriptions';
 import { notificationSuppressionDisposition } from '../../server/notification-subscriptions';
 import type { WebhookAttemptSuppressionReason } from '../../server/webhook-emitter';
 import type { ReportingStatusChangedWebhook } from '../../types/core.generated';
@@ -183,9 +187,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   projected_at           TIMESTAMPTZ,
   retain_until           TIMESTAMPTZ,
-  delivery_intent_round  INTEGER NOT NULL DEFAULT 0,
   delivery_intent_at     TIMESTAMPTZ,
-  delivery_attempt_at    TIMESTAMPTZ,
   PRIMARY KEY (namespace, transition_id),
   CONSTRAINT ${raw}_valid_state CHECK (state IN ('pending', 'projected')),
   CONSTRAINT ${raw}_valid_fingerprint CHECK (intent_fingerprint ~ '^[a-f0-9]{64}$'),
@@ -195,38 +197,54 @@ CREATE TABLE IF NOT EXISTS ${table} (
     (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL)
   ),
   CONSTRAINT ${raw}_valid_delivery_intent CHECK (
-    (delivery_intent_round = 0 AND delivery_intent_at IS NULL AND delivery_attempt_at IS NULL) OR
-    (delivery_intent_round > 0 AND delivery_intent_at IS NOT NULL)
-  ),
-  CONSTRAINT ${raw}_attempt_follows_intent CHECK (
-    delivery_attempt_at IS NULL OR delivery_intent_at IS NOT NULL
+    state = 'projected' OR delivery_intent_at IS NULL OR delivery_intent_at IS NOT NULL
   )
 );
 
-ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_round INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_at TIMESTAMPTZ;
-ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_attempt_at TIMESTAMPTZ;
 
--- One row per frozen recipient. A relational representation is what lets a
--- maximum fanout (10,000 recipients, each with maximum-length scope,
--- subscriber and destination-generation identifiers) be stored at all: a single
--- serialized document would need a size cap, and a fanout that legitimately
--- exceeded it could never be committed and would retry until it aged out.
--- Only the bounded 64-hex fingerprint enters the index, so an individual
--- recipient reference has no length limit of its own.
+-- One row per frozen recipient, carrying that recipient's own delivery state.
+--
+-- Relational rather than one serialized document: a document needs a size cap,
+-- and a fanout that legitimately exceeded it could never be committed and would
+-- retry until it aged out. Only the bounded 64-hex fingerprint enters the index,
+-- so an individual recipient reference has no length limit of its own.
+--
+-- Per-recipient rather than per-emission: attempt_at is the durable pre-POST
+-- checkpoint for exactly one recipient, so one recipient's attempt cannot pin a
+-- sibling that was suppressed before its own first POST. Rows with no
+-- attempt_at are revisable and replaced in place, so a pre-attempt retry can
+-- never accumulate superseded state.
+--
+-- subscriber_key identifies the subscriber independently of its destination
+-- generation. Pinning is per subscriber: once a subscriber has been addressed,
+-- a later generation of the same subscriber is never addressed for this
+-- notification, because that would be the same logical delivery under a new
+-- idempotency key. A different subscriber is unaffected.
 CREATE TABLE IF NOT EXISTS ${recipientTable} (
   namespace              TEXT NOT NULL,
   transition_id          TEXT NOT NULL,
-  intent_round           INTEGER NOT NULL,
   recipient_fingerprint  TEXT NOT NULL,
+  subscriber_key         TEXT NOT NULL,
   recipient              JSONB NOT NULL,
-  PRIMARY KEY (namespace, transition_id, intent_round, recipient_fingerprint),
+  frozen_at              TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  attempt_at             TIMESTAMPTZ,
+  settled_at             TIMESTAMPTZ,
+  disposition            TEXT,
+  PRIMARY KEY (namespace, transition_id, recipient_fingerprint),
   CONSTRAINT ${rawRecipients}_fk FOREIGN KEY (namespace, transition_id)
     REFERENCES ${table}(namespace, transition_id) ON DELETE CASCADE,
   CONSTRAINT ${rawRecipients}_fp CHECK (recipient_fingerprint ~ '^[a-f0-9]{64}$'),
+  CONSTRAINT ${rawRecipients}_sk CHECK (subscriber_key ~ '^[a-f0-9]{64}$'),
   CONSTRAINT ${rawRecipients}_obj CHECK (jsonb_typeof(recipient) = 'object'),
-  CONSTRAINT ${rawRecipients}_rnd CHECK (intent_round > 0)
+  CONSTRAINT ${rawRecipients}_set CHECK (
+    (settled_at IS NULL AND disposition IS NULL) OR
+    (settled_at IS NOT NULL AND disposition IN ('delivered', 'terminal'))
+  )
 );
+CREATE INDEX IF NOT EXISTS idx_${rawRecipients}_unsettled
+  ON ${recipientTable}(namespace, transition_id)
+  WHERE settled_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_${raw}_pending
   ON ${table}(namespace, next_attempt_at, lease_expires_at, activity_sequence)
@@ -248,6 +266,59 @@ export function recipientTableName(tableName: string = DEFAULT_TABLE): string {
 }
 
 export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificationActivityMigration();
+
+/**
+ * Builds the durable pre-POST attempt checkpoint for the reporting activity
+ * recipient table.
+ *
+ * Pass the result to `createPostgresPersistentNotificationRuntime`'s
+ * `checkpointDeliveryAttempt`. It is a standalone factory rather than a method
+ * on the activity runtime so it can be constructed before the notification
+ * runtime it has to be wired into, and it is keyed purely on the durable attempt
+ * context so a recovered outbox attempt — the path most likely to produce an
+ * ambiguous send — records the same checkpoint as the original emission.
+ *
+ * The write is monotonic and idempotent and deliberately takes no recovery
+ * lease: a checkpoint only ever makes a recipient less revisable, which is the
+ * safe direction, and an outbox worker legitimately holds no activity lease.
+ */
+export function createPostgresReportingNotificationAttemptCheckpoint(options: {
+  db: ReportingLedgerTransactionV1;
+  namespace?: string;
+  tableName?: string;
+}): (input: Readonly<NotificationDeliveryAttemptCheckpointInput>) => Promise<void> {
+  if (!options?.db || typeof options.db.query !== 'function') {
+    throw new TypeError('createPostgresReportingNotificationAttemptCheckpoint requires a PostgreSQL queryable');
+  }
+  const namespace = options.namespace ?? DEFAULT_NAMESPACE;
+  assertIdentifier(namespace, 'namespace', 255);
+  const recipientTable = quoteIdentifier(
+    recipientTableName(options.tableName ?? DEFAULT_TABLE),
+    MAX_RECIPIENT_TABLE_BYTES
+  );
+  return async input => {
+    const fingerprint = recipientFingerprint({
+      scope: input.scope,
+      subscriberId: input.subscriberId,
+      destinationGeneration: input.destinationGeneration,
+    });
+    const marked = await reportingActivityDatabaseOperation(
+      'Reporting notification delivery attempt could not be checkpointed',
+      () =>
+        options.db.query(
+          `UPDATE ${recipientTable} SET attempt_at = COALESCE(attempt_at, clock_timestamp())
+            WHERE namespace = $1 AND transition_id = $2 AND recipient_fingerprint = $3`,
+          [namespace, input.notificationId, fingerprint]
+        )
+    );
+    if (marked.rowCount !== 1) {
+      throw new Error(
+        'Reporting notification delivery attempt has no frozen recipient to checkpoint; ' +
+          'the emission owner must freeze its recipient set before any external attempt'
+      );
+    }
+  };
+}
 
 export function createPostgresReportingNotificationActivityRuntime(
   options: PostgresReportingNotificationActivityOptions
@@ -408,16 +479,26 @@ export function createPostgresReportingNotificationActivityRuntime(
       all: [getReportingNotificationActivityMigration({ tableName: rawTable })],
     },
     async probe() {
+      if (
+        'hasDeliveryAttemptCheckpoint' in options.notifications &&
+        (options.notifications as { hasDeliveryAttemptCheckpoint?: boolean }).hasDeliveryAttemptCheckpoint !== true
+      ) {
+        throw new Error(
+          'Reporting notification/activity probe failed: the persistent notification runtime has no ' +
+            'checkpointDeliveryAttempt. Wire createPostgresReportingNotificationAttemptCheckpoint() into it, or a ' +
+            'recovered outbox delivery can send under a recipient this runtime still believes is unaddressed.'
+        );
+      }
       try {
         await options.db.query(
           `SELECT namespace, transition_id, tenant_scope, account_id, obligation_id,
                   activity, intent_fingerprint, state, notification_required, lease_owner, lease_version,
-                  lease_expires_at, projected_at, retain_until, delivery_intent_round, delivery_intent_at,
-                  delivery_attempt_at
+                  lease_expires_at, projected_at, retain_until, delivery_intent_at
              FROM ${table} LIMIT 0`
         );
         await options.db.query(
-          `SELECT namespace, transition_id, intent_round, recipient_fingerprint, recipient
+          `SELECT namespace, transition_id, recipient_fingerprint, recipient, frozen_at,
+                  attempt_at, settled_at, disposition
              FROM ${recipientTable} LIMIT 0`
         );
       } catch (cause) {
@@ -474,6 +555,7 @@ export function createPostgresReportingNotificationActivityRuntime(
           if (claim.activity.notificationType !== 'reporting.status_changed') {
             throw new Error('Pending reporting activity is not a health-transition notification');
           }
+          let frozen: readonly NotificationRecipientRef[] = [];
           const result = await options.notifications.emit({
             emissionId: claim.activity.activityId,
             notificationId: claim.activity.transitionId,
@@ -483,26 +565,40 @@ export function createPostgresReportingNotificationActivityRuntime(
             accountId: claim.accountId,
             payload: notificationPayload(claim.activity),
             // Commit the recipient set under this lease before anything leaves
-            // the process. Revisable until the first attempt, immutable after.
-            freezeRecipients: candidates =>
-              freezeClaimRecipients(options.db, table, recipientTable, namespace, claim, maxRecipients, candidates),
-            beforeExternalAttempt: () => markClaimAttempted(options.db, table, namespace, claim),
+            // the process. Each recipient is revisable until its own durable
+            // pre-POST checkpoint and pinned afterwards.
+            freezeRecipients: async candidates => {
+              frozen = await freezeClaimRecipients(
+                options.db,
+                table,
+                recipientTable,
+                namespace,
+                claim,
+                maxRecipients,
+                candidates
+              );
+              return frozen;
+            },
           });
           metrics.matched += result.matched;
-          if (result.deliveries.some(delivery => delivery.failure !== undefined)) {
-            throw new Error('Persistent notification runtime could not durably bind every matched delivery');
-          }
-          // A suppression is the live delivery authority failing closed before
-          // any external attempt. Deliberate suppressions settle the emission;
-          // operational ones say nothing about the subscriber, so recording the
-          // notification as delivered would silently drop it.
-          const retryableSuppression = result.deliveries.find(
-            delivery =>
-              delivery.result?.suppression !== undefined &&
-              notificationSuppressionDisposition(delivery.result.suppression.reason) === 'retryable'
+          const outcomes = result.deliveries.map(delivery => classifyDelivery(delivery));
+          const settlement = await settleClaimRecipients(
+            options.db,
+            recipientTable,
+            namespace,
+            claim,
+            frozen,
+            outcomes
           );
-          if (retryableSuppression?.result?.suppression) {
-            throw new ReportingNotificationRetryableSuppressionError(retryableSuppression.result.suppression.reason);
+          if (!settlement.settled) {
+            // Something that never reached a subscriber is still outstanding, so
+            // the activity must not be recorded as delivered.
+            const retryable = outcomes.find(outcome => outcome.disposition === 'retryable');
+            throw retryable?.suppression
+              ? new ReportingNotificationRetryableSuppressionError(retryable.suppression)
+              : new Error(
+                  `Reporting notification delivery is not settled for ${settlement.unsettled} recipient(s); retrying`
+                );
           }
           const projected = !leaseLost && (await projectClaim(options.db, table, namespace, claim, retentionMs));
           if (projected) metrics.projected += 1;
@@ -710,21 +806,22 @@ async function claimPending(
 }
 
 /**
- * Commits — or, while nothing has been sent, re-resolves — the recipient set for
- * a claim, and returns the set the emission must use.
+ * Freezes the recipient set for a claim, replacing every recipient that has not
+ * yet been addressed and pinning every recipient that has.
  *
- * The set is revisable until the first external attempt and immutable after it.
- * That closes the window between candidate enumeration and the first POST: if a
- * buyer replaces its destination in that window, the emission is suppressed as
- * `subscription_stale` with no attempt, the claim is released, and the next pass
- * commits a fresh round for the new generation. Once `delivery_attempt_at` is
- * set, a crash is an ambiguous send, so the committed round is replayed verbatim
- * and a replacement can never be added as a second delivery.
+ * Revisability is per recipient, because an attempt is per recipient. A
+ * recipient with no `attempt_at` provably never received a POST — live delivery
+ * authority fails closed before the checkpoint — so it can be dropped when it
+ * goes stale, which closes the window where a destination is replaced between
+ * candidate enumeration and the first POST. A recipient that has been
+ * checkpointed is pinned forever, so a crash after an ambiguous send can never
+ * be turned into a second delivery under a new destination generation. One
+ * recipient's attempt never pins a sibling.
  *
- * Each commit bumps `delivery_intent_round` and writes its own recipient rows.
- * Rounds are never mutated in place, so a crash midway through writing one
- * leaves a partial round that is simply never read — the attempt marker is only
- * set after this function returns, so an unfinished round can never be attempted.
+ * Unattempted rows are replaced rather than superseded, so a claim that retries
+ * many times before any send cannot accumulate rows. A recipient that has
+ * already reached a terminal disposition is left out of the returned set: it
+ * still gates projection, but re-addressing it would be redundant traffic.
  */
 async function freezeClaimRecipients(
   db: ReportingLedgerTransactionV1,
@@ -741,114 +838,199 @@ async function freezeClaimRecipients(
         'raise maxRecipients to at least the notification runtime maxFanoutCandidates'
     );
   }
+  const fenced = await reportingActivityDatabaseOperation(
+    'Reporting notification recipient intent could not be committed',
+    () =>
+      db.query(
+        `UPDATE ${table} SET delivery_intent_at = COALESCE(delivery_intent_at, clock_timestamp())
+          WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+            AND lease_owner = $3 AND lease_version = $4::bigint
+            AND lease_expires_at >= clock_timestamp()`,
+        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
+      )
+  );
+  if (fenced.rowCount !== 1) {
+    throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
+  }
+  const rows = canonicalRecipients(candidates);
+  const fingerprints = rows.map(entry => entry.fingerprint);
+  // One statement, so the replacement of revisable rows and the insertion of
+  // the newly resolved ones cannot be interrupted halfway. The returned set is
+  // assembled from the statement's own CTEs rather than re-read from the table,
+  // because every sub-statement shares one snapshot and would not see the rows
+  // this statement just inserted.
   const committed = await reportingActivityDatabaseOperation(
     'Reporting notification recipient intent could not be committed',
     () =>
-      db.query<{ intent_round: number }>(
-        `UPDATE ${table} SET
-         delivery_intent_round = ${table}.delivery_intent_round + 1,
-         delivery_intent_at = clock_timestamp()
-       WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
-         AND lease_owner = $3 AND lease_version = $4::bigint
-         AND lease_expires_at >= clock_timestamp()
-         AND delivery_attempt_at IS NULL
-       RETURNING delivery_intent_round AS intent_round`,
-        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
-      )
-  );
-  const round = committed.rows[0]?.intent_round;
-  if (round === undefined) {
-    // Either an attempt already happened — in which case the committed round is
-    // authoritative and must be replayed — or the lease is gone.
-    return replayCommittedRecipients(db, table, recipientTable, namespace, claim);
-  }
-  const rows = canonicalRecipients(candidates);
-  // Chunked so a maximum fanout never builds one oversized statement. A partial
-  // round is unreachable, so chunking cannot expose a half-frozen intent.
-  for (let index = 0; index < rows.length; index += RECIPIENT_INSERT_CHUNK) {
-    const chunk = rows.slice(index, index + RECIPIENT_INSERT_CHUNK);
-    await reportingActivityDatabaseOperation('Reporting notification recipient intent could not be committed', () =>
-      db.query(
-        `INSERT INTO ${recipientTable} (namespace, transition_id, intent_round, recipient_fingerprint, recipient)
-         SELECT $1, $2, $3::integer, entry.fingerprint, entry.recipient::jsonb
-           FROM unnest($4::text[], $5::text[]) AS entry(fingerprint, recipient)
-         ON CONFLICT DO NOTHING`,
+      db.query<{ recipient: NotificationRecipientRef }>(
+        `WITH leased AS (
+           SELECT transition_id FROM ${table}
+            WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+              AND lease_owner = $3 AND lease_version = $4::bigint
+              AND lease_expires_at >= clock_timestamp()
+         ), claimed AS (
+           SELECT existing.subscriber_key
+             FROM ${recipientTable} existing, leased
+            WHERE existing.namespace = $1 AND existing.transition_id = $2
+              AND (existing.attempt_at IS NOT NULL OR existing.settled_at IS NOT NULL)
+         ), pinned AS (
+           SELECT existing.recipient_fingerprint AS fingerprint, existing.recipient
+             FROM ${recipientTable} existing, leased
+            WHERE existing.namespace = $1 AND existing.transition_id = $2
+              AND existing.attempt_at IS NOT NULL
+              AND existing.settled_at IS NULL
+         ), proposed AS (
+           SELECT entry.fingerprint, entry.subscriber_key, entry.recipient::jsonb AS recipient
+             FROM leased, unnest($5::text[], $6::text[], $7::text[])
+                    AS entry(fingerprint, subscriber_key, recipient)
+            WHERE NOT EXISTS (SELECT 1 FROM claimed WHERE claimed.subscriber_key = entry.subscriber_key)
+         ), dropped AS (
+           DELETE FROM ${recipientTable} stale USING leased
+            WHERE stale.namespace = $1 AND stale.transition_id = $2
+              AND stale.attempt_at IS NULL AND stale.settled_at IS NULL
+              AND NOT (stale.recipient_fingerprint IN (SELECT fingerprint FROM proposed))
+         ), added AS (
+           INSERT INTO ${recipientTable}
+             (namespace, transition_id, recipient_fingerprint, subscriber_key, recipient)
+           SELECT $1, $2, proposed.fingerprint, proposed.subscriber_key, proposed.recipient FROM proposed
+           ON CONFLICT (namespace, transition_id, recipient_fingerprint) DO NOTHING
+         )
+         SELECT recipient FROM proposed
+          UNION ALL
+         SELECT recipient FROM pinned`,
         [
           namespace,
           claim.transitionId,
-          round,
-          chunk.map(entry => entry.fingerprint),
-          chunk.map(entry => JSON.stringify(entry.recipient)),
+          claim.leaseOwner,
+          claim.leaseVersion,
+          fingerprints,
+          rows.map(entry => entry.subscriberKey),
+          rows.map(entry => JSON.stringify(entry.recipient)),
         ]
       )
+  );
+  const total = committed.rows.length;
+  if (total > maxRecipients) {
+    // Pinned recipients accumulate only when a real POST was made under a
+    // destination that was then replaced. Bounding the total keeps that from
+    // growing without limit while never dropping an addressed recipient.
+    throw new Error(
+      `Reporting notification recipient intent holds ${total} recipients, above maxRecipients ${maxRecipients}; ` +
+        'raise maxRecipients or reduce the destination churn on this notification'
     );
   }
-  return rows.map(entry => entry.recipient);
-}
-
-/** Reads back the authoritative committed round after an attempt has started. */
-async function replayCommittedRecipients(
-  db: ReportingLedgerTransactionV1,
-  table: string,
-  recipientTable: string,
-  namespace: string,
-  claim: ClaimedActivity
-): Promise<readonly NotificationRecipientRef[]> {
-  const result = await reportingActivityDatabaseOperation(
-    'Reporting notification recipient intent could not be read',
-    () =>
-      db.query<{ recipient: NotificationRecipientRef }>(
-        `SELECT recipient.recipient FROM ${recipientTable} recipient
-           JOIN ${table} activity
-             ON activity.namespace = recipient.namespace
-            AND activity.transition_id = recipient.transition_id
-            AND activity.delivery_intent_round = recipient.intent_round
-          WHERE recipient.namespace = $1 AND recipient.transition_id = $2
-            AND activity.delivery_intent_at IS NOT NULL
-            AND activity.lease_owner = $3 AND activity.lease_version = $4::bigint
-          ORDER BY recipient.recipient_fingerprint`,
-        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
-      )
-  );
-  if (result.rowCount === 0) {
-    throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
-  }
-  return result.rows.map(row => row.recipient);
+  return committed.rows.map(row => row.recipient);
 }
 
 /**
- * Durably records that an external attempt is about to happen, freezing the
- * committed round. Fenced on the lease so a worker that lost it cannot send.
+ * Records each recipient's outcome and reports whether the emission may settle.
+ *
+ * Projection requires every stored recipient to have reached a terminal
+ * disposition — delivered, or deliberately not delivered. A recipient whose
+ * delivery is still retryable leaves the claim unsettled, so the notification is
+ * not recorded as delivered on the strength of an outcome that never reached the
+ * subscriber.
  */
-async function markClaimAttempted(
+async function settleClaimRecipients(
   db: ReportingLedgerTransactionV1,
-  table: string,
+  recipientTable: string,
   namespace: string,
-  claim: ClaimedActivity
-): Promise<void> {
-  const result = await reportingActivityDatabaseOperation(
-    'Reporting notification delivery attempt could not be recorded',
-    () =>
-      db.query(
-        `UPDATE ${table} SET delivery_attempt_at = COALESCE(delivery_attempt_at, clock_timestamp())
-       WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
-         AND lease_owner = $3 AND lease_version = $4::bigint
-         AND lease_expires_at >= clock_timestamp()
-         AND delivery_intent_at IS NOT NULL`,
-        [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
-      )
-  );
-  if (result.rowCount !== 1) {
-    throw new Error('Reporting notification delivery attempt was not recorded; the recovery lease was lost');
+  claim: ClaimedActivity,
+  frozen: readonly NotificationRecipientRef[],
+  deliveries: readonly ReportingRecipientOutcome[]
+): Promise<{ settled: boolean; unsettled: number }> {
+  const outcomes = new Map(deliveries.map(delivery => [recipientFingerprint(delivery.recipient), delivery]));
+  const terminal: string[] = [];
+  const delivered: string[] = [];
+  for (const recipient of frozen) {
+    const fingerprint = recipientFingerprint(recipient);
+    const outcome = outcomes.get(fingerprint);
+    if (outcome === undefined) {
+      // Frozen but not addressed this pass: the destination generation no longer
+      // resolves. An unattempted recipient was already replaced by the freeze,
+      // so this is a pinned recipient whose generation the buyer superseded
+      // after it was addressed. Nothing further can be delivered to it.
+      terminal.push(fingerprint);
+      continue;
+    }
+    if (outcome.disposition === 'delivered') delivered.push(fingerprint);
+    else if (outcome.disposition === 'terminal') terminal.push(fingerprint);
   }
+  if (delivered.length > 0 || terminal.length > 0) {
+    await reportingActivityDatabaseOperation('Reporting notification recipient settlement failed', () =>
+      db.query(
+        `UPDATE ${recipientTable} SET settled_at = clock_timestamp(),
+           disposition = CASE WHEN recipient_fingerprint = ANY($3::text[]) THEN 'delivered' ELSE 'terminal' END
+          WHERE namespace = $1 AND transition_id = $2 AND settled_at IS NULL
+            AND (recipient_fingerprint = ANY($3::text[]) OR recipient_fingerprint = ANY($4::text[]))`,
+        [namespace, claim.transitionId, delivered, terminal]
+      )
+    );
+  }
+  const remaining = await reportingActivityDatabaseOperation('Reporting notification recipient settlement failed', () =>
+    db.query<{ unsettled: number }>(
+      `SELECT count(*)::integer AS unsettled FROM ${recipientTable}
+          WHERE namespace = $1 AND transition_id = $2 AND settled_at IS NULL`,
+      [namespace, claim.transitionId]
+    )
+  );
+  const unsettled = remaining.rows[0]?.unsettled ?? 0;
+  return { settled: unsettled === 0, unsettled };
 }
 
-const RECIPIENT_INSERT_CHUNK = 500;
+/** Per-recipient disposition derived from one fanout delivery. */
+interface ReportingRecipientOutcome {
+  recipient: NotificationRecipientRef;
+  disposition: 'delivered' | 'terminal' | 'retryable';
+  suppression?: WebhookAttemptSuppressionReason;
+}
 
-/** Deterministic ordering so a committed round is byte-stable across replays. */
+/**
+ * Classifies one fanout delivery.
+ *
+ * A suppression is live delivery authority failing closed before any POST:
+ * deliberate suppressions are terminal, operational ones are retryable and say
+ * nothing about the subscriber. Everything else follows the emitter's own
+ * terminality, so an exhausted-but-retryable HTTP outcome stays pending for the
+ * outbox worker rather than being recorded as delivered.
+ */
+function classifyDelivery(delivery: {
+  scope: NotificationRecipientRef['scope'];
+  subscriberId: string;
+  destinationGeneration: string;
+  result?: { delivered: boolean; terminal?: boolean; suppression?: { reason: WebhookAttemptSuppressionReason } };
+  failure?: unknown;
+}): ReportingRecipientOutcome {
+  const recipient: NotificationRecipientRef = {
+    scope: delivery.scope,
+    subscriberId: delivery.subscriberId,
+    destinationGeneration: delivery.destinationGeneration,
+  };
+  if (delivery.failure !== undefined || !delivery.result) return { recipient, disposition: 'retryable' };
+  const suppression = delivery.result.suppression;
+  if (suppression) {
+    return {
+      recipient,
+      disposition: notificationSuppressionDisposition(suppression.reason) === 'retryable' ? 'retryable' : 'terminal',
+      suppression: suppression.reason,
+    };
+  }
+  if (delivery.result.delivered) return { recipient, disposition: 'delivered' };
+  return { recipient, disposition: delivery.result.terminal === true ? 'terminal' : 'retryable' };
+}
+
+function recipientFingerprint(recipient: Readonly<NotificationRecipientRef>): string {
+  return canonicalJsonSha256({
+    scope: recipient.scope,
+    subscriberId: recipient.subscriberId,
+    destinationGeneration: recipient.destinationGeneration,
+  });
+}
+
+/** Deterministic ordering so a frozen set is byte-stable across replays. */
 function canonicalRecipients(
   candidates: readonly NotificationRecipientRef[]
-): { fingerprint: string; recipient: NotificationRecipientRef }[] {
+): { fingerprint: string; subscriberKey: string; recipient: NotificationRecipientRef }[] {
   return candidates
     .map(candidate => {
       const recipient = {
@@ -856,9 +1038,23 @@ function canonicalRecipients(
         subscriberId: candidate.subscriberId,
         destinationGeneration: candidate.destinationGeneration,
       };
-      return { fingerprint: canonicalJsonSha256(recipient), recipient };
+      return {
+        fingerprint: recipientFingerprint(recipient),
+        subscriberKey: subscriberKey(recipient),
+        recipient,
+      };
     })
     .sort((left, right) => (left.fingerprint < right.fingerprint ? -1 : 1));
+}
+
+/**
+ * Identifies the subscriber independently of its destination generation, so a
+ * subscriber that has already been addressed is never addressed again under a
+ * replacement generation — that would be one logical delivery under two
+ * idempotency keys.
+ */
+function subscriberKey(recipient: Readonly<NotificationRecipientRef>): string {
+  return canonicalJsonSha256({ scope: recipient.scope, subscriberId: recipient.subscriberId });
 }
 
 async function renewClaim(

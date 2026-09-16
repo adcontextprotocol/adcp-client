@@ -49,7 +49,12 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   if (latest && Date.parse(input.ledgerAsOf) < Date.parse(latest.occurredAt)) return null;
   const previousHealth = latest?.health ?? 'waiting';
   const finality = observedFinality(revisions);
-  const previousFinality = await resolveFinalityBaseline(input.store, obligation.reporting_obligation_id, latest);
+  const previousFinality = await resolveFinalityBaseline(
+    input.store,
+    obligation.reporting_obligation_id,
+    latest,
+    finality
+  );
   const nextIssueIds = new Set(projection.issues.map(issue => issue.issueId));
   const transition: ReportingLedgerStatusTransitionV1 | undefined =
     previousHealth === projection.health && previousFinality === finality
@@ -107,27 +112,32 @@ export async function reconcileReportingStatusLifecycleV1(input: {
  * baseline is that committed value. Pre-SDK-14 rows carry none, and no stored
  * timestamp can recover which revisions had committed when such a row was
  * recorded — payload timestamps rank creation rather than commits, and insert
- * wall clocks tie and step backward. So the baseline for those rows is `'none'`,
- * committed by the store under its own lock (or assumed here for stores that do
- * not implement the port).
+ * wall clocks tie and step backward. A store that implements the port therefore
+ * commits `'none'` for those rows, which records at most one redundant
+ * finality-only transition per obligation at upgrade.
  *
- * That records at most one redundant finality-only transition per obligation at
- * upgrade, which stays internal activity because the AdCP status webhook is
- * health-only. Guessing instead can conclude `official`, which makes
- * `previousFinality` equal `finality` and permanently suppresses a real
- * finality change.
+ * A store that does **not** implement the port cannot commit anything, and
+ * cannot be assumed to persist the `finality` field either. Returning `'none'`
+ * for such a store would make every reconciliation tick observe
+ * `'none' -> official` and write another finality-only transition, forever. So
+ * finality is treated as unobservable there: the baseline is the currently
+ * observed finality, which makes the comparison a no-op. Such a store behaves
+ * exactly as it did before finality existed — health transitions still fire,
+ * finality-only ones simply never do — which is both stable and backward
+ * compatible.
  */
 async function resolveFinalityBaseline(
   store: ReportingLedgerStore,
   reporting_obligation_id: string,
-  latest: ReportingLedgerStatusTransitionV1 | undefined
+  latest: ReportingLedgerStatusTransitionV1 | undefined,
+  observed: ReportingObservedFinalityV1
 ): Promise<ReportingObservedFinalityV1> {
   if (!latest) return 'none';
   if (latest.finality) return latest.finality;
   if (store.resolveTransitionFinalityBaseline) {
     return store.resolveTransitionFinalityBaseline(reporting_obligation_id);
   }
-  return 'none';
+  return observed;
 }
 
 function observedFinality(

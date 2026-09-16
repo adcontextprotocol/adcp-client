@@ -202,14 +202,20 @@ class MemoryLedgerStore {
     );
     const latest = (await this.listTransitions(input.reporting_obligation_id)).at(-1);
     const obligation = await this.getObligation(input.reporting_obligation_id);
-    const previousFinality = await this.resolveTransitionFinalityBaseline(input.reporting_obligation_id);
+    // A store compiled against the pre-finality port has no resolver and must
+    // ignore expectedPreviousFinality; model that faithfully.
+    const previousFinality = this.resolveTransitionFinalityBaseline
+      ? await this.resolveTransitionFinalityBaseline(input.reporting_obligation_id)
+      : undefined;
     if (
       !obligation ||
       obligation.state !== input.expectedObligationState ||
       obligation.attemptCount !== input.expectedAttemptCount ||
       JSON.stringify(revisionIds) !== JSON.stringify(input.expectedRevisionIds) ||
       (latest?.health ?? 'waiting') !== input.expectedPreviousHealth ||
-      (input.expectedPreviousFinality !== undefined && previousFinality !== input.expectedPreviousFinality)
+      (input.expectedPreviousFinality !== undefined &&
+        previousFinality !== undefined &&
+        previousFinality !== input.expectedPreviousFinality)
     ) {
       return { applied: false, transitionInserted: false };
     }

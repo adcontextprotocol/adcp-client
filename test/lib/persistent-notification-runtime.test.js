@@ -724,7 +724,10 @@ test('adopter callbacks time out fail closed and receive an aborted signal', asy
   });
   assert.equal(fetch.calls.length, 0);
   assert.equal(authorizationSignal.aborted, true);
-  assert.deepEqual(result.deliveries[0].result.suppression, { reason: 'authorization_error' });
+  // A timed-out adopter callback could not establish authority and nothing was
+  // sent, so the suppression is retryable and the delivery stays pending.
+  assert.deepEqual(result.deliveries[0].result.suppression, { reason: 'authorization_error', retryable: true });
+  assert.equal(result.deliveries[0].result.terminal, false);
 });
 
 test('fanout runs subscriber retry cycles with bounded concurrency and stable ordering', async () => {

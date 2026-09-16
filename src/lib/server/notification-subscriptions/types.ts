@@ -246,22 +246,39 @@ export interface NotificationEvent {
   freezeRecipients?: (
     candidates: readonly NotificationRecipientRef[]
   ) => MaybePromise<readonly NotificationRecipientRef[]>;
-  /**
-   * Durable barrier awaited once per emission, after live delivery authority
-   * allows the first delivery and immediately before the first external POST.
-   *
-   * It is what makes a frozen recipient set safely revisable. Suppression fails
-   * closed before this point, so an emitter that sees `attempts: 0` on every
-   * delivery knows nothing was sent and may re-resolve the frozen set — closing
-   * the window where a replacement lands between candidate enumeration and the
-   * first POST. Once this barrier has committed, the frozen set must never
-   * change again, because a crash after it is an ambiguous send.
-   *
-   * Rejecting aborts the delivery with no external attempt and a retryable,
-   * non-terminal outcome.
-   */
-  beforeExternalAttempt?: () => Promise<void>;
 }
+
+/** Durable record that one recipient is about to receive an external POST. */
+export interface NotificationDeliveryAttemptCheckpointInput {
+  scope: Readonly<NotificationSubscriptionScope>;
+  eventAnchor: NotificationEventAnchor;
+  accountId?: string;
+  subscriberId: string;
+  destinationGeneration: string;
+  eventType: string;
+  notificationId: string;
+  signal: AbortSignal;
+}
+
+/**
+ * Durably records that a delivery is about to be attempted, awaited on the
+ * allow path of live delivery authority immediately before every external POST.
+ *
+ * It is keyed on the durable attempt context rather than on a per-emission
+ * closure precisely so that recovered outbox attempts participate: an emission
+ * snapshot cannot carry a function, so a per-emission barrier would be silently
+ * skipped by the very path — a restarted outbox worker — where an ambiguous send
+ * is most likely.
+ *
+ * This is what makes a frozen recipient set safely revisable. Suppression fails
+ * closed before this point, so a recipient with no checkpoint provably never
+ * received a POST and may be replaced; a recipient with one is pinned forever,
+ * because a crash after it is an ambiguous send. Rejecting suppresses that
+ * delivery as retryable with no external attempt.
+ */
+export type NotificationDeliveryAttemptCheckpoint = (
+  input: Readonly<NotificationDeliveryAttemptCheckpointInput>
+) => MaybePromise<void>;
 
 /**
  * Whether a live-authority suppression is a deliberate decision not to deliver
@@ -333,6 +350,14 @@ export interface PersistentNotificationRuntimeOptions {
   proofAdapter: NotificationProofAdapter;
   credentialAdapter?: NotificationCredentialBindingAdapter;
   authorizeDelivery: NotificationDeliveryAuthorizer;
+  /**
+   * Durable pre-POST checkpoint. Required by any emission owner that freezes a
+   * recipient set and needs to know whether a recipient was ever addressed;
+   * `PersistentNotificationRuntime.hasDeliveryAttemptCheckpoint` reports whether
+   * it is wired so such an owner can fail closed at startup instead of silently
+   * losing the guarantee.
+   */
+  checkpointDeliveryAttempt?: NotificationDeliveryAttemptCheckpoint;
   /** Defaults to DNS resolution plus the SDK's strict webhook SSRF policy. */
   validateDestination?: NotificationDestinationValidator;
   /** Build the emitter with the supplied mandatory per-attempt authorizer. */
@@ -372,6 +397,8 @@ export interface PersistentNotificationRuntime {
   readonly store: NotificationSubscriptionStore;
   readonly emitter: RecoverableWebhookEmitter;
   readonly authorizeWebhookAttempt: WebhookAttemptAuthorizer;
+  /** True when a durable pre-POST attempt checkpoint is wired. */
+  readonly hasDeliveryAttemptCheckpoint: boolean;
   replace(
     scope: Readonly<NotificationSubscriptionScope>,
     configs: readonly NotificationSubscriptionConfigInput[],
