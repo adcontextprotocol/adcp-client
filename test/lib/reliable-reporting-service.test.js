@@ -892,11 +892,11 @@ describe('ReliableReportingService', () => {
       'a DST zone cannot hold local midnight under fixed-length periods'
     );
 
-    // Sub-day windows have no source-local midnight boundary. The inline
-    // executor refuses the offering outright, so the service never constructs.
+    // Sub-day windows have no source-local midnight boundary, so the offering
+    // is refused at construction and never reaches capabilities.
     assert.throws(
       () => zonedFixture('UTC', { periodDuration: 'PT12H', minimumWindow: 'PT12H' }),
-      /whole source-day fixed windows/
+      /not a whole number of source-local days/
     );
 
     // A historical anchor whose offset change lands between the anchor and the
@@ -1406,6 +1406,121 @@ describe('ReliableReportingService', () => {
       assert.equal(installed.schedule.alignment, offering.schedule.alignment);
       assert.equal(installed.schedule.periodDuration, offering.schedule.period_duration);
     }
+  });
+
+  test('round-trips the exact installed delivery SLA syntax, not an equivalent instant', async () => {
+    // installed_schedule_match compares values, not instants: an offering that
+    // advertised PT1H must not be echoed back as PT3600S.
+    const lexical = adapter();
+    lexical.deliveryOffering.schedule.delivery_sla = 'PT1H';
+    const { service, store } = serviceFixture({ adapters: { fixture: lexical } });
+    assert.equal(service.capabilities.offerings[0].schedule.delivery_sla, 'PT1H');
+
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration({
+      schedule: {
+        anchor,
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 3_600_000,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+    });
+    const installed = await service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    assert.equal(installed.schedule.deliverySlaDuration, 'PT1H');
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: 'account-a' }, view: 'periods' },
+      { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
+    );
+    const [obligation] = status.periods;
+    assert.equal(obligation.schedule.delivery_sla, 'PT1H', 'the status must echo the installed SLA verbatim');
+    assert.equal(obligation.schedule.period_duration, 'P1D');
+    assert.equal(
+      obligation.schedule.delivery_sla,
+      service.capabilities.offerings[0].schedule.delivery_sla,
+      'discovery and status must agree lexically'
+    );
+  });
+
+  test('never advertises a period duration installation would reject', async () => {
+    // PT25H sits inside a P1D..P2D window but is not a whole source-local day,
+    // so publishing it would advertise a period every install refuses.
+    const odd = adapter();
+    odd.sourceOffering.windowing = {
+      ...odd.sourceOffering.windowing,
+      minimumWindow: 'P1D',
+      maximumWindow: 'P2D',
+    };
+    odd.sourceOffering.sourceExecution = {
+      ...odd.sourceOffering.sourceExecution,
+      maximumWindowDaysPerRequest: 2,
+    };
+    odd.deliveryOffering.schedule.period_duration = 'PT25H';
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: odd } }),
+      /not a whole number of source-local days/,
+      'an install-impossible duration must never reach capabilities'
+    );
+
+    // The neighbouring whole-day duration inside the same window is installable.
+    odd.deliveryOffering.schedule.period_duration = 'P2D';
+    const whole = serviceFixture({ adapters: { fixture: odd } });
+    assert.equal(whole.service.capabilities.offerings[0].schedule.period_duration, 'P2D');
+    const installed = await whole.service.installConfiguration(
+      configuration({
+        schedule: {
+          // On the 2-day grid from the 1970 origin.
+          anchor: '2026-08-31T00:00:00.000Z',
+          periodMilliseconds: 172_800_000,
+          deliverySlaMilliseconds: 0,
+          recoveryWindowMilliseconds: 86_400_000,
+        },
+      }),
+      { account: { id: 'account-a', ctx_metadata: {} } }
+    );
+    assert.equal(installed.schedule.periodDuration, 'P2D');
+  });
+
+  test('never advertises snapshot finality for an authoritative source', async () => {
+    // The ledger installs an authoritative source as official only, so
+    // advertising snapshot publishes a finality every install rejects.
+    const authoritative = adapter();
+    const { cadence, ...sourceOffering } = authoritative.sourceOffering;
+    authoritative.sourceOffering = {
+      ...sourceOffering,
+      publicationClass: 'AUTHORITATIVE',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '01:00', daysAfterPeriodEnd: 0 },
+        expectedAvailabilityLag: 'PT15M',
+        worstCaseAvailabilityLag: 'PT1H',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P7D',
+        correctionPolicy: 'immutable_correction',
+      },
+      revisionSemantics: 'official_with_declared_correction_policy',
+    };
+    authoritative.deliveryOffering.schedule.delivery_sla = 'PT2H';
+
+    for (const supported of [['snapshot'], ['snapshot', 'official']]) {
+      authoritative.deliveryOffering.supported_finality = supported;
+      assert.throws(
+        () => serviceFixture({ adapters: { fixture: authoritative } }),
+        /cannot advertise snapshot delivery finality/,
+        `supported_finality ${JSON.stringify(supported)} must be refused`
+      );
+    }
+
+    // Official-only is the installable shape, and every advertised finality
+    // must be one the ledger will accept.
+    authoritative.deliveryOffering.supported_finality = ['official'];
+    const { service } = serviceFixture({ adapters: { fixture: authoritative } });
+    assert.deepEqual(service.capabilities.offerings[0].supported_finality, ['official']);
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {

@@ -848,6 +848,11 @@ function wireSchedule(obligation: ReportingLedgerObligationV1) {
     alignment,
     ...(alignment === 'billing_cycle' ? { period_anchor: obligation.schedule.anchor } : {}),
     ...(alignment === 'utc' ? {} : { period_timezone: periodTimezone }),
-    delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
+    // Echo the installed lexical duration. Recomputing it from expected_at
+    // would answer PT3600S where the offering advertised PT1H — the same
+    // instant, but not the same value installed_schedule_match compares.
+    delivery_sla:
+      obligation.schedule.deliverySlaDuration ??
+      `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
   };
 }

@@ -94,6 +94,7 @@ export interface ReportingLedgerConfigurationV1 {
     periodDuration?: string;
     alignment?: ReportingScheduleAlignment;
     periodTimezone?: string;
+    deliverySlaDuration?: string;
   };
   sourceSettings: ReportingSourceSliceRequestV1['sourceSettings'];
   contract: ReportingSourceSliceRequestV1['contract'];

@@ -379,6 +379,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
           ? {}
           : {
               periodDuration: deliveryOffering.schedule.period_duration,
+              deliverySlaDuration: deliveryOffering.schedule.delivery_sla,
               alignment: deliveryOffering.schedule.alignment,
               ...(deliveryOffering.schedule.alignment === 'utc' ? {} : { periodTimezone: normalizedTimezone }),
             };
@@ -727,6 +728,15 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   if (delivery.supported_finality.includes('official') && source.publicationClass !== 'AUTHORITATIVE') {
     throw new TypeError('Official delivery finality requires an authoritative source offering');
   }
+  // The ledger refuses any non-official configuration against an authoritative
+  // source, so advertising snapshot for one publishes a finality every install
+  // rejects.
+  if (source.publicationClass === 'AUTHORITATIVE' && delivery.supported_finality.includes('snapshot')) {
+    throw new TypeError(
+      'Authoritative source offerings cannot advertise snapshot delivery finality; the ledger installs them ' +
+        'as official only'
+    );
+  }
   if (delivery.supported_finality.includes('official') && source.publicationClass === 'AUTHORITATIVE') {
     // `expected_at` for an official period is period end + delivery_sla, but the
     // source cannot publish before its own declared finalization moment plus the
@@ -750,6 +760,15 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   const min = reportingIsoDurationMillisecondsV1(source.windowing.minimumWindow);
   const max = reportingIsoDurationMillisecondsV1(source.windowing.maximumWindow);
   if (period < min || period > max) throw new TypeError('Delivery schedule is outside source window bounds');
+  // Installation requires whole source-local days, so an advertised duration
+  // such as PT25H would be published to every buyer and then rejected by every
+  // install. Gate it where the capability is built, not only at install.
+  if (period % 86_400_000 !== 0) {
+    throw new TypeError(
+      `Delivery schedule period '${delivery.schedule.period_duration}' is not a whole number of source-local ` +
+        'days; the service generates period boundaries only on source-local midnight'
+    );
+  }
   // The offering's declared window bounds and the executor's per-request
   // ceiling are separate limits. A period inside the window but over the
   // request ceiling would install cleanly and then fail on every execution.
