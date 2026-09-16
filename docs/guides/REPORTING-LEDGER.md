@@ -208,14 +208,32 @@ is stable across an ambiguous retry.
 What makes a frozen set safely revisable is a second durable barrier:
 `PersistentNotificationRuntimeOptions.checkpointDeliveryAttempt`, awaited on the
 allow path of live delivery authority immediately before every external POST.
-Wire `createPostgresReportingNotificationAttemptCheckpoint()` into it;
-`reportingActivity.probe()` fails closed if you forget, because without it a
-recovered outbox delivery could send under a recipient the activity runtime
-still believes unaddressed. It is a runtime-level option keyed on the durable
-attempt context rather than a per-emission closure for exactly that reason: an
-emission snapshot cannot carry a function, so a per-emission barrier would be
-skipped by the recovered outbox path — the path where an ambiguous send is most
-likely.
+Wire `createPostgresReportingNotificationAttemptCheckpoint()` into it. It is a
+runtime-level option keyed on the durable attempt context rather than a
+per-emission closure because an emission snapshot cannot carry a function, so a
+per-emission barrier would be skipped by the recovered outbox path — the path
+where an ambiguous send is most likely.
+
+The hook is runtime-wide, so the reporting checkpoint passes any event type it
+does not own straight through. Failing closed on another subsystem's
+notification would suppress every one of its attempts until the retry horizon
+expired. Pass `eventTypes` if you own more than `reporting.status_changed`.
+
+Construction and `probe()` both fail closed unless the notification port proves
+it runs the checkpoint. A custom `{ emit }` port must set
+`hasDeliveryAttemptCheckpoint: true`, asserting that it forwards the event it is
+handed to a runtime that does; otherwise a crash plus a destination replacement
+re-addresses the notification under a second generation and idempotency key.
+`acknowledgeMissingAttemptCheckpoint` exists only for tests that deliberately
+demonstrate that hazard.
+
+The checkpoint and a concurrent recipient replacement run as separate statements
+against a pool, so neither sees the other's uncommitted work: a freeze can
+propose a replacement generation while the original is being checkpointed, and
+PostgreSQL keeps both rows. A partial unique index on
+`(namespace, transition_id, subscriber_key) WHERE attempt_at IS NOT NULL` is the
+arbiter — the second generation's checkpoint fails, so it is never POSTed, and
+the next freeze drops it because its subscriber is already claimed.
 
 Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
 
@@ -233,7 +251,11 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
 - Unattempted rows are replaced rather than superseded, so a claim that retries
   many times before any send cannot accumulate rows. A settled recipient is left
   out of later emissions — it still gates projection, but re-addressing it would
-  be redundant traffic. `maxRecipients` bounds the total stored per notification.
+  be redundant traffic.
+- Settled history is compacted to one row per subscriber, and `maxRecipients`
+  bounds **every retained row**, checked before the write. Counting only the
+  addressable recipients let terminal rows grow for the lifetime of a claim that
+  kept retrying while fresh subscribers settled.
 
 | Replacement lands | Outcome |
 | --- | --- |
@@ -255,6 +277,19 @@ Live delivery authority fails closed before every POST. Use
   established: a store read failed, an authorization or credential callback threw
   or timed out, the generation moved mid-flight, or the durable checkpoint could
   not be written. Nothing was sent (`attempts: 0`).
+
+`subscription_stale` is the one reason whose disposition depends on the caller.
+A live emission can re-resolve the new generation, so it stays retryable. A
+**recovered** attempt (`WebhookEmitAttempt.recovered`) is pinned to the snapshot
+it was taken from and can never become valid for a replaced generation, so it is
+terminal — otherwise the outbox reclaims a dead delivery until its horizon
+expires.
+
+A delivery that throws is classified too: a retired binding or an exhausted
+retry horizon surfaces as `failure.reason: 'delivery_binding_retired'` with
+`terminal: true` and settles under terminal policy. Flattening it into a
+retryable failure left the activity pending forever and eventually exhausted the
+tenant's pending capacity.
 
 A retryable suppression no longer terminalizes the delivery in the webhook
 outbox either — it releases it, exactly as a retryable exhausted HTTP result

@@ -99,7 +99,9 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         signerKey: signerKey(),
         fetch: async (url, init) => {
           const body = JSON.parse(init.body);
-          assert.equal(validateStatusWebhook(body), true, JSON.stringify(validateStatusWebhook.errors));
+          if (body.notification_type === 'reporting.status_changed') {
+            assert.equal(validateStatusWebhook(body), true, JSON.stringify(validateStatusWebhook.errors));
+          }
           if (failNextFetch) {
             failNextFetch = false;
             return { status: 503, headers: { get: () => undefined } };
@@ -215,6 +217,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: 'reporting-activity-tests',
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         async emit(event) {
           const result = await notifications.emit(event);
           if (crashOnce) {
@@ -438,6 +441,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: 'reporting-activity-tests',
       tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         async emit(event) {
           await notifications.emit(event);
           throw new Error('crash after send, before settlement');
@@ -551,6 +555,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: 'reporting-activity-tests',
       tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // Deliberately unfrozen and uncheckpointed: this is the hazard A/B.
+      acknowledgeMissingAttemptCheckpoint: true,
       notifications: { emit: ({ freezeRecipients, beforeExternalAttempt, ...event }) => notify(event) },
     });
     const crashing = ledger.createPostgresReportingNotificationActivityRuntime(
@@ -712,6 +718,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: recovery.namespace,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         emit: event =>
           notifications.emit({
             ...event,
@@ -787,6 +794,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: recovery.namespace,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         emit: event =>
           notifications.emit({
             ...event,
@@ -949,6 +957,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         namespace: recovery.namespace,
         tenantScopeForAccount: () => 'tenant-a',
         notifications: {
+          hasDeliveryAttemptCheckpoint: true,
+          hasDeliveryAttemptCheckpoint: true,
           emit: async event => {
             frozen = await event.freezeRecipients(candidates);
             // None of the synthetic recipients resolves, so nothing is sent.
@@ -999,7 +1009,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: recovery.namespace,
       maxRecipients: 2,
       tenantScopeForAccount: () => 'tenant-a',
-      notifications: { emit: event => event.freezeRecipients(oversized) },
+      notifications: { hasDeliveryAttemptCheckpoint: true, emit: event => event.freezeRecipients(oversized) },
     });
     const pass = await overflowRuntime.recoverOnce({
       ownerToken: 'fanout-over-worker',
@@ -1074,6 +1084,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: recovery.namespace,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         emit: async event => {
           const result = await notifications.emit(event);
           // Exactly what an owner sees if it inspects only thrown failures: a
@@ -1131,6 +1142,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         db: pool,
         namespace: recovery.namespace,
         tenantScopeForAccount: () => 'tenant-a',
+        // Deliberately uncheckpointed: this is the hazard A/B.
+        acknowledgeMissingAttemptCheckpoint: true,
         notifications: { emit: event => notify(event) },
       });
     const crashing = unbarriered(async event => {
@@ -1335,6 +1348,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: recovery.namespace,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         emit: event =>
           notifications.emit({
             ...event,
@@ -1414,6 +1428,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: recovery.namespace,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         emit: event =>
           notifications.emit({
             ...event,
@@ -1443,6 +1458,306 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       assert.equal(intent.recipients.length, 1, `round ${round}: exactly one stored recipient`);
       assert.equal(intent.attempted, 0, `round ${round}: nothing was ever addressed`);
     }
+  });
+
+  test('passes a non-reporting notification through the reporting checkpoint untouched', async () => {
+    // The checkpoint hook is runtime-wide. A notification from another
+    // subsystem has no frozen reporting recipient, and failing closed on it
+    // would suppress every one of its attempts until the retry horizon expired.
+    const scope = { kind: 'caller', tenantId: 'tenant-a', principalId: 'principal-other' };
+    const before = fetchCalls.length;
+    await notifications.replace(scope, [
+      {
+        subscriber_id: 'other-subscriber',
+        url: 'https://buyer.example/other-subsystem',
+        event_types: ['capabilities.changed'],
+      },
+    ]);
+    const emitted = await notifications.emit({
+      emissionId: 'emission-other-subsystem',
+      notificationId: 'notification-other-subsystem',
+      notificationType: 'capabilities.changed',
+      anchor: 'caller',
+      tenantId: scope.tenantId,
+      principalId: scope.principalId,
+      payload: { repair: '/capabilities' },
+    });
+    assert.equal(emitted.deliveries.length, 1);
+    assert.equal(emitted.deliveries[0].result?.suppression, undefined, 'it is not suppressed');
+    assert.equal(emitted.deliveries[0].result?.delivered, true);
+    assert.equal(fetchCalls.length, before + 1, 'the unrelated subsystem still delivers');
+  });
+
+  test('never lets a checkpoint racing a replacement address two generations', async () => {
+    // Controlled trace of the race: the checkpoint for generation one is held
+    // open while generation two is frozen from a snapshot that cannot see it.
+    // PostgreSQL keeps both rows, so only a database-level arbiter can stop
+    // both from being POSTed under distinct idempotency keys.
+    const scope = { kind: 'account', tenantId: 'tenant-a', principalId: 'principal-race', accountId: 'account-race' };
+    const recovery = isolatedActivity('checkpoint-race');
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/race-g1');
+    const obligation = await putObligation('checkpoint-race', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const delivered = () => fetchCalls.filter(value => value.body.notification_id === transition.transitionId);
+
+    // Freeze generation one and leave it unattempted.
+    const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      hasDeliveryAttemptCheckpoint: true,
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: event =>
+          notifications.emit({
+            ...event,
+            freezeRecipients: async candidates => {
+              await event.freezeRecipients(candidates);
+              throw new Error('stop before any attempt');
+            },
+          }),
+      },
+    });
+    await freezeOnly.recoverOnce({ ownerToken: 'race-freeze', limit: 1, retryAfterMs: 1 });
+    const frozen = await readIntent(transition.transitionId, recovery.namespace);
+    assert.equal(frozen.recipients.length, 1);
+    assert.equal(frozen.attempted, 0);
+    const generationOne = frozen.recipients[0];
+
+    // Hold the generation-one checkpoint open in its own transaction, so the
+    // concurrent freeze cannot observe it.
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      const checkpointRace = ledger.createPostgresReportingNotificationAttemptCheckpoint({
+        db: holder,
+        namespace: recovery.namespace,
+      });
+      await checkpointRace({
+        scope: generationOne.scope,
+        eventAnchor: 'account',
+        accountId: scope.accountId,
+        subscriberId: generationOne.subscriberId,
+        destinationGeneration: generationOne.destinationGeneration,
+        eventType: 'reporting.status_changed',
+        notificationId: transition.transitionId,
+        signal: new AbortController().signal,
+      });
+
+      // Generation two is frozen from a snapshot that predates that commit.
+      const current = await notifications.read(scope);
+      await notifications.replace(
+        scope,
+        [
+          {
+            subscriber_id: 'account-race-subscriber',
+            url: 'https://buyer.example/race-g2',
+            event_types: ['reporting.status_changed'],
+          },
+        ],
+        { expectedGeneration: current.generation }
+      );
+      await makeClaimEligible(recovery.namespace, transition.transitionId);
+      const racingFreeze = freezeOnly.recoverOnce({ ownerToken: 'race-freeze-two', limit: 1, retryAfterMs: 1 });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await holder.query('COMMIT');
+      await racingFreeze;
+    } finally {
+      holder.release();
+    }
+
+    // Both generations can be stored, but only one can ever be addressed.
+    const raced = await readIntent(transition.transitionId, recovery.namespace);
+    assert.ok(raced.recipients.length >= 1);
+    assert.equal(raced.attempted, 1, 'exactly one generation is addressable');
+    const secondGeneration = (await notifications.read(scope)).notificationConfigs[0].destination_generation;
+    await assert.rejects(
+      () =>
+        ledger.createPostgresReportingNotificationAttemptCheckpoint({
+          db: pool,
+          namespace: recovery.namespace,
+        })({
+          scope: generationOne.scope,
+          eventAnchor: 'account',
+          accountId: scope.accountId,
+          subscriberId: 'account-race-subscriber',
+          destinationGeneration: secondGeneration,
+          eventType: 'reporting.status_changed',
+          notificationId: transition.transitionId,
+          signal: new AbortController().signal,
+        }),
+      /could not be checkpointed|no frozen recipient/,
+      'the second generation can never be checkpointed, so it can never be POSTed'
+    );
+
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const settled = await recovery.activity.recoverOnce({ ownerToken: 'race-settle', limit: 1 });
+    assert.equal(settled.projected, 1);
+    assert.ok(delivered().length <= 1, 'at most one logical delivery');
+    assert.equal(new Set(delivered().map(value => value.body.idempotency_key)).size <= 1, true);
+  });
+
+  test('bounds retained recipient rows while distinct subscribers keep settling', async () => {
+    // One recipient stays retryable forever while a fresh subscriber settles on
+    // every pass. Counting only the addressable recipients let the retained
+    // terminal rows grow without bound under a pending claim.
+    const scope = { kind: 'account', tenantId: 'tenant-a', principalId: 'principal-bound', accountId: 'account-bound' };
+    const recovery = isolatedActivity('retained-bound', { maxRecipients: 4 });
+    const stuck = {
+      subscriber_id: 'bound-stuck',
+      url: 'https://buyer.example/bound-stuck',
+      event_types: ['reporting.status_changed'],
+    };
+    await notifications.replace(scope, [stuck]);
+    const obligation = await putObligation('retained-bound', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    // The stuck subscriber can never establish authority, so it never settles.
+    authorizeDeliveryHook = input =>
+      input.subscriberId === 'bound-stuck'
+        ? (() => {
+            throw new Error('authorization backend unavailable for the stuck subscriber');
+          })()
+        : { authorized: true };
+    try {
+      for (let round = 1; round <= 6; round += 1) {
+        const current = await notifications.read(scope);
+        await notifications.replace(
+          scope,
+          [
+            stuck,
+            {
+              subscriber_id: `bound-fresh-${round}`,
+              url: `https://buyer.example/bound-fresh-${round}`,
+              event_types: ['reporting.status_changed'],
+            },
+          ],
+          { expectedGeneration: current.generation }
+        );
+        await makeClaimEligible(recovery.namespace, transition.transitionId);
+        await recovery.activity.recoverOnce({ ownerToken: `bound-worker-${round}`, limit: 1, retryAfterMs: 1 });
+        const retained = await pool.query(
+          `SELECT count(*)::integer AS total FROM adcp_reporting_notification_activity_recipients
+            WHERE namespace = $1 AND transition_id = $2`,
+          [recovery.namespace, transition.transitionId]
+        );
+        assert.ok(
+          retained.rows[0].total <= 4,
+          `round ${round}: retained rows stay within maxRecipients (saw ${retained.rows[0].total})`
+        );
+      }
+    } finally {
+      authorizeDeliveryHook = undefined;
+    }
+    // The claim never settled — it is bounded and loud, not silently growing.
+    assert.equal((await readIntent(transition.transitionId, recovery.namespace)).state, 'pending');
+  });
+
+  test('settles a delivery whose binding is retired instead of retrying it forever', async () => {
+    // A checkpointed recipient past its retry horizon can never be delivered.
+    // Flattening that into a retryable failure holds the claim open until the
+    // tenant's pending capacity is exhausted.
+    const recovery = isolatedActivity('retired-binding');
+    await installSubscription('tenant-a', 'principal-retired', 'account-retired', 'https://buyer.example/retired');
+    const obligation = await putObligation('retired-binding', 'account-retired', recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const terminalRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: async event => {
+          const resolved = [];
+          await event.freezeRecipients(
+            (
+              await notifications.read({
+                kind: 'account',
+                tenantId: 'tenant-a',
+                principalId: 'principal-retired',
+                accountId: 'account-retired',
+              })
+            ).notificationConfigs.map(config => {
+              const recipient = {
+                scope: {
+                  kind: 'account',
+                  tenantId: 'tenant-a',
+                  principalId: 'principal-retired',
+                  accountId: 'account-retired',
+                },
+                subscriberId: config.subscriber_id,
+                destinationGeneration: config.destination_generation,
+              };
+              resolved.push(recipient);
+              return recipient;
+            })
+          );
+          return {
+            notificationId: event.notificationId,
+            emissionId: event.emissionId,
+            matched: resolved.length,
+            deliveries: resolved.map(recipient => ({
+              ...recipient,
+              failure: { reason: 'delivery_binding_retired', terminal: true },
+            })),
+          };
+        },
+      },
+    });
+    const pass = await terminalRuntime.recoverOnce({ ownerToken: 'retired-worker', limit: 1 });
+    assert.equal(pass.projected, 1, 'a terminal binding settles the activity rather than holding it pending');
+    const intent = await readIntent(transition.transitionId, recovery.namespace);
+    assert.equal(intent.state, 'projected');
+    assert.equal(intent.unsettled, 0);
+    assert.deepEqual(
+      intent.rows.map(row => row.disposition),
+      ['terminal']
+    );
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 0);
+  });
+
+  test('refuses a notification port that cannot prove it checkpoints attempts', async () => {
+    assert.throws(
+      () =>
+        ledger.createPostgresReportingNotificationActivityRuntime({
+          db: pool,
+          namespace: 'reporting-activity-tests',
+          tenantScopeForAccount: () => 'tenant-a',
+          notifications: { emit: async () => ({ notificationId: 'x', emissionId: 'y', matched: 0, deliveries: [] }) },
+        }),
+      /durable pre-POST attempt checkpoint/,
+      'a bare custom { emit } port fails closed'
+    );
+    await assert.rejects(
+      () =>
+        ledger
+          .createPostgresReportingNotificationActivityRuntime({
+            db: pool,
+            namespace: 'reporting-activity-tests',
+            tenantScopeForAccount: () => 'tenant-a',
+            acknowledgeMissingAttemptCheckpoint: true,
+            notifications: {
+              emit: async () => ({ notificationId: 'x', emissionId: 'y', matched: 0, deliveries: [] }),
+            },
+          })
+          .probe(),
+      /does not prove it runs the durable/,
+      'and the acknowledged form still fails the startup probe'
+    );
   });
 
   test('refuses legacy subscribers beside the transactional port', async () => {
@@ -1786,6 +2101,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: 'reporting-activity-tests',
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         async emit(event) {
           emissionIds.push(event.emissionId);
           await new Promise(resolve => setTimeout(resolve, 600));
@@ -1814,6 +2130,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: 'reporting-activity-tests',
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         async emit(event) {
           await pool.query(
             `UPDATE adcp_reporting_notification_activity
@@ -1855,6 +2172,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       namespace: 'reporting-activity-tests',
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
+        hasDeliveryAttemptCheckpoint: true,
         async emit(event) {
           emissions += 1;
           await new Promise(resolve => setTimeout(resolve, 2_500));

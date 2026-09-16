@@ -19,6 +19,7 @@ import type {
 } from './types';
 
 const DEFAULT_TABLE = 'adcp_reporting_notification_activity';
+const REPORTING_STATUS_EVENT_TYPE = 'reporting.status_changed';
 const DEFAULT_NAMESPACE = 'adcp-reporting';
 const DEFAULT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const DEFAULT_MAX_PENDING_PER_TENANT = 100_000;
@@ -88,7 +89,13 @@ export interface ReportingNotificationProjectionErrorV1 {
 
 export interface PostgresReportingNotificationActivityOptions {
   db: ReportingLedgerTransactionV1;
-  notifications: Pick<PersistentNotificationRuntime, 'emit'>;
+  /**
+   * Notification port. A custom `{ emit }` must also set
+   * `hasDeliveryAttemptCheckpoint: true`, which asserts that it forwards the
+   * event it is handed to a runtime that runs the durable pre-POST checkpoint.
+   */
+  notifications: Pick<PersistentNotificationRuntime, 'emit'> &
+    Partial<Pick<PersistentNotificationRuntime, 'hasDeliveryAttemptCheckpoint'>>;
   /** Stable deployment namespace. Defaults to `adcp-reporting`. */
   namespace?: string;
   /** Assert that the supplied database/schema is isolated to this deployment. */
@@ -105,6 +112,14 @@ export interface PostgresReportingNotificationActivityOptions {
   retentionMs?: number;
   /** Atomic pending-intent backpressure per tenant. Defaults to 100,000. */
   maxPendingPerTenant?: number;
+  /**
+   * Acknowledge a notification port that cannot prove it runs the durable
+   * pre-POST checkpoint. Without it a crash plus a destination replacement
+   * re-addresses the same notification under a second generation and a second
+   * idempotency key, so this is refused by default and exists only for tests
+   * that deliberately demonstrate that hazard.
+   */
+  acknowledgeMissingAttemptCheckpoint?: boolean;
   /**
    * Largest recipient fanout whose frozen intent this runtime will store.
    * Defaults to 10,000 — the ceiling the persistent notification runtime
@@ -245,6 +260,18 @@ CREATE TABLE IF NOT EXISTS ${recipientTable} (
 CREATE INDEX IF NOT EXISTS idx_${rawRecipients}_unsettled
   ON ${recipientTable}(namespace, transition_id)
   WHERE settled_at IS NULL;
+-- At most one addressed generation per subscriber, enforced by the database.
+--
+-- The checkpoint and a concurrent recipient replacement run as separate
+-- statements against a connection pool, so neither sees the other's uncommitted
+-- work: a freeze can propose a replacement generation while the original is
+-- being checkpointed, and PostgreSQL will keep both rows. This index is the
+-- serialization point. The second generation's checkpoint fails, so it is never
+-- POSTed, and the next freeze drops it because its subscriber is already
+-- claimed. One logical delivery, one idempotency key.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_${rawRecipients}_attempted_subscriber
+  ON ${recipientTable}(namespace, transition_id, subscriber_key)
+  WHERE attempt_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_${raw}_pending
   ON ${table}(namespace, next_attempt_at, lease_expires_at, activity_sequence)
@@ -286,6 +313,13 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   db: ReportingLedgerTransactionV1;
   namespace?: string;
   tableName?: string;
+  /**
+   * Event types this checkpoint owns. Anything else is another subsystem's
+   * notification and is passed through untouched — the runtime hook is global,
+   * and failing closed on an event that was never frozen here would suppress
+   * every attempt of that event until its retry horizon expired.
+   */
+  eventTypes?: readonly string[];
 }): (input: Readonly<NotificationDeliveryAttemptCheckpointInput>) => Promise<void> {
   if (!options?.db || typeof options.db.query !== 'function') {
     throw new TypeError('createPostgresReportingNotificationAttemptCheckpoint requires a PostgreSQL queryable');
@@ -296,7 +330,9 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
     recipientTableName(options.tableName ?? DEFAULT_TABLE),
     MAX_RECIPIENT_TABLE_BYTES
   );
+  const owned = new Set(options.eventTypes ?? [REPORTING_STATUS_EVENT_TYPE]);
   return async input => {
+    if (!owned.has(input.eventType)) return;
     const fingerprint = recipientFingerprint({
       scope: input.scope,
       subscriberId: input.subscriberId,
@@ -333,6 +369,14 @@ export function createPostgresReportingNotificationActivityRuntime(
   }
   if (typeof options.tenantScopeForAccount !== 'function') {
     throw new TypeError('tenantScopeForAccount must be a function');
+  }
+  if (options.notifications.hasDeliveryAttemptCheckpoint !== true && !options.acknowledgeMissingAttemptCheckpoint) {
+    throw new TypeError(
+      'createPostgresReportingNotificationActivityRuntime requires a notification port that runs the durable ' +
+        'pre-POST attempt checkpoint. Build createPostgresReportingNotificationAttemptCheckpoint() and pass it as ' +
+        'checkpointDeliveryAttempt; a custom port must set hasDeliveryAttemptCheckpoint: true to prove it forwards ' +
+        'the event it is given.'
+    );
   }
   const namespace = options.namespace ?? DEFAULT_NAMESPACE;
   const development = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
@@ -479,14 +523,15 @@ export function createPostgresReportingNotificationActivityRuntime(
       all: [getReportingNotificationActivityMigration({ tableName: rawTable })],
     },
     async probe() {
-      if (
-        'hasDeliveryAttemptCheckpoint' in options.notifications &&
-        (options.notifications as { hasDeliveryAttemptCheckpoint?: boolean }).hasDeliveryAttemptCheckpoint !== true
-      ) {
+      // Fails closed for any port, including a custom `{ emit }`: a port that
+      // cannot prove it checkpoints lets a recovered outbox delivery send under
+      // a recipient this runtime still believes unaddressed.
+      if (options.notifications.hasDeliveryAttemptCheckpoint !== true) {
         throw new Error(
-          'Reporting notification/activity probe failed: the persistent notification runtime has no ' +
-            'checkpointDeliveryAttempt. Wire createPostgresReportingNotificationAttemptCheckpoint() into it, or a ' +
-            'recovered outbox delivery can send under a recipient this runtime still believes is unaddressed.'
+          'Reporting notification/activity probe failed: the notification port does not prove it runs the durable ' +
+            'pre-POST attempt checkpoint. Wire createPostgresReportingNotificationAttemptCheckpoint() into ' +
+            'checkpointDeliveryAttempt, or set hasDeliveryAttemptCheckpoint: true on a custom port that forwards ' +
+            'the event it is given.'
         );
       }
       try {
@@ -854,6 +899,38 @@ async function freezeClaimRecipients(
   }
   const rows = canonicalRecipients(candidates);
   const fingerprints = rows.map(entry => entry.fingerprint);
+  // Bound every retained row before writing, not just the addressable ones.
+  // Settled rows are kept to gate projection and to stop a subscriber being
+  // addressed twice, so a claim that keeps retrying while fresh subscribers
+  // settle would otherwise accumulate them for its whole lifetime.
+  const existing = await reportingActivityDatabaseOperation(
+    'Reporting notification recipient intent could not be measured',
+    () =>
+      db.query<{ recipient_fingerprint: string; subscriber_key: string; claimed: boolean; revisable: boolean }>(
+        `SELECT recipient_fingerprint, subscriber_key,
+                (attempt_at IS NOT NULL OR settled_at IS NOT NULL) AS claimed,
+                (attempt_at IS NULL AND settled_at IS NULL) AS revisable
+           FROM ${recipientTable}
+          WHERE namespace = $1 AND transition_id = $2`,
+        [namespace, claim.transitionId]
+      )
+  );
+  const claimedSubscribers = new Set(existing.rows.filter(row => row.claimed).map(row => row.subscriber_key));
+  const proposedFingerprints = new Set(
+    rows.filter(entry => !claimedSubscribers.has(entry.subscriberKey)).map(entry => entry.fingerprint)
+  );
+  const surviving = existing.rows.filter(
+    row => !row.revisable || proposedFingerprints.has(row.recipient_fingerprint)
+  ).length;
+  const additions = [...proposedFingerprints].filter(
+    fingerprint => !existing.rows.some(row => row.recipient_fingerprint === fingerprint)
+  ).length;
+  if (surviving + additions > maxRecipients) {
+    throw new Error(
+      `Reporting notification recipient intent would hold ${surviving + additions} recipients, above maxRecipients ` +
+        `${maxRecipients}; raise maxRecipients or reduce the destination churn on this notification`
+    );
+  }
   // One statement, so the replacement of revisable rows and the insertion of
   // the newly resolved ones cannot be interrupted halfway. The returned set is
   // assembled from the statement's own CTEs rather than re-read from the table,
@@ -909,16 +986,6 @@ async function freezeClaimRecipients(
         ]
       )
   );
-  const total = committed.rows.length;
-  if (total > maxRecipients) {
-    // Pinned recipients accumulate only when a real POST was made under a
-    // destination that was then replaced. Bounding the total keeps that from
-    // growing without limit while never dropping an addressed recipient.
-    throw new Error(
-      `Reporting notification recipient intent holds ${total} recipients, above maxRecipients ${maxRecipients}; ` +
-        'raise maxRecipients or reduce the destination churn on this notification'
-    );
-  }
   return committed.rows.map(row => row.recipient);
 }
 
@@ -966,6 +1033,29 @@ async function settleClaimRecipients(
         [namespace, claim.transitionId, delivered, terminal]
       )
     );
+    // Compact terminal history to one row per subscriber. Superseded
+    // generations of a settled subscriber carry no further meaning: the
+    // surviving row still gates projection, still records the disposition for
+    // audit, and still stops that subscriber being addressed again. Only rows
+    // that are already settled are touched, so nothing in flight is disturbed
+    // and a crash simply repeats an idempotent delete.
+    await reportingActivityDatabaseOperation('Reporting notification recipient compaction failed', () =>
+      db.query(
+        `DELETE FROM ${recipientTable} superseded
+          WHERE superseded.namespace = $1 AND superseded.transition_id = $2
+            AND superseded.settled_at IS NOT NULL
+            AND EXISTS (
+              SELECT 1 FROM ${recipientTable} survivor
+               WHERE survivor.namespace = superseded.namespace
+                 AND survivor.transition_id = superseded.transition_id
+                 AND survivor.subscriber_key = superseded.subscriber_key
+                 AND survivor.settled_at IS NOT NULL
+                 AND (survivor.disposition, survivor.recipient_fingerprint)
+                     > (superseded.disposition, superseded.recipient_fingerprint)
+            )`,
+        [namespace, claim.transitionId]
+      )
+    );
   }
   const remaining = await reportingActivityDatabaseOperation('Reporting notification recipient settlement failed', () =>
     db.query<{ unsettled: number }>(
@@ -999,14 +1089,19 @@ function classifyDelivery(delivery: {
   subscriberId: string;
   destinationGeneration: string;
   result?: { delivered: boolean; terminal?: boolean; suppression?: { reason: WebhookAttemptSuppressionReason } };
-  failure?: unknown;
+  failure?: { reason?: string; terminal?: boolean };
 }): ReportingRecipientOutcome {
   const recipient: NotificationRecipientRef = {
     scope: delivery.scope,
     subscriberId: delivery.subscriberId,
     destinationGeneration: delivery.destinationGeneration,
   };
-  if (delivery.failure !== undefined || !delivery.result) return { recipient, disposition: 'retryable' };
+  if (delivery.failure !== undefined || !delivery.result) {
+    // A retired delivery binding or an exhausted retry horizon can never
+    // succeed. Retrying it holds the claim open until the tenant's own pending
+    // capacity is exhausted, so it settles under explicit terminal policy.
+    return { recipient, disposition: delivery.failure?.terminal === true ? 'terminal' : 'retryable' };
+  }
   const suppression = delivery.result.suppression;
   if (suppression) {
     return {

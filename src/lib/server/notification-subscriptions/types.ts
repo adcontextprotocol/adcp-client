@@ -336,7 +336,18 @@ interface NotificationFanoutDeliveryBase {
 }
 
 export type NotificationFanoutDelivery = NotificationFanoutDeliveryBase &
-  ({ result: WebhookEmitResult; failure?: never } | { result?: never; failure: { reason: 'delivery_runtime_error' } });
+  (
+    | { result: WebhookEmitResult; failure?: never }
+    | {
+        result?: never;
+        /**
+         * `delivery_binding_retired` is terminal: the delivery identity is
+         * retired or past its retry horizon and can never succeed. Anything
+         * else is an operational failure worth retrying.
+         */
+        failure: { reason: 'delivery_runtime_error' | 'delivery_binding_retired'; terminal?: boolean };
+      }
+  );
 
 export interface NotificationFanoutResult {
   notificationId: string;

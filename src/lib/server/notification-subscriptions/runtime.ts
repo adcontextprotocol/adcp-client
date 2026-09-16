@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { canonicalJsonSha256 } from '../../utils/jcs';
+import { isWebhookDeliveryTerminalError } from '../webhook-delivery/common';
 import { enforceSsrfPolicy, enforceSsrfPolicyResolved } from '../../substitution/observer/ssrf';
 import { WEBHOOK_SSRF_POLICY } from '../pin-and-bind-fetch';
 import type {
@@ -173,7 +174,13 @@ export function createPersistentNotificationRuntime(
     const subscription = set.subscriptions.find(item => item.subscriberId === context.subscriberId);
     if (!subscription) return suppress('subscription_missing');
     if (subscription.destinationGeneration !== context.destinationGeneration) {
-      return suppress('subscription_stale');
+      // A fresh emission can re-resolve the new generation, so this is
+      // retryable. A recovered outbox attempt cannot: its snapshot is pinned to
+      // the generation that was replaced, so retrying it only consumes recovery
+      // capacity until the horizon expires.
+      return attempt.recovered === true
+        ? { decision: 'suppress', reason: 'subscription_stale' }
+        : suppress('subscription_stale');
     }
     if (!subscription.active || subscription.proofGeneration !== subscription.destinationGeneration) {
       return suppress('subscription_inactive');
@@ -457,10 +464,15 @@ export function createPersistentNotificationRuntime(
             attemptAuthorizationContext: context as unknown as Record<string, unknown>,
           });
           return { ...delivery, result } satisfies NotificationFanoutDelivery;
-        } catch {
+        } catch (error) {
+          // A retired binding or an exhausted retry horizon can never succeed:
+          // flattening it into a retryable failure leaves the owner recovering
+          // the same dead delivery until it exhausts its own capacity.
           return {
             ...delivery,
-            failure: { reason: 'delivery_runtime_error' },
+            failure: isWebhookDeliveryTerminalError(error)
+              ? { reason: 'delivery_binding_retired', terminal: true }
+              : { reason: 'delivery_runtime_error' },
           } satisfies NotificationFanoutDelivery;
         }
       });

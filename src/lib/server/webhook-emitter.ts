@@ -390,6 +390,12 @@ export interface WebhookEmitAttempt {
   url: string;
   /** Durable non-secret context supplied by the emission owner. */
   attemptAuthorizationContext?: Record<string, unknown>;
+  /**
+   * True when this attempt replays a durable outbox snapshot rather than a live
+   * emission. A recovered attempt is pinned to the snapshot it was taken from,
+   * so authority that has since moved on can never become valid for it.
+   */
+  recovered?: boolean;
 }
 
 export type WebhookAttemptSuppressionReason =
@@ -619,6 +625,7 @@ export function createWebhookEmitter(options: WebhookEmitterOptions): Recoverabl
             ...(attemptAuthorizationContext === undefined
               ? {}
               : { attemptAuthorizationContext: structuredClone(attemptAuthorizationContext) }),
+            ...(recoveredClaim ? { recovered: true } : {}),
           };
 
           let attemptAuthentication = authentication;
