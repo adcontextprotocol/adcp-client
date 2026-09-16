@@ -435,6 +435,12 @@ async function executeAndSeal(
   const reportingRowsInput = fetchedRecord ? ownDataValue(fetchedRecord, 'reporting_rows') : undefined;
   const mediaBuyDeliveriesInput = fetchedRecord ? ownDataValue(fetchedRecord, 'media_buy_deliveries') : undefined;
   const availabilityEvidenceInput = fetchedRecord ? ownDataValue(fetchedRecord, 'availability_evidence') : undefined;
+  // An evidence slot that is not an own data property reads as omitted, which would
+  // silently downgrade the response to legacy present inference. Refuse it instead,
+  // without reading the accessor.
+  const availabilityEvidenceIsUnreadable = fetchedRecord
+    ? hasNonDataSlot(fetchedRecord, 'availability_evidence')
+    : false;
   if (
     (reportingRowsInput !== undefined && !Array.isArray(reportingRowsInput)) ||
     (mediaBuyDeliveriesInput !== undefined && !Array.isArray(mediaBuyDeliveriesInput))
@@ -523,6 +529,9 @@ async function executeAndSeal(
   }
   const auxiliaryRowInputs = !isRows(fetched) && reportingRows !== undefined ? [...(mediaBuyDeliveries ?? [])] : [];
   let availabilityEvidence: z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> | undefined;
+  if (!isRows(fetched) && availabilityEvidenceIsUnreadable) {
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
+  }
   if (!isRows(fetched) && availabilityEvidenceInput !== undefined) {
     try {
       availabilityEvidence = parseInlineAvailabilityEvidence(
@@ -1212,6 +1221,24 @@ function isEvidenceValue(value: unknown): value is string | number {
   );
 }
 
+/** Two claims for one metric agree when they are identical or the same decimal quantity. */
+function metricClaimsAgree(direct: unknown, nested: unknown): boolean {
+  if (Object.is(direct, nested)) return true;
+  if (!isEvidenceValue(direct) || !isEvidenceValue(nested)) return false;
+  const canonical = canonicalDecimalEvidence(direct);
+  return canonical !== undefined && canonical === canonicalDecimalEvidence(nested);
+}
+
+function canonicalDecimalEvidence(value: string | number): string | undefined {
+  const raw = typeof value === 'number' ? String(value) : value.trim();
+  const parts = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw);
+  if (!parts) return undefined;
+  const integer = (parts[2] ?? '').replace(/^0+(?=\d)/, '');
+  const fraction = (parts[3] ?? '').replace(/0+$/, '');
+  const magnitude = fraction ? `${integer}.${fraction}` : integer;
+  return magnitude === '0' ? '0' : `${parts[1] ?? ''}${magnitude}`;
+}
+
 function isZeroEvidenceValue(value: string | number): boolean {
   return typeof value === 'number' ? value === 0 : /^-?0(?:\.0+)?$/.test(value);
 }
@@ -1234,6 +1261,24 @@ function ownDataClaim(record: Record<string, unknown>, field: string): { claimed
   return descriptor && 'value' in descriptor && descriptor.value !== undefined
     ? { claimed: true, value: descriptor.value }
     : { claimed: false };
+}
+
+/**
+ * True when `field` is reachable on `record` but is not an own data property:
+ * an accessor anywhere on the chain, or an inherited value. Never invokes a getter.
+ */
+function hasNonDataSlot(record: Record<string, unknown>, field: string): boolean {
+  for (
+    let current: object | null = record;
+    current !== null;
+    current = Object.getPrototypeOf(current) as object | null
+  ) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, field);
+    if (!descriptor) continue;
+    if (!('value' in descriptor)) return true;
+    return current !== record && descriptor.value !== undefined;
+  }
+  return false;
 }
 
 function rowCurrency(row: unknown): string | undefined {
@@ -1287,13 +1332,20 @@ function projectEvidenceRow(
     let directValue = false;
     if (options.strictMetricClaims) {
       const direct = ownDataClaim(record, metric);
+      const nested: { claimed: boolean; value?: unknown } = totalsRecord
+        ? ownDataClaim(totalsRecord, metric)
+        : { claimed: false };
+      if (direct.claimed && !isEvidenceValue(direct.value)) throw new TypeError('Invalid metric evidence');
+      if (nested.claimed && !isEvidenceValue(nested.value)) throw new TypeError('Invalid metric evidence');
+      // A row that claims the same metric twice must not let the direct value mask a
+      // contradictory totals claim — the sealed evidence would misrepresent the source.
+      if (direct.claimed && nested.claimed && !metricClaimsAgree(direct.value, nested.value)) {
+        throw new TypeError('Contradictory metric evidence');
+      }
       if (direct.claimed) {
-        if (!isEvidenceValue(direct.value)) throw new TypeError('Invalid metric evidence');
         value = direct.value;
         directValue = true;
-      } else if (totalsRecord) {
-        const nested = ownDataClaim(totalsRecord, metric);
-        if (nested.claimed && !isEvidenceValue(nested.value)) throw new TypeError('Invalid metric evidence');
+      } else {
         value = nested.value;
       }
     } else {

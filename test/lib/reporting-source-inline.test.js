@@ -504,6 +504,100 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('fails closed when a direct metric value contradicts its totals claim', async () => {
+    for (const [index, item] of [
+      { direct: 0, totals: 999, status: 'explicit_zero' },
+      { direct: 10, totals: 11, status: 'present' },
+      { direct: 10, totals: '10.5', status: 'present' },
+      { direct: 5, totals: {}, status: 'present' },
+    ].entries()) {
+      const source = createInlineReportingSourceExecutor(input => {
+        const availability_evidence = presentAvailability(input);
+        availability_evidence.cells[0] = {
+          constituent_id: input.constituents[0].constituent_id,
+          metric: 'impressions',
+          status: item.status,
+          data_through: input.end_date,
+        };
+        return {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            {
+              media_buy_id: 'fixture-media-buy',
+              impressions: item.direct,
+              totals: { impressions: item.totals, spend: '1.25' },
+            },
+          ],
+          availability_evidence,
+        };
+      }, redactedReportingSourceOfferingV1);
+      const result = await source.execute(request(`fixture-inline-contradictory-metric-claim-${index}`), context());
+      assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    }
+  });
+
+  test('keeps agreeing duplicate metric claims sealable', async () => {
+    const source = createInlineReportingSourceExecutor(input => {
+      const availability_evidence = presentAvailability(input);
+      availability_evidence.cells[0] = {
+        constituent_id: input.constituents[0].constituent_id,
+        metric: 'impressions',
+        status: 'explicit_zero',
+        data_through: input.end_date,
+      };
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          {
+            media_buy_id: 'fixture-media-buy',
+            impressions: 0,
+            totals: { impressions: '0.00', spend: '1.25' },
+          },
+        ],
+        availability_evidence,
+      };
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-agreeing-metric-claim'), context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'impressions').status, 'explicit_zero');
+  });
+
+  test('refuses accessor-backed availability evidence without reading it', async () => {
+    for (const [index, onPrototype] of [false, true].entries()) {
+      let reads = 0;
+      const source = createInlineReportingSourceExecutor(input => {
+        const response = {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        };
+        const descriptor = {
+          enumerable: true,
+          configurable: true,
+          get: () => {
+            reads += 1;
+            return presentAvailability(input);
+          },
+        };
+        if (!onPrototype) {
+          Object.defineProperty(response, 'availability_evidence', descriptor);
+          return response;
+        }
+        return Object.create(
+          Object.defineProperty({}, 'availability_evidence', descriptor),
+          Object.getOwnPropertyDescriptors(response)
+        );
+      }, redactedReportingSourceOfferingV1);
+      const result = await source.execute(request(`fixture-inline-accessor-evidence-${index}`), context());
+      assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+      assert.equal(reads, 0, 'the executor never invokes an adopter evidence accessor');
+    }
+  });
+
   test('does not treat a present cell with missing row values as complete', async () => {
     const source = createInlineReportingSourceExecutor(
       input => ({
