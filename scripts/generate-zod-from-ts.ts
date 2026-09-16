@@ -151,6 +151,8 @@ const TS7056_SCHEMAS: Array<{
   { name: 'ListedCreativeCanonicalFormatKindSchema' },
   { name: 'CreateMediaBuyRequestSchema', tsType: 'CreateMediaBuyRequest', objectShape: true },
   { name: 'CanonicalProposalSchema', tsType: 'CanonicalProposal', objectShape: true },
+  { name: 'TargetingOverlaySchema', tsType: 'TargetingOverlay', objectShape: true },
+  { name: 'TargetingOverlayInputSchema', tsType: 'TargetingOverlayInput', objectShape: true },
   { name: 'GetMediaBuysResponseMediaBuySchema' },
   { name: 'GetMediaBuysResponseSchema' },
   { name: 'WholesaleFeedWebhookSchema' },
@@ -2204,6 +2206,25 @@ function sourceSchemaDocumentsById(cacheRoot: string): Record<string, unknown> {
   };
   visitDirectory(cacheRoot);
   return documents;
+}
+
+/** Dereference canonical schema URIs exclusively from the verified local cache. */
+async function dereferenceFromVerifiedSchemaCache(source: unknown, cacheRoot: string): Promise<any> {
+  const documents = sourceSchemaDocumentsById(cacheRoot);
+  const clonedSource = structuredClone(source) as Record<string, unknown>;
+  if (typeof clonedSource.$id === 'string') documents[clonedSource.$id] = clonedSource;
+  const cacheResolver = {
+    order: 1,
+    canRead: (file: { url: string }) => Object.hasOwn(documents, file.url),
+    read: (file: { url: string }) => {
+      const document = documents[file.url];
+      if (!document) throw new Error(`Schema reference is absent from the verified cache: ${file.url}`);
+      return structuredClone(document);
+    },
+  };
+  return $RefParser.dereference(clonedSource, {
+    resolve: { file: false, http: false, cache: cacheResolver },
+  });
 }
 
 /**
@@ -5058,7 +5079,11 @@ async function generateZodSchemas() {
         'utf8'
       )
     );
-    const dereferencedRefineResponse = (await $RefParser.dereference(refineResponseSource)) as any;
+    const verifiedCacheRoot = path.join(__dirname, '../schemas/cache/latest');
+    const dereferencedRefineResponse = (await dereferenceFromVerifiedSchemaCache(
+      refineResponseSource,
+      verifiedCacheRoot
+    )) as any;
     const canonicalProposalSource = dereferencedRefineResponse?.properties?.results?.items?.properties?.proposal;
     if (!canonicalProposalSource) {
       throw new Error('Unable to locate the bundled canonical proposal used by refine_proposals.');
@@ -5168,6 +5193,46 @@ async function generateZodSchemas() {
     })()`;
     zodSchemas = postProcessCanonicalProposalRuntimeConstraints(zodSchemas, exactCanonicalProposal);
 
+    // Targeting state and targeting commands intentionally differ only in
+    // whether a dimension may be null. Their TypeScript projections cannot
+    // retain wire-only constraints such as minItems and string patterns, so
+    // replace both public Zod schemas from the authoritative JSON Schemas.
+    for (const [schemaName, schemaFile] of [
+      ['TargetingOverlaySchema', 'targeting.json'],
+      ['TargetingOverlayInputSchema', 'targeting-input.json'],
+    ] as const) {
+      const source = JSON.parse(readFileSync(path.join(__dirname, '../schemas/cache/latest/core', schemaFile), 'utf8'));
+      const dereferenced = (await dereferenceFromVerifiedSchemaCache(source, verifiedCacheRoot)) as any;
+      removeDiscriminatorHints(dereferenced);
+      const rootConstraints = dereferenced.allOf;
+      delete dereferenced.allOf;
+      const objectSchema = jsonSchemaToZod(dereferenced, converterOptions).replaceAll(
+        '.url()',
+        '.refine(adcpJsonSchemaUri, "Invalid URI")'
+      );
+      const constraintSchema = jsonSchemaToZod(
+        { allOf: Array.isArray(rootConstraints) ? rootConstraints : [] },
+        converterOptions
+      ).replaceAll('.url()', '.refine(adcpJsonSchemaUri, "Invalid URI")');
+      const exact = `(() => {
+        const objectSchema = ${objectSchema};
+        const exactSchema = objectSchema.superRefine((value, ctx) => {
+          const checked = ${constraintSchema}.safeParse(value);
+          if (!checked.success) {
+            for (const issue of checked.error.issues) {
+              ctx.addIssue({ code: "custom", path: issue.path, message: issue.message });
+            }
+          }
+        });
+        return Object.assign(exactSchema, {
+          pick: objectSchema.pick.bind(objectSchema),
+          omit: objectSchema.omit.bind(objectSchema),
+          extend: objectSchema.extend.bind(objectSchema),
+        });
+      })()`;
+      zodSchemas = postProcessExactSchema(zodSchemas, schemaName, exact);
+    }
+
     // TypeScript cannot retain JSON Schema `format: uri` or root oneOf
     // exclusivity. Restore both for legacy/canonical creative identity. This
     // runs after replacing CanonicalProposalSchema because generated export
@@ -5185,7 +5250,7 @@ async function generateZodSchemas() {
       const source = JSON.parse(
         readFileSync(path.join(__dirname, '../schemas/cache/latest/formats/canonical', schemaFile), 'utf8')
       );
-      const dereferenced = (await $RefParser.dereference(source)) as any;
+      const dereferenced = (await dereferenceFromVerifiedSchemaCache(source, verifiedCacheRoot)) as any;
       removeDiscriminatorHints(dereferenced);
       // Both promoted formats extend exactly one plain object base. Flatten
       // that structural allOf before Zod projection so the public export stays
@@ -5467,6 +5532,7 @@ export const __test__ = {
   reportingStatusViewRequiredFields,
   reportingStatusClosedStructures,
   reportingFileManifestClosedStructures,
+  dereferenceFromVerifiedSchemaCache,
   postProcessGetReportingStatusViewRequiredFields,
   postProcessReportingEvidenceStrictness,
   postProcessReportingConsumerStatusConstraints,

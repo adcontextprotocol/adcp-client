@@ -16,6 +16,7 @@ const validateInput = getSchemaValidatorByRef(`media-buy/${purchaseRef.split('/'
 const permitsClear = purchaseRef.endsWith('/product-purchase-input.json');
 assert.equal(permitsClear, true, 'the current pin must retain request-only targeting input');
 const validateProposal = getSchemaValidatorByRef('core/canonical-proposal.json');
+const validateTargeting = getSchemaValidatorByRef('core/targeting.json');
 const roundtrip = value => JSON.parse(JSON.stringify(value));
 
 const overlays = [
@@ -39,6 +40,10 @@ for (const [name, overlay, validInput, validSnapshot] of overlays) {
     const wire = roundtrip(purchase);
     assert.deepEqual(wire, purchase);
     assert.equal(validateInput(wire), validInput, JSON.stringify(validateInput.errors));
+    if (overlay !== undefined && overlay !== null) {
+      assert.equal(TargetingOverlayInputSchema.safeParse(overlay).success, validInput, `${name}: input Zod`);
+      assert.equal(TargetingOverlaySchema.safeParse(overlay).success, validSnapshot, `${name}: state Zod`);
+    }
     for (const kind of ['new_media_buy', 'media_buy_update', 'media_buy_cancellation']) {
       for (const status of ['draft', 'committed', 'accepted']) {
         const commercial_terms = structuredClone(current);
@@ -76,7 +81,6 @@ for (const [name, overlay, validInput, validSnapshot] of overlays) {
 }
 
 test('all known targeting dimensions distinguish clear commands from effective state', () => {
-  const validateTargeting = getSchemaValidatorByRef('core/targeting.json');
   for (const [dimension, schema] of Object.entries(targeting.properties)) {
     const overlay = { [dimension]: null };
     assert.equal(
@@ -103,6 +107,37 @@ test('all known targeting dimensions distinguish clear commands from effective s
         dimension
       );
       assert.equal(validateTargeting({ [dimension]: [] }), false, dimension);
+      assert.equal(TargetingOverlaySchema.safeParse({ [dimension]: [] }).success, false, dimension);
+      assert.equal(TargetingOverlayInputSchema.safeParse({ [dimension]: [] }).success, false, dimension);
     }
+  }
+});
+
+test('public targeting Zod schemas preserve wire-only scalar and nested constraints', () => {
+  const invalidOverlays = [
+    { geo_countries: ['USA'] },
+    { geo_metros: [{ system: 'unsupported', values: ['501'] }] },
+    { geo_metros: [{ system: 'nielsen_dma', values: ['501'], extra: true }] },
+    { keyword_targets: [{ keyword: '', match_type: 'exact' }] },
+    { keyword_targets: [{ keyword: 'shoe', match_type: 'exact', extra: true }] },
+  ];
+  for (const overlay of invalidOverlays) {
+    const purchase = { product_id: 'product-1', pricing_option_id: 'price-1', targeting_overlay: overlay };
+    assert.equal(validateTargeting(overlay), false, JSON.stringify(overlay));
+    assert.equal(validateInput(purchase), false, JSON.stringify(overlay));
+    assert.equal(TargetingOverlaySchema.safeParse(overlay).success, false, JSON.stringify(overlay));
+    assert.equal(TargetingOverlayInputSchema.safeParse(overlay).success, false, JSON.stringify(overlay));
+  }
+});
+
+test('public targeting Zod schemas preserve open root extension fields', () => {
+  const overlay = { seller_extension: { enabled: true } };
+  const purchase = { product_id: 'product-1', pricing_option_id: 'price-1', targeting_overlay: overlay };
+  assert.equal(validateTargeting(overlay), true);
+  assert.equal(validateInput(purchase), true);
+  for (const schema of [TargetingOverlaySchema, TargetingOverlayInputSchema]) {
+    const parsed = schema.safeParse(overlay);
+    assert.equal(parsed.success, true);
+    assert.deepEqual(parsed.data, overlay);
   }
 });

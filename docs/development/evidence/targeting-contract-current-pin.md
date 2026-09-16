@@ -2,8 +2,8 @@
 
 ## Applicability on current main
 
-The audited base is `f3bee4728f8e1f647ea03609a6536a6b54a3aeab`, following
-#2917 and #2920. The original PR head is
+The rebased candidate starts from `cccb3ea83cb07dc24584e07aa2626b55761564bf`,
+following #2939. The original PR head was
 `76b044514c9b03ce7905732bd0021fcc27746940`, based on
 `ecf1c74535fb184a91c5b4279b40e8f38f4558e9` (#2907).
 
@@ -31,27 +31,35 @@ The unchanged base passes example compilation and the expanded official-MCP
 starter rejection/digest/readback assertions. The original starter TS2322 is
 therefore historical; it is not the justification for this patch.
 
-## Overlap resolution
+## Historical overlap resolution
 
-Only two of the original twelve PR paths changed after its recorded base:
+Before the final rebase, only two of the original twelve PR paths changed after
+its recorded base:
 
 | Path | Newer main change | Resolution |
 | --- | --- | --- |
 | `src/lib/types/schemas.generated.ts` | #2918 (`5591b93f`) | Regenerate from current source; preserve every non-targeting declaration. |
 | `src/type-tests/negotiation-generated-parity.type-test.ts` | #2928 (`46eb3012`) | Retain all frequency-cap, criteria, refinement and public-export assertions; append targeting assertions. |
 
-The other ten paths have no intervening blob change (including paths absent
+The other ten paths had no intervening blob change (including paths absent
 from both bases). #2907 is already the recorded base; its cardinality fallback,
 public helpers, and store implementation are retained. #2917 and #2920 have no
 direct path overlap. #2923's targeting documentation and #2936's existing-platform
-adapter and tests are inherited intact. A blob comparison preserves all 161
+adapter and tests were inherited intact. A blob comparison preserved all 161
 other paths changed since the recorded base, including deletions.
+
+The final rebase from that audited main to #2939's
+`cccb3ea83cb07dc24584e07aa2626b55761564bf` has no path overlap with this
+change. It inherits #2939's removal of obsolete preview artifacts and its exact
+published-protocol inventory guard.
 
 No historical generated files or rc.4 evidence files are carried into this
 candidate. Current generation adds six input aliases in each TypeScript unit
 and six corresponding Zod schemas. No declarations are removed. The only
 existing declarations changed are targeting aliases and input references;
-non-targeting declaration checksums match the current base.
+non-targeting declaration checksums match the current base. The two existing
+public targeting Zod exports are additionally replaced from their authoritative
+cached JSON Schemas so runtime validation does not lose wire-only constraints.
 
 ## Contracts retained
 
@@ -59,9 +67,10 @@ The transform changes naming annotations only. It is non-mutating and
 idempotent, preserves array constraints and enum items, and works with both
 root compilation orders and referenced or inline device arrays. A priority
 resolver normalizes only the cached targeting-input document. The generator's
-other reference-resolution behavior is unchanged; this is not a claim that the
-entire generator is hermetic. Missing-cache fallback remains detectable by
-generated parity tests.
+exact runtime projections dereference canonical URIs exclusively through the
+verified local cache, with network and filesystem fallback disabled. Other
+reference-resolution behavior is unchanged. Missing-cache fallback remains
+detectable by generated parity tests.
 
 The cardinality fallback remains before core-import rewriting in the tool
 pipeline and outermost in core postprocessing. Its multi-repair regression,
@@ -86,8 +95,11 @@ schema; the store deliberately represents no surviving dimensions by omission.
 Proposal tests exercise every dimension's null command across three kinds and
 three statuses using both canonical AJV and exact Zod, with JSON round trips.
 Purchase input accepts commands; commercial snapshots reject them. Array
-cardinality, invalid elements, omitted targeting and empty overlays retain their
-schema-defined distinctions. No new required request field is introduced.
+cardinality, string patterns, nested invalid values, omitted targeting and empty
+overlays have their schema-defined distinctions in both AJV and the public Zod
+schemas. This newly corrects public Zod acceptance of wire-invalid arrays,
+scalars, and nested closed-object extensions. No new required request field is
+introduced.
 
 The starter still rejects every supplied overlay before creating a buy. Its
 supported-field constructor retains product/pricing IDs, budget, optional
@@ -97,7 +109,8 @@ terms. The current-base fixed-flight test independently retains digest
 
 ## Qualification boundaries
 
-The package file budget is now 6,111 with unchanged byte ceilings. Historical
+The packed candidate contains 6,107 files and remains within the unchanged byte
+ceilings. Historical
 rc.4 comparisons against 6,059 files and an older commercial semantic guard do
 not qualify this base or establish current rc.4 compatibility. This work does
 not adopt or qualify rc.4, change a protocol pin, or alter a package budget.

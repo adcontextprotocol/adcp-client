@@ -8,6 +8,7 @@ import {
 } from '../lib';
 import * as server from '../lib/server';
 import * as mediaBuy from '../lib/media-buy';
+import { TargetingOverlayInputSchema, TargetingOverlaySchema } from '../lib/schemas';
 
 type Input = NonNullable<BuyProductsRequest['purchases'][number]['targeting_overlay']>;
 type Snapshot = NonNullable<ProposalPurchase['targeting_overlay']>;
@@ -30,6 +31,10 @@ const serverHas: typeof hasTargetingClears = server.hasTargetingClears;
 const mediaResolve: typeof resolveTargetingInput = mediaBuy.resolveTargetingInput;
 const mediaApply: typeof applyTargetingInput = mediaBuy.applyTargetingInput;
 const mediaHas: typeof hasTargetingClears = mediaBuy.hasTargetingClears;
+const pickedTargeting = TargetingOverlaySchema.pick({ geo_countries: true });
+const omittedTargeting = TargetingOverlayInputSchema.omit({ geo_countries: true });
+const extendedTargeting = TargetingOverlaySchema.extend({ seller_extension: TargetingOverlaySchema });
+const targetingShape = TargetingOverlayInputSchema.shape;
 
 // @ts-expect-error Resolution removes top-level null commands from the result.
 const invalidResolved: NonNullable<typeof resolved> = { language: null };
@@ -40,3 +45,4 @@ applyTargetingInput<Snapshot>(undefined, { device_platform: 'ios' });
 
 void [strictResolved, patched, seeded, cleared, noPatch, hasClears, serverResolve, serverApply, serverHas];
 void [mediaResolve, mediaApply, mediaHas, invalidResolved];
+void [pickedTargeting, omittedTargeting, extendedTargeting, targetingShape];
