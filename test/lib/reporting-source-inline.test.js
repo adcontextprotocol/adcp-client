@@ -1820,6 +1820,214 @@ describe('createInlineReportingSourceExecutor', () => {
     };
   }
 
+  test('validates one observation of each response field', async () => {
+    // `currency` was read to test its presence and read again to compare it, so a
+    // response naming a foreign currency on the first read and the frozen currency on the
+    // second passed a check it should have failed.
+    let currencyReads = 0;
+    const currencySource = createInlineReportingSourceExecutor(input => {
+      const response = {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+      };
+      Object.defineProperty(response, 'currency', {
+        enumerable: true,
+        get: () => {
+          currencyReads += 1;
+          return currencyReads === 1 ? 'EUR' : 'USD';
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const currencyResult = await currencySource.execute(request('fixture-inline-response-currency'), context());
+    assert.equal(validateReportingSourceFailureV1(currencyResult, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(currencyReads, 1, 'the response currency is observed exactly once');
+
+    // `reporting_period` was read once for presence and once per boundary, so a response
+    // could prove its start from one object and its end from another.
+    let periodReads = 0;
+    const periodSource = createInlineReportingSourceExecutor(input => {
+      const response = {
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+      };
+      Object.defineProperty(response, 'reporting_period', {
+        enumerable: true,
+        get: () => {
+          periodReads += 1;
+          return periodReads <= 2
+            ? { start: input.start_date, end: 'not-the-requested-end' }
+            : { start: 'not-the-requested-start', end: input.end_date };
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const periodResult = await periodSource.execute(request('fixture-inline-response-period'), context());
+    assert.equal(validateReportingSourceFailureV1(periodResult, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    assert.equal(periodReads, 1, 'the response period is observed exactly once');
+  });
+
+  test('reads an aliased totals slot once', async () => {
+    // A row whose `totals` is the row itself addresses each metric descriptor twice. The
+    // first observation was discarded as invalid and the second was sealed under
+    // `totals`, so the value staged was one the row had already denied.
+    let spendReads = 0;
+    const aliasedRow = () => {
+      const target = { media_buy_id: 'fixture-media-buy', impressions: 10 };
+      const row = new Proxy(target, {
+        getOwnPropertyDescriptor(unusedTarget, property) {
+          // `totals` aliases the row, so `totals.spend` addresses the same slot as `spend`.
+          if (property === 'totals') {
+            return { configurable: true, enumerable: true, writable: true, value: row };
+          }
+          if (property !== 'spend') return Reflect.getOwnPropertyDescriptor(target, property);
+          spendReads += 1;
+          return {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: spendReads === 1 ? {} : '999.99',
+          };
+        },
+      });
+      return row;
+    };
+    const source = createInlineReportingSourceExecutor(() => [aliasedRow()], redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-aliased-totals'), context());
+    assert.equal(spendReads, 1, 'an aliased totals slot is observed once');
+    // That single observation is not a usable value, so the metric stays unproven rather
+    // than being satisfied by a second, different answer.
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+  });
+
+  test('captures row collections by counted index, never by iterator', async () => {
+    // A collection may report a length its iterator disagrees with. Spreading ran the
+    // iterator, so 150,000 rows were materialized before the row cap rejected them.
+    let iteratorCalls = 0;
+    let producedValues = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const rows = new Proxy([], {
+        get(target, property, receiver) {
+          if (property === 'length') return 0;
+          if (property === Symbol.iterator) {
+            iteratorCalls += 1;
+            return function* oversized() {
+              for (let index = 0; index < 150_000; index += 1) {
+                producedValues += 1;
+                yield { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' };
+              }
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: rows,
+      };
+    }, redactedReportingSourceOfferingV1);
+    const slice = request('fixture-inline-iterable-row-collection');
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(iteratorCalls, 0, 'the row collection iterator is never run');
+    assert.equal(producedValues, 0, 'no row is materialized beyond the counted length');
+    // The declared length is what is admitted: zero rows is an observed empty period.
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.objects[0].rowCount, 0);
+  });
+
+  test('bounds evidence keys before reading them and requires own-data cells', async () => {
+    // An envelope carrying 100,000 unknown keys had a descriptor materialized for each
+    // one before validation could reject it.
+    let descriptorReads = 0;
+    const unknownKeys = Array.from({ length: 100_000 }, (unused, index) => `unknown_${index}`);
+    const floodedSource = createInlineReportingSourceExecutor(input => {
+      const evidence = new Proxy(
+        { version: '1.0', cells: presentAvailability(input).cells },
+        {
+          ownKeys: () => ['version', 'cells', ...unknownKeys],
+          getOwnPropertyDescriptor(target, property) {
+            descriptorReads += 1;
+            const own = Reflect.getOwnPropertyDescriptor(target, property);
+            return own ?? { configurable: true, enumerable: true, writable: true, value: 1 };
+          },
+        }
+      );
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: evidence,
+      };
+    }, redactedReportingSourceOfferingV1);
+    const flooded = await floodedSource.execute(request('fixture-inline-evidence-key-flood'), context());
+    assert.equal(validateReportingSourceFailureV1(flooded, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(descriptorReads, 0, 'no evidence descriptor is read once the key set is refused');
+
+    // A cell whose `status` is inherited from an accessor was admitted through the get
+    // channel; only own data properties may prove a cell.
+    let statusReads = 0;
+    const inheritedSource = createInlineReportingSourceExecutor(input => {
+      const proto = {};
+      Object.defineProperty(proto, 'status', {
+        enumerable: true,
+        get: () => {
+          statusReads += 1;
+          return 'present';
+        },
+      });
+      const cells = input.constituents.flatMap(constituent =>
+        input.requested_metrics.map(metric =>
+          Object.create(
+            proto,
+            Object.getOwnPropertyDescriptors({
+              constituent_id: constituent.constituent_id,
+              metric,
+              data_through: input.end_date,
+            })
+          )
+        )
+      );
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: { version: '1.0', cells },
+      };
+    }, redactedReportingSourceOfferingV1);
+    const inherited = await inheritedSource.execute(request('fixture-inline-inherited-cell-status'), context());
+    assert.equal(validateReportingSourceFailureV1(inherited, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(statusReads, 0, 'an inherited cell accessor is never invoked');
+  });
+
+  test('charges every scan pass a retained claim costs', async () => {
+    // One claim is scanned for its byte width, tested for zero and canonicalized for the
+    // duplicate comparison. Charging a single pass let a 27,000,000 character claim be
+    // admitted and then scanned several times over, so the run ended in STAGING_FAILED
+    // after the scanning rather than refusing the scan budget up front.
+    const reused = `0.${'0'.repeat(27_000_000)}`;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: reused, totals: { spend: reused } },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-scan-passes');
+    slice.coverage.expected = 'partial';
+    const started = process.hrtime.bigint();
+    const result = await source.execute(slice, context());
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.equal(validateReportingSourceFailureV1(result, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+    assert.ok(elapsedMs < 2_000, `scan-pass refusal took ${elapsedMs.toFixed(1)}ms`);
+  });
+
   test('holds captured claims within a bounded footprint', async () => {
     // Rows that identify their media buy and nothing else retain nothing through
     // projection, so the staging budget is untouched and the response is rejected as

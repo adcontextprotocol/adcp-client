@@ -173,6 +173,11 @@ const INLINE_RETAINED_BYTES_PER_CLAIM_V1 = 9;
 // cannot match one, so it is never case-folded: a huge status shared by every row used to
 // be copied once per row before a failure that was already decided.
 const INLINE_MAX_STATUS_CHARS_V1 = 32;
+// Evidence envelopes and cells carry a fixed, small field set. Both are checked against
+// these lists before any descriptor is observed.
+const INLINE_MAX_EVIDENCE_OBJECT_KEYS_V1 = 16;
+const INLINE_EVIDENCE_ENVELOPE_KEYS_V1 = ['version', 'cells'] as const;
+const INLINE_EVIDENCE_CELL_KEYS_V1 = ['constituent_id', 'metric', 'status', 'reason', 'data_through'] as const;
 const INLINE_UNAVAILABLE_ROW_STATUSES_V1 = [
   'failed',
   'reporting_delayed',
@@ -498,7 +503,23 @@ async function executeAndSeal(
   }
   const reportingRows = reportingRowsInput as readonly unknown[] | undefined;
   const mediaBuyDeliveries = mediaBuyDeliveriesInput as readonly unknown[] | undefined;
-  const responseStatus = !isRows(fetched) ? boundedLowerCaseStatus(fetched.status) : undefined;
+  // Every remaining response field is observed once, here, and only this capture is
+  // validated. Reading a field twice let a stateful response answer differently per
+  // observation: a `currency` naming a foreign currency when its presence was tested and
+  // the frozen currency when it was compared passed a check it should have failed, and a
+  // `reporting_period` could prove its start from one object and its end from another.
+  let response: DeliveryResponseSnapshotV1;
+  try {
+    response = captureDeliveryResponse(fetchedRecord);
+  } catch {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
+  }
+  const reportingRowsLength = boundedCollectionLength(reportingRows);
+  const mediaBuyDeliveriesLength = boundedCollectionLength(mediaBuyDeliveries);
+  if (reportingRowsLength === undefined || mediaBuyDeliveriesLength === undefined) {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
+  }
+  const responseStatus = response.status;
   if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
     return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
   }
@@ -510,26 +531,23 @@ async function executeAndSeal(
     (['working', 'submitted', 'input_required', 'deferred', 'reporting_delayed', 'not_ready', 'pending'].includes(
       responseStatus ?? ''
     ) ||
-      (request.publicationClass === 'AUTHORITATIVE' && fetched.is_final === false))
+      (request.publicationClass === 'AUTHORITATIVE' && response.isFinal === false))
   ) {
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
   }
   if (
     request.publicationClass === 'AUTHORITATIVE' &&
-    (isRows(fetched) || (fetched.is_final !== true && !['final', 'adjusted'].includes(fetched.notification_type ?? '')))
+    (isRows(fetched) || (response.isFinal !== true && !['final', 'adjusted'].includes(response.notificationType ?? '')))
   ) {
     return failure('NOT_READY', 'retryable', 'Authoritative inline reporting requires source finality evidence');
   }
-  if (
-    !isRows(fetched) &&
-    (fetched.partial_data || (fetched.unavailable_count ?? 0) > 0 || (fetched.errors?.length ?? 0) > 0)
-  ) {
+  if (!isRows(fetched) && (response.partialData || response.unavailableCount > 0 || response.errorCount > 0)) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned partial data');
   }
   if (
     !isRows(fetched) &&
-    fetched.pagination !== undefined &&
-    (fetched.pagination.has_more !== false || Boolean(fetched.pagination.next_cursor))
+    response.paginationPresent &&
+    (response.paginationHasMore !== false || Boolean(response.paginationNextCursor))
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned unfinished pagination');
   }
@@ -538,13 +556,13 @@ async function executeAndSeal(
   }
   if (
     !isRows(fetched) &&
-    (!fetched.reporting_period ||
-      !deliveryPeriodBoundaryMatches(fetched.reporting_period.start, deliveryDates.start, request.period.start) ||
-      !deliveryPeriodBoundaryMatches(fetched.reporting_period.end, deliveryDates.end, request.period.end))
+    (!response.periodPresent ||
+      !deliveryPeriodBoundaryMatches(response.periodStart, deliveryDates.start, request.period.start) ||
+      !deliveryPeriodBoundaryMatches(response.periodEnd, deliveryDates.end, request.period.end))
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch did not prove the requested half-open period');
   }
-  if (!isRows(fetched) && fetched.currency !== undefined && fetched.currency !== request.sourceSettings.currency) {
+  if (!isRows(fetched) && response.currency !== undefined && response.currency !== request.sourceSettings.currency) {
     return failure(
       'INTEGRITY_FAILED',
       'terminal',
@@ -553,9 +571,9 @@ async function executeAndSeal(
   }
   if (
     !isRows(fetched) &&
-    ((reportingRows?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
-      (mediaBuyDeliveries?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
-      (reportingRows?.length ?? 0) + (mediaBuyDeliveries?.length ?? 0) > INLINE_MAX_ROWS_V1)
+    (reportingRowsLength > INLINE_MAX_ROWS_V1 ||
+      mediaBuyDeliveriesLength > INLINE_MAX_ROWS_V1 ||
+      reportingRowsLength + mediaBuyDeliveriesLength > INLINE_MAX_ROWS_V1)
   ) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline delivery fetch exceeded the row limit');
   }
@@ -563,20 +581,23 @@ async function executeAndSeal(
     !isRows(fetched) &&
     reportingRows !== undefined &&
     mediaBuyDeliveries !== undefined &&
-    (reportingRows.length === 0) !== (mediaBuyDeliveries.length === 0)
+    (reportingRowsLength === 0) !== (mediaBuyDeliveriesLength === 0)
   ) {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row collections disagree about zero delivery');
   }
 
-  const sourceRowInputs = isRows(fetched)
-    ? [...fetched]
-    : reportingRows !== undefined
-      ? [...reportingRows]
-      : [...(mediaBuyDeliveries ?? [])];
-  if (sourceRowInputs.length > INLINE_MAX_ROWS_V1) {
+  // Copy by index against the length that was already counted, never by spreading. A
+  // collection reporting length zero can still yield through a custom iterator, so
+  // spreading materialized far more rows than the cap admits before the cap was checked.
+  const sourceCollection = isRows(fetched) ? fetched : (reportingRows ?? mediaBuyDeliveries ?? []);
+  const sourceRowInputs = captureRowCollection(sourceCollection, INLINE_MAX_ROWS_V1);
+  const auxiliaryRowInputs =
+    !isRows(fetched) && reportingRows !== undefined
+      ? captureRowCollection(mediaBuyDeliveries ?? [], INLINE_MAX_ROWS_V1)
+      : [];
+  if (sourceRowInputs === 'exceeded' || auxiliaryRowInputs === 'exceeded') {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline delivery fetch exceeded the row limit');
   }
-  const auxiliaryRowInputs = !isRows(fetched) && reportingRows !== undefined ? [...(mediaBuyDeliveries ?? [])] : [];
   let availabilityEvidence: z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> | undefined;
   if (!isRows(fetched) && availabilityEvidenceSlot.kind === 'unreadable') {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
@@ -763,7 +784,7 @@ async function executeAndSeal(
   const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
   if (
     readsPartialPeriod &&
-    (isRows(fetched) || fetched.data_through === undefined || fetched.observed_at === undefined)
+    (isRows(fetched) || response.dataThrough === undefined || response.observedAt === undefined)
   ) {
     return failure(
       'PARTIAL_RESULT',
@@ -773,7 +794,7 @@ async function executeAndSeal(
   }
   const observedAt = isRows(fetched)
     ? request.period.sourceReadCutoffAt
-    : normalizeDeliveryInstant(fetched.observed_at ?? request.period.sourceReadCutoffAt, deliveryDates, request.period);
+    : normalizeDeliveryInstant(response.observedAt ?? request.period.sourceReadCutoffAt, deliveryDates, request.period);
   const defaultDataThrough =
     request.publicationClass === 'AUTHORITATIVE'
       ? request.period.end
@@ -782,7 +803,7 @@ async function executeAndSeal(
         : request.period.end;
   const dataThrough = isRows(fetched)
     ? defaultDataThrough
-    : normalizeDeliveryInstant(fetched.data_through ?? defaultDataThrough, deliveryDates, request.period);
+    : normalizeDeliveryInstant(response.dataThrough ?? defaultDataThrough, deliveryDates, request.period);
   const acquiredAt = new Date().toISOString();
   const startMs = Date.parse(request.period.start);
   const endMs = Date.parse(request.period.end);
@@ -933,19 +954,24 @@ function parseInlineAvailabilityEvidence(
   // cap below with one array and then present a different array -- or a restated claim
   // in the same array -- to the validator. Unknown keys are carried into the snapshot so
   // the strict schema still rejects them.
-  const envelope = snapshotOwnDataEnvelope(input as unknown as Record<string, unknown>);
+  const envelope = snapshotOwnDataObject(input as unknown as Record<string, unknown>, INLINE_EVIDENCE_ENVELOPE_KEYS_V1);
   const inputCells = envelope.cells;
-  const cellCount = Array.isArray(inputCells) ? inputCells.length : undefined;
-  if (cellCount === undefined || !Number.isSafeInteger(cellCount)) {
-    throw new TypeError('Availability evidence cells are not a bounded array');
-  }
+  const cellCount = Array.isArray(inputCells) ? boundedCollectionLength(inputCells) : undefined;
+  if (cellCount === undefined) throw new TypeError('Availability evidence cells are not a bounded array');
   if (cellCount > SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1) {
     throw new TypeError('Availability evidence exceeds the cell limit');
   }
-  // Pin exactly the counted cells, in order, so the array that passed the cap is the
-  // array that is validated.
+  // Pin exactly the counted cells, in order, and snapshot each one from its own data
+  // properties, so the cells that passed the cap are the cells that are validated and no
+  // cell field is read through an accessor or inherited from a prototype.
   const cellSnapshot: unknown[] = new Array(cellCount);
-  for (let index = 0; index < cellCount; index += 1) cellSnapshot[index] = (inputCells as unknown[])[index];
+  for (let index = 0; index < cellCount; index += 1) {
+    const cell = (inputCells as unknown[])[index];
+    if (typeof cell !== 'object' || cell === null || Array.isArray(cell)) {
+      throw new TypeError('Availability evidence cell is not an object');
+    }
+    cellSnapshot[index] = snapshotOwnDataObject(cell as Record<string, unknown>, INLINE_EVIDENCE_CELL_KEYS_V1);
+  }
   const parsed = InlineReportingAvailabilityEvidenceV1Schema.parse({ ...envelope, cells: cellSnapshot });
   const expected = new Set(
     request.coverage.constituents.flatMap(constituent =>
@@ -1064,50 +1090,46 @@ function captureRowSnapshot(
   const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
   const values: (string | number | undefined)[] = new Array(layout.fields.length);
   const flags = new Uint8Array(layout.fields.length);
+  // `totals` aliasing its own row addresses the same descriptor twice. Reuse the single
+  // observation instead of taking a second one a stateful row could answer differently.
+  const totalsAliasesRow = totalsRecord === record;
   for (let slot = 0; slot < layout.fields.length; slot += 1) {
     const field = layout.fields[slot]!;
     const direct = ownDataClaim(record, field);
-    const nested = totalsRecord ? ownDataClaim(totalsRecord, field) : UNCLAIMED_V1;
-    // Charge both claims before anything measures or canonicalizes either one. A
-    // string's `length` is O(1), while its byte length, the zero test and the decimal
-    // trims are all O(length). Only the retained value is charged against the projection
-    // budget, so a long string appearing as the discarded half of a duplicate claim -- a
-    // tiny direct value beside a huge `totals` restatement -- otherwise bought a full
-    // scan per row at no cost, and the same string reused across rows bought one scan
-    // per occurrence.
-    chargeScan(claimScanUnits(direct.value, strictClaims) + claimScanUnits(nested.value, strictClaims));
+    const nested =
+      totalsRecord === undefined ? UNCLAIMED_V1 : totalsAliasesRow ? direct : ownDataClaim(totalsRecord, field);
+    // Charge before anything measures or canonicalizes either claim. A string's `length`
+    // is O(1), while its byte width, the zero test and the decimal canonicalization are
+    // each O(length) -- and each is a separate pass, so charging one pass let a claim be
+    // scanned several times over for a single charge. Only the retained value is charged
+    // against the projection budget, so a long string appearing as the discarded half of
+    // a duplicate claim -- a tiny direct value beside a huge `totals` restatement --
+    // otherwise bought full scans per row at no cost.
+    const passes = claimScanPasses(strictClaims, direct.claimed && nested.claimed);
+    chargeScan((claimScanWidth(direct.value, strictClaims) + claimScanWidth(nested.value, strictClaims)) * passes);
 
-    const directValid = isEvidenceValue(direct.value);
-    const nestedValid = isEvidenceValue(nested.value);
-    const value: string | number | undefined = directValid
-      ? (direct.value as string | number)
-      : nestedValid
-        ? (nested.value as string | number)
-        : undefined;
+    // Each measurement happens once per claim and is reused everywhere below.
+    const needCanonical = strictClaims && direct.claimed && nested.claimed;
+    const measuredDirect = measureClaim(direct.value, strictClaims, needCanonical);
+    const measuredNested = totalsAliasesRow ? measuredDirect : measureClaim(nested.value, strictClaims, needCanonical);
+    const resolved = measuredDirect.valid ? measuredDirect : measuredNested.valid ? measuredNested : undefined;
+    const claimed = direct.claimed ? measuredDirect : measuredNested;
     let bits = 0;
     if (direct.claimed) bits |= CLAIM_DIRECT_CLAIMED_V1;
     if (nested.claimed) bits |= CLAIM_NESTED_CLAIMED_V1;
-    if (directValid) bits |= CLAIM_DIRECT_VALID_V1;
-    if (nestedValid) bits |= CLAIM_NESTED_VALID_V1;
-    // The zero tests and the duplicate-claim comparison are read only while evidence
-    // cells are checked and projected strictly. Computing them on the legacy path scanned
-    // and canonicalized values whose results nothing would consult.
-    if (strictClaims) {
-      const claimValue = direct.claimed ? direct.value : nested.value;
-      const claimValid = direct.claimed ? directValid : nestedValid;
-      if (value !== undefined && isZeroEvidenceValue(value)) bits |= CLAIM_VALUE_IS_ZERO_V1;
-      if (claimValid && isZeroEvidenceValue(claimValue as string | number)) bits |= CLAIM_CLAIM_IS_ZERO_V1;
-      if (
-        direct.claimed &&
-        nested.claimed &&
-        directValid &&
-        nestedValid &&
-        !metricClaimsAgree(direct.value, nested.value)
-      ) {
-        bits |= CLAIM_DISAGREE_V1;
-      }
+    if (measuredDirect.valid) bits |= CLAIM_DIRECT_VALID_V1;
+    if (measuredNested.valid) bits |= CLAIM_NESTED_VALID_V1;
+    if (resolved?.isZero === true) bits |= CLAIM_VALUE_IS_ZERO_V1;
+    if (claimed.valid && claimed.isZero) bits |= CLAIM_CLAIM_IS_ZERO_V1;
+    if (
+      needCanonical &&
+      measuredDirect.valid &&
+      measuredNested.valid &&
+      !claimMeasurementsAgree(measuredDirect, measuredNested)
+    ) {
+      bits |= CLAIM_DISAGREE_V1;
     }
-    values[slot] = value;
+    values[slot] = resolved?.value;
     flags[slot] = bits;
   }
   return {
@@ -1158,7 +1180,53 @@ function anyRowCurrencyDiffers(
   return false;
 }
 
-function claimScanUnits(value: unknown, strictClaims: boolean): number {
+/**
+ * One claim measured once: the byte-width test, the zero test and the canonical decimal
+ * form are each computed at most one time and then reused by every later check.
+ */
+type MeasuredClaimV1 = {
+  readonly value: string | number | undefined;
+  readonly valid: boolean;
+  readonly isZero: boolean;
+  readonly canonical: string | undefined;
+};
+
+const UNMEASURED_CLAIM_V1: MeasuredClaimV1 = {
+  value: undefined,
+  valid: false,
+  isZero: false,
+  canonical: undefined,
+};
+
+function measureClaim(value: unknown, strictClaims: boolean, needCanonical: boolean): MeasuredClaimV1 {
+  // The only byte-width scan of this claim.
+  if (!isEvidenceValue(value)) return UNMEASURED_CLAIM_V1;
+  return {
+    value,
+    valid: true,
+    // The only zero test, and the only canonicalization.
+    isZero: strictClaims ? isZeroEvidenceValue(value) : false,
+    canonical: needCanonical ? canonicalDecimalEvidence(value) : undefined,
+  };
+}
+
+/** Two measured claims agree when they are identical or the same decimal quantity. */
+function claimMeasurementsAgree(direct: MeasuredClaimV1, nested: MeasuredClaimV1): boolean {
+  if (Object.is(direct.value, nested.value)) return true;
+  return direct.canonical !== undefined && direct.canonical === nested.canonical;
+}
+
+/**
+ * Passes a claim is scanned in: its byte width always, its zero test whenever evidence
+ * cells will read it, and its canonical form only when a duplicate claim must be
+ * reconciled.
+ */
+function claimScanPasses(strictClaims: boolean, duplicateClaim: boolean): number {
+  if (!strictClaims) return 1;
+  return duplicateClaim ? 3 : 2;
+}
+
+function claimScanWidth(value: unknown, strictClaims: boolean): number {
   if (typeof value === 'string') return value.length + 1;
   if (typeof value !== 'number') return 1;
   // Only a strict duplicate-claim comparison canonicalizes a number into plain decimal.
@@ -1603,14 +1671,6 @@ function isEvidenceValue(value: unknown): value is string | number {
   );
 }
 
-/** Two claims for one metric agree when they are identical or the same decimal quantity. */
-function metricClaimsAgree(direct: unknown, nested: unknown): boolean {
-  if (Object.is(direct, nested)) return true;
-  if (!isEvidenceValue(direct) || !isEvidenceValue(nested)) return false;
-  const canonical = canonicalDecimalEvidence(direct);
-  return canonical !== undefined && canonical === canonicalDecimalEvidence(nested);
-}
-
 /**
  * Exact plain-decimal canonical form, or undefined when the claim is not a decimal
  * quantity. A number is canonicalized from its shortest round-trip digits, so exponent
@@ -1709,15 +1769,116 @@ function ownDataClaim(record: Record<string, unknown>, field: string): { claimed
  * observation per key. Getters are never invoked: an own accessor is refused instead,
  * because an envelope that computes its own fields cannot be pinned to one observation.
  */
-function snapshotOwnDataEnvelope(record: Record<string, unknown>): Record<string, unknown> {
-  const descriptors = Object.getOwnPropertyDescriptors(record);
+/**
+ * Snapshot an evidence object from the own data descriptors of an allowlisted key set.
+ *
+ * The key list is checked against the allowlist and the key cap before any descriptor is
+ * observed, so an envelope carrying 100,000 unknown keys costs one `ownKeys` call rather
+ * than 100,000 descriptor reads. Only own data properties are copied: an accessor is
+ * refused rather than invoked, and an inherited field simply is not there, so the strict
+ * schema rejects the object for the field it is missing. A cell that computed or
+ * inherited its `status` used to be admitted through the get channel.
+ */
+function snapshotOwnDataObject(
+  record: Record<string, unknown>,
+  allowedKeys: readonly string[]
+): Record<string, unknown> {
+  const keys = Reflect.ownKeys(record);
+  if (keys.length > INLINE_MAX_EVIDENCE_OBJECT_KEYS_V1) {
+    throw new TypeError('Availability evidence object declares too many keys');
+  }
+  for (const key of keys) {
+    if (typeof key !== 'string' || !allowedKeys.includes(key)) {
+      throw new TypeError('Availability evidence object declares an unknown key');
+    }
+  }
   const snapshot: Record<string, unknown> = {};
-  for (const key of Object.keys(descriptors)) {
-    const descriptor = descriptors[key];
+  for (const key of keys as string[]) {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
     if (!descriptor || !('value' in descriptor)) throw new TypeError('Availability evidence field is not readable');
     snapshot[key] = descriptor.value;
   }
   return snapshot;
+}
+
+/**
+ * Every delivery-response field this adapter consults, observed once.
+ *
+ * Reading a response field more than once let a stateful response answer differently per
+ * observation. Validating only this capture closes that: the value a check admits is the
+ * value the next check sees.
+ */
+type DeliveryResponseSnapshotV1 = {
+  readonly status: string | undefined;
+  readonly isFinal: unknown;
+  readonly notificationType: string | undefined;
+  readonly partialData: unknown;
+  readonly unavailableCount: number;
+  readonly errorCount: number;
+  readonly paginationPresent: boolean;
+  readonly paginationHasMore: unknown;
+  readonly paginationNextCursor: unknown;
+  readonly periodPresent: boolean;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly currency: unknown;
+  readonly dataThrough: string | undefined;
+  readonly observedAt: string | undefined;
+};
+
+function captureDeliveryResponse(record: Record<string, unknown> | undefined): DeliveryResponseSnapshotV1 {
+  const period = record?.reporting_period;
+  const periodRecord = typeof period === 'object' && period !== null ? (period as Record<string, unknown>) : undefined;
+  const pagination = record?.pagination;
+  const paginationRecord =
+    typeof pagination === 'object' && pagination !== null ? (pagination as Record<string, unknown>) : undefined;
+  const errors = record?.errors;
+  const unavailableCount = record?.unavailable_count;
+  const notificationType = record?.notification_type;
+  const dataThrough = record?.data_through;
+  const observedAt = record?.observed_at;
+  return {
+    status: boundedLowerCaseStatus(record?.status),
+    isFinal: record?.is_final,
+    notificationType: typeof notificationType === 'string' ? notificationType : undefined,
+    partialData: record?.partial_data,
+    unavailableCount: typeof unavailableCount === 'number' ? unavailableCount : 0,
+    errorCount: Array.isArray(errors) ? errors.length : 0,
+    paginationPresent: record !== undefined && pagination !== undefined,
+    paginationHasMore: paginationRecord?.has_more,
+    paginationNextCursor: paginationRecord?.next_cursor,
+    // A period is proven only when both boundaries are strings on one observed object.
+    periodPresent:
+      periodRecord !== undefined && typeof periodRecord.start === 'string' && typeof periodRecord.end === 'string',
+    periodStart: typeof periodRecord?.start === 'string' ? periodRecord.start : '',
+    periodEnd: typeof periodRecord?.end === 'string' ? periodRecord.end : '',
+    currency: record?.currency,
+    dataThrough: typeof dataThrough === 'string' ? dataThrough : undefined,
+    observedAt: typeof observedAt === 'string' ? observedAt : undefined,
+  };
+}
+
+/** Single `length` observation, or undefined when the collection does not declare one. */
+function boundedCollectionLength(rows: readonly unknown[] | undefined): number | undefined {
+  if (rows === undefined) return 0;
+  const declared = (rows as { length?: unknown }).length;
+  return typeof declared === 'number' && Number.isSafeInteger(declared) && declared >= 0 ? declared : undefined;
+}
+
+/**
+ * Copy a row collection by index, bounded by its own declared length.
+ *
+ * Spreading a collection runs its iterator, and an adopter iterator is not obliged to
+ * agree with `length`: a collection reporting length zero yielded 150,000 rows, all
+ * materialized before the row cap could reject them. Indexed capture reads exactly the
+ * number of slots that was counted and admitted.
+ */
+function captureRowCollection(rows: readonly unknown[], cap: number): unknown[] | 'exceeded' {
+  const declared = boundedCollectionLength(rows);
+  if (declared === undefined || declared > cap) return 'exceeded';
+  const captured: unknown[] = new Array(declared);
+  for (let index = 0; index < declared; index += 1) captured[index] = rows[index];
+  return captured;
 }
 
 /** One bounded observation of an own data slot. */
