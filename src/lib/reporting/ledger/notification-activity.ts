@@ -314,10 +314,12 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   namespace?: string;
   tableName?: string;
   /**
-   * Event types this checkpoint owns. Anything else is another subsystem's
-   * notification and is passed through untouched — the runtime hook is global,
-   * and failing closed on an event that was never frozen here would suppress
-   * every attempt of that event until its retry horizon expired.
+   * Additional event types this checkpoint owns, on top of the mandatory
+   * `reporting.status_changed`. Anything it does not own is another
+   * subsystem's notification and is passed through untouched — the runtime hook
+   * is global, and failing closed on an event that was never frozen here would
+   * suppress every attempt of that event until its retry horizon expired. This
+   * extends the owned set; it can never remove the reporting event.
    */
   eventTypes?: readonly string[];
 }): (input: Readonly<NotificationDeliveryAttemptCheckpointInput>) => Promise<void> {
@@ -330,7 +332,11 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
     recipientTableName(options.tableName ?? DEFAULT_TABLE),
     MAX_RECIPIENT_TABLE_BYTES
   );
-  const owned = new Set(options.eventTypes ?? [REPORTING_STATUS_EVENT_TYPE]);
+  // Always owns the reporting event. Letting configuration replace the set
+  // would silently stop checkpointing reporting deliveries while the runtime
+  // still advertises checkpoint support, which is the exact shape of the bug
+  // the checkpoint exists to prevent.
+  const owned = new Set([REPORTING_STATUS_EVENT_TYPE, ...(options.eventTypes ?? [])]);
   return async input => {
     if (!owned.has(input.eventType)) return;
     const fingerprint = recipientFingerprint({
@@ -601,6 +607,7 @@ export function createPostgresReportingNotificationActivityRuntime(
             throw new Error('Pending reporting activity is not a health-transition notification');
           }
           let frozen: readonly NotificationRecipientRef[] = [];
+          let froze = false;
           const result = await options.notifications.emit({
             emissionId: claim.activity.activityId,
             notificationId: claim.activity.transitionId,
@@ -613,6 +620,7 @@ export function createPostgresReportingNotificationActivityRuntime(
             // the process. Each recipient is revisable until its own durable
             // pre-POST checkpoint and pinned afterwards.
             freezeRecipients: async candidates => {
+              froze = true;
               frozen = await freezeClaimRecipients(
                 options.db,
                 table,
@@ -625,6 +633,18 @@ export function createPostgresReportingNotificationActivityRuntime(
               return frozen;
             },
           });
+          // Declaring checkpoint support is not enough: a port that never calls
+          // freezeRecipients leaves no frozen recipient, so the checkpoint
+          // suppresses every delivery and settlement would then see nothing
+          // outstanding and project the activity as delivered although nothing
+          // was sent. The freeze is the contract, and it is verified, not
+          // assumed.
+          if (!froze) {
+            throw new Error(
+              'Reporting notification port did not freeze its recipient set; it must forward the emitted event, ' +
+                'including freezeRecipients, to a runtime that honours it. Nothing was projected.'
+            );
+          }
           metrics.matched += result.matched;
           const outcomes = result.deliveries.map(delivery => classifyDelivery(delivery));
           const settlement = await settleClaimRecipients(
@@ -898,95 +918,92 @@ async function freezeClaimRecipients(
     throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
   }
   const rows = canonicalRecipients(candidates);
-  const fingerprints = rows.map(entry => entry.fingerprint);
-  // Bound every retained row before writing, not just the addressable ones.
-  // Settled rows are kept to gate projection and to stop a subscriber being
-  // addressed twice, so a claim that keeps retrying while fresh subscribers
-  // settle would otherwise accumulate them for its whole lifetime.
-  const existing = await reportingActivityDatabaseOperation(
-    'Reporting notification recipient intent could not be measured',
-    () =>
-      db.query<{ recipient_fingerprint: string; subscriber_key: string; claimed: boolean; revisable: boolean }>(
-        `SELECT recipient_fingerprint, subscriber_key,
-                (attempt_at IS NOT NULL OR settled_at IS NOT NULL) AS claimed,
-                (attempt_at IS NULL AND settled_at IS NULL) AS revisable
-           FROM ${recipientTable}
-          WHERE namespace = $1 AND transition_id = $2`,
-        [namespace, claim.transitionId]
-      )
-  );
-  const claimedSubscribers = new Set(existing.rows.filter(row => row.claimed).map(row => row.subscriber_key));
-  const proposedFingerprints = new Set(
-    rows.filter(entry => !claimedSubscribers.has(entry.subscriberKey)).map(entry => entry.fingerprint)
-  );
-  const surviving = existing.rows.filter(
-    row => !row.revisable || proposedFingerprints.has(row.recipient_fingerprint)
-  ).length;
-  const additions = [...proposedFingerprints].filter(
-    fingerprint => !existing.rows.some(row => row.recipient_fingerprint === fingerprint)
-  ).length;
-  if (surviving + additions > maxRecipients) {
-    throw new Error(
-      `Reporting notification recipient intent would hold ${surviving + additions} recipients, above maxRecipients ` +
-        `${maxRecipients}; raise maxRecipients or reduce the destination churn on this notification`
-    );
-  }
-  // One statement, so the replacement of revisable rows and the insertion of
-  // the newly resolved ones cannot be interrupted halfway. The returned set is
-  // assembled from the statement's own CTEs rather than re-read from the table,
-  // because every sub-statement shares one snapshot and would not see the rows
-  // this statement just inserted.
+  // Reclaim before measuring. Settled duplicates of one subscriber carry no
+  // further meaning, and refusing on a bound that compaction could have
+  // satisfied would strand the notification permanently.
+  await compactSettledRecipients(db, recipientTable, namespace, claim.transitionId);
+  // Budget and mutation are one statement. Measuring separately let a
+  // concurrent checkpoint turn a revisable row into a pinned one between the
+  // measurement and the write, pushing the retained set past the bound; a
+  // single statement either applies the whole replacement or mutates nothing.
   const committed = await reportingActivityDatabaseOperation(
     'Reporting notification recipient intent could not be committed',
     () =>
-      db.query<{ recipient: NotificationRecipientRef }>(
+      db.query<{ leased: boolean; ok: boolean; retained: number; recipient: NotificationRecipientRef | null }>(
         `WITH leased AS (
            SELECT transition_id FROM ${table}
             WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
               AND lease_owner = $3 AND lease_version = $4::bigint
               AND lease_expires_at >= clock_timestamp()
+         ), existing AS (
+           -- FOR UPDATE is what serializes this statement against a concurrent
+           -- checkpoint. Without it the budget is computed from a snapshot in
+           -- which a row is still revisable, the DELETE then re-checks the
+           -- locked row, finds it attempted and skips it, and the retained set
+           -- lands one row above the budget that approved the write.
+           SELECT current.recipient_fingerprint, current.subscriber_key, current.recipient,
+                  current.attempt_at, current.settled_at
+             FROM ${recipientTable} current, leased
+            WHERE current.namespace = $1 AND current.transition_id = $2
+            FOR UPDATE OF current
          ), claimed AS (
-           SELECT existing.subscriber_key
-             FROM ${recipientTable} existing, leased
-            WHERE existing.namespace = $1 AND existing.transition_id = $2
-              AND (existing.attempt_at IS NOT NULL OR existing.settled_at IS NOT NULL)
-         ), pinned AS (
-           SELECT existing.recipient_fingerprint AS fingerprint, existing.recipient
-             FROM ${recipientTable} existing, leased
-            WHERE existing.namespace = $1 AND existing.transition_id = $2
-              AND existing.attempt_at IS NOT NULL
-              AND existing.settled_at IS NULL
+           SELECT subscriber_key FROM existing
+            WHERE attempt_at IS NOT NULL OR settled_at IS NOT NULL
          ), proposed AS (
            SELECT entry.fingerprint, entry.subscriber_key, entry.recipient::jsonb AS recipient
              FROM leased, unnest($5::text[], $6::text[], $7::text[])
                     AS entry(fingerprint, subscriber_key, recipient)
             WHERE NOT EXISTS (SELECT 1 FROM claimed WHERE claimed.subscriber_key = entry.subscriber_key)
+         ), budget AS (
+           SELECT
+             (SELECT count(*) FROM existing
+               WHERE attempt_at IS NOT NULL OR settled_at IS NOT NULL
+                  OR recipient_fingerprint IN (SELECT fingerprint FROM proposed))
+             + (SELECT count(*) FROM proposed
+                 WHERE fingerprint NOT IN (SELECT recipient_fingerprint FROM existing)) AS retained
+         ), gate AS (
+           SELECT retained, retained <= $8::integer AS ok FROM budget
          ), dropped AS (
-           DELETE FROM ${recipientTable} stale USING leased
-            WHERE stale.namespace = $1 AND stale.transition_id = $2
+           DELETE FROM ${recipientTable} stale USING gate
+            WHERE gate.ok AND stale.namespace = $1 AND stale.transition_id = $2
               AND stale.attempt_at IS NULL AND stale.settled_at IS NULL
               AND NOT (stale.recipient_fingerprint IN (SELECT fingerprint FROM proposed))
          ), added AS (
            INSERT INTO ${recipientTable}
              (namespace, transition_id, recipient_fingerprint, subscriber_key, recipient)
-           SELECT $1, $2, proposed.fingerprint, proposed.subscriber_key, proposed.recipient FROM proposed
+           SELECT $1, $2, proposed.fingerprint, proposed.subscriber_key, proposed.recipient
+             FROM proposed, gate WHERE gate.ok
            ON CONFLICT (namespace, transition_id, recipient_fingerprint) DO NOTHING
+         ), pinned AS (
+           SELECT recipient FROM existing WHERE attempt_at IS NOT NULL AND settled_at IS NULL
          )
-         SELECT recipient FROM proposed
-          UNION ALL
-         SELECT recipient FROM pinned`,
+         SELECT (SELECT count(*) FROM leased) = 1 AS leased, gate.ok, gate.retained, entry.recipient
+           FROM gate
+           LEFT JOIN (SELECT recipient FROM proposed UNION ALL SELECT recipient FROM pinned) entry ON TRUE`,
         [
           namespace,
           claim.transitionId,
           claim.leaseOwner,
           claim.leaseVersion,
-          fingerprints,
+          rows.map(entry => entry.fingerprint),
           rows.map(entry => entry.subscriberKey),
           rows.map(entry => JSON.stringify(entry.recipient)),
+          maxRecipients,
         ]
       )
   );
-  return committed.rows.map(row => row.recipient);
+  const verdict = committed.rows[0];
+  if (!verdict?.leased) {
+    throw new Error('Reporting notification recipient intent was not committed; the recovery lease was lost');
+  }
+  if (!verdict.ok) {
+    throw new Error(
+      `Reporting notification recipient intent would hold ${verdict.retained} recipients, above maxRecipients ` +
+        `${maxRecipients}; nothing was changed. Raise maxRecipients to at least the number of distinct subscribers ` +
+        'this notification can address, or reduce the destination churn on it'
+    );
+  }
+  return committed.rows.flatMap(row => (row.recipient === null ? [] : [row.recipient]));
 }
 
 /**
@@ -1033,29 +1050,7 @@ async function settleClaimRecipients(
         [namespace, claim.transitionId, delivered, terminal]
       )
     );
-    // Compact terminal history to one row per subscriber. Superseded
-    // generations of a settled subscriber carry no further meaning: the
-    // surviving row still gates projection, still records the disposition for
-    // audit, and still stops that subscriber being addressed again. Only rows
-    // that are already settled are touched, so nothing in flight is disturbed
-    // and a crash simply repeats an idempotent delete.
-    await reportingActivityDatabaseOperation('Reporting notification recipient compaction failed', () =>
-      db.query(
-        `DELETE FROM ${recipientTable} superseded
-          WHERE superseded.namespace = $1 AND superseded.transition_id = $2
-            AND superseded.settled_at IS NOT NULL
-            AND EXISTS (
-              SELECT 1 FROM ${recipientTable} survivor
-               WHERE survivor.namespace = superseded.namespace
-                 AND survivor.transition_id = superseded.transition_id
-                 AND survivor.subscriber_key = superseded.subscriber_key
-                 AND survivor.settled_at IS NOT NULL
-                 AND (survivor.disposition, survivor.recipient_fingerprint)
-                     > (superseded.disposition, superseded.recipient_fingerprint)
-            )`,
-        [namespace, claim.transitionId]
-      )
-    );
+    await compactSettledRecipients(db, recipientTable, namespace, claim.transitionId);
   }
   const remaining = await reportingActivityDatabaseOperation('Reporting notification recipient settlement failed', () =>
     db.query<{ unsettled: number }>(
@@ -1066,6 +1061,40 @@ async function settleClaimRecipients(
   );
   const unsettled = remaining.rows[0]?.unsettled ?? 0;
   return { settled: unsettled === 0, unsettled };
+}
+
+/**
+ * Compacts terminal history to one row per subscriber.
+ *
+ * Superseded generations of a settled subscriber carry no further meaning: the
+ * surviving row still gates projection, still records a disposition for audit,
+ * and still stops that subscriber being addressed again. Only rows that are
+ * already settled are touched, so nothing in flight is disturbed and a crash
+ * simply repeats an idempotent delete.
+ */
+async function compactSettledRecipients(
+  db: ReportingLedgerTransactionV1,
+  recipientTable: string,
+  namespace: string,
+  transitionId: string
+): Promise<void> {
+  await reportingActivityDatabaseOperation('Reporting notification recipient compaction failed', () =>
+    db.query(
+      `DELETE FROM ${recipientTable} superseded
+        WHERE superseded.namespace = $1 AND superseded.transition_id = $2
+          AND superseded.settled_at IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM ${recipientTable} survivor
+             WHERE survivor.namespace = superseded.namespace
+               AND survivor.transition_id = superseded.transition_id
+               AND survivor.subscriber_key = superseded.subscriber_key
+               AND survivor.settled_at IS NOT NULL
+               AND (survivor.disposition, survivor.recipient_fingerprint)
+                   > (superseded.disposition, superseded.recipient_fingerprint)
+          )`,
+      [namespace, transitionId]
+    )
+  );
 }
 
 /** Per-recipient disposition derived from one fanout delivery. */

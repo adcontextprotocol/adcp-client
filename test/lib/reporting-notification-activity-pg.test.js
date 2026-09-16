@@ -529,77 +529,50 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(delivered().length, 1);
   });
 
-  test('without the freeze barrier the same replay delivers twice under two idempotency keys', async () => {
-    // The hazard the barrier removes, demonstrated against the same PostgreSQL
-    // runtime. The only difference from the test above is a notification runtime
-    // that drops `freezeRecipients` and therefore re-enumerates subscriptions on
-    // every attempt — exactly what a custom runtime does by default.
-    const scope = {
-      kind: 'account',
-      tenantId: 'tenant-a',
-      principalId: 'principal-unfrozen',
-      accountId: 'account-unfrozen',
-    };
-    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/unfrozen-g1');
-    const obligation = await putObligation('recipient-unfrozen', 'account-unfrozen');
+  test('refuses a port that skips the freeze rather than projecting an unsent notification', async () => {
+    // A port can declare checkpoint support and still never freeze. Nothing is
+    // then addressable, the checkpoint has no row to mark, and a runtime that
+    // trusted the declaration would settle zero outstanding recipients and
+    // record the notification as delivered.
+    const recovery = isolatedActivity('skips-freeze');
+    await installSubscription('tenant-a', 'principal-skip', 'account-skip', 'https://buyer.example/skip');
+    const obligation = await putObligation('skips-freeze', 'account-skip', recovery.store);
     const transition = await ledger.reconcileReportingStatusLifecycleV1({
-      store,
+      store: recovery.store,
       reporting_obligation_id: obligation.reporting_obligation_id,
       ledgerAsOf: '2026-09-02T01:30:00.000Z',
     });
     assert.ok(transition);
-    const delivered = () => fetchCalls.filter(value => value.body.notification_id === transition.transitionId);
-
-    const unfrozen = notify => ({
+    const skipping = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
-      namespace: 'reporting-activity-tests',
-      tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      // Deliberately unfrozen and uncheckpointed: this is the hazard A/B.
-      acknowledgeMissingAttemptCheckpoint: true,
-      notifications: { emit: ({ freezeRecipients, beforeExternalAttempt, ...event }) => notify(event) },
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        // Declares the capability, then drops the freeze on the floor.
+        hasDeliveryAttemptCheckpoint: true,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        emit: ({ freezeRecipients, ...event }) => notifications.emit(event),
+      },
     });
-    const crashing = ledger.createPostgresReportingNotificationActivityRuntime(
-      unfrozen(async event => {
-        await notificationsWithoutCheckpoint.emit(event);
-        throw new Error('crash after send, before settlement');
-      })
-    );
-    assert.equal((await crashing.recoverOnce({ ownerToken: 'unfrozen-worker-one' })).retried, 1);
-    assert.equal(delivered().length, 1);
+    const errors = [];
+    const pass = await skipping.recoverOnce({
+      ownerToken: 'skip-worker',
+      limit: 1,
+      retryAfterMs: 1,
+      onError: error => errors.push(error),
+    });
+    assert.equal(pass.projected, 0, 'an unfrozen emission is never projected');
+    assert.equal(pass.retried, 1);
+    assert.match(errors.at(-1)?.message ?? '', /did not freeze its recipient set/);
+    const intent = await readIntent(transition.transitionId, recovery.namespace);
+    assert.equal(intent.state, 'pending', 'the activity stays pending rather than being recorded as delivered');
+    assert.equal(intent.recipients.length, 0);
 
-    const current = await notifications.read(scope);
-    await notifications.replace(
-      scope,
-      [
-        {
-          subscriber_id: 'account-unfrozen-subscriber',
-          url: 'https://buyer.example/unfrozen-g2',
-          event_types: ['reporting.status_changed'],
-        },
-      ],
-      { expectedGeneration: current.generation }
-    );
-    await pool.query(
-      `UPDATE adcp_reporting_notification_activity SET next_attempt_at = clock_timestamp()
-        WHERE namespace = $1 AND transition_id = $2`,
-      ['reporting-activity-tests', transition.transitionId]
-    );
-    const replaying = ledger.createPostgresReportingNotificationActivityRuntime(
-      unfrozen(event => notificationsWithoutCheckpoint.emit(event))
-    );
-    assert.equal((await replaying.recoverOnce({ ownerToken: 'unfrozen-worker-two' })).projected, 1);
-
-    assert.deepEqual(
-      delivered().map(value => value.url),
-      ['https://buyer.example/unfrozen-g1', 'https://buyer.example/unfrozen-g2'],
-      're-enumeration addresses the replacement generation for an already-sent notification'
-    );
-    assert.equal(
-      new Set(delivered().map(value => value.body.idempotency_key)).size,
-      2,
-      'the second delivery carries a new idempotency key, so the buyer cannot dedupe it'
-    );
+    // The same claim settles normally once a conforming port handles it.
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const recovered = await recovery.activity.recoverOnce({ ownerToken: 'skip-worker-two', limit: 1 });
+    assert.equal(recovered.projected, 1);
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
   });
 
   test('retries operational delivery-authority failures instead of recording them as delivered', async () => {
@@ -1760,6 +1733,320 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     );
   });
 
+  test('never exceeds the recipient bound when a checkpoint races a replacement at the limit', async () => {
+    // Bound enforcement and replacement must be one statement. Measuring first
+    // let a concurrent checkpoint turn a revisable row into a pinned one before
+    // the write landed, so the retained set overshot the bound and every later
+    // freeze then refused — permanently, since the refusal preceded compaction.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-atomic',
+      accountId: 'account-atomic',
+    };
+    const recovery = isolatedActivity('bound-atomic', { maxRecipients: 1 });
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/atomic-g1');
+    const obligation = await putObligation('bound-atomic', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const retainedCount = async () =>
+      (
+        await pool.query(
+          `SELECT count(*)::integer AS total FROM adcp_reporting_notification_activity_recipients
+            WHERE namespace = $1 AND transition_id = $2`,
+          [recovery.namespace, transition.transitionId]
+        )
+      ).rows[0].total;
+
+    const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      maxRecipients: 1,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: event =>
+          notifications.emit({
+            ...event,
+            freezeRecipients: async candidates => {
+              const frozen = await event.freezeRecipients(candidates);
+              throw new Error('stop before any attempt');
+            },
+          }),
+      },
+    });
+    await freezeOnly.recoverOnce({ ownerToken: 'atomic-freeze', limit: 1, retryAfterMs: 1 });
+    const frozen = await readIntent(transition.transitionId, recovery.namespace);
+    assert.equal(frozen.recipients.length, 1);
+    const generationOne = frozen.recipients[0];
+
+    // Hold the generation-one checkpoint open so the racing freeze cannot see
+    // it, then replace the destination and freeze from that stale snapshot.
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await ledger.createPostgresReportingNotificationAttemptCheckpoint({
+        db: holder,
+        namespace: recovery.namespace,
+      })({
+        scope: generationOne.scope,
+        eventAnchor: 'account',
+        accountId: scope.accountId,
+        subscriberId: generationOne.subscriberId,
+        destinationGeneration: generationOne.destinationGeneration,
+        eventType: 'reporting.status_changed',
+        notificationId: transition.transitionId,
+        signal: new AbortController().signal,
+      });
+      const current = await notifications.read(scope);
+      await notifications.replace(
+        scope,
+        [
+          {
+            subscriber_id: 'account-atomic-subscriber',
+            url: 'https://buyer.example/atomic-g2',
+            event_types: ['reporting.status_changed'],
+          },
+        ],
+        { expectedGeneration: current.generation }
+      );
+      await makeClaimEligible(recovery.namespace, transition.transitionId);
+      const racing = freezeOnly.recoverOnce({ ownerToken: 'atomic-freeze-two', limit: 1, retryAfterMs: 1 });
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await holder.query('COMMIT');
+      await racing;
+    } finally {
+      holder.release();
+    }
+    assert.ok((await retainedCount()) <= 1, `the race never pushes the retained set past the bound`);
+
+    // And the notification still converges: it is not stranded behind a bound
+    // that no later pass could satisfy.
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const settled = await recovery.activity.recoverOnce({ ownerToken: 'atomic-settle', limit: 1 });
+    assert.equal(settled.projected, 1, 'the claim settles rather than being stranded');
+    assert.ok((await retainedCount()) <= 1);
+    assert.ok(
+      fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length <= 1,
+      'at most one logical delivery'
+    );
+  });
+
+  test('refuses an over-budget recipient set without mutating anything', async () => {
+    // A refusal must leave the stored intent exactly as it was, so a later pass
+    // with a workable bound can still make progress.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-refuse',
+      accountId: 'account-refuse',
+    };
+    const recovery = isolatedActivity('bound-refuse', { maxRecipients: 1 });
+    await notifications.replace(scope, [
+      { subscriber_id: 'refuse-a', url: 'https://buyer.example/refuse-a', event_types: ['reporting.status_changed'] },
+    ]);
+    const obligation = await putObligation('bound-refuse', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    // One subscriber is already retained as settled, so a single new candidate
+    // is still one recipient too many: this exercises the retained budget, not
+    // the candidate-count guard.
+    await pool.query(
+      `INSERT INTO adcp_reporting_notification_activity_recipients
+         (namespace, transition_id, recipient_fingerprint, subscriber_key, recipient, settled_at, disposition)
+       VALUES ($1, $2, $3, $4, $5::jsonb, clock_timestamp(), 'delivered')`,
+      [
+        recovery.namespace,
+        transition.transitionId,
+        'a'.repeat(64),
+        'b'.repeat(64),
+        JSON.stringify({ scope, subscriberId: 'refuse-settled', destinationGeneration: 'dest_settled' }),
+      ]
+    );
+    const overflowing = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      maxRecipients: 1,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: event => event.freezeRecipients([{ scope, subscriberId: 'refuse-a', destinationGeneration: 'dest_a' }]),
+      },
+    });
+    const errors = [];
+    const pass = await overflowing.recoverOnce({
+      ownerToken: 'refuse-worker',
+      limit: 1,
+      retryAfterMs: 1,
+      onError: error => errors.push(error),
+    });
+    assert.equal(pass.projected, 0);
+    assert.match(errors.at(-1)?.message ?? '', /would hold 2 recipients, above maxRecipients 1/);
+    const stored = await pool.query(
+      `SELECT recipient_fingerprint FROM adcp_reporting_notification_activity_recipients
+        WHERE namespace = $1 AND transition_id = $2`,
+      [recovery.namespace, transition.transitionId]
+    );
+    assert.deepEqual(
+      stored.rows.map(row => row.recipient_fingerprint),
+      ['a'.repeat(64)],
+      'the refusal mutated nothing: no insert, and the retained row survives'
+    );
+
+    // Raising the bound is the documented remedy, and the claim self-heals:
+    // the refusal left no state behind that could block it.
+    const widened = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      notifications,
+      namespace: recovery.namespace,
+      maxRecipients: 4,
+      tenantScopeForAccount: () => 'tenant-a',
+    });
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const recovered = await widened.recoverOnce({ ownerToken: 'refuse-worker-two', limit: 1 });
+    assert.equal(recovered.projected, 1, 'the claim is not stranded by the refusal');
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
+  });
+
+  test('compacts superseded terminal history before refusing on the recipient bound', async () => {
+    // The refusal used to precede compaction, so a bound that compaction could
+    // have satisfied stranded the notification permanently.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-compact',
+      accountId: 'account-compact',
+    };
+    const recovery = isolatedActivity('bound-compact', { maxRecipients: 2 });
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/compact');
+    const obligation = await putObligation('bound-compact', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    // Two superseded generations of one already-settled subscriber. They are
+    // reclaimable: only one row per subscriber carries any meaning.
+    for (const [fingerprint, generation] of [
+      ['c'.repeat(64), 'dest_old_one'],
+      ['d'.repeat(64), 'dest_old_two'],
+    ]) {
+      await pool.query(
+        `INSERT INTO adcp_reporting_notification_activity_recipients
+           (namespace, transition_id, recipient_fingerprint, subscriber_key, recipient, settled_at, disposition)
+         VALUES ($1, $2, $3, $4, $5::jsonb, clock_timestamp(), 'delivered')`,
+        [
+          recovery.namespace,
+          transition.transitionId,
+          fingerprint,
+          'e'.repeat(64),
+          JSON.stringify({ scope, subscriberId: 'compact-old', destinationGeneration: generation }),
+        ]
+      );
+    }
+    const before = await pool.query(
+      `SELECT count(*)::integer AS total FROM adcp_reporting_notification_activity_recipients
+        WHERE namespace = $1 AND transition_id = $2`,
+      [recovery.namespace, transition.transitionId]
+    );
+    assert.equal(before.rows[0].total, 2);
+
+    // Two retained rows plus the live recipient is three, above the bound of
+    // two — unless the superseded pair is compacted first.
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const pass = await recovery.activity.recoverOnce({ ownerToken: 'compact-worker', limit: 1 });
+    assert.equal(pass.projected, 1, 'compaction reclaims the superseded row, so the claim is not stranded');
+    const after = await pool.query(
+      `SELECT count(*)::integer AS total FROM adcp_reporting_notification_activity_recipients
+        WHERE namespace = $1 AND transition_id = $2`,
+      [recovery.namespace, transition.transitionId]
+    );
+    assert.equal(after.rows[0].total, 2, 'one row per subscriber survives: the compacted one and the live one');
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
+  });
+
+  test('keeps owning the reporting event when the checkpoint is configured for another', async () => {
+    // Configuration extends the owned set; it can never remove the reporting
+    // event, which would silently stop checkpointing reporting deliveries while
+    // the runtime still advertised checkpoint support.
+    const recovery = isolatedActivity('event-ownership');
+    await installSubscription('tenant-a', 'principal-own', 'account-own', 'https://buyer.example/own');
+    const obligation = await putObligation('event-ownership', 'account-own', recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    // Freeze the recipient set without attempting, so a checkpoint is required.
+    const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: event =>
+          notifications.emit({
+            ...event,
+            freezeRecipients: async candidates => {
+              await event.freezeRecipients(candidates);
+              throw new Error('stop before any attempt');
+            },
+          }),
+      },
+    });
+    await freezeOnly.recoverOnce({ ownerToken: 'ownership-freeze', limit: 1, retryAfterMs: 1 });
+    const frozen = await readIntent(transition.transitionId, recovery.namespace);
+    assert.equal(frozen.recipients.length, 1);
+
+    // A checkpoint configured only for some other event still checkpoints the
+    // reporting delivery.
+    const extended = ledger.createPostgresReportingNotificationAttemptCheckpoint({
+      db: pool,
+      namespace: recovery.namespace,
+      eventTypes: ['some.other.event'],
+    });
+    await extended({
+      scope: frozen.recipients[0].scope,
+      eventAnchor: 'account',
+      accountId: 'account-own',
+      subscriberId: frozen.recipients[0].subscriberId,
+      destinationGeneration: frozen.recipients[0].destinationGeneration,
+      eventType: 'reporting.status_changed',
+      notificationId: transition.transitionId,
+      signal: new AbortController().signal,
+    });
+    assert.equal(
+      (await readIntent(transition.transitionId, recovery.namespace)).attempted,
+      1,
+      'the mandatory reporting event is still owned and still checkpointed'
+    );
+    // The extra event is owned too, and is still failed closed when unfrozen.
+    await assert.rejects(
+      () =>
+        extended({
+          scope: frozen.recipients[0].scope,
+          eventAnchor: 'account',
+          accountId: 'account-own',
+          subscriberId: frozen.recipients[0].subscriberId,
+          destinationGeneration: frozen.recipients[0].destinationGeneration,
+          eventType: 'some.other.event',
+          notificationId: 'notification-not-frozen',
+          signal: new AbortController().signal,
+        }),
+      /no frozen recipient/
+    );
+  });
+
   test('refuses legacy subscribers beside the transactional port', async () => {
     const obligation = await putObligation('subscriber-conflict', 'account-a');
     await assert.rejects(
@@ -2175,6 +2462,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         hasDeliveryAttemptCheckpoint: true,
         async emit(event) {
           emissions += 1;
+          await event.freezeRecipients([]);
           await new Promise(resolve => setTimeout(resolve, 2_500));
           return { notificationId: event.notificationId, emissionId: event.emissionId, matched: 0, deliveries: [] };
         },

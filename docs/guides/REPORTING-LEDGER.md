@@ -217,7 +217,11 @@ where an ambiguous send is most likely.
 The hook is runtime-wide, so the reporting checkpoint passes any event type it
 does not own straight through. Failing closed on another subsystem's
 notification would suppress every one of its attempts until the retry horizon
-expired. Pass `eventTypes` if you own more than `reporting.status_changed`.
+expired. `eventTypes` **extends** the owned set and can never shrink it —
+`reporting.status_changed` is always owned, because a configuration that
+silently stopped checkpointing reporting deliveries while the runtime still
+advertised checkpoint support is the precise bug the checkpoint exists to
+prevent.
 
 Construction and `probe()` both fail closed unless the notification port proves
 it runs the checkpoint. A custom `{ emit }` port must set
@@ -226,6 +230,13 @@ handed to a runtime that does; otherwise a crash plus a destination replacement
 re-addresses the notification under a second generation and idempotency key.
 `acknowledgeMissingAttemptCheckpoint` exists only for tests that deliberately
 demonstrate that hazard.
+
+Declaring the capability is not sufficient, and is not trusted. Freeze and
+checkpoint are one contract: a port that declares support but never calls
+`freezeRecipients` leaves nothing addressable, so the checkpoint has no row to
+mark and settlement would see zero outstanding recipients and record the
+notification as delivered although nothing was sent. The runtime verifies that
+the freeze actually ran and refuses to project the emission otherwise.
 
 The checkpoint and a concurrent recipient replacement run as separate statements
 against a pool, so neither sees the other's uncommitted work: a freeze can
@@ -253,9 +264,16 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
   out of later emissions — it still gates projection, but re-addressing it would
   be redundant traffic.
 - Settled history is compacted to one row per subscriber, and `maxRecipients`
-  bounds **every retained row**, checked before the write. Counting only the
-  addressable recipients let terminal rows grow for the lifetime of a claim that
-  kept retrying while fresh subscribers settled.
+  bounds **every retained row**. Counting only the addressable recipients let
+  terminal rows grow for the lifetime of a claim that kept retrying while fresh
+  subscribers settled.
+- The bound and the replacement are one statement, and the rows it measures are
+  taken `FOR UPDATE`. Measuring separately let a concurrent checkpoint turn a
+  revisable row into a pinned one after the budget approved the write: the
+  `DELETE` then re-checked the locked row, skipped it, and the retained set
+  landed above the bound. Compaction runs before the budget, so a bound that
+  compaction can satisfy never refuses, and a refusal mutates nothing — raise
+  `maxRecipients` and the claim self-heals on its next pass.
 
 | Replacement lands | Outcome |
 | --- | --- |
