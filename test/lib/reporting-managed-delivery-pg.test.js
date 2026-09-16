@@ -3304,6 +3304,88 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(stored.rows[0].processed_roster_version, 'a2');
   });
 
+  test('does not overwrite a roster observation published while the apply was in flight', async () => {
+    const raced = await seedSkewLedger('rostercas', 'consumer_receipt');
+    let version = 'r1';
+    const roster = async () => ({ ids: ['https://rostercas.example'], complete: true, version });
+    const { Pool } = require('pg');
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+    const sideStore = new ledger.PostgresReportingLedgerStore(sidePool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: roster,
+    });
+    let interleaved = 0;
+    const interleavingPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = async (sql, values) => {
+          const result = await query(sql, values);
+          if (
+            interleaved === 0 &&
+            typeof sql === 'string' &&
+            sql.includes('FROM adcp_reporting_obligations WHERE obligation_id = $1 FOR UPDATE')
+          ) {
+            interleaved += 1;
+            // The roster changes and a refresh publishes it on an
+            // independent connection, after this reconcile re-checked the
+            // version and while its apply is open. The apply then wrote the
+            // version it had used over the newer observation, and because
+            // due-ness is exactly "current differs from processed", the
+            // change had nothing left to re-arm from.
+            version = 'r2';
+            await sideStore.recordObligatedConsumerRosterVersion({
+              reporting_obligation_id: raced.obligation.reporting_obligation_id,
+              version: 'r2',
+            });
+          }
+          return result;
+        };
+        const release = client.release.bind(client);
+        client.release = (...args) => {
+          client.query = query;
+          client.release = release;
+          return release(...args);
+        };
+        return client;
+      },
+      query: (sql, values) => pool.query(sql, values),
+      end: async () => {},
+    };
+
+    try {
+      const rosterStore = new ledger.PostgresReportingLedgerStore(interleavingPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+        obligatedConsumers: roster,
+      });
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store: rosterStore,
+        reporting_obligation_id: raced.obligation.reporting_obligation_id,
+      });
+      assert.equal(interleaved, 1, 'the interleaving actually fired — otherwise this test proves nothing');
+      const stored = await pool.query(
+        `SELECT current_roster_version, processed_roster_version FROM adcp_reporting_lifecycle_state
+          WHERE obligation_id = $1`,
+        [raced.obligation.reporting_obligation_id]
+      );
+      assert.equal(
+        stored.rows[0].current_roster_version,
+        'r2',
+        'the newer roster observation survives the apply that did not see it'
+      );
+      // Either it was reconciled against r2 on the retry, or it is still due
+      // for one. What it may never be is settled against r1 with the change
+      // erased.
+      const settledAgainstStale =
+        stored.rows[0].processed_roster_version === 'r1' && stored.rows[0].current_roster_version === 'r1';
+      assert.equal(settledAgainstStale, false);
+    } finally {
+      await sidePool.end();
+    }
+  });
+
   test('does not let a fast worker host bury database-timestamped work', async () => {
     const skewed = await seedSkewLedger('hostskew', 'consumer_receipt');
     const adapter = {
@@ -3898,6 +3980,356 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       await capPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${capSchema}" CASCADE`);
     }
+  });
+
+  async function deliverOnce(fixtureValue, storeValue = managed) {
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(fixtureValue),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await storeValue.planMaterializations({ account_id: fixtureValue.accountId });
+    await ledger.runManagedDeliveryWorker(storeValue, adapter, {
+      maxIterations: 2,
+      account_id: fixtureValue.accountId,
+    });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [fixtureValue.obligation.reporting_obligation_id]
+    );
+    fixtureValue.materialization = settled.rows[0].data;
+    return fixtureValue;
+  }
+
+  test('keeps a pruned rejected leaf in the chain instead of reopening the subject', async () => {
+    const chain = await deliverOnce(await seedSkewLedger('tombchain', 'consumer_receipt'));
+    const context = { account: { id: chain.accountId }, agent: { agent_url: 'https://tombchain-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const first = await sync(
+      {
+        idempotency_key: 'receipt-tombchain-batch-0001',
+        receipts: [
+          receipt(chain, {
+            reporting_receipt_id: 'receipt-tombchain-0001',
+            status: 'rejected',
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(first.results[0].result, 'recorded');
+
+    // Age the receipt and its replay row out, and let the resource horizon
+    // pass so the acceptance hold does not keep it. The materialization row
+    // itself stays inside retention, so the evidence a later correction
+    // needs is still there and this is purely about the receipt chain.
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [chain.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [chain.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [chain.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    const pruned = await retaining.pruneExpiredEvidence({ account_id: chain.accountId });
+    assert.equal(pruned.receipts, 1, 'the rejected leaf body is gone');
+    const tombstone = await pool.query(
+      `SELECT was_current, status FROM adcp_reporting_receipt_tombstones
+        WHERE account_id = $1 AND reporting_receipt_id = 'receipt-tombchain-0001'`,
+      [chain.accountId]
+    );
+    assert.equal(tombstone.rows[0].was_current, true);
+
+    // A fresh root: the same repair content with no supersedes. Losing the
+    // body must not turn the subject back into virgin ground.
+    const omission = await sync(
+      {
+        idempotency_key: 'receipt-tombchain-batch-0002',
+        receipts: [
+          receipt(chain, {
+            reporting_receipt_id: 'receipt-tombchain-0003',
+            status: 'rejected',
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(omission.results[0].result, 'failed', 'a pruned leaf still owns its subject');
+
+    // And its real successor is admitted, which it was not while the pruned
+    // leaf counted as absent.
+    const correction = await sync(
+      {
+        idempotency_key: 'receipt-tombchain-batch-0003',
+        receipts: [
+          receipt(chain, {
+            reporting_receipt_id: 'receipt-tombchain-0002',
+            status: 'rejected',
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+            supersedes_reporting_receipt_id: 'receipt-tombchain-0001',
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(correction.results[0].result, 'recorded', 'the successor of a pruned leaf still extends the chain');
+    const leaf = await pool.query(
+      `SELECT reporting_receipt_id FROM adcp_reporting_receipts WHERE account_id = $1 AND is_current`,
+      [chain.accountId]
+    );
+    assert.deepEqual(
+      leaf.rows.map(value => value.reporting_receipt_id),
+      ['receipt-tombchain-0002']
+    );
+  });
+
+  test('holds an adjustment acceptance while the revision resource it corrects is readable', async () => {
+    const adjusted = await deliverOnce(await seedSkewLedger('adjretain', 'consumer_receipt'));
+    const rows = [{ media_buy_id: 'buy-3', impressions: 12 }];
+    const bytes = Buffer.from(canonicalize(rows), 'utf8');
+    const wireAdjustmentWithoutDigest = {
+      reporting_adjustment_id: 'adjustment-adjretain-0001',
+      adjusts_reporting_revision_id: adjusted.revision.reporting_revision_id,
+      reason_code: 'source_correction',
+      accounting_period: { start: adjusted.period.start, end: adjusted.period.end },
+      control_total_deltas: [{ name: 'row_count', value: '0', value_type: 'integer' }],
+      correction_observed_at: adjusted.now,
+      created_at: adjusted.now,
+    };
+    const canonicalAdjustmentSha256 = createHash('sha256')
+      .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+      .digest('hex');
+    await core.commitAdjustment(
+      {
+        reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+        reporting_obligation_id: adjusted.obligation.reporting_obligation_id,
+        adjusts_reporting_revision_id: adjusted.revision.reporting_revision_id,
+        adjustmentNumber: 1,
+        manifest: { level: 'basic', objectRef: 'adjretain-manifest', sha256: 'b'.repeat(64), byteCount: 1 },
+        sourcePublicationId: 'adjustment-publication-adjretain',
+        binding: {
+          algorithm: 'rfc8785_jcs_v1',
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          byteCount: bytes.byteLength,
+          rowCount: rows.length,
+        },
+        rows,
+        observedAt: adjusted.now,
+        dataThrough: adjusted.period.end,
+        sourceReadCutoffAt: adjusted.now,
+        createdAt: adjusted.now,
+        wireAdjustment: { ...wireAdjustmentWithoutDigest, canonical_adjustment_sha256: canonicalAdjustmentSha256 },
+      },
+      adjusted.coreLease
+    );
+
+    const context = { account: { id: adjusted.accountId }, agent: { agent_url: 'https://adjretain-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const accepted = await sync(
+      {
+        idempotency_key: 'adjustment-adjretain-batch-0001',
+        adjustment_receipts: [
+          {
+            reporting_receipt_id: 'adjustment-receipt-adjretain-0001',
+            reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+            adjusts_reporting_revision_id: adjusted.revision.reporting_revision_id,
+            observed_adjustment_sha256: canonicalAdjustmentSha256,
+            observed_at: adjusted.now,
+            status: 'accepted',
+          },
+        ],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+
+    // Age the receipt and its replay row past retention, and leave the
+    // revision's resource readable. An adjustment receipt names no
+    // materialization, so the acceptance hold used to miss it entirely and
+    // the period kept a `complete` with the evidence for it deleted.
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [adjusted.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [adjusted.accountId]
+    );
+    const live = await pool.query(
+      `SELECT (data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp() AS readable
+         FROM adcp_reporting_materializations WHERE account_id = $1`,
+      [adjusted.accountId]
+    );
+    assert.equal(live.rows[0].readable, true, 'the revision resource this adjustment corrects is still readable');
+
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    const pruned = await retaining.pruneExpiredEvidence({ account_id: adjusted.accountId });
+    assert.equal(pruned.receipts, 0, 'an adjustment acceptance outlives its age while the revision stays readable');
+    const surviving = await pool.query(
+      `SELECT COUNT(*)::int AS receipts FROM adcp_reporting_receipts WHERE account_id = $1`,
+      [adjusted.accountId]
+    );
+    assert.equal(surviving.rows[0].receipts, 1);
+  });
+
+  test('admits a correction alongside the exact receipt it supersedes in one batch', async () => {
+    const pair = await deliverOnce(await seedSkewLedger('dupsubject', 'consumer_receipt'));
+    const context = { account: { id: pair.accountId }, agent: { agent_url: 'https://dupsubject-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const rejected = receipt(pair, {
+      reporting_receipt_id: 'receipt-dupsubject-0001',
+      status: 'rejected',
+      rejection_codes: ['ROW_COUNT_MISMATCH'],
+    });
+    const first = await sync({ idempotency_key: 'receipt-dupsubject-batch-0001', receipts: [rejected] }, context);
+    assert.equal(first.results[0].result, 'recorded');
+
+    // The shape a consumer resubmitting its own state produces: everything it
+    // holds for the subject, including the receipt already stored. The
+    // duplicate-subject rule is about two claimants, and an entry that
+    // resolves to an existing row writes nothing, so it is not one.
+    const correction = receipt(pair, {
+      reporting_receipt_id: 'receipt-dupsubject-0002',
+      status: 'rejected',
+      rejection_codes: ['ROW_COUNT_MISMATCH'],
+      supersedes_reporting_receipt_id: 'receipt-dupsubject-0001',
+    });
+    const both = await sync(
+      { idempotency_key: 'receipt-dupsubject-batch-0002', receipts: [rejected, correction] },
+      context
+    );
+    assert.deepEqual(
+      both.results.map(value => value.result),
+      ['unchanged', 'recorded']
+    );
+    assert.equal(validateResponse('sync_reporting_receipts', both, '3.2.0-rc.3').valid, true);
+    const leaf = await pool.query(
+      `SELECT reporting_receipt_id FROM adcp_reporting_receipts WHERE account_id = $1 AND is_current`,
+      [pair.accountId]
+    );
+    assert.deepEqual(
+      leaf.rows.map(value => value.reporting_receipt_id),
+      ['receipt-dupsubject-0002']
+    );
+
+    // Two genuinely competing new receipts for one subject are still refused.
+    const rival = receipt(pair, {
+      reporting_receipt_id: 'receipt-dupsubject-0003',
+      status: 'rejected',
+      rejection_codes: ['ROW_COUNT_MISMATCH'],
+      supersedes_reporting_receipt_id: 'receipt-dupsubject-0002',
+    });
+    const other = receipt(pair, {
+      reporting_receipt_id: 'receipt-dupsubject-0004',
+      status: 'rejected',
+      rejection_codes: ['CONTROL_TOTAL_MISMATCH'],
+      supersedes_reporting_receipt_id: 'receipt-dupsubject-0002',
+    });
+    const contested = await sync(
+      { idempotency_key: 'receipt-dupsubject-batch-0003', receipts: [rival, other] },
+      context
+    );
+    assert.deepEqual(
+      contested.results.map(value => value.result),
+      ['failed', 'failed']
+    );
+  });
+
+  test('takes the lifecycle account lock before failing exhausted materializations', async () => {
+    const fenced = await seedSkewLedger('sweeplock');
+    assert.equal(await managed.planMaterializations({ account_id: fenced.accountId }), 1);
+    for (let round = 0; round < 8; round += 1) {
+      const claimed = await managed.claimMaterialization({
+        owner: `sweeplock-worker-${round}`,
+        now: new Date().toISOString(),
+        lease_milliseconds: 1,
+        account_id: fenced.accountId,
+      });
+      if (!claimed) break;
+      await new Promise(resolve => setTimeout(resolve, 3));
+    }
+
+    // The lifecycle apply holds exactly this lock while it validates the
+    // managed state version and writes its transition. An unlocked sweep
+    // could commit pending -> failed inside that window, and the lifecycle
+    // then published a projection taken before the row failed.
+    const { Pool } = require('pg');
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+    const holder = await sidePool.connect();
+    let settled = false;
+    try {
+      await holder.query('BEGIN');
+      await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `adcp-reporting-account:${fenced.accountId}`,
+      ]);
+      const sweeping = managed.failExhaustedMaterializations({ account_id: fenced.accountId }).then(value => {
+        settled = true;
+        return value;
+      });
+      await new Promise(resolve => setTimeout(resolve, 250));
+      assert.equal(settled, false, 'the sweep waits for the account lock rather than racing the apply');
+      await holder.query('COMMIT');
+      assert.equal(await sweeping, 1, 'and completes once the lock is free');
+    } finally {
+      holder.release();
+      await sidePool.end();
+    }
+  });
+
+  test('never watermarks ahead of the ledger clock when a caller pins a future cutoff', async () => {
+    const fast = await deliverOnce(await seedSkewLedger('futurepin', 'consumer_receipt'));
+    // A host running a minute fast. The cutoff it pins is not a cutoff this
+    // database has reached.
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: core,
+      reporting_obligation_id: fast.obligation.reporting_obligation_id,
+      ledgerAsOf: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const watermark = await pool.query(
+      `SELECT processed_at <= clock_timestamp() AS reached FROM adcp_reporting_lifecycle_state
+        WHERE obligation_id = $1`,
+      [fast.obligation.reporting_obligation_id]
+    );
+    assert.equal(watermark.rowCount, 1, 'the reconcile recorded a watermark');
+    assert.equal(watermark.rows[0].reached, true, 'the watermark is an instant this ledger has actually reached');
+    const transitions = await pool.query(
+      `SELECT COUNT(*)::int AS ahead FROM adcp_reporting_transitions
+        WHERE obligation_id = $1 AND occurred_at > clock_timestamp()`,
+      [fast.obligation.reporting_obligation_id]
+    );
+    assert.equal(transitions.rows[0].ahead, 0, 'nor is any transition dated ahead of it');
+
+    // Everything the database timestamps inside that skew must still re-arm.
+    await managed.revokeDestination({
+      account_id: fast.accountId,
+      destination_ref: fast.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    const due = await core.listLifecycleDueObligations({
+      ledgerAsOf: await core.readLedgerInstant(),
+      account_id: fast.accountId,
+      limit: 100,
+    });
+    assert.ok(
+      due.some(value => value.reporting_obligation_id === fast.obligation.reporting_obligation_id),
+      'a database-timestamped revocation is not buried behind a future watermark'
+    );
   });
 
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {

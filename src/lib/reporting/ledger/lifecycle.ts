@@ -27,9 +27,20 @@ async function resolveLedgerAsOf(
   input: { store: ReportingLedgerStore; ledgerAsOf?: string; now?: () => Date },
   attempt: number
 ): Promise<string> {
-  if (attempt === 0 && input.ledgerAsOf !== undefined) return input.ledgerAsOf;
   const resolved = (await input.store.readLedgerInstant?.()) ?? (input.now ?? (() => new Date()))().toISOString();
   if (input.ledgerAsOf === undefined) return resolved;
+  // A pin wins on the first attempt, but never past the ledger's own clock.
+  // A caller pinning an instant ahead of the database — a fast host, or a
+  // synthetic time replayed against a live store — had that instant written
+  // into the watermark, and every database-timestamped change inside the
+  // skew was then permanently behind it: excluded from the projection that
+  // wrote it, and never due again. Clamping keeps a backdated replay exact
+  // while making a forward pin harmless.
+  if (attempt === 0) {
+    return input.store.readLedgerInstant && compareReportingInstants(input.ledgerAsOf, resolved) > 0
+      ? resolved
+      : input.ledgerAsOf;
+  }
   // `compareReportingInstants`, never `Date.parse`. Date truncates to
   // milliseconds, so a retry moving .123500Z to .123600Z compared equal and
   // kept the old cutoff — the projection then excluded a .123550Z write while
@@ -223,7 +234,12 @@ export async function reconcileReportingStatusLifecycleV1(
         }
       : {}),
     ...(composed.obligatedConsumerRosterVersion !== undefined
-      ? { processedObligatedConsumerRosterVersion: composed.obligatedConsumerRosterVersion }
+      ? {
+          processedObligatedConsumerRosterVersion: composed.obligatedConsumerRosterVersion,
+          // The re-check above is outside any transaction, so it leaves a
+          // window the store closes by fencing on the same value.
+          expectedObligatedConsumerRosterVersion: composed.obligatedConsumerRosterVersion,
+        }
       : {}),
   });
   if (!applied.applied) return retryLifecycle(input, attempt);

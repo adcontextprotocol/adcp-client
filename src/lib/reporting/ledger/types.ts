@@ -723,6 +723,16 @@ export interface ReportingLedgerStore {
      */
     processedManagedStateVersion?: string;
     processedObligatedConsumerRosterVersion?: string;
+    /**
+     * Roster version this reconcile observed, for the same compare-and-set
+     * treatment as `expectedManagedStateVersion`.
+     *
+     * The roster lives outside the store, so the apply cannot re-read it.
+     * A store that records what readers observed MUST NOT overwrite a newer
+     * observation with this one: the due query compares the observed version
+     * with the processed one, so clobbering it drops the re-arm.
+     */
+    expectedObligatedConsumerRosterVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }>;
   markTransitionNotified(transitionId: string, notifiedAt: string): Promise<void>;
   /**

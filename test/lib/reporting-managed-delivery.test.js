@@ -340,6 +340,83 @@ describe('seller managed reporting runtime', () => {
     assert.equal(result, null);
   });
 
+  test('does not leak a provider message when an adapter read throws synchronously', async () => {
+    const selected = { materialization: outcome(), binding: lease().binding };
+    const store = {
+      getReadableResource: async () => selected,
+      isAuthorizationCurrent: async () => true,
+    };
+    // Not `async`: a client constructed inside `read`, or a credential
+    // resolved eagerly, throws before any promise exists to attach a handler
+    // to. The sanitising `.catch` was never reached and the provider string
+    // reached the caller verbatim.
+    const adapter = {
+      read: () => {
+        throw new Error('s3: AccessDenied for arn:aws:iam::42:role/reporting-secret');
+      },
+    };
+    await assert.rejects(
+      () =>
+        ledger.readManagedReportingResource(store, adapter, {
+          account_id: 'account-1',
+          resource_ref: 'resource-1',
+        }),
+      error => {
+        assert.equal(error.message, 'Managed reporting resource read failed');
+        assert.match(String(error.cause?.message), /AccessDenied/);
+        return true;
+      }
+    );
+  });
+
+  test('refuses an empty batch before it can answer with an empty results array', async () => {
+    const handler = ledger.createSyncReportingReceiptsHandler(
+      { syncReceiptBatch: async () => assert.fail('an empty batch must never reach the store') },
+      () => 'buyer-1'
+    );
+    // RC3 gives `results` minItems 1, so a per-entry refusal of a batch with
+    // no entries is a schema-invalid body. The account mismatch used to be
+    // answered first and produced exactly that.
+    await assert.rejects(
+      () =>
+        handler(
+          { account: { account_id: 'account-other' }, idempotency_key: 'receipt-empty-0001', receipts: [] },
+          { account: { id: 'account-1' } }
+        ),
+      error => {
+        assert.equal(error.code, 'VALIDATION_ERROR');
+        assert.match(error.message, /at least one receipt/);
+        return true;
+      }
+    );
+    // And a non-empty batch for the wrong account still answers per entry.
+    const denied = await handler(
+      {
+        account: { account_id: 'account-other' },
+        idempotency_key: 'receipt-empty-0002',
+        receipts: [
+          {
+            reporting_receipt_id: 'receipt-empty-entry-0001',
+            reporting_obligation_id: 'obligation-1',
+            reporting_revision_id: 'revision-1',
+            reporting_materialization_id: 'materialization-1',
+            status: 'accepted',
+            verification_profile: 'canonical_digest',
+            observed_row_count: 2,
+            observed_control_totals: { impressions: 2 },
+            observed_canonical_content_digest: 'a'.repeat(64),
+            observed_manifest_sha256: 'b'.repeat(64),
+            observed_at: '2026-08-27T05:00:00.000Z',
+          },
+        ],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(denied.results.length, 1);
+    assert.equal(denied.results[0].result, 'failed');
+    assert.equal(denied.results[0].errors[0].code, 'PERMISSION_DENIED');
+  });
+
   test('enforces the resource-read deadline even when an adapter ignores abort', async () => {
     const selected = { materialization: outcome(), binding: lease().binding };
     const store = {

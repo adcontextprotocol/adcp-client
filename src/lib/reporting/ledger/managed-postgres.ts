@@ -537,10 +537,20 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             -- An acceptance outlives its own age while the resource it
             -- accepts is still readable. Pruning it sooner produced a period
             -- that reads complete with no receipt to show for it.
+            --
+            -- An adjustment receipt names no materialization at all: it
+            -- names the revision it adjusts. Matching only on
+            -- reporting_materialization_id therefore held every revision
+            -- acceptance and no adjustment acceptance, so a period whose
+            -- revision resource was still readable lost the adjustment
+            -- evidence behind its own complete.
             AND NOT EXISTS (
               SELECT 1 FROM adcp_reporting_materializations live
                WHERE live.account_id = receipt.account_id
-                 AND live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                 AND (
+                   live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                   OR live.revision_id = receipt.data ->> 'adjusts_reporting_revision_id'
+                 )
                  AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
             )
           ORDER BY receipt.recorded_at
@@ -634,7 +644,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               AND NOT EXISTS (
                 SELECT 1 FROM adcp_reporting_materializations live
                  WHERE live.account_id = receipt.account_id
-                   AND live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                   AND (
+                     live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                     OR live.revision_id = receipt.data ->> 'adjusts_reporting_revision_id'
+                   )
                    AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
               )
          ), tombstoned AS (
@@ -1172,8 +1185,26 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   async failExhaustedMaterializations(input?: { account_id?: string; limit?: number }): Promise<number> {
     const limit = input?.limit ?? 1_000;
     positiveInteger(limit, 'limit');
-    const result = await this.query(
-      `UPDATE adcp_reporting_materializations SET status = 'failed',
+    // This sweep mutates exactly the state the lifecycle compare-and-set
+    // fences, so it has to take the same account lock the apply holds.
+    // Running unlocked, it could commit `pending` -> `failed` between the
+    // apply reading a matching managed state version and that apply's
+    // commit, and the lifecycle then persisted and webhooked a projection
+    // taken before the row failed. Accounts are locked in id order, and the
+    // account lock is the canonical middle of policy -> account -> binding.
+    return this.transaction(async client => {
+      const accounts = await client.query<QueryRow & { account_id: string }>(
+        `SELECT DISTINCT account_id FROM adcp_reporting_materializations
+          WHERE status = 'pending'
+            AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
+            AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+            AND ($1::text IS NULL OR account_id = $1)
+          ORDER BY account_id`,
+        [input?.account_id ?? null]
+      );
+      for (const { account_id } of accounts.rows) await advisoryLock(client, accountLock(account_id));
+      const result = await client.query(
+        `UPDATE adcp_reporting_materializations SET status = 'failed',
           data = data || jsonb_build_object(
             'status', 'failed',
             'failed_at', ${rfc3339Micro('clock_timestamp()')},
@@ -1197,9 +1228,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
                AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
                AND ($1::text IS NULL OR account_id = $1)
              ORDER BY created_at LIMIT $2)`,
-      [input?.account_id ?? null, limit]
-    );
-    return result.rowCount ?? 0;
+        [input?.account_id ?? null, limit]
+      );
+      return result.rowCount ?? 0;
+    });
   }
 
   async settleMaterialization(input: {
@@ -1545,13 +1577,37 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       }
       let remainingReceipts = MAX_RECEIPTS_PER_CONSUMER - Number(capacity.rows[0]?.receipts ?? 0);
       const duplicateIds = duplicates(input.entries.map(entry => entry.receipt.reporting_receipt_id));
-      const duplicateSubjects = duplicates(input.entries.map(entry => subjectKey(entry)));
+      // Resolve which entries are already stored, byte-identically, before
+      // deciding who is competing for a subject. Such an entry replays as
+      // `unchanged` and writes nothing, so it is not a second claimant: a
+      // batch carrying an existing rejected receipt together with its own
+      // correction failed both of them on the duplicate-subject rule, which
+      // made the correction unfileable in the one batch shape a consumer
+      // resubmitting its state naturally produces. Duplicate IDs stay a
+      // property of the whole submitted batch — two entries sharing an id
+      // are malformed whatever they resolve to.
+      const alreadyStored = await client.query<
+        QueryRow & { reporting_receipt_id: string; semantic_fingerprint: string }
+      >(
+        `SELECT reporting_receipt_id, semantic_fingerprint FROM adcp_reporting_receipts
+          WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = ANY($3::text[])`,
+        [input.account_id, input.consumer_id, input.entries.map(entry => entry.receipt.reporting_receipt_id)]
+      );
+      const storedFingerprints = new Map(
+        alreadyStored.rows.map(row => [row.reporting_receipt_id, row.semantic_fingerprint])
+      );
+      const resolvesToStored = input.entries.map(
+        entry => storedFingerprints.get(entry.receipt.reporting_receipt_id) === digest(entry.receipt)
+      );
+      const duplicateSubjects = duplicates(
+        input.entries.filter((_entry, index) => !resolvesToStored[index]).map(entry => subjectKey(entry))
+      );
       const results: SyncReportingReceiptsResponse['results'] = [];
       for (const [index, entry] of input.entries.entries()) {
         if (
           !authorization[index] ||
           duplicateIds.has(entry.receipt.reporting_receipt_id) ||
-          duplicateSubjects.has(subjectKey(entry))
+          (!resolvesToStored[index] && duplicateSubjects.has(subjectKey(entry)))
         ) {
           results.push(failed(entry.receipt.reporting_receipt_id));
           continue;
@@ -1667,7 +1723,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     const tombstones = await client.query<
       QueryRow & { reporting_receipt_id: string; status: string; was_current: boolean; semantic_fingerprint: string }
     >(
-      `SELECT reporting_receipt_id, status, was_current, semantic_fingerprint
+      `SELECT reporting_receipt_id, subject_id, status, was_current, semantic_fingerprint
          FROM adcp_reporting_receipt_tombstones
         WHERE account_id = $1 AND consumer_id = $2
           AND (reporting_receipt_id = $3 OR (receipt_kind = $4 AND subject_id = $5))`,
@@ -1682,6 +1738,18 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         return failed(entry.receipt.reporting_receipt_id);
       }
     }
+    // A tombstone keeps the chain position its body held, not just its
+    // identity. Pruning a rejected leaf left the subject with no live
+    // `is_current` row, so the correction that supersedes it was refused as
+    // an orphan while an omission — the same content with no
+    // `supersedes_reporting_receipt_id` — was accepted as a fresh root. That
+    // inverts the rule: retention decided which of the two the chain let in.
+    const tombstonedLeafId = tombstones.rows.find(
+      tombstone =>
+        tombstone.was_current &&
+        tombstone.subject_id === subjectIdFor(entry) &&
+        tombstone.reporting_receipt_id !== entry.receipt.reporting_receipt_id
+    )?.reporting_receipt_id;
     const evidence = await this.loadReceiptEvidence(client, batch.account_id, entry);
     if (!evidence) return failed(entry.receipt.reporting_receipt_id);
     const matches =
@@ -1708,7 +1776,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     const supersedes = entry.receipt.supersedes_reporting_receipt_id;
     if (
       (leaf && (leaf.data.status === 'accepted' || supersedes !== leaf.reporting_receipt_id)) ||
-      (!leaf && supersedes !== undefined)
+      // The pruned leaf answers for the chain exactly as a live one would:
+      // only its own successor may extend the subject. Re-presenting the
+      // tombstoned leaf itself is not a succession and is handled above, so
+      // it never reaches here.
+      (!leaf && tombstonedLeafId !== undefined && supersedes !== tombstonedLeafId) ||
+      (!leaf && tombstonedLeafId === undefined && supersedes !== undefined)
     ) {
       return failed(entry.receipt.reporting_receipt_id);
     }

@@ -1326,6 +1326,7 @@ ${managedDueArm}       )
     expectedManagedStateVersion?: string;
     processedManagedStateVersion?: string;
     processedObligatedConsumerRosterVersion?: string;
+    expectedObligatedConsumerRosterVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }> {
     const lock = await this.accountLockForObligation(input.reporting_obligation_id);
     return this.transaction(
@@ -1369,6 +1370,26 @@ ${managedDueArm}       )
         ) {
           return { applied: false, transitionInserted: false };
         }
+        // The roster is external, so the caller re-reads it immediately
+        // before this apply and publishes what it saw. That leaves a window:
+        // a refresh publishing a newer version between the re-read and this
+        // commit was then overwritten below with the version this projection
+        // used, and because the due query compares the current version with
+        // the processed one, the change had nothing left to re-arm from and
+        // was lost. Locking the row here closes the window; refusing on a
+        // difference keeps a projection taken against a superseded roster
+        // from being persisted at all. The caller retries.
+        if (input.expectedObligatedConsumerRosterVersion !== undefined) {
+          const state = await client.query<QueryResultRow & { current_roster_version: string | null }>(
+            `SELECT current_roster_version FROM adcp_reporting_lifecycle_state
+              WHERE obligation_id = $1 FOR UPDATE`,
+            [input.reporting_obligation_id]
+          );
+          const observed = state.rows[0]?.current_roster_version;
+          if (observed !== undefined && observed !== input.expectedObligatedConsumerRosterVersion) {
+            return { applied: false, transitionInserted: false };
+          }
+        }
         let transitionInserted = false;
         if (input.transition) {
           const inserted = await client.query(
@@ -1393,7 +1414,7 @@ ${managedDueArm}       )
             `INSERT INTO adcp_reporting_lifecycle_state
                (obligation_id, processed_state_version, processed_roster_version,
                 current_roster_version, processed_at)
-             VALUES ($1, $2, $3, $3, $4::timestamptz)
+             VALUES ($1, $2, $3, $3, LEAST($4::timestamptz, clock_timestamp()))
              ON CONFLICT (obligation_id) DO UPDATE SET
                processed_state_version = EXCLUDED.processed_state_version,
                processed_roster_version = EXCLUDED.processed_roster_version,
@@ -1401,7 +1422,15 @@ ${managedDueArm}       )
                -- moves with the processed one. A later external change
                -- publishes a different current version and re-arms; without
                -- this the two never matched and the obligation stayed due.
-               current_roster_version = EXCLUDED.processed_roster_version,
+               -- Never over a version this reconcile did not observe: if the
+               -- row was created or advanced after the check above, that
+               -- newer observation is what has to survive, or its re-arm is
+               -- silently dropped.
+               current_roster_version = CASE
+                 WHEN $5::text IS NOT NULL
+                  AND adcp_reporting_lifecycle_state.current_roster_version IS DISTINCT FROM $5::text
+                 THEN adcp_reporting_lifecycle_state.current_roster_version
+                 ELSE EXCLUDED.processed_roster_version END,
                processed_at = EXCLUDED.processed_at,
                failure_count = 0,
                next_attempt_at = NULL`,
@@ -1416,8 +1445,12 @@ ${managedDueArm}       )
               // instant. Watermarking at commit time swallowed everything
               // that landed between the two: excluded from the projection,
               // and then behind the watermark forever, so it never became
-              // due again.
+              // due again. It is clamped to this database's clock in SQL
+              // below, because a cutoff ahead of the ledger buries
+              // database-timestamped work the same way for the opposite
+              // reason.
               input.ledgerAsOf,
+              input.expectedObligatedConsumerRosterVersion ?? null,
             ]
           );
         }

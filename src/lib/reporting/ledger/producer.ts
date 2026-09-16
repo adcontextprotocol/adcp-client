@@ -145,7 +145,14 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await reconcileReportingStatusLifecycleV1({
               store: options.store,
               reporting_obligation_id: written.value.reporting_obligation_id,
-              ledgerAsOf: now,
+              // A fallback clock, never a pinned cutoff. `now` is this host's
+              // instant: a host running fast pinned a cutoff ahead of the
+              // database, the watermark was stamped with it, and every
+              // database-timestamped change inside that skew — a revocation,
+              // a receipt — landed behind the watermark and never made the
+              // obligation due again, so a `complete` transition and its
+              // webhook stood over state that had already contradicted it.
+              now: () => new Date(now),
               subscribers: options.subscribers,
             });
           }
@@ -232,7 +239,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               await reconcileReportingStatusLifecycleV1({
                 store: options.store,
                 reporting_obligation_id: obligation.reporting_obligation_id,
-                ledgerAsOf: nowValue.toISOString(),
+                // Fallback clock, not a pin; see planObligations.
+                now: () => nowValue,
                 subscribers: options.subscribers,
               });
               continue;
@@ -271,7 +279,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await reconcileReportingStatusLifecycleV1({
               store: options.store,
               reporting_obligation_id: obligation.reporting_obligation_id,
-              ledgerAsOf: nowValue.toISOString(),
+              // Fallback clock, not a pin; see planObligations.
+              now: () => nowValue,
               subscribers: options.subscribers,
             });
             continue;
@@ -324,7 +333,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           await reconcileReportingStatusLifecycleV1({
             store: options.store,
             reporting_obligation_id: obligation.reporting_obligation_id,
-            ledgerAsOf: nowValue.toISOString(),
+            // Fallback clock, not a pin; see planObligations.
+            now: () => nowValue,
             subscribers: options.subscribers,
           });
         } catch (error) {
@@ -347,7 +357,8 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await reconcileReportingStatusLifecycleV1({
               store: options.store,
               reporting_obligation_id: obligation.reporting_obligation_id,
-              ledgerAsOf: nowValue.toISOString(),
+              // Fallback clock, not a pin; see planObligations.
+              now: () => nowValue,
               subscribers: options.subscribers,
             });
           } catch (recoveryError) {

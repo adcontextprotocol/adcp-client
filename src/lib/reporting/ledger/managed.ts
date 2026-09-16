@@ -500,15 +500,19 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
           `${MAX_RECEIPT_RESULTS} receipts and adjustment receipts in total`,
       });
     }
-    if (request.account && 'account_id' in request.account && request.account.account_id !== account_id) {
-      return receiptBatchFailure(entries, 'PERMISSION_DENIED', 'Reporting receipt account is unavailable');
-    }
     // RC3 requires `results` minItems 1 and the request anyOf requires a
     // non-empty array, so an empty batch has no legal response body either.
+    // This is checked before every per-entry refusal below, because those
+    // answer with one result per entry: an empty batch that also named the
+    // wrong account returned `results: []`, which is schema-invalid, so the
+    // caller got a malformed body instead of a typed error.
     if (!entries.length) {
       throw new AdcpError('VALIDATION_ERROR', {
         message: 'sync_reporting_receipts requires at least one receipt or adjustment receipt',
       });
+    }
+    if (request.account && 'account_id' in request.account && request.account.account_id !== account_id) {
+      return receiptBatchFailure(entries, 'PERMISSION_DENIED', 'Reporting receipt account is unavailable');
     }
     if (!/^[A-Za-z0-9_.:-]{16,255}$/.test(request.idempotency_key)) {
       return receiptBatchFailure(entries, 'VALIDATION_ERROR', 'sync_reporting_receipts idempotency_key is invalid');
@@ -823,10 +827,16 @@ export async function readManagedReportingResource(
     // Adapter failure messages are provider strings: they vary by SDK version
     // and can carry endpoint or credential detail. Callers get one stable
     // sentence; the provider error stays reachable as `cause` for seller logs.
+    // `Promise.resolve().then` rather than calling and chaining `.catch`: an
+    // adapter that throws synchronously — a bad credential resolved eagerly,
+    // a client constructed inside `read` — never produced a promise to attach
+    // the handler to, so its raw provider message escaped this boundary.
     signal =>
-      adapter.read({ materialization, binding, resource, maxBytes }, { signal }).catch((cause: unknown) => {
-        throw new Error('Managed reporting resource read failed', { cause });
-      }),
+      Promise.resolve()
+        .then(() => adapter.read({ materialization, binding, resource, maxBytes }, { signal }))
+        .catch((cause: unknown) => {
+          throw new Error('Managed reporting resource read failed', { cause });
+        }),
     deadlineMilliseconds,
     'Reporting resource read deadline elapsed',
     input.signal
