@@ -51,7 +51,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // not published. Retiring the v3.1 beta type bundle removes eight artifacts;
 // its current legacy-view wholesale type replacement adds four, for 6,107
 // published files. Byte budgets stay fixed.
-const MAX_PACKED_FILE_COUNT = 6_111;
+// Managed Delivery and Reconciled Billing add one public dual-format
+// runtime/declaration module set (+4 files), raising the file budget to 6,115.
+const MAX_PACKED_FILE_COUNT = 6_115;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
