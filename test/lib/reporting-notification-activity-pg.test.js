@@ -384,13 +384,12 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   test('progresses a pre-v14 obligation whose stored insert clock is skewed from the ledger clock', async () => {
     const obligation = await putObligation('finality-clock-skew', 'account-b');
     const obligationId = obligation.reporting_obligation_id;
-    // Committed in the order snapshot -> legacy transition -> official, but the
-    // `created_at` insert column runs eight hours ahead of the application clock
-    // the revision payloads carry. A baseline reconstructed from `created_at`
-    // against the transition's application-clock `occurredAt` would see nothing
-    // observed at the legacy transition, disagree with the lifecycle decision on
-    // every pass, and wedge the compare-and-set forever. Ordering both sides by
-    // the committed `recorded_at` ignores the skew entirely.
+    // The `created_at` insert column runs eight hours ahead of the application
+    // clock the revision payloads carry. A baseline reconstructed from
+    // `created_at` against the transition's application-clock `occurredAt` would
+    // disagree with the lifecycle decision on every pass and wedge the
+    // compare-and-set forever. Resolving the pre-v14 baseline to 'none' consults
+    // neither clock, so no amount of skew can stall the lifecycle.
     await insertSkewedRevision({
       obligationId,
       revisionId: 'rrev_clock_skew_snapshot',
@@ -424,15 +423,15 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.ok(transition, 'lifecycle progresses instead of wedging on a two-clock baseline');
     assert.deepEqual(
       [transition.previousHealth, transition.health, transition.previousFinality, transition.finality],
-      ['delayed', 'complete', 'snapshot', 'official']
+      ['delayed', 'complete', 'none', 'official']
     );
-    // The reconstructed baseline is committed onto the legacy row, so no later
-    // pass — and no other clock — can derive a different one.
+    // The baseline is committed onto the legacy row, so no later pass — and no
+    // clock — can derive a different one.
     const stored = await store.listTransitions(obligationId);
     assert.deepEqual(
       stored.map(value => [value.transitionId, value.finality]),
       [
-        ['rst_clock_skew_pre_v14', 'snapshot'],
+        ['rst_clock_skew_pre_v14', 'none'],
         [transition.transitionId, 'official'],
       ]
     );
@@ -562,6 +561,87 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       leaseLost: 0,
     });
     assert.equal(delivered().length, 1, 'notification stays exactly-once across the replay');
+  });
+
+  test('never treats a later-committed revision as observed when recorded_at ties or steps backward', async () => {
+    // `recorded_at` defaults to `clock_timestamp()`, a wall clock: it can repeat
+    // within a microsecond and it can move backward across an NTP step. Both are
+    // forced here, with the revision genuinely committed after the legacy
+    // transition. Neither may let it count as already observed, which would make
+    // `previousFinality` equal `finality` and drop the real change.
+    const legacyRecordedAt = '2026-09-02T01:30:00.000000Z';
+    for (const scenario of [
+      { suffix: 'recorded-tie', recordedAt: legacyRecordedAt, label: 'equal recorded_at' },
+      { suffix: 'recorded-backward', recordedAt: '2026-09-02T00:30:00.000000Z', label: 'backward recorded_at' },
+    ]) {
+      const obligation = await putObligation(`wall-clock-${scenario.suffix}`, 'account-b');
+      const obligationId = obligation.reporting_obligation_id;
+      await insertLegacyTransition({
+        transitionId: `rst_wall_clock_${scenario.suffix.replace(/-/g, '_')}`,
+        obligationId,
+        previousHealth: 'waiting',
+        health: 'delayed',
+        occurredAt: '2026-09-02T01:30:00.000Z',
+        recordedAt: legacyRecordedAt,
+      });
+      await insertSkewedRevision({
+        obligationId,
+        revisionId: `rrev_wall_clock_${scenario.suffix.replace(/-/g, '_')}`,
+        revisionNumber: 1,
+        finality: 'official',
+        createdAt: '2026-09-02T01:45:00.000Z',
+        insertedAt: '2026-09-02T01:45:00.000Z',
+        recordedAt: scenario.recordedAt,
+      });
+
+      const transition = await ledger.reconcileReportingStatusLifecycleV1({
+        store,
+        reporting_obligation_id: obligationId,
+        ledgerAsOf: '2026-09-02T02:00:00.000Z',
+      });
+      assert.ok(transition, `${scenario.label}: the later-committed revision is still reported`);
+      assert.deepEqual(
+        [transition.previousHealth, transition.health, transition.previousFinality, transition.finality],
+        ['delayed', 'complete', 'none', 'official'],
+        `${scenario.label}: the baseline never claims the revision was observed`
+      );
+      assert.equal(
+        (await store.listTransitions(obligationId))[0].finality,
+        'none',
+        `${scenario.label}: the committed baseline is backfilled onto the legacy row`
+      );
+
+      const delivered = () => fetchCalls.filter(value => value.body.notification_id === transition.transitionId);
+      assert.equal(
+        (await activity.recoverOnce({ ownerToken: `wall-clock-${scenario.suffix}-worker` })).projected,
+        1,
+        `${scenario.label}: the health change projects once`
+      );
+      assert.equal(delivered().length, 1, `${scenario.label}: webhook delivered exactly once`);
+      assert.equal(
+        await ledger.reconcileReportingStatusLifecycleV1({
+          store,
+          reporting_obligation_id: obligationId,
+          ledgerAsOf: '2026-09-02T02:15:00.000Z',
+        }),
+        null,
+        `${scenario.label}: the replay re-reads the committed baseline and re-transitions nothing`
+      );
+      assert.deepEqual(await activity.recoverOnce({ ownerToken: `wall-clock-${scenario.suffix}-replay` }), {
+        claimed: 0,
+        matched: 0,
+        projected: 0,
+        retried: 0,
+        leaseLost: 0,
+      });
+      assert.equal(delivered().length, 1, `${scenario.label}: notification stays exactly-once across the replay`);
+      const page = await activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b' });
+      assert.equal(
+        page.activities.filter(value => value.transitionId === transition.transitionId).length,
+        1,
+        `${scenario.label}: exactly one activity row`
+      );
+    }
   });
 
   test('claims rows incrementally so a slow batch cannot expire later leases', async () => {
@@ -853,8 +933,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     await pool.query(
       `INSERT INTO adcp_reporting_revisions
          (revision_id, obligation_id, revision_number, finality, kind, supersedes_revision_id,
-          content_sha256, data, created_at)
-       VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8)`,
+          content_sha256, data, created_at, recorded_at)
+       VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, COALESCE($9::timestamptz, clock_timestamp()))`,
       [
         input.revisionId,
         input.obligationId,
@@ -872,15 +952,20 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           ...(input.supersedesRevisionId ? { supersedes_reporting_revision_id: input.supersedesRevisionId } : {}),
         }),
         input.insertedAt,
+        input.recordedAt ?? null,
       ]
     );
   }
 
-  /** Commits a pre-SDK-14 transition row: no `finality`, already notified. */
+  /**
+   * Commits a pre-SDK-14 transition row: no `finality`, already notified.
+   * `recordedAt` pins the insert wall clock so a test can force ties and
+   * backward steps against later-committed revisions.
+   */
   async function insertLegacyTransition(input) {
     await pool.query(
-      `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
-       VALUES ($1, $2, $3::jsonb, $4)`,
+      `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at, recorded_at)
+       VALUES ($1, $2, $3::jsonb, $4, COALESCE($5::timestamptz, clock_timestamp()))`,
       [
         input.transitionId,
         input.obligationId,
@@ -894,6 +979,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           notifiedAt: input.occurredAt,
         }),
         input.occurredAt,
+        input.recordedAt ?? null,
       ]
     );
   }

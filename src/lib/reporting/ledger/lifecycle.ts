@@ -104,24 +104,17 @@ export async function reconcileReportingStatusLifecycleV1(input: {
  * the store's compare-and-set must both use.
  *
  * Transitions written from SDK 14 onward carry their own `finality`, so the
- * baseline is the committed value. Pre-SDK-14 rows carry none, and only the
- * store can say which revisions were already committed when such a row was
- * recorded — that ordering lives in the store's own committed write order, not
- * in any timestamp carried by a revision payload. So the reconstruction is
- * delegated to the store, which derives it once and persists it.
+ * baseline is that committed value. Pre-SDK-14 rows carry none, and no stored
+ * timestamp can recover which revisions had committed when such a row was
+ * recorded — payload timestamps rank creation rather than commits, and insert
+ * wall clocks tie and step backward. So the baseline for those rows is `'none'`,
+ * committed by the store under its own lock (or assumed here for stores that do
+ * not implement the port).
  *
- * Reconstructing it here instead would have to compare the revision payload's
- * `createdAt` against the transition's `occurredAt`, and neither the mixed-clock
- * nor the single-clock form of that comparison is sound: mixing an application
- * clock with a store's insert clock lets the two sides disagree under skew and
- * wedges the compare-and-set forever, while comparing creation instants counts
- * a revision created early but committed late as already observed and
- * permanently suppresses the real snapshot→official transition.
- *
- * A store that cannot supply a committed baseline gets `'none'`. That is
- * deterministic, and it errs toward recording one redundant finality-only
- * transition at upgrade — which stays internal activity, because the AdCP
- * status webhook is health-only — rather than silently dropping a real
+ * That records at most one redundant finality-only transition per obligation at
+ * upgrade, which stays internal activity because the AdCP status webhook is
+ * health-only. Guessing instead can conclude `official`, which makes
+ * `previousFinality` equal `finality` and permanently suppresses a real
  * finality change.
  */
 async function resolveFinalityBaseline(

@@ -531,26 +531,18 @@ export interface ReportingLedgerStore {
    *
    * Transitions written from SDK 14 onward carry their own `finality`, so the
    * baseline is read straight back off the committed row. Pre-SDK-14 rows carry
-   * none; a store that reconstructs their baseline MUST derive it once and
-   * persist it here so `applyLifecycleProjection` compares against the same
-   * committed value the lifecycle decision used.
+   * none, and a store MUST NOT reconstruct one: nothing already stored proves
+   * which revisions had committed when such a row was recorded. Payload
+   * timestamps rank creation instants rather than commits, and insert wall
+   * clocks such as `clock_timestamp()` can repeat within a microsecond and step
+   * backward. Either rule can conclude `official`, which makes
+   * `previousFinality` equal `finality` and permanently suppresses the real
+   * snapshot→official change.
    *
-   * Reconstruction must order revisions against the transition by the store's
-   * own committed write order — for the bundled PostgreSQL store, the
-   * `recorded_at` insert clock both tables default to and no write sets by
-   * hand. Two other rules look plausible and are both wrong. Comparing a
-   * store's insert clock against the transition's application-clock
-   * `occurredAt` mixes clocks, so the store and the lifecycle decision disagree
-   * under insert latency or skew and the compare-and-set wedges permanently.
-   * Comparing the revision payload's `createdAt` against that same `occurredAt`
-   * stays in one clock but ranks creation instants rather than commits, so a
-   * revision created before the transition and committed after it counts as
-   * already observed and the real snapshot→official change is suppressed
-   * forever.
-   *
-   * A store with no committed write order to consult must return (and persist)
-   * `'none'` rather than guess. That records at most one redundant
-   * finality-only transition at upgrade, which stays internal activity because
+   * Such rows therefore resolve to `'none'`, which the store persists so
+   * `applyLifecycleProjection` compares against the same committed value the
+   * lifecycle decision used. That records at most one redundant finality-only
+   * transition per obligation at upgrade, which stays internal activity because
    * the AdCP status webhook is health-only.
    *
    * Optional for stores compiled against the pre-finality lifecycle port; such

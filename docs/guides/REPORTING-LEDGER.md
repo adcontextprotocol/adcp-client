@@ -196,42 +196,32 @@ migration.
 That comparison must read **one** committed baseline, never a freshly
 recomputed one. Transitions written from SDK 14 onward carry their own
 `finality`, so the baseline is read straight back off the row. Pre-v14 rows
-carry none, so the store reconstructs their baseline once and persists it via
-`resolveTransitionFinalityBaseline(reporting_obligation_id)`, which
-`reconcileReportingStatusLifecycleV1` calls before deciding the transition.
-Deriving the baseline independently on both sides is unsafe: when the two
-derivations disagree, every lifecycle compare-and-set fails and the obligation
-wedges with no error. Implementing `resolveTransitionFinalityBaseline` is
-therefore required of any store that honours `expectedPreviousFinality`; a
-store that omits it must also ignore `expectedPreviousFinality`, and the
-lifecycle then treats a pre-v14 baseline as `none`.
+carry none, and their baseline is **not** reconstructed — it resolves to `none`,
+which the store persists via
+`resolveTransitionFinalityBaseline(reporting_obligation_id)` under its account
+lock. `reconcileReportingStatusLifecycleV1` calls that port before deciding the
+transition, and stores that omit it must also ignore `expectedPreviousFinality`,
+in which case the lifecycle assumes `none` itself.
 
-Reconstruction must rank revisions against the transition by the store's own
-**committed write order**. The bundled PostgreSQL store uses `recorded_at`,
-which both `adcp_reporting_transitions` and `adcp_reporting_revisions` default
-to `clock_timestamp()` and no ledger write ever sets by hand; because the
-per-account advisory lock is held from before `BEGIN` until after `COMMIT`,
-that order is the commit order for every revision and transition of an account.
-It is the same committed-ordering domain the changes cursor and
-pending-transition scans already bound by, and neither timestamp is
-round-tripped through the application, so microsecond precision is preserved.
+Do not try to reconstruct a historical baseline. Nothing already stored proves
+which revisions had committed when a pre-v14 transition was recorded:
 
-Two other rules look plausible and are both wrong:
+- **Payload timestamps** (a revision's `createdAt` against the transition's
+  `occurredAt`) rank creation instants, not commits. A revision constructed
+  before the transition but committed after it counts as already observed.
+- **Insert wall clocks** (`recorded_at`, `created_at`, anything derived from
+  `clock_timestamp()`) can repeat within a microsecond and can step backward, so
+  a revision that committed after the transition can still compare equal or
+  earlier. Comparing one against the transition's application-clock `occurredAt`
+  additionally mixes clocks, so the store and the lifecycle decision disagree
+  under skew and the compare-and-set wedges permanently.
 
-- **Insert clock vs. `occurredAt`** (e.g. the revision `created_at` column
-  against the transition payload's `occurredAt`) mixes the database and
-  application clocks. Insert latency or skew makes the store and the lifecycle
-  decision disagree, and the compare-and-set wedges permanently.
-- **Payload `createdAt` vs. `occurredAt`** stays in one clock but ranks
-  creation instants rather than commits. A revision constructed before the
-  transition but committed after it is then counted as already observed, the
-  backfilled baseline jumps to `official`, and the real snapshot→official
-  lifecycle transition and its activity record are suppressed forever.
+Either rule can conclude `official`, which makes `previousFinality` equal
+`finality` and silently suppresses the real snapshot→official transition and its
+activity record forever. Resolving to `none` instead records at most one
+redundant finality-only transition per obligation at upgrade, which stays
+internal activity because the AdCP status webhook is health-only.
 
-A custom store with no committed write order to consult must return and persist
-`none` rather than guess. That records at most one redundant finality-only
-transition per obligation at upgrade, which stays internal activity because the
-AdCP status webhook is health-only.
 The transaction argument must be one BEGIN/COMMIT-bound connection, never a
 pool or autocommit queryable; the per-tenant advisory transaction lock provides
 capacity serialization under READ COMMITTED. Never call the port in a

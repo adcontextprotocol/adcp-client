@@ -424,9 +424,11 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
         officialCreatedAt,
       ]
     );
+    // A pre-v14 row's baseline is never reconstructed, so it resolves to 'none'
+    // and the store fails closed against any other claimed predecessor.
     assert.deepEqual(
       await store.appendTransition({
-        transitionId: 'rst_pg_pre_v14_official_successor',
+        transitionId: 'rst_pg_pre_v14_reconstructed_predecessor',
         reporting_obligation_id: upgradeObligation.reporting_obligation_id,
         previousHealth: 'complete',
         health: 'complete',
@@ -435,7 +437,25 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
         issueIds: [],
         occurredAt: new Date(now + 400).toISOString(),
       }),
+      { inserted: false }
+    );
+    assert.deepEqual(
+      await store.appendTransition({
+        transitionId: 'rst_pg_pre_v14_official_successor',
+        reporting_obligation_id: upgradeObligation.reporting_obligation_id,
+        previousHealth: 'complete',
+        health: 'complete',
+        previousFinality: 'none',
+        finality: 'official',
+        issueIds: [],
+        occurredAt: new Date(now + 400).toISOString(),
+      }),
       { inserted: true }
+    );
+    assert.equal(
+      (await store.listTransitions(upgradeObligation.reporting_obligation_id))[0].finality,
+      'none',
+      'the pre-v14 row carries the committed baseline after the first resolution'
     );
 
     const snapshot = await store.createSnapshot({ account_id: request.account.account_id, view: 'periods' });

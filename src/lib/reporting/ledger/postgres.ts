@@ -2208,35 +2208,25 @@ function accountLock(accountId: string): string {
 }
 
 /**
- * Resolves the committed observed-finality baseline of the latest transition,
- * backfilling it once for pre-SDK-14 rows.
+ * Resolves the committed observed-finality baseline of the latest transition.
  *
  * Transitions written from SDK 14 onward carry `finality` in their own row, so
- * the baseline is simply read back. Pre-SDK-14 rows carry none, so the baseline
- * is reconstructed from the revisions that were already committed when the row
- * was recorded, then written onto the row under the caller's account advisory
- * lock — every later read, here and in the lifecycle projection, returns that
- * one committed value.
+ * the baseline is read straight back. Pre-SDK-14 rows carry none, and their
+ * baseline is deliberately **not** reconstructed: nothing already stored proves
+ * which revisions had committed when such a row was recorded. The revision
+ * payload's `createdAt` ranks creation instants, not commits, so a revision
+ * created early and committed late would count as already observed. And
+ * `recorded_at` is a `clock_timestamp()` wall clock — it can repeat within a
+ * microsecond and it can step backward — so a revision that committed after the
+ * transition can still compare equal or earlier. Either rule can conclude
+ * `official`, which makes `previousFinality` equal `finality` and silently
+ * suppresses the real snapshot→official transition forever.
  *
- * Reconstruction orders both sides by `recorded_at`, the database insert clock
- * both tables default to `clock_timestamp()` and no ledger write ever sets by
- * hand. That is the ledger's existing committed-ordering domain (the same one
- * the changes cursor and pending-transition scans bound by), and because the
- * per-account advisory lock is held from before `BEGIN` until after `COMMIT`,
- * its order is the commit order for every revision and transition of an
- * account.
- *
- * Two rules must not be used here. Reading the revision's `created_at` column
- * against the transition's application-clock `occurredAt` mixes the database
- * and application clocks, so insert latency or skew makes this store and the
- * lifecycle decision disagree and wedges the compare-and-set forever. Reading
- * the revision payload's `createdAt` against that same `occurredAt` stays in
- * one clock but compares creation instants rather than commit order, so a
- * revision created before the transition but committed after it is falsely
- * counted as already observed — the backfilled baseline jumps to `official` and
- * the real snapshot→official transition is suppressed permanently. Neither
- * timestamp is round-tripped through JavaScript, so microsecond precision is
- * never truncated.
+ * So the baseline is persisted as `'none'` under the caller's account advisory
+ * lock and every later read returns that committed value. The cost is at most
+ * one redundant finality-only transition per obligation at upgrade, which stays
+ * internal activity because the AdCP status webhook is health-only. The benefit
+ * is that no real finality change is ever dropped.
  */
 async function resolveStoredFinalityBaseline(
   transaction: ReportingPgClient,
@@ -2254,28 +2244,13 @@ async function resolveStoredFinalityBaseline(
   const previous = latest.rows[0];
   if (!previous) return 'none';
   if (previous.finality) return previous.finality;
-  const reconstructed = await transaction.query<QueryResultRow & { baseline: ReportingObservedFinalityV1 }>(
-    `SELECT CASE
-              WHEN bool_or(revision.finality = 'official') THEN 'official'
-              WHEN count(revision.revision_id) > 0 THEN 'snapshot'
-              ELSE 'none'
-            END AS baseline
-       FROM adcp_reporting_transitions transition
-       LEFT JOIN adcp_reporting_revisions revision
-         ON revision.obligation_id = transition.obligation_id
-        AND revision.recorded_at <= transition.recorded_at
-      WHERE transition.transition_id = $1`,
-    [previous.transition_id]
-  );
-  const baseline = reconstructed.rows[0]?.baseline;
-  if (!baseline) throw new Error('Reporting transition finality baseline is unavailable');
   await transaction.query(
     `UPDATE adcp_reporting_transitions
-        SET data = data || jsonb_build_object('finality', $2::text)
+        SET data = data || jsonb_build_object('finality', 'none')
       WHERE transition_id = $1 AND NOT (data ? 'finality')`,
-    [previous.transition_id, baseline]
+    [previous.transition_id]
   );
-  return baseline;
+  return 'none';
 }
 
 async function assertNoLegacyPendingTransitions(
