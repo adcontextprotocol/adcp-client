@@ -1971,6 +1971,117 @@ describe('ReliableReportingService', () => {
     assert.equal(ok.schedule.periodDuration, 'P1D');
   });
 
+  test('reclaims exactly one execution when the global ceiling frees the same scope', async () => {
+    // Fill the global ceiling with the target scope oldest, so the global
+    // reclamation picks a victim from that very scope. Recomputing the scope
+    // against a stale count then charges a second victim for the same
+    // admission, destroying replay evidence that was still owed.
+    const retained = createInlineReportingSourceExecutor(
+      () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const scoped = (scope, index) => {
+      const value = redactedReportingSourceRequestV1({
+        sourceExecutionKey: `scope-${scope}-${String(index).padStart(4, '0')}`,
+      });
+      value.sourceScope = { connection: `fixture-scope-${scope}`, region: 'test' };
+      return value;
+    };
+    const readInputFor = (request, staged) => ({
+      objectRef: staged.objectRef,
+      objectGeneration: staged.objectGeneration,
+      sourceScope: request.sourceScope,
+      account: request.account,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      report_definition_id: request.report_definition_id,
+      reporting_obligation_id: request.reporting_obligation_id,
+      maxBytes: 1024 * 1024,
+      signal: new AbortController().signal,
+    });
+    const stagedOf = sealed =>
+      (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+
+    // Target scope first (100 = its ceiling), so its entries are the oldest.
+    const targetReads = [];
+    for (let index = 0; index < 100; index += 1) {
+      const request = scoped(0, index);
+      const sealed = await retained.execute(request, ctx());
+      assert.equal(sealed.ok, true, `target ${index}`);
+      targetReads.push(readInputFor(request, stagedOf(sealed)));
+    }
+    // Other scopes bring the executor to its global ceiling of 1000.
+    for (let scope = 1; scope <= 9; scope += 1) {
+      for (let index = 0; index < 100; index += 1) {
+        assert.equal((await retained.execute(scoped(scope, index), ctx())).ok, true, `scope ${scope}/${index}`);
+      }
+    }
+
+    // One more request for the target scope: globally and scope exhausted.
+    assert.equal((await retained.execute(scoped(0, 100), ctx())).ok, true);
+
+    // Exactly one of the target scope's staged objects may be gone.
+    let reclaimed = 0;
+    for (const input of targetReads) {
+      try {
+        await retained.read(input);
+      } catch {
+        reclaimed += 1;
+      }
+    }
+    assert.equal(reclaimed, 1, 'a single admission must reclaim a single execution');
+  });
+
+  test('refuses a raw anchor that is off its declared protocol grid', async () => {
+    // Only billing_cycle carries its anchor on the wire, so a utc or
+    // source_timezone generation anchored at 06:00 would run 06:00 boundaries
+    // while every buyer derives 00:00 from the protocol origin.
+    const { service } = serviceFixture();
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+    const install = schedule =>
+      service.producer.installConfiguration({
+        ...ledgerInput,
+        schedule: { ...ledgerInput.schedule, ...schedule },
+        account: { account_id: 'account-a' },
+        sourceScope: { network_id: 'n' },
+        sourceTimezone: 'UTC',
+        sourceSettings: { ...sourceSettings, currency: 'USD' },
+        contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+        constituents: [authorizedConstituent('account-a')],
+        mediaBuyIds: ['media-buy-account-a'],
+      });
+
+    for (const alignment of ['utc', 'source_timezone']) {
+      await assert.rejects(
+        install({
+          alignment,
+          anchor: '2026-09-01T06:00:00.000Z',
+          ...(alignment === 'source_timezone' ? { periodTimezone: 'UTC' } : {}),
+        }),
+        /anchor is not on a period boundary derived from its protocol origin/,
+        `${alignment} must not accept an off-grid anchor`
+      );
+    }
+
+    // account_timezone has no origin this ledger can resolve, so it is refused
+    // rather than published as a schedule nobody can reproduce.
+    await assert.rejects(
+      install({ alignment: 'account_timezone', anchor: '2026-09-01T00:00:00.000Z' }),
+      /account_timezone alignment is not schedulable/
+    );
+
+    // billing_cycle emits its anchor, so an off-grid anchor stays reproducible.
+    const billing = await install({
+      alignment: 'billing_cycle',
+      periodTimezone: 'UTC',
+      anchor: '2026-09-01T06:00:00.000Z',
+    });
+    assert.equal(billing.schedule.alignment, 'billing_cycle');
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];

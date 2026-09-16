@@ -8,6 +8,7 @@ import {
   canonicalJsonV1,
   reportingIsoDurationMillisecondsV1,
   reportingCoverageDenominatorFingerprintV1,
+  reportingScheduleOriginV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
   validateReportingSourceExecutionV1,
   type ReportingSourceManifestV1,
@@ -1141,6 +1142,24 @@ function assertScheduleIdentityMatchesBoundaries(
   }
   if (carriesTimezone && schedule.periodTimezone !== undefined && schedule.periodTimezone !== sourceTimezone) {
     throw new Error('Reporting periodTimezone does not match the configured source timezone');
+  }
+  // Only billing_cycle carries its anchor on the wire. Every other alignment
+  // has consumers derive boundaries from the normative origin in
+  // reporting-schedule.json, so an anchor off that grid makes the producer run
+  // one set of periods while buyers compute another — a daily 06:00 anchor is
+  // published as a plain `utc` schedule and read as 00:00 boundaries.
+  if (schedule.alignment === 'billing_cycle') return;
+  if (schedule.alignment === 'account_timezone') {
+    throw new Error('Reporting account_timezone alignment is not schedulable by this ledger');
+  }
+  const anchorMs = instant(schedule.anchor, 'schedule.anchor');
+  const originMs = reportingScheduleOriginV1(schedule.alignment, sourceTimezone);
+  const offset = anchorMs - originMs;
+  const phase = ((offset % schedule.periodMilliseconds) + schedule.periodMilliseconds) % schedule.periodMilliseconds;
+  if (phase !== 0) {
+    throw new Error(
+      `Reporting ${schedule.alignment} anchor is not on a period boundary derived from its protocol origin`
+    );
   }
 }
 
