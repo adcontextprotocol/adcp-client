@@ -1278,6 +1278,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     projectedIssues: ReportingLedgerIssueV1[];
     ledgerAsOf: string;
     transition?: ReportingLedgerStatusTransitionV1;
+    expectedManagedStateVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }> {
     const lock = await this.accountLockForObligation(input.reporting_obligation_id);
     return this.transaction(
@@ -1305,6 +1306,19 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           obligation.attemptCount !== input.expectedAttemptCount ||
           canonicalJsonV1(revisionIds) !== canonicalJsonV1(input.expectedRevisionIds) ||
           previousHealth !== input.expectedPreviousHealth
+        ) {
+          return { applied: false, transitionInserted: false };
+        }
+        // Extend the CAS over managed state. The projection reads managed rows
+        // in a separate transaction, so without this a revocation, receipt,
+        // adjustment or settled materialization landing in between would be
+        // overwritten by a health computed before it existed — most visibly as
+        // a `complete` persisted and webhooked over a receipt that had just
+        // arrived. The caller retries on a false return.
+        if (
+          input.expectedManagedStateVersion !== undefined &&
+          (await this.readManagedStateVersion(client, input.reporting_obligation_id)) !==
+            input.expectedManagedStateVersion
         ) {
           return { applied: false, transitionInserted: false };
         }
@@ -2059,7 +2073,10 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       >(
         `SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
            FROM adcp_reporting_receipts receipt
-          WHERE receipt.received_at <= $2
+          -- Ordered and cut off by the database clock, exactly as every other
+          -- receipt read path is, so a skewed host cannot make the lifecycle
+          -- projection see a different receipt set than get_reporting_status.
+          WHERE receipt.recorded_at <= $2
             AND (
               (receipt.receipt_kind = 'revision' AND EXISTS (
                  SELECT 1 FROM adcp_reporting_revisions revision
@@ -2072,7 +2089,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                     AND adjustment.obligation_id = $1
                ))
             )
-          ORDER BY receipt.consumer_id, receipt.received_at, receipt.reporting_receipt_id
+          ORDER BY receipt.consumer_id, receipt.recorded_at, receipt.reporting_receipt_id
           LIMIT $3`,
         [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
       );
@@ -2106,6 +2123,9 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
       }
       const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
+      // Read last, inside the same transaction as everything above, so the
+      // token covers exactly the state this projection was computed from.
+      const managedStateVersion = await this.readManagedStateVersion(client, input.reporting_obligation_id);
       return {
         binding,
         materializations,
@@ -2113,6 +2133,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         consumers: [...byConsumer.values()],
         obligatedConsumerIds: observed,
         obligatedConsumerRosterComplete: false,
+        managedStateVersion,
       };
     });
     if (!base || !this.obligatedConsumers) return base;
@@ -2136,6 +2157,51 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
     }
     return { ...base, obligatedConsumerIds: ids, obligatedConsumerRosterComplete: supplied.complete === true };
+  }
+
+  /**
+   * Digest over every managed row that can change this obligation's projected
+   * health: materialization status, receipt existence and current-leaf flag,
+   * adjustments, and the destination authorization's revocation/cleanup state.
+   *
+   * `is_current` is included because superseding a receipt flips it with no
+   * timestamp of its own, and the authorization's `cleanup_completed_at` is
+   * included because `completeRevocation` does not touch `changed_at`.
+   */
+  private async readManagedStateVersion(client: ReportingPgClient, obligationId: string): Promise<string> {
+    const result = await client.query<QueryResultRow & { version: string }>(
+      `SELECT md5(COALESCE(string_agg(marker, '|' ORDER BY marker), '')) AS version FROM (
+         SELECT 'm:' || materialization_id || ':' || status || ':'
+                || EXTRACT(EPOCH FROM changed_at)::text AS marker
+           FROM adcp_reporting_materializations WHERE obligation_id = $1
+         UNION ALL
+         SELECT 'r:' || receipt.reporting_receipt_id || ':' || receipt.is_current::text || ':'
+                || EXTRACT(EPOCH FROM receipt.recorded_at)::text
+           FROM adcp_reporting_receipts receipt
+          WHERE (receipt.receipt_kind = 'revision' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_revisions revision
+                    WHERE revision.revision_id = receipt.subject_id AND revision.obligation_id = $1))
+             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_adjustments adjustment
+                    WHERE adjustment.adjustment_id = receipt.subject_id AND adjustment.obligation_id = $1))
+         UNION ALL
+         SELECT 'a:' || adjustment_id || ':' || EXTRACT(EPOCH FROM recorded_at)::text
+           FROM adcp_reporting_adjustments WHERE obligation_id = $1
+         UNION ALL
+         SELECT 'z:' || authz.generation::text
+                || ':' || COALESCE(EXTRACT(EPOCH FROM authz.revoked_at)::text, '')
+                || ':' || COALESCE(EXTRACT(EPOCH FROM authz.cleanup_completed_at)::text, '')
+                || ':' || EXTRACT(EPOCH FROM authz.changed_at)::text
+           FROM adcp_reporting_destination_authorizations authz
+           JOIN adcp_reporting_managed_bindings binding
+             ON binding.account_id = authz.account_id AND binding.destination_ref = authz.destination_ref
+           JOIN adcp_reporting_obligations obligation
+             ON obligation.configuration_id = binding.configuration_id
+          WHERE obligation.obligation_id = $1
+       ) markers`,
+      [obligationId]
+    );
+    return result.rows[0]?.version ?? '';
   }
 
   private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {

@@ -564,6 +564,18 @@ export interface ReportingManagedLifecycleProjectionV1 {
    * transitions.
    */
   obligatedConsumerRosterComplete?: boolean;
+  /**
+   * Opaque token over the managed state this projection was computed from.
+   *
+   * The lifecycle CAS fences Core evidence — revision set, obligation state,
+   * attempt count, predecessor health — but managed state is read in a
+   * separate transaction, so a revocation, receipt, adjustment or
+   * materialization landing between projection and apply would be written over
+   * by a health computed before it existed. Pass it back through
+   * `applyLifecycleProjection` so a store that supplies one can refuse a stale
+   * apply.
+   */
+  managedStateVersion?: string;
 }
 
 export interface ReportingLedgerLeaseV1 {
@@ -655,6 +667,13 @@ export interface ReportingLedgerStore {
     projectedIssues: ReportingLedgerIssueV1[];
     ledgerAsOf: string;
     transition?: ReportingLedgerStatusTransitionV1;
+    /**
+     * Managed-state token from the projection this apply was computed from.
+     * A store that produces `managedStateVersion` MUST re-read it inside the
+     * apply transaction and return `applied: false` when it has moved, so a
+     * concurrent managed write cannot be overwritten by a stale health.
+     */
+    expectedManagedStateVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }>;
   markTransitionNotified(transitionId: string, notifiedAt: string): Promise<void>;
   /**

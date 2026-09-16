@@ -176,14 +176,33 @@ describe('seller managed reporting runtime', () => {
         }),
       /generation-fencing revocation components/
     );
+    // `automated_recovery_window_seconds` is published once per agent while
+    // Core windows are per configuration, so the advertised value is required
+    // to be an upper bound over installed windows rather than equal to each.
+    // Advertising more than the widest is conservative and allowed; advertising
+    // less promises a recovery bound the deployment does not keep.
     await assert.rejects(
       () =>
         ledger.createReportingManagedDeliveryRuntime({
           ...common,
-          automatedRecoveryWindowSeconds: 1,
+          store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [60, 900] },
+          automatedRecoveryWindowSeconds: 300,
         }),
-      /must equal every installed managed Core recovery window/
+      /at least the widest installed managed Core recovery window \(900s\)/
     );
+    const heterogeneous = await ledger.createReportingManagedDeliveryRuntime({
+      ...common,
+      store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [60, 900] },
+      automatedRecoveryWindowSeconds: 900,
+    });
+    assert.equal(heterogeneous.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
+    // No managed tenant yet, or the last one just offboarded: still startable.
+    const unbound = await ledger.createReportingManagedDeliveryRuntime({
+      ...common,
+      store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [] },
+      automatedRecoveryWindowSeconds: 120,
+    });
+    assert.equal(unbound.reportingDeliveryCapabilities.automated_recovery_window_seconds, 120);
     await assert.rejects(
       () =>
         ledger.createReportingManagedDeliveryRuntime({
@@ -695,7 +714,11 @@ describe('seller managed reporting runtime', () => {
       deliveryDeadlineMilliseconds: 5_000,
     });
     assert.equal(unbounded.revocationsOverdue, 0);
-    assert.equal(claimsUnbounded[0].lease_milliseconds, 300_000);
+    assert.equal(
+      claimsUnbounded[0].lease_milliseconds,
+      300_000,
+      'with no advertised window there is no promise to protect, so the caller lease stands'
+    );
   });
 
   test('applies the RC3 receipt caps per array instead of a combined cap', async () => {

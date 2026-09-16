@@ -234,12 +234,30 @@ export async function createReportingManagedDeliveryRuntime<
     throw new Error('Managed reporting store is not operational for the configured Core authority');
   }
   nonnegativeInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
+  // `automated_recovery_window_seconds` is published once per agent, in one
+  // capability document, while Core recovery windows are per configuration.
+  // Requiring the advertised value to equal every installed window was
+  // therefore unsatisfiable for any agent serving two tenants on different
+  // windows — and since a capability document cannot be split per tenant,
+  // "run one runtime per cohort" only worked for a seller willing to run one
+  // endpoint per cohort. It also refused to start with no binding installed,
+  // which a fresh deployment always has, and which is the state a deployment
+  // returns to when its last managed tenant offboards.
+  //
+  // The advertised value is a maximum: "the maximum late interval during which
+  // a due obligation may remain delayed while automated recovery continues
+  // before action_required". Going action_required sooner than advertised
+  // honours it; going later does not. So one agent-wide value is truthful
+  // exactly when it is at least every installed window, and the conservative
+  // agent-wide policy is to require that bound and nothing more.
   const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
-  if (!installedRecoveryWindows.length) {
-    throw new Error('Managed Delivery requires an installed binding before capabilities can be advertised');
-  }
-  if (installedRecoveryWindows.some(value => value !== options.automatedRecoveryWindowSeconds)) {
-    throw new Error('automatedRecoveryWindowSeconds must equal every installed managed Core recovery window');
+  const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
+  if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
+    throw new Error(
+      `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
+        `(${widestInstalledWindow}s); advertising ${options.automatedRecoveryWindowSeconds}s would promise a ` +
+        `recovery bound this deployment does not keep for every tenant`
+    );
   }
   positiveInteger(options.statusRetentionDays, 'statusRetentionDays');
   positiveInteger(options.resourceRetentionDays, 'resourceRetentionDays');
@@ -519,22 +537,24 @@ export async function runManagedDeliveryWorker(
   }
   const revocationWindow =
     options.authorizationRevocationSeconds === undefined ? undefined : options.authorizationRevocationSeconds * 1_000;
-  // A failed cleanup keeps its lease as the retry delay, so the lease is the
-  // retry interval. Capping it at the whole advertised window was not enough:
-  // a failure near the boundary then held the grant unretried for up to the
-  // entire window, i.e. past the promise. The lease a claim can safely take is
-  // one attempt's worth — the delivery deadline plus the settlement grace —
-  // which is the shortest interval that cannot cut an in-flight attempt short,
-  // and it leaves the rest of the window available for further retries.
-  // `claimRevocation` requires at least 1 ms, which is the right reading of a
-  // zero-second promise: no backoff at all is permitted.
+  // A failed cleanup keeps its lease as the retry delay, so the lease is also
+  // the retry interval, and a lease as long as the whole advertised window
+  // would defer a retry past the promise. Cap it at one attempt's worth
+  // instead: the delivery deadline plus the settlement grace is the shortest
+  // interval that cannot cut an in-flight attempt short, and it leaves the
+  // rest of the window free for further retries.
+  //
+  // Deliberately NOT scaled by the advertised window. `authorization_
+  // revocation_seconds` has a schema minimum of 0, and scaling by it turned a
+  // legal zero-second promise into a 1 ms lease — which `completeRevocation`
+  // fences with `cleanup_lease_expires_at > clock_timestamp()`, so cleanup
+  // could never commit and the grant was stranded forever. The window governs
+  // the SLA — when an attempt is clipped and when a grant counts as overdue —
+  // and never the length of the lease that fences durable settlement.
   const revocationLeaseMilliseconds =
     revocationWindow === undefined
       ? leaseMilliseconds
-      : Math.max(
-          1,
-          Math.min(leaseMilliseconds, deadlineMilliseconds + MINIMUM_SETTLEMENT_GRACE_MILLISECONDS, revocationWindow)
-        );
+      : Math.min(leaseMilliseconds, deadlineMilliseconds + MINIMUM_SETTLEMENT_GRACE_MILLISECONDS);
   const owner = `managed-reporting-${randomUUID()}`;
   const counts = {
     planned: await store.planMaterializations({ ...(options.account_id ? { account_id: options.account_id } : {}) }),
@@ -563,6 +583,8 @@ export async function runManagedDeliveryWorker(
     // instant. Once the window is already spent there is no bound left to
     // honour and withholding cleanup would strand the grant forever, so the
     // attempt gets its normal budget and the breach is counted instead.
+    // Clipping bounds the attempt, never the settlement that follows it: the
+    // lease above always covers deadline + grace regardless of the window.
     const attemptDeadline =
       remaining !== undefined && remaining > 0 ? Math.min(deadlineMilliseconds, remaining) : deadlineMilliseconds;
     try {

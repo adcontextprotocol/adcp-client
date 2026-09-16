@@ -11,12 +11,18 @@ import type {
   ReportingLedgerSubscriberV1,
 } from './types';
 
-export async function reconcileReportingStatusLifecycleV1(input: {
-  store: ReportingLedgerStore;
-  reporting_obligation_id: string;
-  ledgerAsOf: string;
-  subscribers?: readonly ReportingLedgerSubscriberV1[];
-}): Promise<ReportingLedgerStatusTransitionV1 | null> {
+/** Bounded so a contended obligation falls back to the sweep instead of spinning. */
+const MAX_LIFECYCLE_CAS_ATTEMPTS = 3;
+
+export async function reconcileReportingStatusLifecycleV1(
+  input: {
+    store: ReportingLedgerStore;
+    reporting_obligation_id: string;
+    ledgerAsOf: string;
+    subscribers?: readonly ReportingLedgerSubscriberV1[];
+  },
+  attempt = 0
+): Promise<ReportingLedgerStatusTransitionV1 | null> {
   const obligation = await input.store.getObligation(input.reporting_obligation_id);
   if (!obligation) throw new Error('Reporting obligation is unavailable');
   const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
@@ -33,7 +39,8 @@ export async function reconcileReportingStatusLifecycleV1(input: {
   // `RECEIPT_REQUIRED`, and a managed-only change produced no transition at all
   // so nothing was ever notified. The read path and this path now call the one
   // `projectManagedDelivery`, so the rule itself cannot drift again.
-  const projection = await composeManagedLifecycleProjection(input, obligation, revisions, coreProjection);
+  const composed = await composeManagedLifecycleProjection(input, obligation, revisions, coreProjection);
+  const projection = composed.projection;
   const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
   for (const pending of transitions.filter(value => !value.notifiedAt)) {
     if (await notifyTransition(pending, obligation.account.account_id, input.subscribers)) {
@@ -75,8 +82,20 @@ export async function reconcileReportingStatusLifecycleV1(input: {
     projectedIssues: projection.issues,
     ledgerAsOf: input.ledgerAsOf,
     ...(transition ? { transition } : {}),
+    ...(composed.managedStateVersion !== undefined
+      ? { expectedManagedStateVersion: composed.managedStateVersion }
+      : {}),
   });
-  if (!applied.applied || !transition || !applied.transitionInserted) return null;
+  if (!applied.applied) {
+    // The CAS refused: Core evidence or managed state moved under us. Recompute
+    // and reapply rather than waiting for the next deadline sweep, which for a
+    // managed-only change may not be scheduled at all — that is how a stale
+    // `complete` would otherwise stay persisted and notified. Bounded, so a
+    // genuinely hot obligation degrades to the sweep instead of spinning.
+    if (attempt + 1 >= MAX_LIFECYCLE_CAS_ATTEMPTS) return null;
+    return reconcileReportingStatusLifecycleV1(input, attempt + 1);
+  }
+  if (!transition || !applied.transitionInserted) return null;
   const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);
   if (notified) await input.store.markTransitionNotified(transition.transitionId, input.ledgerAsOf);
   return notified ? { ...transition, notifiedAt: input.ledgerAsOf } : transition;
@@ -115,13 +134,16 @@ async function composeManagedLifecycleProjection(
   obligation: Awaited<ReturnType<ReportingLedgerStore['getObligation']>> & object,
   revisions: Awaited<ReturnType<ReportingLedgerStore['listRevisions']>>,
   coreProjection: ReturnType<typeof projectReportingObligationHealthV1>
-): Promise<ReturnType<typeof projectReportingObligationHealthV1>> {
-  if (!input.store.getManagedLifecycleProjection) return coreProjection;
+): Promise<{
+  projection: ReturnType<typeof projectReportingObligationHealthV1>;
+  managedStateVersion?: string;
+}> {
+  if (!input.store.getManagedLifecycleProjection) return { projection: coreProjection };
   const managed = await input.store.getManagedLifecycleProjection({
     reporting_obligation_id: obligation.reporting_obligation_id,
     ledgerAsOf: input.ledgerAsOf,
   });
-  if (!managed) return coreProjection;
+  if (!managed) return { projection: coreProjection };
   const adjustments = await input.store.listAdjustments(obligation.reporting_obligation_id);
   // Aggregate over the obligated roster, not merely over whoever has already
   // submitted. A consumer that owes a receipt and has sent nothing has no
@@ -208,7 +230,10 @@ async function composeManagedLifecycleProjection(
       observedAt: input.ledgerAsOf,
     });
   }
-  return { ...coreProjection, health, satisfied, issues: [...issues.values()] };
+  return {
+    projection: { ...coreProjection, health, satisfied, issues: [...issues.values()] },
+    ...(managed.managedStateVersion !== undefined ? { managedStateVersion: managed.managedStateVersion } : {}),
+  };
 }
 
 export async function retryReportingStatusNotificationsV1(input: {

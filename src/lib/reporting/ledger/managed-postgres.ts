@@ -186,8 +186,101 @@ type StoredReceiptBatchResult = {
 
 type StoredBatch = { results: StoredReceiptBatchResult[]; request_fingerprint: string };
 
+export interface PostgresReportingManagedDeliveryStoreOptions {
+  /**
+   * Days of managed evidence an account is still accountable for.
+   *
+   * MAX_MATERIALIZATIONS_PER_ACCOUNT and MAX_RECEIPTS_PER_CONSUMER are
+   * lifetime counts. Left unbounded they are a one-way door: a long-lived
+   * account eventually reaches them and then stops planning materializations
+   * and refuses every receipt, permanently, with no operator-visible way back
+   * — evidence is immutable, so nothing ever frees capacity.
+   *
+   * Setting this makes the caps active-scope: only evidence recorded inside
+   * the window counts against them, and `pruneExpiredEvidence` can delete what
+   * falls outside it. Choose a value at least as long as the
+   * `status_retention_days` you advertise, since that is the period you
+   * promised the metadata stays queryable. Omit it to keep the previous
+   * lifetime accounting with no pruning.
+   */
+  evidenceRetentionDays?: number;
+}
+
 export class PostgresReportingManagedDeliveryStore implements ReportingManagedDeliveryStore {
-  constructor(private readonly pool: ReportingPgPool) {}
+  private readonly evidenceRetentionDays: number | undefined;
+
+  constructor(
+    private readonly pool: ReportingPgPool,
+    options: PostgresReportingManagedDeliveryStoreOptions = {}
+  ) {
+    if (options.evidenceRetentionDays !== undefined) {
+      positiveInteger(options.evidenceRetentionDays, 'evidenceRetentionDays');
+    }
+    this.evidenceRetentionDays = options.evidenceRetentionDays;
+  }
+
+  /** SQL fragment scoping a count to the active retention window, if one is set. */
+  private activeScope(column: string): string {
+    return this.evidenceRetentionDays === undefined
+      ? ''
+      : ` AND ${column} >= clock_timestamp() - (${this.evidenceRetentionDays}::bigint * INTERVAL '1 day')`;
+  }
+
+  /**
+   * Deletes managed evidence that has aged out of `evidenceRetentionDays`.
+   *
+   * Only ever removes evidence the deployment no longer promises: nothing
+   * inside the retention window, nothing still `pending` or leased, and no
+   * receipt batch inside its own replay retention. Immutable evidence stays
+   * immutable while it is retained — this frees capacity at the far end of the
+   * window rather than rewriting anything. Returns what it removed so a
+   * scheduler can page through with `limit`.
+   */
+  async pruneExpiredEvidence(input: {
+    account_id: string;
+    limit?: number;
+  }): Promise<{ materializations: number; receipts: number; batches: number }> {
+    if (this.evidenceRetentionDays === undefined) {
+      throw new Error('pruneExpiredEvidence requires PostgresReportingManagedDeliveryStore({ evidenceRetentionDays })');
+    }
+    const limit = input.limit ?? 1_000;
+    positiveInteger(limit, 'limit');
+    const days = this.evidenceRetentionDays;
+    return this.transaction(async client => {
+      await advisoryLock(client, accountLock(input.account_id));
+      const materializations = await client.query(
+        `DELETE FROM adcp_reporting_materializations
+          WHERE materialization_id IN (
+            SELECT materialization_id FROM adcp_reporting_materializations
+             WHERE account_id = $1
+               AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
+               AND status <> 'pending'
+               AND lease_owner IS NULL
+             ORDER BY recorded_at LIMIT $3)`,
+        [input.account_id, days, limit]
+      );
+      const receipts = await client.query(
+        `DELETE FROM adcp_reporting_receipts
+          WHERE (account_id, consumer_id, reporting_receipt_id) IN (
+            SELECT account_id, consumer_id, reporting_receipt_id FROM adcp_reporting_receipts
+             WHERE account_id = $1
+               AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
+             ORDER BY recorded_at LIMIT $3)`,
+        [input.account_id, days, limit]
+      );
+      const batches = await client.query(
+        `DELETE FROM adcp_reporting_receipt_batches
+          WHERE account_id = $1
+            AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 millisecond')`,
+        [input.account_id, RECEIPT_BATCH_RETENTION_MS]
+      );
+      return {
+        materializations: materializations.rowCount ?? 0,
+        receipts: receipts.rowCount ?? 0,
+        batches: batches.rowCount ?? 0,
+      };
+    });
+  }
 
   async probe(coreStore: ReportingLedgerStore): Promise<boolean> {
     const authority = coreStore[REPORTING_LEDGER_AUTHORITY];
@@ -223,10 +316,15 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     );
     return result.rows.map(row => {
       const milliseconds = Number(row.milliseconds);
-      if (!Number.isSafeInteger(milliseconds) || milliseconds < 0 || milliseconds % 1_000 !== 0) {
-        throw new Error('Installed managed Core recovery windows must be non-negative whole seconds');
+      if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
+        throw new Error('Installed managed Core recovery windows must be non-negative');
       }
-      return milliseconds / 1_000;
+      // Core permits any positive integer of milliseconds, and configuration
+      // generations are immutable, so a sub-second window already in the
+      // database cannot be corrected. Round up to the whole second the
+      // capability is expressed in: ceiling keeps the advertised bound at or
+      // above the real one, which is the safe direction for a maximum.
+      return Math.ceil(milliseconds / 1_000);
     });
   }
 
@@ -407,7 +505,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       for (const { account_id } of accounts.rows) await advisoryLock(client, accountLock(account_id));
       const capacity = await client.query<QueryRow & { account_id: string; count: string }>(
         `SELECT account_id, COUNT(*)::text AS count FROM adcp_reporting_materializations
-          WHERE ($1::text IS NULL OR account_id = $1) GROUP BY account_id`,
+          WHERE ($1::text IS NULL OR account_id = $1)${this.activeScope('recorded_at')} GROUP BY account_id`,
         [input.account_id ?? null]
       );
       const remainingByAccount = new Map(
@@ -735,6 +833,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(input.account_id));
       await advisoryLock(client, `adcp-reporting-receipts:${input.account_id}:${input.consumer_id}`);
+      // One authoritative instant for the whole batch, taken from the database
+      // rather than the caller. `input.received_at` comes from the handler's
+      // host clock, and durable receipt state is ordered and cut off by
+      // `recorded_at`, which is a database clock_timestamp() — so trusting the
+      // caller made a skewed host publish a `received_at` that disagreed with
+      // the order and the visibility cutoff its own receipt was subject to.
+      const instant = (await client.query<QueryRow & { now: Date }>('SELECT clock_timestamp() AS now')).rows[0]!.now;
+      const receivedAt = instant.toISOString();
       const authorization = await Promise.all(
         input.entries.map(entry => this.loadReceiptEvidence(client, input.account_id, entry).then(Boolean))
       );
@@ -747,7 +853,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         if (prior.rows[0].request_fingerprint !== input.request_fingerprint) {
           return input.entries.map(entry => idempotencyConflict(entry.receipt.reporting_receipt_id));
         }
-        return this.replayReceiptBatch(client, input, prior.rows[0].results, authorization);
+        return this.replayReceiptBatch(client, input, prior.rows[0].results);
       }
       // Age the replay cache out before measuring it, so reaching the cap is a
       // throttle on burst rather than a permanent lockout that would surface as
@@ -764,7 +870,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
            (SELECT COUNT(*) FROM adcp_reporting_receipt_batches
              WHERE account_id = $1 AND consumer_id = $2)::text AS batches,
            (SELECT COUNT(*) FROM adcp_reporting_receipts
-             WHERE account_id = $1 AND consumer_id = $2)::text AS receipts`,
+             WHERE account_id = $1 AND consumer_id = $2${this.activeScope('recorded_at')})::text AS receipts`,
         [input.account_id, input.consumer_id]
       );
       if (Number(capacity.rows[0]?.batches ?? 0) >= MAX_RECEIPT_BATCHES_PER_CONSUMER) {
@@ -784,7 +890,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           results.push(failed(entry.receipt.reporting_receipt_id));
           continue;
         }
-        const result = await this.recordReceipt(client, input, entry);
+        const result = await this.recordReceipt(client, input, entry, receivedAt);
         results.push(result);
         if (result.result === 'recorded') remainingReceipts -= 1;
       }
@@ -813,24 +919,34 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
    * append-only receipt rows, re-checking authorization exactly as the first
    * call did so a revoked destination cannot be replayed back into disclosure.
    */
+  /**
+   * Replays a prior batch response exactly.
+   *
+   * An exact same-key replay is side-effect free and returns the caller its own
+   * previously recorded verdict, so later revocation of the destination does
+   * not change it. Downgrading a replay to `failed` once authorization ended
+   * broke the protocol-wide rule that a replayed idempotency key returns the
+   * same response, and bought nothing: the body is the caller's own receipt
+   * echoed back with the verdict it already received, so a revoked caller
+   * learns nothing it did not already hold. Fail-closed still governs every
+   * path that *accepts* new evidence — `loadReceiptEvidence` joins
+   * `revoked_at IS NULL` — and nothing here reads another consumer's rows.
+   */
   private async replayReceiptBatch(
     client: PgClient,
     input: ReportingReceiptBatchInputV1,
-    stored: StoredReceiptBatchResult[],
-    authorization: boolean[]
+    stored: StoredReceiptBatchResult[]
   ): Promise<SyncReportingReceiptsResponse['results']> {
     const replay: SyncReportingReceiptsResponse['results'] = [];
     for (const [index, entry] of input.entries.entries()) {
       const result = stored[index];
       // Rows written before the compact form stored the whole response entry.
-      // Serve those verbatim so an idempotency key in flight across the upgrade
-      // still replays instead of turning into a spurious failure.
       const legacy = legacyReceiptBatchResult(result);
       if (legacy) {
-        replay.push(authorization[index] ? structuredClone(legacy) : failed(entry.receipt.reporting_receipt_id));
+        replay.push(structuredClone(legacy));
         continue;
       }
-      if (!result || !authorization[index] || result.kind === 'failed') {
+      if (!result || result.kind === 'failed') {
         replay.push(failed(entry.receipt.reporting_receipt_id));
         continue;
       }
@@ -858,7 +974,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   private async recordReceipt(
     client: PgClient,
     batch: ReportingReceiptBatchInputV1,
-    entry: ReportingReceiptBatchEntryV1
+    entry: ReportingReceiptBatchEntryV1,
+    receivedAt: string
   ): Promise<SyncReportingReceiptsResponse['results'][number]> {
     const fingerprint = digest(entry.receipt);
     const existing = await client.query<
@@ -909,12 +1026,15 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         [batch.account_id, batch.consumer_id, leaf.reporting_receipt_id]
       );
     }
-    const stored = { ...entry.receipt, received_at: batch.received_at };
+    // `received_at` on the wire, `received_at`/`recorded_at` in the row: one
+    // value, so the instant a consumer is shown is exactly the instant its
+    // receipt sorts and becomes visible at.
+    const stored = { ...entry.receipt, received_at: receivedAt };
     await client.query(
       `INSERT INTO adcp_reporting_receipts
         (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
-         supersedes_receipt_id, is_current, semantic_fingerprint, data, received_at)
-       VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8::jsonb,$9)`,
+         supersedes_receipt_id, is_current, semantic_fingerprint, data, received_at, recorded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8::jsonb,$9,$9)`,
       [
         batch.account_id,
         batch.consumer_id,
@@ -924,7 +1044,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         supersedes ?? null,
         fingerprint,
         JSON.stringify(stored),
-        batch.received_at,
+        receivedAt,
       ]
     );
     return recorded(entry.kind, stored);

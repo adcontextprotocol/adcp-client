@@ -548,7 +548,22 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       },
       { account: { id: fixture.accountId }, agent: { agent_url: 'https://buyer-one.example' } }
     );
-    assert.equal(revokedReplay.results[0].result, 'failed');
+    // An exact same-key replay is side-effect free and returns the caller its
+    // own prior verdict. Revocation governs what may be newly accepted, not
+    // what an already-answered idempotency key answers, and the body is the
+    // caller's own receipt echoed back — no other consumer's state is read.
+    assert.equal(revokedReplay.results[0].result, 'recorded');
+    assert.equal(revokedReplay.results[0].receipt.reporting_receipt_id, 'receipt-accepted-0001');
+    assert.equal(validateResponse('sync_reporting_receipts', revokedReplay, '3.2.0-rc.3').valid, true);
+    // A new receipt under a fresh key is still refused while revoked.
+    const revokedFresh = await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
+      {
+        idempotency_key: 'receipt-batch-after-revoke-0001',
+        receipts: [receipt(fixture, { reporting_receipt_id: 'receipt-after-revoke-0001' })],
+      },
+      { account: { id: fixture.accountId }, agent: { agent_url: 'https://buyer-one.example' } }
+    );
+    assert.equal(revokedFresh.results[0].result, 'failed', 'fail-closed still governs newly accepted evidence');
     const retained = await pool.query(
       'SELECT COUNT(*)::integer AS count FROM adcp_reporting_materializations WHERE account_id = $1',
       [fixture.accountId]
@@ -1303,6 +1318,237 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await core.commitRevision(revision, coreLease);
     return { accountId, now, period, configuration, obligation, revision, binding, coreLease };
   }
+
+  test('refuses a lifecycle apply whose managed state moved under it', async () => {
+    const race = await seedSkewLedger('cas', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(race),
+      read: async () => Buffer.from('cas bytes'),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: race.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      now: () => new Date(Date.parse(race.now) + 1000),
+      maxIterations: 2,
+      account_id: race.accountId,
+    });
+
+    const ledgerAsOf = new Date(Date.parse(race.now) + 600_000).toISOString();
+    const before = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: race.obligation.reporting_obligation_id,
+      ledgerAsOf,
+    });
+    assert.ok(before.managedStateVersion, 'the projection carries a managed-state token');
+
+    // A managed write lands between projection and apply. The stale apply must
+    // be refused rather than persisting a health computed before it existed.
+    await managed.revokeDestination({
+      account_id: race.accountId,
+      destination_ref: race.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    const after = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: race.obligation.reporting_obligation_id,
+      ledgerAsOf,
+    });
+    assert.notEqual(
+      after.managedStateVersion,
+      before.managedStateVersion,
+      'a revocation moves the token; a token that never moves would make the CAS vacuous'
+    );
+
+    const stale = await core.applyLifecycleProjection({
+      reporting_obligation_id: race.obligation.reporting_obligation_id,
+      expectedRevisionIds: [race.revision.reporting_revision_id],
+      expectedPreviousHealth: 'waiting',
+      expectedObligationState: race.obligation.state,
+      expectedAttemptCount: race.obligation.attemptCount,
+      projectedIssues: [],
+      ledgerAsOf,
+      expectedManagedStateVersion: before.managedStateVersion,
+    });
+    assert.equal(stale.applied, false, 'a stale managed-state token is refused');
+
+    const current = await core.applyLifecycleProjection({
+      reporting_obligation_id: race.obligation.reporting_obligation_id,
+      expectedRevisionIds: [race.revision.reporting_revision_id],
+      expectedPreviousHealth: 'waiting',
+      expectedObligationState: race.obligation.state,
+      expectedAttemptCount: race.obligation.attemptCount,
+      projectedIssues: [],
+      ledgerAsOf,
+      expectedManagedStateVersion: after.managedStateVersion,
+    });
+    assert.equal(current.applied, true, 'the same apply succeeds once the token matches — the CAS is not vacuous');
+  });
+
+  test('settles provider cleanup durably when the advertised window is zero', async () => {
+    const zero = await seedSkewLedger('zerowindow');
+    await managed.revokeDestination({
+      account_id: zero.accountId,
+      destination_ref: zero.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    let attempts = 0;
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(zero),
+      read: async () => Buffer.from(''),
+      // Slower than a trivial call, to prove the lease actually outlives the
+      // work rather than passing because the work was instantaneous.
+      revoke: async () => {
+        attempts += 1;
+        await new Promise(resolve => setTimeout(resolve, 60));
+      },
+    };
+    // A zero-second promise used to scale the lease to 1 ms, which
+    // completeRevocation fences against clock_timestamp() — so cleanup could
+    // never commit and the grant was stranded forever.
+    const result = await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 3,
+      account_id: zero.accountId,
+      authorizationRevocationSeconds: 0,
+      leaseMilliseconds: 30_000,
+      deliveryDeadlineMilliseconds: 10_000,
+    });
+    assert.equal(attempts, 1, 'bounded: the settled grant is not reselected');
+    assert.equal(result.revocationsCompleted, 1, 'cleanup commits durably under a zero-second window');
+    assert.ok(result.revocationsOverdue >= 1, 'a zero-second window is still reported as overdue');
+    const row = await pool.query(
+      `SELECT cleanup_completed_at FROM adcp_reporting_destination_authorizations
+        WHERE account_id = $1 AND destination_ref = $2 AND generation = 1`,
+      [zero.accountId, zero.binding.destination_ref]
+    );
+    assert.ok(row.rows[0].cleanup_completed_at, 'the durable cleanup marker is set');
+  });
+
+  test('orders receipts by the database clock even when the caller clock is skewed', async () => {
+    const skewLedger = await seedSkewLedger('receiptclock', 'consumer_receipt');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(skewLedger),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: skewLedger.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      now: () => new Date(Date.parse(skewLedger.now) + 1000),
+      maxIterations: 2,
+      account_id: skewLedger.accountId,
+    });
+    const stored = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [skewLedger.obligation.reporting_obligation_id]
+    );
+    skewLedger.materialization = stored.rows[0].data;
+
+    const context = {
+      account: { id: skewLedger.accountId },
+      agent: { agent_url: 'https://receiptclock-buyer.example' },
+    };
+    // A host a year in the past. Nothing durable may take that value.
+    const skewed = new Date(Date.now() - 365 * 86_400_000);
+    const sync = ledger.createSyncReportingReceiptsHandler(
+      managed,
+      value => value.agent.agent_url,
+      () => skewed
+    );
+    const response = await sync(
+      {
+        idempotency_key: 'receipt-clock-skew-0001',
+        receipts: [receipt(skewLedger, { reporting_receipt_id: 'receipt-clock-skew-0001' })],
+      },
+      context
+    );
+    assert.equal(response.results[0].result, 'recorded');
+    const wireReceivedAt = Date.parse(response.results[0].receipt.received_at);
+    assert.ok(
+      wireReceivedAt > Date.now() - 600_000,
+      'the published received_at comes from the database, not the skewed host'
+    );
+    const columns = await pool.query(
+      `SELECT received_at, recorded_at FROM adcp_reporting_receipts WHERE reporting_receipt_id = $1`,
+      ['receipt-clock-skew-0001']
+    );
+    assert.equal(
+      columns.rows[0].received_at.toISOString(),
+      columns.rows[0].recorded_at.toISOString(),
+      'the instant a consumer is shown is the instant its receipt sorts and becomes visible at'
+    );
+
+    // The status read and the lifecycle projection must agree about it.
+    const status = await ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    })({ account: { account_id: skewLedger.accountId }, view: 'periods', period: skewLedger.period }, context);
+    assert.equal(status.periods[0].receipt_count, 1);
+    const projection = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: skewLedger.obligation.reporting_obligation_id,
+      ledgerAsOf: status.ledger_as_of,
+    });
+    assert.deepEqual(
+      projection.consumers.map(value => value.receipts.length),
+      [1],
+      'the lifecycle projection sees the same receipt the status read does'
+    );
+  });
+
+  test('frees managed capacity by pruning evidence past its retention', async () => {
+    const aged = await seedSkewLedger('retention');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(aged),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    await managed.planMaterializations({ account_id: aged.accountId });
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      now: () => new Date(Date.parse(aged.now) + 1000),
+      maxIterations: 2,
+      account_id: aged.accountId,
+    });
+
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 30 });
+    assert.deepEqual(
+      await retaining.pruneExpiredEvidence({ account_id: aged.accountId }),
+      { materializations: 0, receipts: 0, batches: 0 },
+      'nothing inside the retention window is ever removed'
+    );
+
+    // Age the settled materialization past the window.
+    await pool.query(
+      `UPDATE adcp_reporting_materializations SET recorded_at = clock_timestamp() - INTERVAL '90 days'
+        WHERE account_id = $1`,
+      [aged.accountId]
+    );
+    const pruned = await retaining.pruneExpiredEvidence({ account_id: aged.accountId });
+    assert.equal(pruned.materializations, 1, 'evidence past the advertised retention frees capacity');
+
+    // A lifetime cap would have counted the aged row forever; active scope does not.
+    const lifetime = await pool.query(
+      `SELECT COUNT(*)::integer AS count FROM adcp_reporting_materializations WHERE account_id = $1`,
+      [aged.accountId]
+    );
+    assert.equal(lifetime.rows[0].count, 0);
+    assert.equal(
+      await retaining.planMaterializations({ account_id: aged.accountId }),
+      1,
+      'the account keeps working after reaching and clearing its cap'
+    );
+
+    // Without the option the store keeps its previous lifetime accounting and
+    // refuses to prune rather than silently deleting retained evidence.
+    await assert.rejects(
+      () => managed.pruneExpiredEvidence({ account_id: aged.accountId }),
+      /requires PostgresReportingManagedDeliveryStore\(\{ evidenceRetentionDays \}\)/
+    );
+  });
 
   async function seedCoreLedger() {
     const nowMs = Date.now();
