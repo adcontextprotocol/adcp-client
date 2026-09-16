@@ -1820,6 +1820,215 @@ describe('createInlineReportingSourceExecutor', () => {
     };
   }
 
+  test('admits the collection length it counted', async () => {
+    // Length was read to admit the collection and read again to copy it. A collection
+    // answering five and then zero had five real rows sealed as an observed empty period:
+    // rowCount 0, explicit zero, coverage full.
+    let lengthReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const backing = Array.from({ length: 5 }, () => ({
+        media_buy_id: 'fixture-media-buy',
+        impressions: 10,
+        spend: '1.25',
+      }));
+      const rows = new Proxy(backing, {
+        get(target, property, receiver) {
+          if (property === 'length') {
+            lengthReads += 1;
+            return lengthReads === 1 ? 5 : 0;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: rows,
+      };
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-length-restated'), context());
+    assert.equal(lengthReads, 1, 'the collection length is observed exactly once');
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    // The five rows that were admitted are the five rows that are staged.
+    assert.equal(manifest.objects[0].rowCount, 5);
+    assert.ok(manifest.metricAvailability.every(cell => cell.status === 'present'));
+  });
+
+  test('resolves requested reserved field names from the reserved observation', async () => {
+    // `currency` and `status` are read for the adapter's own checks. When one of them is
+    // also a requested dimension it was read a second time, so a row could validate `USD`
+    // and stage `EUR`, or pass the unavailable check and stage `failed`.
+    for (const [index, item] of [
+      { field: 'currency', first: 'USD', second: 'EUR' },
+      { field: 'status', first: 'delivered', second: 'failed' },
+    ].entries()) {
+      let reads = 0;
+      const offering = structuredClone(redactedReportingSourceOfferingV1);
+      offering.dimensions.push({ name: item.field, support: 'exact' });
+      const source = createInlineReportingSourceExecutor(
+        () => [
+          new Proxy(
+            { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' },
+            {
+              getOwnPropertyDescriptor(target, property) {
+                if (property !== item.field) return Reflect.getOwnPropertyDescriptor(target, property);
+                reads += 1;
+                return {
+                  configurable: true,
+                  enumerable: true,
+                  writable: true,
+                  value: reads === 1 ? item.first : item.second,
+                };
+              },
+            }
+          ),
+        ],
+        offering
+      );
+      const slice = request(`fixture-inline-reserved-dimension-${index}`);
+      slice.requestedDimensions = ['media_buy_id', item.field];
+      const result = await source.execute(slice, context());
+      assert.equal(reads, 1, `${item.field} is observed exactly once`);
+      assert.equal(result.ok, true, `${item.field} dimension seals`);
+      const object = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic')
+        .objects[0];
+      const staged = JSON.parse(
+        Buffer.from(
+          await source.read({
+            sourceScope: slice.sourceScope,
+            account: slice.account,
+            delivery_config_id: slice.delivery_config_id,
+            delivery_config_version: slice.delivery_config_version,
+            report_definition_id: slice.report_definition_id,
+            reporting_obligation_id: slice.reporting_obligation_id,
+            objectRef: object.objectRef,
+            objectGeneration: object.objectGeneration,
+            maxBytes: object.byteCount,
+            signal: context().signal,
+          })
+        )
+          .toString('utf8')
+          .trim()
+      );
+      // The value the adapter validated is the value it stages.
+      assert.equal(staged[item.field], item.first, `${item.field} stages its validated observation`);
+    }
+  });
+
+  test('proves each period boundary from one observation', async () => {
+    // A boundary was read for presence, then for its type, then for its value, so a
+    // getter could answer with rubbish twice and the requested date on the third read.
+    let startReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const period = {};
+      Object.defineProperty(period, 'start', {
+        enumerable: true,
+        get: () => {
+          startReads += 1;
+          return startReads <= 2 ? 'not-a-date' : input.start_date;
+        },
+      });
+      Object.defineProperty(period, 'end', { enumerable: true, value: input.end_date });
+      return {
+        reporting_period: period,
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+      };
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-period-boundary-reads'), context());
+    assert.equal(startReads, 1, 'each period boundary is observed exactly once');
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+  });
+
+  test('fails closed on present but malformed control fields', async () => {
+    // Narrowing a malformed control field to its absent form admitted responses that used
+    // to fail closed.
+    for (const [index, item] of [
+      { patch: { unavailable_count: '5' }, code: 'PARTIAL_RESULT' },
+      { patch: { errors: 'boom' }, code: 'PARTIAL_RESULT' },
+      { patch: { partial_data: 'yes' }, code: 'PARTIAL_RESULT' },
+      { patch: { data_through: 1_764_633_600_000, observed_at: 1_764_633_600_000 }, code: 'SOURCE_PERMANENT' },
+    ].entries()) {
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+          ...item.patch,
+        }),
+        redactedReportingSourceOfferingV1
+      );
+      const result = await source.execute(request(`fixture-inline-malformed-control-${index}`), context());
+      assert.equal(
+        validateReportingSourceFailureV1(result, item.code).code,
+        item.code,
+        `${JSON.stringify(item.patch)} fails closed`
+      );
+    }
+  });
+
+  test('settles the response status before reading anything else', async () => {
+    // A reported failure is a retryable source failure. Capturing the row collections
+    // first turned a throwing collection into a terminal verdict instead.
+    let rowCollectionReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const response = {
+        status: 'failed',
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+      };
+      Object.defineProperty(response, 'reporting_rows', {
+        enumerable: true,
+        get: () => {
+          rowCollectionReads += 1;
+          throw new Error('row collection is unavailable');
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-status-precedence'), context());
+    // SOURCE_TRANSIENT is the retryable verdict; SOURCE_PERMANENT would be terminal.
+    assert.equal(validateReportingSourceFailureV1(result, 'SOURCE_TRANSIENT').code, 'SOURCE_TRANSIENT');
+    assert.equal(rowCollectionReads, 0, 'the row collection is not read once status settles the outcome');
+  });
+
+  test('admits a legacy wide-metric report the staging budget accepts', async () => {
+    // 100,000 rows over 20 short metrics stages at about 24 MB, well inside the staging
+    // budget. Accounting for retained claims as a per-row array pair made the retained
+    // bound stricter than the budget it mirrors and refused the report outright.
+    // Short metric names keep the staged object inside the budget, which is what makes
+    // this report one the adapter has always accepted.
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    const metrics = ['impressions', 'spend'];
+    for (let index = metrics.length; index < 20; index += 1) {
+      const name = `m${String(index).padStart(2, '0')}`;
+      offering.metrics.push({ ...offering.metrics[0], name, semanticContractId: `delivery.${name}` });
+      metrics.push(name);
+    }
+    const slice = request('fixture-inline-legacy-wide-metrics');
+    slice.requestedMetrics = metrics;
+    const row = { media_buy_id: 'fixture-media-buy' };
+    for (const metric of metrics) row[metric] = '1';
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array.from({ length: 100_000 }, () => ({ ...row })),
+      }),
+      offering
+    );
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true, 'a report the staging budget accepts is not refused for retained state');
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.objects[0].rowCount, 100_000);
+    assert.equal(manifest.coverage.status, 'full');
+    assert.ok(
+      manifest.objects[0].byteCount < 32 * 1024 * 1024,
+      `staged ${(manifest.objects[0].byteCount / 1048576).toFixed(1)} MiB`
+    );
+  });
+
   test('validates one observation of each response field', async () => {
     // `currency` was read to test its presence and read again to compare it, so a
     // response naming a foreign currency on the first read and the frozen currency on the

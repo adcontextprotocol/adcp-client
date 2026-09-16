@@ -167,7 +167,12 @@ const INLINE_MAX_VALIDATION_SCAN_BYTES_V1 = INLINE_MAX_OBJECT_BYTES_V1;
 // let a request inside every other limit hold most of a gigabyte before a completeness
 // check could reject it.
 const INLINE_MAX_VALIDATION_RETAINED_BYTES_V1 = INLINE_MAX_SCOPE_OBJECT_BYTES_V1;
-const INLINE_RETAINED_BYTES_PER_ROW_V1 = 160;
+// One shared value array and one shared flag array hold every row's claims, so a claim
+// costs one pointer slot plus one flag byte and a row costs only its snapshot handle and
+// its reserved capture. Per-row arrays cost their own headers instead, which made the
+// bound stricter than the staging budget it is meant to mirror: a 100,000 row report over
+// 20 short metrics stages in about 24 MB yet was refused outright.
+const INLINE_RETAINED_BYTES_PER_ROW_V1 = 48;
 const INLINE_RETAINED_BYTES_PER_CLAIM_V1 = 9;
 // The longest status this adapter recognizes is `reporting_delayed`. A longer string
 // cannot match one, so it is never case-folded: a huge status shared by every row used to
@@ -470,6 +475,22 @@ async function executeAndSeal(
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
   }
   const fetchedRecord = !isRows(fetched) ? (fetched as unknown as Record<string, unknown>) : undefined;
+  // `status` is the first thing observed, and the failures it decides are settled before
+  // anything else is read. A response reporting `failed` alongside a row collection that
+  // throws on access is a retryable source failure, not a terminal one -- capturing the
+  // collections first turned the established precedence upside down.
+  let responseStatus: string | undefined;
+  try {
+    responseStatus = boundedLowerCaseStatus(fetchedRecord?.status);
+  } catch {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
+  }
+  if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
+    return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
+  }
+  if (responseStatus === 'unavailable') {
+    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch reported unavailable data');
+  }
   // The row collections are read through the ordinary property channel, so a class
   // instance, a prototype-inherited value, and an accessor-backed slot all keep working
   // the way they did before evidence support landed. Each collection is read once and
@@ -514,17 +535,22 @@ async function executeAndSeal(
   } catch {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
   }
+  // Each collection declares its length exactly once. Reading it again let a collection
+  // admit five rows and then hand back none, sealing five real rows as an observed empty
+  // period: rowCount 0, explicit zero, coverage full.
   const reportingRowsLength = boundedCollectionLength(reportingRows);
   const mediaBuyDeliveriesLength = boundedCollectionLength(mediaBuyDeliveries);
-  if (reportingRowsLength === undefined || mediaBuyDeliveriesLength === undefined) {
+  const sourceDeclaredLength = isRows(fetched)
+    ? boundedCollectionLength(fetched)
+    : reportingRows !== undefined
+      ? reportingRowsLength
+      : mediaBuyDeliveriesLength;
+  if (
+    reportingRowsLength === undefined ||
+    mediaBuyDeliveriesLength === undefined ||
+    sourceDeclaredLength === undefined
+  ) {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
-  }
-  const responseStatus = response.status;
-  if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
-    return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
-  }
-  if (responseStatus === 'unavailable') {
-    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch reported unavailable data');
   }
   if (
     !isRows(fetched) &&
@@ -537,11 +563,18 @@ async function executeAndSeal(
   }
   if (
     request.publicationClass === 'AUTHORITATIVE' &&
-    (isRows(fetched) || (response.isFinal !== true && !['final', 'adjusted'].includes(response.notificationType ?? '')))
+    (isRows(fetched) ||
+      (response.isFinal !== true &&
+        !['final', 'adjusted'].includes((response.notificationType as string | undefined) ?? '')))
   ) {
     return failure('NOT_READY', 'retryable', 'Authoritative inline reporting requires source finality evidence');
   }
-  if (!isRows(fetched) && (response.partialData || response.unavailableCount > 0 || response.errorCount > 0)) {
+  if (
+    !isRows(fetched) &&
+    (Boolean(response.partialData) ||
+      ((response.unavailableCount as number | undefined) ?? 0) > 0 ||
+      ((response.errorsLength as number | undefined) ?? 0) > 0)
+  ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned partial data');
   }
   if (
@@ -590,14 +623,13 @@ async function executeAndSeal(
   // collection reporting length zero can still yield through a custom iterator, so
   // spreading materialized far more rows than the cap admits before the cap was checked.
   const sourceCollection = isRows(fetched) ? fetched : (reportingRows ?? mediaBuyDeliveries ?? []);
-  const sourceRowInputs = captureRowCollection(sourceCollection, INLINE_MAX_ROWS_V1);
-  const auxiliaryRowInputs =
-    !isRows(fetched) && reportingRows !== undefined
-      ? captureRowCollection(mediaBuyDeliveries ?? [], INLINE_MAX_ROWS_V1)
-      : [];
-  if (sourceRowInputs === 'exceeded' || auxiliaryRowInputs === 'exceeded') {
+  const auxiliaryDeclaredLength = !isRows(fetched) && reportingRows !== undefined ? mediaBuyDeliveriesLength : 0;
+  if (sourceDeclaredLength > INLINE_MAX_ROWS_V1 || auxiliaryDeclaredLength > INLINE_MAX_ROWS_V1) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline delivery fetch exceeded the row limit');
   }
+  const sourceRowInputs = captureRowCollection(sourceCollection, sourceDeclaredLength);
+  const auxiliaryRowInputs =
+    auxiliaryDeclaredLength > 0 ? captureRowCollection(mediaBuyDeliveries ?? [], auxiliaryDeclaredLength) : [];
   let availabilityEvidence: z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> | undefined;
   if (!isRows(fetched) && availabilityEvidenceSlot.kind === 'unreadable') {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
@@ -637,25 +669,49 @@ async function executeAndSeal(
     if (units > scanBudget) throw new InlineWorkBudgetExhaustedError();
     scanBudget -= units;
   };
-  // Row status and row currency are decided in their own streaming passes, before any
-  // claim is captured, so a response whose first row already settles the outcome does not
-  // pay to capture the rest. Each field is still observed exactly once overall: status
-  // here, currency here, and every metric and dimension in the capture below.
-  if (anyRowIsUnavailable(sourceRowInputs, auxiliaryRowInputs)) {
-    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
+  // Each row's own reserved fields are observed once, here. Row status decides the
+  // outcome for every row before any currency is considered, and currency before any
+  // claim is captured -- the order these checks have always resolved in -- and a
+  // requested field named after a reserved one reuses this same observation instead of
+  // taking a second one the row could answer differently.
+  const sourceReserved: (RowReservedV1 | undefined)[] = [];
+  const auxiliaryReserved: (RowReservedV1 | undefined)[] = [];
+  for (const [rows, captured] of [
+    [sourceRowInputs, sourceReserved],
+    [auxiliaryRowInputs, auxiliaryReserved],
+  ] as const) {
+    for (const row of rows) {
+      const reserved = captureRowReserved(row);
+      captured.push(reserved);
+      // Stop at the first row that settles the outcome: the rows after it are never read.
+      if (reserved !== undefined && reservedRowStatusIsUnavailable(reserved)) {
+        return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
+      }
+    }
   }
-  if (anyRowCurrencyDiffers(sourceRowInputs, auxiliaryRowInputs, request.sourceSettings.currency)) {
+  if (
+    sourceReserved.some(
+      reserved => typeof reserved?.currency === 'string' && reserved.currency !== request.sourceSettings.currency
+    ) ||
+    auxiliaryReserved.some(
+      reserved => typeof reserved?.currency === 'string' && reserved.currency !== request.sourceSettings.currency
+    )
+  ) {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
   }
+  const totalReservedRows = sourceReserved.length + auxiliaryReserved.length;
   // Observe every claim exactly once. Budgeting, scope checks, availability validation,
   // projection and the staged bytes all read these snapshots, so a row that answers
   // differently on a second read cannot charge one shape and perform another.
   let sourceSnapshots: readonly (RowSnapshotV1 | undefined)[];
   let auxiliarySnapshots: readonly (RowSnapshotV1 | undefined)[];
   try {
-    sourceSnapshots = sourceRowInputs.map(row => captureRowSnapshot(row, captureLayout, strictClaims, chargeScan));
-    auxiliarySnapshots = auxiliaryRowInputs.map(row =>
-      captureRowSnapshot(row, captureLayout, strictClaims, chargeScan)
+    const store = createClaimStore(captureLayout, totalReservedRows);
+    sourceSnapshots = sourceReserved.map((reserved, index) =>
+      captureRowSnapshot(reserved, store, index, strictClaims, chargeScan)
+    );
+    auxiliarySnapshots = auxiliaryReserved.map((reserved, index) =>
+      captureRowSnapshot(reserved, store, sourceReserved.length + index, strictClaims, chargeScan)
     );
   } catch (error) {
     if (error instanceof InlineWorkBudgetExhaustedError) {
@@ -1014,17 +1070,24 @@ const UNCLAIMED_V1: RowClaimV1 = { claimed: false };
  * 100,000 rows over 48 requested fields held roughly 4,800,000 claim objects and Map
  * entries -- near a gigabyte -- before a completeness check could reject the response.
  */
-type CaptureLayoutV1 = { readonly fields: readonly string[]; readonly indexOf: ReadonlyMap<string, number> };
+type CaptureLayoutV1 = {
+  readonly fields: readonly string[];
+  readonly indexOf: ReadonlyMap<string, number>;
+  /** Requested fields that name one of the adapter's own row fields. */
+  readonly reservedFields: ReadonlySet<string>;
+};
 
 function captureLayoutFor(request: ReportingSourceSliceRequestV1): CaptureLayoutV1 {
   const fields: string[] = [];
   const indexOf = new Map<string, number>();
+  const reservedFields = new Set<string>();
   for (const field of [...request.requestedMetrics, ...request.requestedDimensions]) {
     if (field === 'media_buy_id' || indexOf.has(field)) continue;
     indexOf.set(field, fields.length);
     fields.push(field);
+    if ((INLINE_RESERVED_ROW_FIELDS_V1 as readonly string[]).includes(field)) reservedFields.add(field);
   }
-  return { fields, indexOf };
+  return { fields, indexOf, reservedFields };
 }
 
 // Per-field capture flags. Only the resolved value is retained: the direct claim is what
@@ -1039,6 +1102,84 @@ const CLAIM_CLAIM_IS_ZERO_V1 = 1 << 5;
 const CLAIM_DISAGREE_V1 = 1 << 6;
 
 /**
+ * The row fields this adapter reads for its own purposes, observed once per row.
+ *
+ * A requested metric or dimension may be named after one of them. Re-observing the slot
+ * for the requested field let a stateful row answer differently: a `currency` reading
+ * `USD` when the row was checked and `EUR` when the dimension was captured validated one
+ * value and staged another, and a `status` reading `failed` when it was captured staged a
+ * failed row as complete. Any requested field named after a reserved one resolves to this
+ * single observation.
+ */
+type RowReservedV1 = {
+  readonly record: Record<string, unknown>;
+  readonly mediaBuyId: unknown;
+  readonly currency: unknown;
+  readonly status: unknown;
+  readonly partialData: unknown;
+  readonly totals: unknown;
+};
+
+const INLINE_RESERVED_ROW_FIELDS_V1 = ['media_buy_id', 'currency', 'status', 'partial_data', 'totals'] as const;
+
+function captureRowReserved(row: unknown): RowReservedV1 | undefined {
+  const record = asRowRecord(row);
+  if (!record) return undefined;
+  return {
+    record,
+    mediaBuyId: ownDataValue(record, 'media_buy_id'),
+    currency: ownDataValue(record, 'currency'),
+    status: ownDataValue(record, 'status'),
+    partialData: ownDataValue(record, 'partial_data'),
+    totals: ownDataValue(record, 'totals'),
+  };
+}
+
+function reservedFieldValue(reserved: RowReservedV1, field: string): unknown {
+  switch (field) {
+    case 'media_buy_id':
+      return reserved.mediaBuyId;
+    case 'currency':
+      return reserved.currency;
+    case 'status':
+      return reserved.status;
+    case 'partial_data':
+      return reserved.partialData;
+    default:
+      return reserved.totals;
+  }
+}
+
+function reservedRowStatusIsUnavailable(reserved: RowReservedV1): boolean {
+  const status = boundedLowerCaseStatus(reserved.status);
+  return (status !== undefined && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status)) || reserved.partialData === true;
+}
+
+/**
+ * Claims for every captured row, stored in two arrays shared by all of them.
+ *
+ * A values array and a flag byte array per row cost their own headers, which dominated
+ * the retained footprint for narrow requests: a 100,000 row report over 20 short metrics
+ * stages in well under the budget yet was refused by the retained bound. One pair of
+ * arrays for the whole response removes that per-row overhead, so the bound tracks the
+ * claims themselves.
+ */
+type CapturedClaimStoreV1 = {
+  readonly layout: CaptureLayoutV1;
+  readonly values: (string | number | undefined)[];
+  readonly flags: Uint8Array;
+};
+
+function createClaimStore(layout: CaptureLayoutV1, rowCount: number): CapturedClaimStoreV1 {
+  const width = layout.fields.length;
+  return {
+    layout,
+    values: new Array<string | number | undefined>(rowCount * width),
+    flags: new Uint8Array(rowCount * width),
+  };
+}
+
+/**
  * One delivery row observed exactly once.
  *
  * Work budgeting, scope checks, availability validation, projection and the staged bytes
@@ -1048,24 +1189,23 @@ const CLAIM_DISAGREE_V1 = 1 << 6;
  * charged one constituent's work and then performed every constituent's.
  */
 type RowSnapshotV1 = {
-  readonly layout: CaptureLayoutV1;
+  readonly store: CapturedClaimStoreV1;
+  /** Offset of this row's claims inside the shared arrays. */
+  readonly offset: number;
   readonly mediaBuyId: string | undefined;
-  /** Resolved value per captured field, addressed by layout ordinal. */
-  readonly values: readonly (string | number | undefined)[];
-  readonly flags: Uint8Array;
 };
 
 /** Layout ordinal of `field`, or -1 when the request did not ask for it. */
 function fieldSlotOf(snapshot: RowSnapshotV1, field: string): number {
-  return snapshot.layout.indexOf.get(field) ?? -1;
+  return snapshot.store.layout.indexOf.get(field) ?? -1;
 }
 
 function slotValue(snapshot: RowSnapshotV1, slot: number): string | number | undefined {
-  return slot < 0 ? undefined : snapshot.values[slot];
+  return slot < 0 ? undefined : snapshot.store.values[snapshot.offset + slot];
 }
 
 function slotFlags(snapshot: RowSnapshotV1, slot: number): number {
-  return slot < 0 ? 0 : (snapshot.flags[slot] ?? 0);
+  return slot < 0 ? 0 : (snapshot.store.flags[snapshot.offset + slot] ?? 0);
 }
 
 /** The resolved value for `field`: the direct claim when valid, else the `totals` claim. */
@@ -1074,28 +1214,31 @@ function snapshotFieldValue(snapshot: RowSnapshotV1, field: string): string | nu
 }
 
 /**
- * Capture one row. Returns undefined when the value is not a row object at all, so the
- * status and currency passes keep their precedence over the projection's rejection.
+ * Capture one row's claims into the shared store. Returns undefined when the row was not
+ * an object at all, so the status and currency passes keep their precedence over the
+ * projection's rejection.
  */
 function captureRowSnapshot(
-  row: unknown,
-  layout: CaptureLayoutV1,
+  reserved: RowReservedV1 | undefined,
+  store: CapturedClaimStoreV1,
+  rowIndex: number,
   strictClaims: boolean,
   chargeScan: (units: number) => void
 ): RowSnapshotV1 | undefined {
-  const record = asRowRecord(row);
-  if (!record) return undefined;
-  const mediaBuyId = ownDataValue(record, 'media_buy_id');
-  const totals = ownDataValue(record, 'totals');
+  if (!reserved) return undefined;
+  const { record, totals } = reserved;
+  const layout = store.layout;
+  const offset = rowIndex * layout.fields.length;
   const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
-  const values: (string | number | undefined)[] = new Array(layout.fields.length);
-  const flags = new Uint8Array(layout.fields.length);
   // `totals` aliasing its own row addresses the same descriptor twice. Reuse the single
   // observation instead of taking a second one a stateful row could answer differently.
   const totalsAliasesRow = totalsRecord === record;
   for (let slot = 0; slot < layout.fields.length; slot += 1) {
     const field = layout.fields[slot]!;
-    const direct = ownDataClaim(record, field);
+    // A requested field named after a reserved one resolves to the reserved observation.
+    const direct = layout.reservedFields.has(field)
+      ? claimOfValue(reservedFieldValue(reserved, field))
+      : ownDataClaim(record, field);
     const nested =
       totalsRecord === undefined ? UNCLAIMED_V1 : totalsAliasesRow ? direct : ownDataClaim(totalsRecord, field);
     // Charge before anything measures or canonicalizes either claim. A string's `length`
@@ -1129,15 +1272,18 @@ function captureRowSnapshot(
     ) {
       bits |= CLAIM_DISAGREE_V1;
     }
-    values[slot] = resolved?.value;
-    flags[slot] = bits;
+    store.values[offset + slot] = resolved?.value;
+    store.flags[offset + slot] = bits;
   }
   return {
-    layout,
-    mediaBuyId: typeof mediaBuyId === 'string' ? mediaBuyId : undefined,
-    values,
-    flags,
+    store,
+    offset,
+    mediaBuyId: typeof reserved.mediaBuyId === 'string' ? reserved.mediaBuyId : undefined,
   };
+}
+
+function claimOfValue(value: unknown): RowClaimV1 {
+  return value === undefined ? UNCLAIMED_V1 : { claimed: true, value };
 }
 
 function asRowRecord(row: unknown): Record<string, unknown> | undefined {
@@ -1147,37 +1293,6 @@ function asRowRecord(row: unknown): Record<string, unknown> | undefined {
 /** Case-fold a status only when it is short enough to be one this adapter recognizes. */
 function boundedLowerCaseStatus(status: unknown): string | undefined {
   return typeof status === 'string' && status.length <= INLINE_MAX_STATUS_CHARS_V1 ? status.toLowerCase() : undefined;
-}
-
-/** Stream both collections, stopping at the first unavailable row. Nothing is retained. */
-function anyRowIsUnavailable(sourceRowInputs: readonly unknown[], auxiliaryRowInputs: readonly unknown[]): boolean {
-  for (const rows of [sourceRowInputs, auxiliaryRowInputs]) {
-    for (const row of rows) {
-      const record = asRowRecord(row);
-      if (!record) continue;
-      const status = boundedLowerCaseStatus(ownDataValue(record, 'status'));
-      if (status !== undefined && INLINE_UNAVAILABLE_ROW_STATUSES_V1.includes(status)) return true;
-      if (ownDataValue(record, 'partial_data') === true) return true;
-    }
-  }
-  return false;
-}
-
-/** Stream both collections, stopping at the first row that declares another currency. */
-function anyRowCurrencyDiffers(
-  sourceRowInputs: readonly unknown[],
-  auxiliaryRowInputs: readonly unknown[],
-  currency: string
-): boolean {
-  for (const rows of [sourceRowInputs, auxiliaryRowInputs]) {
-    for (const row of rows) {
-      const record = asRowRecord(row);
-      if (!record) continue;
-      const declared = ownDataValue(record, 'currency');
-      if (typeof declared === 'string' && declared !== currency) return true;
-    }
-  }
-  return false;
 }
 
 /**
@@ -1811,50 +1926,53 @@ function snapshotOwnDataObject(
 type DeliveryResponseSnapshotV1 = {
   readonly status: string | undefined;
   readonly isFinal: unknown;
-  readonly notificationType: string | undefined;
+  readonly notificationType: unknown;
   readonly partialData: unknown;
-  readonly unavailableCount: number;
-  readonly errorCount: number;
+  readonly unavailableCount: unknown;
+  readonly errorsLength: unknown;
   readonly paginationPresent: boolean;
   readonly paginationHasMore: unknown;
   readonly paginationNextCursor: unknown;
   readonly periodPresent: boolean;
-  readonly periodStart: string;
-  readonly periodEnd: string;
+  readonly periodStart: unknown;
+  readonly periodEnd: unknown;
   readonly currency: unknown;
-  readonly dataThrough: string | undefined;
-  readonly observedAt: string | undefined;
+  readonly dataThrough: unknown;
+  readonly observedAt: unknown;
 };
 
 function captureDeliveryResponse(record: Record<string, unknown> | undefined): DeliveryResponseSnapshotV1 {
   const period = record?.reporting_period;
   const periodRecord = typeof period === 'object' && period !== null ? (period as Record<string, unknown>) : undefined;
+  // Each boundary is observed once and only that observation is validated and retained.
+  // Reading a boundary for presence, then for its type, then for its value let a getter
+  // answer with rubbish twice and the requested date on the third read.
+  const periodStart = periodRecord?.start;
+  const periodEnd = periodRecord?.end;
   const pagination = record?.pagination;
   const paginationRecord =
     typeof pagination === 'object' && pagination !== null ? (pagination as Record<string, unknown>) : undefined;
+  // Control fields are kept exactly as observed. Narrowing a present-but-malformed value
+  // to its absent form admitted responses that used to fail closed: `unavailable_count:
+  // '5'` and `errors: 'boom'` are partial data, and a non-string watermark is invalid
+  // temporal evidence rather than a missing one.
   const errors = record?.errors;
-  const unavailableCount = record?.unavailable_count;
-  const notificationType = record?.notification_type;
-  const dataThrough = record?.data_through;
-  const observedAt = record?.observed_at;
   return {
     status: boundedLowerCaseStatus(record?.status),
     isFinal: record?.is_final,
-    notificationType: typeof notificationType === 'string' ? notificationType : undefined,
+    notificationType: record?.notification_type,
     partialData: record?.partial_data,
-    unavailableCount: typeof unavailableCount === 'number' ? unavailableCount : 0,
-    errorCount: Array.isArray(errors) ? errors.length : 0,
+    unavailableCount: record?.unavailable_count,
+    errorsLength: (errors as { length?: unknown } | undefined)?.length,
     paginationPresent: record !== undefined && pagination !== undefined,
     paginationHasMore: paginationRecord?.has_more,
     paginationNextCursor: paginationRecord?.next_cursor,
-    // A period is proven only when both boundaries are strings on one observed object.
-    periodPresent:
-      periodRecord !== undefined && typeof periodRecord.start === 'string' && typeof periodRecord.end === 'string',
-    periodStart: typeof periodRecord?.start === 'string' ? periodRecord.start : '',
-    periodEnd: typeof periodRecord?.end === 'string' ? periodRecord.end : '',
+    periodPresent: periodRecord !== undefined && periodStart !== undefined && periodEnd !== undefined,
+    periodStart,
+    periodEnd,
     currency: record?.currency,
-    dataThrough: typeof dataThrough === 'string' ? dataThrough : undefined,
-    observedAt: typeof observedAt === 'string' ? observedAt : undefined,
+    dataThrough: record?.data_through,
+    observedAt: record?.observed_at,
   };
 }
 
@@ -1871,13 +1989,13 @@ function boundedCollectionLength(rows: readonly unknown[] | undefined): number |
  * Spreading a collection runs its iterator, and an adopter iterator is not obliged to
  * agree with `length`: a collection reporting length zero yielded 150,000 rows, all
  * materialized before the row cap could reject them. Indexed capture reads exactly the
- * number of slots that was counted and admitted.
+ * `declaredLength` slots the caller already counted and admitted -- the length is never
+ * re-read here, because a second answer would decouple what was admitted from what is
+ * copied, staged and reported.
  */
-function captureRowCollection(rows: readonly unknown[], cap: number): unknown[] | 'exceeded' {
-  const declared = boundedCollectionLength(rows);
-  if (declared === undefined || declared > cap) return 'exceeded';
-  const captured: unknown[] = new Array(declared);
-  for (let index = 0; index < declared; index += 1) captured[index] = rows[index];
+function captureRowCollection(rows: readonly unknown[], declaredLength: number): unknown[] {
+  const captured: unknown[] = new Array(declaredLength);
+  for (let index = 0; index < declaredLength; index += 1) captured[index] = rows[index];
   return captured;
 }
 
@@ -2016,18 +2134,21 @@ function sourceLocalMidnightDate(instant: string, timeZone: string): string {
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
-function deliveryPeriodBoundaryMatches(actual: string, wireDate: string, instant: string): boolean {
+function deliveryPeriodBoundaryMatches(actual: unknown, wireDate: string, instant: string): boolean {
+  if (typeof actual !== 'string') return false;
   return actual === wireDate || Date.parse(actual) === Date.parse(instant);
 }
 
 function normalizeDeliveryInstant(
-  value: string,
+  value: unknown,
   deliveryDates: { start: string; end: string },
   period: ReportingSourceSliceRequestV1['period']
 ): string {
   if (value === deliveryDates.start) return period.start;
   if (value === deliveryDates.end) return period.end;
-  return value;
+  // A malformed watermark is passed through as observed so `Date.parse` rejects it as
+  // invalid temporal evidence, instead of being narrowed into an absent one that seals.
+  return typeof value === 'string' ? value : String(value);
 }
 
 function scheduleDeadline(deadlineAt: string, expire: () => void): () => void {
