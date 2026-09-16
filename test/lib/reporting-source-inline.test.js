@@ -34,6 +34,38 @@ function presentAvailability(input) {
   };
 }
 
+// Two constituents backed by the same media buy. Both orders are exercised because the
+// mapping from media buy to constituent used to keep only the last declaration.
+function sharedMediaBuyRequest(sourceExecutionKey, zeroCellFirst) {
+  const slice = request(sourceExecutionKey);
+  const base = slice.coverage.constituents[0];
+  const constituents = [base, { ...base, constituentId: 'fixture-constituent-b' }];
+  slice.coverage.constituents = zeroCellFirst ? constituents : [constituents[1], constituents[0]];
+  slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+  return slice;
+}
+
+function sharedMediaBuyCells(input, overrides = []) {
+  return {
+    version: '1.0',
+    cells: input.constituents.flatMap(constituent =>
+      input.requested_metrics.map(metric => {
+        const override = overrides.find(
+          candidate => candidate.constituent_id === constituent.constituent_id && candidate.metric === metric
+        );
+        return override
+          ? { ...override }
+          : {
+              constituent_id: constituent.constituent_id,
+              metric,
+              status: 'present',
+              data_through: input.end_date,
+            };
+      })
+    ),
+  };
+}
+
 describe('createInlineReportingSourceExecutor', () => {
   test('wraps a synchronous delivery fetch and passes basic replay conformance', async () => {
     const calls = [];
@@ -868,7 +900,7 @@ describe('createInlineReportingSourceExecutor', () => {
     );
   });
 
-  test('validates the same row snapshot that is staged and rejects accessor-backed row collections', async () => {
+  test('validates the same row snapshot that is staged', async () => {
     let spendReads = 0;
     const row = new Proxy(
       { media_buy_id: 'fixture-media-buy', impressions: 10 },
@@ -929,25 +961,6 @@ describe('createInlineReportingSourceExecutor', () => {
     });
     assert.equal(spendReads, 1);
     assert.equal(Object.hasOwn(JSON.parse(Buffer.from(bytes).toString('utf8').trim()), 'spend'), false);
-
-    const accessorSource = createInlineReportingSourceExecutor(input => {
-      const response = {
-        reporting_period: { start: input.start_date, end: input.end_date },
-        currency: 'USD',
-      };
-      Object.defineProperty(response, 'reporting_rows', {
-        enumerable: true,
-        get: () => [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
-      });
-      return response;
-    }, redactedReportingSourceOfferingV1);
-    assert.equal(
-      validateReportingSourceFailureV1(
-        await accessorSource.execute(request('fixture-inline-accessor-row-collection'), context()),
-        'SOURCE_PERMANENT'
-      ).code,
-      'SOURCE_PERMANENT'
-    );
   });
 
   test('requires explicit temporal evidence for a partial-period source cutoff', async () => {
@@ -1716,6 +1729,302 @@ describe('createInlineReportingSourceExecutor', () => {
     );
     const result = await source.execute(request('fixture-inline-scalar-cap'), context());
     assert.equal(validateReportingSourceFailureV1(result, 'STAGING_FAILED').code, 'STAGING_FAILED');
+  });
+
+  test('does not spend projection capacity on the auxiliary collection without evidence', async () => {
+    // Only availability verification reads the auxiliary collection, so on the legacy
+    // path its values are never projected. Projecting them charged a separate budget and
+    // turned an otherwise valid response into STAGING_FAILED.
+    const oversized = 'x'.repeat(11 * 1024 * 1024);
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        media_buy_deliveries: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: oversized }],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-auxiliary-capacity'), context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    // Only the source collection is staged, so the auxiliary value never reaches an object.
+    assert.equal(manifest.objects[0].rowCount, 1);
+    assert.ok(manifest.objects[0].byteCount < 1_024);
+  });
+
+  test('gives every constituent sharing one media buy its rows', async () => {
+    const sharedRow = { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' };
+
+    // A contradiction against either constituent must fail closed in either declaration
+    // order. Mapping one media buy onto a single constituent left the other row-free, so
+    // its cells were compared against nothing.
+    for (const override of [
+      { metric: 'impressions', status: 'explicit_zero', data_through: undefined },
+      { metric: 'spend', status: 'missing', reason: 'Provider did not return spend' },
+      { metric: 'spend', status: 'delayed', reason: 'Provider processing is not closed' },
+    ]) {
+      for (const [index, zeroCellFirst] of [true, false].entries()) {
+        for (const contradicted of ['fixture-constituent', 'fixture-constituent-b']) {
+          const source = createInlineReportingSourceExecutor(
+            input => ({
+              reporting_period: { start: input.start_date, end: input.end_date },
+              currency: 'USD',
+              reporting_rows: [sharedRow],
+              availability_evidence: sharedMediaBuyCells(input, [
+                {
+                  constituent_id: contradicted,
+                  metric: override.metric,
+                  status: override.status,
+                  ...(override.reason ? { reason: override.reason } : { data_through: input.end_date }),
+                },
+              ]),
+            }),
+            redactedReportingSourceOfferingV1
+          );
+          const key = `fixture-shared-${override.metric}-${override.status}-${index}-${contradicted}`;
+          const result = await source.execute(sharedMediaBuyRequest(key, zeroCellFirst), context());
+          assert.equal(
+            validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code,
+            'INTEGRITY_FAILED',
+            `${override.status} ${override.metric} on ${contradicted} (zeroCellFirst=${zeroCellFirst})`
+          );
+        }
+      }
+    }
+
+    // The sharpest case: when the contradicted constituent claims no cell as `present`,
+    // nothing forced a partial, so a row-free constituent used to seal a manifest that
+    // declared zero impressions and missing spend against a row carrying both.
+    for (const [index, zeroCellFirst] of [true, false].entries()) {
+      for (const contradicted of ['fixture-constituent', 'fixture-constituent-b']) {
+        const source = createInlineReportingSourceExecutor(
+          input => ({
+            reporting_period: { start: input.start_date, end: input.end_date },
+            currency: 'USD',
+            reporting_rows: [sharedRow],
+            availability_evidence: sharedMediaBuyCells(input, [
+              {
+                constituent_id: contradicted,
+                metric: 'impressions',
+                status: 'explicit_zero',
+                data_through: input.end_date,
+              },
+              {
+                constituent_id: contradicted,
+                metric: 'spend',
+                status: 'missing',
+                reason: 'Provider did not return spend',
+              },
+            ]),
+          }),
+          redactedReportingSourceOfferingV1
+        );
+        const slice = sharedMediaBuyRequest(`fixture-shared-silent-${index}-${contradicted}`, zeroCellFirst);
+        slice.coverage.expected = 'partial';
+        const result = await source.execute(slice, context());
+        assert.equal(
+          validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code,
+          'INTEGRITY_FAILED',
+          `wholly unavailable ${contradicted} (zeroCellFirst=${zeroCellFirst})`
+        );
+      }
+    }
+
+    // The legitimate all-present case must still seal in either order: the shared row
+    // proves both constituents, so neither may read as row-free and partial.
+    for (const [index, zeroCellFirst] of [true, false].entries()) {
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [sharedRow],
+          availability_evidence: sharedMediaBuyCells(input),
+        }),
+        redactedReportingSourceOfferingV1
+      );
+      const result = await source.execute(
+        sharedMediaBuyRequest(`fixture-shared-present-${index}`, zeroCellFirst),
+        context()
+      );
+      assert.equal(result.ok, true, `all-present seals (zeroCellFirst=${zeroCellFirst})`);
+      const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+      assert.equal(manifest.coverage.status, 'full');
+      assert.equal(manifest.metricAvailability.length, 4);
+      assert.ok(manifest.metricAvailability.every(cell => cell.status === 'present'));
+    }
+  });
+
+  test('validates the captured evidence cells rather than a restated envelope', async () => {
+    // The cap used to be checked against the captured own `cells` value while the schema
+    // re-read `cells` through the get channel, so a proxy could be capped on the claim it
+    // declared and validated on a different one.
+    let getReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const captured = [
+        {
+          constituent_id: input.constituents[0].constituent_id,
+          metric: 'impressions',
+          status: 'present',
+          data_through: input.end_date,
+        },
+        {
+          constituent_id: input.constituents[0].constituent_id,
+          metric: 'spend',
+          status: 'missing',
+          reason: 'Provider did not return spend',
+        },
+      ];
+      const restated = [
+        captured[0],
+        {
+          constituent_id: input.constituents[0].constituent_id,
+          metric: 'spend',
+          status: 'present',
+          data_through: input.end_date,
+        },
+      ];
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: new Proxy(
+          { version: '1.0', cells: captured },
+          {
+            get(target, property, receiver) {
+              if (property === 'cells') {
+                getReads += 1;
+                return restated;
+              }
+              return Reflect.get(target, property, receiver);
+            },
+          }
+        ),
+      };
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-restated-evidence-cells'), context());
+    // The captured claim is `missing`, and the row carries spend, so it must fail closed.
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    assert.equal(getReads, 0, 'the evidence envelope is never read through the get channel');
+  });
+
+  test('reconciles long decimal claims in linear time', async () => {
+    const zeros = '0'.repeat(100_000);
+    const claimSource = (direct, totals) =>
+      createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            {
+              media_buy_id: 'fixture-media-buy',
+              impressions: 10,
+              spend: direct,
+              totals: { impressions: 10, spend: totals },
+            },
+          ],
+          availability_evidence: presentAvailability(input),
+        }),
+        redactedReportingSourceOfferingV1
+      );
+
+    // A long zero run that never reaches the end of the string made the trailing-zero
+    // regex retry it from every offset. Trimming is a single scan now, so a contradiction
+    // between two such claims settles immediately instead of quadratically.
+    const started = process.hrtime.bigint();
+    const contradiction = await claimSource(`0.${zeros}1`, `0.${zeros}2`).execute(
+      request('fixture-inline-long-decimal-contradiction'),
+      context()
+    );
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.equal(validateReportingSourceFailureV1(contradiction, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    // Linear settles in single-digit milliseconds; the quadratic trim needed seconds.
+    assert.ok(elapsedMs < 2_000, `long-decimal reconciliation took ${elapsedMs.toFixed(1)}ms`);
+
+    // Trailing zeros are still insignificant, so a padded restatement of the same
+    // quantity remains sealable.
+    const agreement = await claimSource(0.5, `0.5${zeros}`).execute(
+      request('fixture-inline-long-decimal-agreement'),
+      context()
+    );
+    assert.equal(agreement.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(
+      agreement.response.manifest,
+      agreement.manifestBytes,
+      'basic'
+    );
+    assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'spend').status, 'present');
+  });
+
+  test('accepts inherited and accessor-backed row collections', async () => {
+    const row = () => ({ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' });
+    const period = input => ({ start: input.start_date, end: input.end_date });
+
+    // A class instance keeps its rows on the prototype as an accessor.
+    class ClassDelivery {
+      constructor(input) {
+        this.reporting_period = period(input);
+        this.currency = 'USD';
+      }
+      get reporting_rows() {
+        return [row()];
+      }
+    }
+
+    let accessorReads = 0;
+    let deliveriesReads = 0;
+    const shapes = [
+      ['class-instance', input => new ClassDelivery(input)],
+      [
+        'inherited-value',
+        input =>
+          Object.create(
+            { reporting_rows: [row()] },
+            Object.getOwnPropertyDescriptors({ reporting_period: period(input), currency: 'USD' })
+          ),
+      ],
+      [
+        'own-accessor-rows',
+        input => {
+          const response = { reporting_period: period(input), currency: 'USD' };
+          Object.defineProperty(response, 'reporting_rows', {
+            enumerable: true,
+            get: () => {
+              accessorReads += 1;
+              return [row()];
+            },
+          });
+          return response;
+        },
+      ],
+      [
+        'own-accessor-deliveries',
+        input => {
+          const response = { reporting_period: period(input), currency: 'USD' };
+          Object.defineProperty(response, 'media_buy_deliveries', {
+            enumerable: true,
+            get: () => {
+              deliveriesReads += 1;
+              return [row()];
+            },
+          });
+          return response;
+        },
+      ],
+    ];
+
+    for (const [label, build] of shapes) {
+      const source = createInlineReportingSourceExecutor(build, redactedReportingSourceOfferingV1);
+      const result = await source.execute(request(`fixture-inline-row-shape-${label}`), context());
+      assert.equal(result.ok, true, `${label} row collection is accepted`);
+      const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+      assert.equal(manifest.coverage.status, 'full', label);
+      assert.equal(manifest.objects[0].rowCount, 1, label);
+    }
+    // Each collection is read once and reused, so the staged rows are the validated rows.
+    assert.equal(accessorReads, 1);
+    assert.equal(deliveriesReads, 1);
   });
 
   test('bounds both delivery row collections before combining evidence', async () => {

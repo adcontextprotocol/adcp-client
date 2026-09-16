@@ -434,8 +434,22 @@ async function executeAndSeal(
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
   }
   const fetchedRecord = !isRows(fetched) ? (fetched as unknown as Record<string, unknown>) : undefined;
-  const reportingRowsInput = fetchedRecord ? ownDataValue(fetchedRecord, 'reporting_rows') : undefined;
-  const mediaBuyDeliveriesInput = fetchedRecord ? ownDataValue(fetchedRecord, 'media_buy_deliveries') : undefined;
+  // The row collections are read through the ordinary property channel, so a class
+  // instance, a prototype-inherited value, and an accessor-backed slot all keep working
+  // the way they did before evidence support landed. Each collection is read once and
+  // captured here; every later check reads the capture, so the collection that gets
+  // validated is the collection that gets staged. `availability_evidence` is
+  // deliberately not read this way -- an evidence slot that cannot be observed as plain
+  // own data must fail closed rather than read as omitted, because reading as omitted
+  // silently downgrades the response to legacy derived availability.
+  let reportingRowsInput: unknown;
+  let mediaBuyDeliveriesInput: unknown;
+  try {
+    reportingRowsInput = fetchedRecord ? fetchedRecord.reporting_rows : undefined;
+    mediaBuyDeliveriesInput = fetchedRecord ? fetchedRecord.media_buy_deliveries : undefined;
+  } catch {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
+  }
   // One bounded observation decides the evidence slot for the whole execution. A slot
   // that is not an own data property reads as omitted, which would silently downgrade
   // the response to legacy present inference, so it is refused here without reading the
@@ -592,22 +606,30 @@ async function executeAndSeal(
         }
       )
     );
-    auxiliaryRows = auxiliaryRowInputs.map(row =>
-      projectEvidenceRow(
-        row,
-        request,
-        upperBound => {
-          if (upperBound > auxiliaryProjectionBudget) throw new RangeError('Inline projection capacity exhausted');
-          auxiliaryProjectionBudget -= upperBound;
-        },
-        {
-          allowMissingMetrics: true,
-          allowMissingDimensions: true,
-          strictMetricClaims: availabilityEvidence !== undefined,
-          includeDimensions: false,
-        }
-      )
-    );
+    // Only availability verification consults the auxiliary collection. Projecting it on
+    // the legacy path would spend capacity on values nothing reads, and could fail an
+    // otherwise valid response with STAGING_FAILED.
+    auxiliaryRows =
+      availabilityEvidence === undefined
+        ? []
+        : auxiliaryRowInputs.map(row =>
+            projectEvidenceRow(
+              row,
+              request,
+              upperBound => {
+                if (upperBound > auxiliaryProjectionBudget) {
+                  throw new RangeError('Inline projection capacity exhausted');
+                }
+                auxiliaryProjectionBudget -= upperBound;
+              },
+              {
+                allowMissingMetrics: true,
+                allowMissingDimensions: true,
+                strictMetricClaims: true,
+                includeDimensions: false,
+              }
+            )
+          );
   } catch (error) {
     if (error instanceof RangeError) {
       return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
@@ -627,7 +649,9 @@ async function executeAndSeal(
     const admittedMediaBuyIds = new Set(
       request.coverage.constituents.flatMap(constituent => (constituent.mediaBuyId ? [constituent.mediaBuyId] : []))
     );
-    if (evidenceRows.some(row => !admittedMediaBuyIds.has(rowMediaBuyId(row) ?? ''))) {
+    // Read from the raw inputs so the auxiliary collection is still scope-checked on the
+    // legacy path, where it is intentionally left unprojected.
+    if (allRowInputs.some(row => !admittedMediaBuyIds.has(rowMediaBuyId(row) ?? ''))) {
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
     }
     if (
@@ -832,14 +856,26 @@ function parseInlineAvailabilityEvidence(
   input: InlineReportingAvailabilityEvidenceV1,
   request: ReportingSourceSliceRequestV1
 ): z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> {
-  const inputCells =
-    typeof input === 'object' && input !== null
-      ? ownDataValue(input as unknown as Record<string, unknown>, 'cells')
-      : undefined;
-  if (!Array.isArray(inputCells) || inputCells.length > SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1) {
+  if (typeof input !== 'object' || input === null) throw new TypeError('Availability evidence is not an envelope');
+  // Validate a snapshot, never the adopter object. Handing the envelope to the schema
+  // would re-read `cells` through the get channel, so a stateful proxy could satisfy the
+  // cap below with one array and then present a different array -- or a restated claim
+  // in the same array -- to the validator. Unknown keys are carried into the snapshot so
+  // the strict schema still rejects them.
+  const envelope = snapshotOwnDataEnvelope(input as unknown as Record<string, unknown>);
+  const inputCells = envelope.cells;
+  const cellCount = Array.isArray(inputCells) ? inputCells.length : undefined;
+  if (cellCount === undefined || !Number.isSafeInteger(cellCount)) {
+    throw new TypeError('Availability evidence cells are not a bounded array');
+  }
+  if (cellCount > SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1) {
     throw new TypeError('Availability evidence exceeds the cell limit');
   }
-  const parsed = InlineReportingAvailabilityEvidenceV1Schema.parse(input);
+  // Pin exactly the counted cells, in order, so the array that passed the cap is the
+  // array that is validated.
+  const cellSnapshot: unknown[] = new Array(cellCount);
+  for (let index = 0; index < cellCount; index += 1) cellSnapshot[index] = (inputCells as unknown[])[index];
+  const parsed = InlineReportingAvailabilityEvidenceV1Schema.parse({ ...envelope, cells: cellSnapshot });
   const expected = new Set(
     request.coverage.constituents.flatMap(constituent =>
       request.requestedMetrics.map(metric => availabilityCellKey(constituent.constituentId, metric))
@@ -872,23 +908,34 @@ function validateRowsAgainstAvailabilityEvidence(
   cells: readonly z.output<typeof InlineReportingMetricEvidenceV1Schema>[]
 ): 'partial' | 'integrity' | undefined {
   const cellsByConstituent = new Map<string, Array<(typeof cells)[number]>>();
-  const constituentIdByMediaBuyId = new Map<string, string>();
+  // One media buy can back several constituents. Inverting that to a single constituent
+  // per media buy let the last-declared constituent absorb every row, leaving the others
+  // row-free: their `explicit_zero` and unavailable cells were then never checked
+  // against the rows that do carry values, so a contradiction sealed on declaration
+  // order alone.
+  const constituentIdsByMediaBuyId = new Map<string, string[]>();
   const sourceRowsByConstituent = new Map<string, unknown[]>();
   const evidenceRowsByConstituent = new Map<string, unknown[]>();
   for (const constituent of request.coverage.constituents) {
     cellsByConstituent.set(constituent.constituentId, []);
     sourceRowsByConstituent.set(constituent.constituentId, []);
     evidenceRowsByConstituent.set(constituent.constituentId, []);
-    if (constituent.mediaBuyId) constituentIdByMediaBuyId.set(constituent.mediaBuyId, constituent.constituentId);
+    if (constituent.mediaBuyId) {
+      const sharing = constituentIdsByMediaBuyId.get(constituent.mediaBuyId) ?? [];
+      sharing.push(constituent.constituentId);
+      constituentIdsByMediaBuyId.set(constituent.mediaBuyId, sharing);
+    }
   }
   for (const cell of cells) cellsByConstituent.get(cell.constituent_id)?.push(cell);
   for (const row of sourceRows) {
-    const constituentId = constituentIdByMediaBuyId.get(rowMediaBuyId(row) ?? '');
-    if (constituentId) sourceRowsByConstituent.get(constituentId)?.push(row);
+    for (const constituentId of constituentIdsByMediaBuyId.get(rowMediaBuyId(row) ?? '') ?? []) {
+      sourceRowsByConstituent.get(constituentId)?.push(row);
+    }
   }
   for (const row of evidenceRows) {
-    const constituentId = constituentIdByMediaBuyId.get(rowMediaBuyId(row) ?? '');
-    if (constituentId) evidenceRowsByConstituent.get(constituentId)?.push(row);
+    for (const constituentId of constituentIdsByMediaBuyId.get(rowMediaBuyId(row) ?? '') ?? []) {
+      evidenceRowsByConstituent.get(constituentId)?.push(row);
+    }
   }
   for (const constituent of request.coverage.constituents) {
     const sourceConstituentRows = sourceRowsByConstituent.get(constituent.constituentId) ?? [];
@@ -1252,10 +1299,38 @@ function canonicalDecimalEvidence(value: string | number): string | undefined {
   }
   const parts = /^(-?)(\d+)(?:\.(\d+))?$/.exec(raw);
   if (!parts) return undefined;
-  const integer = (parts[2] ?? '').replace(/^0+(?=\d)/, '');
-  const fraction = (parts[3] ?? '').replace(/0+$/, '');
+  const integer = trimLeadingZeroDigits(parts[2] ?? '');
+  const fraction = trimTrailingZeroDigits(parts[3] ?? '');
   const magnitude = fraction ? `${integer}.${fraction}` : integer;
   return magnitude === '0' ? '0' : `${parts[1] ?? ''}${magnitude}`;
+}
+
+const ZERO_CHAR_CODE = 48;
+
+/**
+ * Drop insignificant leading zeros, keeping the last digit. A single scan: the regex
+ * this replaces (`/^0+(?=\d)/`) was anchored and so already linear, but the pair is
+ * easier to reason about when both trims are plainly bounded by the input length.
+ */
+function trimLeadingZeroDigits(digits: string): string {
+  let start = 0;
+  while (start + 1 < digits.length && digits.charCodeAt(start) === ZERO_CHAR_CODE) start += 1;
+  return digits.slice(start);
+}
+
+/**
+ * Drop insignificant trailing zeros in one backward scan.
+ *
+ * The regex this replaces (`/0+$/`) is quadratic on a long run of zeros that does not
+ * reach the end of the string: the engine retries the run from every offset, and each
+ * retry walks it again. A metric claim may be a decimal string of up to
+ * `INLINE_MAX_OBJECT_BYTES_V1`, and claims are reconciled before any projection budget
+ * is charged, so `'0.' + '0'.repeat(n) + '1'` bought n^2 work for n bytes of input.
+ */
+function trimTrailingZeroDigits(digits: string): string {
+  let end = digits.length;
+  while (end > 0 && digits.charCodeAt(end - 1) === ZERO_CHAR_CODE) end -= 1;
+  return digits.slice(0, end);
 }
 
 /**
@@ -1301,6 +1376,22 @@ function ownDataClaim(record: Record<string, unknown>, field: string): { claimed
   return descriptor && 'value' in descriptor && descriptor.value !== undefined
     ? { claimed: true, value: descriptor.value }
     : { claimed: false };
+}
+
+/**
+ * Copy `record`'s own data properties into a plain object, from a single descriptor
+ * observation per key. Getters are never invoked: an own accessor is refused instead,
+ * because an envelope that computes its own fields cannot be pinned to one observation.
+ */
+function snapshotOwnDataEnvelope(record: Record<string, unknown>): Record<string, unknown> {
+  const descriptors = Object.getOwnPropertyDescriptors(record);
+  const snapshot: Record<string, unknown> = {};
+  for (const key of Object.keys(descriptors)) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !('value' in descriptor)) throw new TypeError('Availability evidence field is not readable');
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
 }
 
 /** One bounded observation of an own data slot. */

@@ -53,25 +53,25 @@ const source = createInlineReportingSourceExecutor(async input => ({
   reporting_period: { start: input.start_date, end: input.end_date },
   currency: 'USD',
   reporting_rows: [
-    { media_buy_id: input.constituents[0].media_buy_id, impressions: 10, clicks: 0 },
+    { media_buy_id: input.constituents[0]!.media_buy_id, impressions: 10, clicks: 0 },
   ],
   availability_evidence: {
     version: '1.0',
     cells: [
       {
-        constituent_id: input.constituents[0].constituent_id,
+        constituent_id: input.constituents[0]!.constituent_id,
         metric: 'impressions',
         status: 'present',
         data_through: input.end_date,
       },
       {
-        constituent_id: input.constituents[0].constituent_id,
+        constituent_id: input.constituents[0]!.constituent_id,
         metric: 'clicks',
         status: 'explicit_zero',
         data_through: input.end_date,
       },
       {
-        constituent_id: input.constituents[0].constituent_id,
+        constituent_id: input.constituents[0]!.constituent_id,
         metric: 'viewability',
         status: 'delayed',
         reason: 'Provider processing is not closed',
@@ -81,9 +81,11 @@ const source = createInlineReportingSourceExecutor(async input => ({
 }), offering);
 ```
 
-`present` and `explicit_zero` require `data_through` and forbid a reason. `unsupported`, `delayed`, `partial`, `stale`, and `missing` require a bounded reason and may carry `data_through`. Reasons are retained in durable manifest evidence: use stable non-secret explanations, never credentials or raw provider payloads. A row must contain every metric marked `present`; when that constituent has rows, every row must also carry zero for a metric marked `explicit_zero`. Rows cannot contain values for `unsupported`, `delayed`, or `missing` cells. Mixed cells roll up to existing manifest constituent and coverage states in the request's canonical constituent/metric order. A request for full coverage still returns `PARTIAL_RESULT` when the cell matrix proves only partial or no coverage, and an authoritative/final response cannot seal until every cell is present or explicit-zero through period end.
+`present` and `explicit_zero` require `data_through` and forbid a reason. `unsupported`, `delayed`, `partial`, `stale`, and `missing` require a bounded reason and may carry `data_through`. Reasons are retained in durable manifest evidence: use stable non-secret explanations, never credentials or raw provider payloads. A row must contain every metric marked `present`; when that constituent has rows, every row must also carry zero for a metric marked `explicit_zero`. A row proves every constituent that names its `media_buy_id`, so when several constituents share one media buy they are each held to their own cells against that same row. Rows cannot contain values for `unsupported`, `delayed`, or `missing` cells. Mixed cells roll up to existing manifest constituent and coverage states in the request's canonical constituent/metric order. A request for full coverage still returns `PARTIAL_RESULT` when the cell matrix proves only partial or no coverage, and an authoritative/final response cannot seal until every cell is present or explicit-zero through period end.
 
 Malformed versions or cells, duplicates, missing cells, unrequested constituent/metric keys, invalid watermarks, and row/evidence contradictions fail with `INTEGRITY_FAILED` before objects are staged. Evidence with no rows may prove either that every cell is explicit-zero or that cells are unavailable; it cannot combine available and unavailable claims without rows. A row that repeats one metric both directly and under `totals` must repeat the same quantity; a contradictory second claim is `INTEGRITY_FAILED` rather than a silently preferred direct value. The two claims are compared as exact decimals, so a number printed in exponent notation matches the equivalent plain decimal (`1e-7` and `"0.0000001"` are one quantity), while a decimal string is read digit for digit and is never rounded onto a nearby number. Omitting `availability_evidence` retains the prior all-cells-derived behavior for row arrays and existing response objects, but the envelope must be supplied as a plain own data property: an accessor-backed or inherited `availability_evidence` slot is `INTEGRITY_FAILED` and is never read, because reading it is unsafe and ignoring it would silently downgrade the response to derived availability. That classification comes from one bounded descriptor observation, and the value captured by that same observation is what gets parsed, so a slot that presents itself differently each time it is examined cannot reach the downgrade either. A prototype chain that cannot be walked to an end -- cyclic, or regenerated on every hop -- is likewise `INTEGRITY_FAILED`.
+
+`reporting_rows` and `media_buy_deliveries` are read through the ordinary property channel, so a class instance, a prototype-inherited value, and an accessor-backed slot are all accepted as before; each is read once and the collection that is validated is the collection that is staged. Only `availability_evidence` is restricted to a plain own data property, because an evidence slot that reads as omitted changes which availability rules apply, whereas a row collection that reads as omitted is simply a failure.
 
 The inline adapter narrows the supplied offering to `basic`, non-paginated `media_buy` execution. Every nonzero row must identify an admitted `media_buy_id` and contain each requested dimension. Without `availability_evidence`, it must also contain every requested metric (directly or under `totals`); extra or unidentified rows are rejected. Only the identifier and requested evidence fields are retained. `[]` is the only implicit proof of an all-zero period. A response that omits both row collections is a failure, and unfinished pagination is partial. Authoritative publication additionally requires `is_final: true` or a `final`/`adjusted` notification. The fetch context carries the frozen source settings and semantic contract; group reads are rejected because this compatibility adapter cannot prove them. Each inline executor instance admits at most 100 retained executions and 32 MiB per caller scope, 1,000 executions and 256 MiB total, 16 concurrent fetches, 64 MiB per object, and 5,000,000 row/cell checks per evidence-bearing response. Capacity exhaustion is terminal for that instance; replace it with a durable executor when those bounded compatibility limits are too small.
 
