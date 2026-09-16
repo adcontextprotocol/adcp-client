@@ -649,6 +649,7 @@ export function createPostgresReportingNotificationActivityRuntime(
           const outcomes = result.deliveries.map(delivery => classifyDelivery(delivery));
           const settlement = await settleClaimRecipients(
             options.db,
+            table,
             recipientTable,
             namespace,
             claim,
@@ -921,7 +922,7 @@ async function freezeClaimRecipients(
   // Reclaim before measuring. Settled duplicates of one subscriber carry no
   // further meaning, and refusing on a bound that compaction could have
   // satisfied would strand the notification permanently.
-  await compactSettledRecipients(db, recipientTable, namespace, claim.transitionId);
+  await compactSettledRecipients(db, table, recipientTable, namespace, claim);
   // Budget and mutation are one statement. Measuring separately let a
   // concurrent checkpoint turn a revisable row into a pinned one between the
   // measurement and the write, pushing the retained set past the bound; a
@@ -962,9 +963,14 @@ async function freezeClaimRecipients(
              + (SELECT count(*) FROM proposed
                  WHERE fingerprint NOT IN (SELECT recipient_fingerprint FROM existing)) AS retained
          ), gate AS (
-           SELECT retained, retained <= $8::integer AS ok FROM budget
+           -- The lease is part of the gate, not just of the row sources. A
+           -- stale worker sees an empty \`leased\`, which makes every source
+           -- empty and the budget zero; without this predicate the budget would
+           -- be satisfied and the delete below would reap the rows the
+           -- successor had already frozen under its own lease.
+           SELECT retained, retained <= $8::integer AND EXISTS (SELECT 1 FROM leased) AS ok FROM budget
          ), dropped AS (
-           DELETE FROM ${recipientTable} stale USING gate
+           DELETE FROM ${recipientTable} stale USING gate, leased
             WHERE gate.ok AND stale.namespace = $1 AND stale.transition_id = $2
               AND stale.attempt_at IS NULL AND stale.settled_at IS NULL
               AND NOT (stale.recipient_fingerprint IN (SELECT fingerprint FROM proposed))
@@ -972,7 +978,7 @@ async function freezeClaimRecipients(
            INSERT INTO ${recipientTable}
              (namespace, transition_id, recipient_fingerprint, subscriber_key, recipient)
            SELECT $1, $2, proposed.fingerprint, proposed.subscriber_key, proposed.recipient
-             FROM proposed, gate WHERE gate.ok
+             FROM proposed, gate, leased WHERE gate.ok
            ON CONFLICT (namespace, transition_id, recipient_fingerprint) DO NOTHING
          ), pinned AS (
            SELECT recipient FROM existing WHERE attempt_at IS NOT NULL AND settled_at IS NULL
@@ -1017,6 +1023,7 @@ async function freezeClaimRecipients(
  */
 async function settleClaimRecipients(
   db: ReportingLedgerTransactionV1,
+  table: string,
   recipientTable: string,
   namespace: string,
   claim: ClaimedActivity,
@@ -1046,11 +1053,17 @@ async function settleClaimRecipients(
         `UPDATE ${recipientTable} SET settled_at = clock_timestamp(),
            disposition = CASE WHEN recipient_fingerprint = ANY($3::text[]) THEN 'delivered' ELSE 'terminal' END
           WHERE namespace = $1 AND transition_id = $2 AND settled_at IS NULL
-            AND (recipient_fingerprint = ANY($3::text[]) OR recipient_fingerprint = ANY($4::text[]))`,
-        [namespace, claim.transitionId, delivered, terminal]
+            AND (recipient_fingerprint = ANY($3::text[]) OR recipient_fingerprint = ANY($4::text[]))
+            AND EXISTS (
+              SELECT 1 FROM ${table} activity
+               WHERE activity.namespace = $1 AND activity.transition_id = $2
+                 AND activity.lease_owner = $5 AND activity.lease_version = $6::bigint
+                 AND activity.lease_expires_at >= clock_timestamp()
+            )`,
+        [namespace, claim.transitionId, delivered, terminal, claim.leaseOwner, claim.leaseVersion]
       )
     );
-    await compactSettledRecipients(db, recipientTable, namespace, claim.transitionId);
+    await compactSettledRecipients(db, table, recipientTable, namespace, claim);
   }
   const remaining = await reportingActivityDatabaseOperation('Reporting notification recipient settlement failed', () =>
     db.query<{ unsettled: number }>(
@@ -1074,15 +1087,22 @@ async function settleClaimRecipients(
  */
 async function compactSettledRecipients(
   db: ReportingLedgerTransactionV1,
+  table: string,
   recipientTable: string,
   namespace: string,
-  transitionId: string
+  claim: ClaimedActivity
 ): Promise<void> {
   await reportingActivityDatabaseOperation('Reporting notification recipient compaction failed', () =>
     db.query(
       `DELETE FROM ${recipientTable} superseded
         WHERE superseded.namespace = $1 AND superseded.transition_id = $2
           AND superseded.settled_at IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM ${table} activity
+             WHERE activity.namespace = $1 AND activity.transition_id = $2
+               AND activity.lease_owner = $3 AND activity.lease_version = $4::bigint
+               AND activity.lease_expires_at >= clock_timestamp()
+          )
           AND EXISTS (
             SELECT 1 FROM ${recipientTable} survivor
              WHERE survivor.namespace = superseded.namespace
@@ -1092,7 +1112,7 @@ async function compactSettledRecipients(
                AND (survivor.disposition, survivor.recipient_fingerprint)
                    > (superseded.disposition, superseded.recipient_fingerprint)
           )`,
-      [namespace, transitionId]
+      [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion]
     )
   );
 }

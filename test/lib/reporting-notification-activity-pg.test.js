@@ -2047,6 +2047,121 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     );
   });
 
+  test('makes a stale worker a strict no-op after its lease is taken over', async () => {
+    // After takeover the stale worker's `leased` source is empty, which made
+    // every other source empty and the budget zero — so the gate passed and the
+    // delete reaped the successor's frozen recipients. Its checkpoint then had
+    // no row to mark, settlement counted nothing outstanding, and an unsent
+    // notification could project as delivered.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-takeover',
+      accountId: 'account-takeover',
+    };
+    const recovery = isolatedActivity('post-fence-takeover');
+    await installSubscription(scope.tenantId, scope.principalId, scope.accountId, 'https://buyer.example/takeover');
+    const obligation = await putObligation('post-fence-takeover', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const storedRecipients = async () =>
+      (
+        await pool.query(
+          `SELECT recipient_fingerprint, settled_at FROM adcp_reporting_notification_activity_recipients
+            WHERE namespace = $1 AND transition_id = $2 ORDER BY recipient_fingerprint`,
+          [recovery.namespace, transition.transitionId]
+        )
+      ).rows;
+
+    // The successor freezes its recipient set and leaves it unattempted.
+    const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        emit: event =>
+          notifications.emit({
+            ...event,
+            freezeRecipients: async candidates => {
+              await event.freezeRecipients(candidates);
+              throw new Error('stop before any attempt');
+            },
+          }),
+      },
+    });
+    await freezeOnly.recoverOnce({ ownerToken: 'takeover-successor', limit: 1, retryAfterMs: 1 });
+    const successorRows = await storedRecipients();
+    assert.equal(successorRows.length, 1, 'the successor has a frozen, unattempted recipient');
+
+    // A worker claims and passes its lease fence, and only then loses the lease
+    // to a takeover. That is the window the fence cannot see: the replacement
+    // statement still runs, with an empty leased source.
+    const errors = [];
+    let tookOver = false;
+    const racingDb = {
+      query: async (text, values) => {
+        const result = await pool.query(text, values);
+        if (!tookOver && /delivery_intent_at = COALESCE/.test(text)) {
+          tookOver = true;
+          await pool.query(
+            `UPDATE adcp_reporting_notification_activity
+                SET lease_owner = 'takeover-thief',
+                    lease_version = lease_version + 1,
+                    lease_expires_at = clock_timestamp() + INTERVAL '1 hour'
+              WHERE namespace = $1 AND transition_id = $2`,
+            [recovery.namespace, transition.transitionId]
+          );
+        }
+        return result;
+      },
+    };
+    const stale = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: racingDb,
+      namespace: recovery.namespace,
+      tenantScopeForAccount: () => 'tenant-a',
+      notifications: {
+        hasDeliveryAttemptCheckpoint: true,
+        // The stale worker resolved nothing, so an ungated delete would reap
+        // every unattempted row the successor had frozen.
+        emit: async event => {
+          await event.freezeRecipients([]);
+          return { notificationId: event.notificationId, emissionId: event.emissionId, matched: 0, deliveries: [] };
+        },
+      },
+    });
+    await makeClaimEligible(recovery.namespace, transition.transitionId);
+    const stalePass = await stale.recoverOnce({
+      ownerToken: 'takeover-stale',
+      limit: 1,
+      retryAfterMs: 1,
+      onError: error => errors.push(error),
+    });
+    assert.ok(tookOver, 'the takeover landed inside the post-fence window');
+    assert.equal(stalePass.projected, 0, 'a stale worker never projects');
+    assert.match(errors.at(-1)?.message ?? '', /the recovery lease was lost/);
+    assert.deepEqual(
+      await storedRecipients(),
+      successorRows,
+      'the stale freeze is a strict no-op: the successor recipients are untouched'
+    );
+
+    // Hand the claim back and confirm the notification still delivers once.
+    await pool.query(
+      `UPDATE adcp_reporting_notification_activity
+          SET lease_owner = NULL, lease_expires_at = NULL, next_attempt_at = clock_timestamp()
+        WHERE namespace = $1 AND transition_id = $2`,
+      [recovery.namespace, transition.transitionId]
+    );
+    const settled = await recovery.activity.recoverOnce({ ownerToken: 'takeover-finish', limit: 1 });
+    assert.equal(settled.projected, 1);
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
+  });
+
   test('refuses legacy subscribers beside the transactional port', async () => {
     const obligation = await putObligation('subscriber-conflict', 'account-a');
     await assert.rejects(

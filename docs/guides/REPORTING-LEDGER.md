@@ -267,6 +267,12 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
   bounds **every retained row**. Counting only the addressable recipients let
   terminal rows grow for the lifetime of a claim that kept retrying while fresh
   subscribers settled.
+- Every mutation — the replacement delete, the insert, compaction and
+  settlement — is gated on a live, matching lease, and so is the gate that
+  authorises them. A stale worker sees an empty lease source, which makes every
+  other source empty and the budget zero; gating only the row sources let that
+  empty budget satisfy the check and reap the rows a successor had already
+  frozen. After a takeover a stale worker is a strict no-op that refuses.
 - The bound and the replacement are one statement, and the rows it measures are
   taken `FOR UPDATE`. Measuring separately let a concurrent checkpoint turn a
   revisable row into a pinned one after the budget approved the write: the
