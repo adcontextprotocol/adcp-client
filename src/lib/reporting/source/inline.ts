@@ -178,6 +178,8 @@ const INLINE_RETAINED_BYTES_PER_CLAIM_V1 = 9;
 // cannot match one, so it is never case-folded: a huge status shared by every row used to
 // be copied once per row before a failure that was already decided.
 const INLINE_MAX_STATUS_CHARS_V1 = 32;
+/** Offset of a snapshot that carries no claims: every slot reads as absent. */
+const INLINE_NO_CLAIMS_OFFSET_V1 = -1;
 // Evidence envelopes and cells carry a fixed, small field set. Both are checked against
 // these lists before any descriptor is observed.
 const INLINE_MAX_EVIDENCE_OBJECT_KEYS_V1 = 16;
@@ -479,51 +481,24 @@ async function executeAndSeal(
   // anything else is read. A response reporting `failed` alongside a row collection that
   // throws on access is a retryable source failure, not a terminal one -- capturing the
   // collections first turned the established precedence upside down.
-  let responseStatus: string | undefined;
+  let rawStatus: unknown;
   try {
-    responseStatus = boundedLowerCaseStatus(fetchedRecord?.status);
+    rawStatus = fetchedRecord?.status;
   } catch {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
   }
+  // A status that is present but is not a string is not an absent status: it is an
+  // unreadable response. Narrowing it to absent let `status: 7` seal alongside valid rows.
+  if (rawStatus !== undefined && typeof rawStatus !== 'string') {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch reported an unreadable status');
+  }
+  const responseStatus = boundedLowerCaseStatus(rawStatus);
   if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
     return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
   }
   if (responseStatus === 'unavailable') {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch reported unavailable data');
   }
-  // The row collections are read through the ordinary property channel, so a class
-  // instance, a prototype-inherited value, and an accessor-backed slot all keep working
-  // the way they did before evidence support landed. Each collection is read once and
-  // captured here; every later check reads the capture, so the collection that gets
-  // validated is the collection that gets staged. `availability_evidence` is
-  // deliberately not read this way -- an evidence slot that cannot be observed as plain
-  // own data must fail closed rather than read as omitted, because reading as omitted
-  // silently downgrades the response to legacy derived availability.
-  let reportingRowsInput: unknown;
-  let mediaBuyDeliveriesInput: unknown;
-  try {
-    reportingRowsInput = fetchedRecord ? fetchedRecord.reporting_rows : undefined;
-    mediaBuyDeliveriesInput = fetchedRecord ? fetchedRecord.media_buy_deliveries : undefined;
-  } catch {
-    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
-  }
-  // One bounded observation decides the evidence slot for the whole execution. A slot
-  // that is not an own data property reads as omitted, which would silently downgrade
-  // the response to legacy present inference, so it is refused here without reading the
-  // accessor. Observing the slot a second time would let a stateful proxy answer
-  // "accessor" once and "data" once, and that pair of answers reaches the same silent
-  // downgrade — so the captured snapshot below is the only answer anything consults.
-  const availabilityEvidenceSlot: OwnDataSlotV1 = fetchedRecord
-    ? resolveOwnDataSlot(fetchedRecord, 'availability_evidence')
-    : { kind: 'absent' };
-  if (
-    (reportingRowsInput !== undefined && !Array.isArray(reportingRowsInput)) ||
-    (mediaBuyDeliveriesInput !== undefined && !Array.isArray(mediaBuyDeliveriesInput))
-  ) {
-    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
-  }
-  const reportingRows = reportingRowsInput as readonly unknown[] | undefined;
-  const mediaBuyDeliveries = mediaBuyDeliveriesInput as readonly unknown[] | undefined;
   // Every remaining response field is observed once, here, and only this capture is
   // validated. Reading a field twice let a stateful response answer differently per
   // observation: a `currency` naming a foreign currency when its presence was tested and
@@ -534,23 +509,6 @@ async function executeAndSeal(
     response = captureDeliveryResponse(fetchedRecord);
   } catch {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an unreadable response');
-  }
-  // Each collection declares its length exactly once. Reading it again let a collection
-  // admit five rows and then hand back none, sealing five real rows as an observed empty
-  // period: rowCount 0, explicit zero, coverage full.
-  const reportingRowsLength = boundedCollectionLength(reportingRows);
-  const mediaBuyDeliveriesLength = boundedCollectionLength(mediaBuyDeliveries);
-  const sourceDeclaredLength = isRows(fetched)
-    ? boundedCollectionLength(fetched)
-    : reportingRows !== undefined
-      ? reportingRowsLength
-      : mediaBuyDeliveriesLength;
-  if (
-    reportingRowsLength === undefined ||
-    mediaBuyDeliveriesLength === undefined ||
-    sourceDeclaredLength === undefined
-  ) {
-    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
   }
   if (
     !isRows(fetched) &&
@@ -583,6 +541,55 @@ async function executeAndSeal(
     (response.paginationHasMore !== false || Boolean(response.paginationNextCursor))
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned unfinished pagination');
+  }
+  // Only now are the row collections read. Every failure the response's own status and
+  // control fields decide has already been settled, so a response reporting `working`
+  // beside a collection that throws on access stays retryable rather than being turned
+  // terminal by the read. Each collection is read through the ordinary property channel,
+  // so a class instance, a prototype-inherited value and an accessor-backed slot all keep
+  // working, and each is read once: the collection that gets validated is the collection
+  // that gets staged.
+  let reportingRowsInput: unknown;
+  let mediaBuyDeliveriesInput: unknown;
+  try {
+    reportingRowsInput = fetchedRecord ? fetchedRecord.reporting_rows : undefined;
+    mediaBuyDeliveriesInput = fetchedRecord ? fetchedRecord.media_buy_deliveries : undefined;
+  } catch {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
+  }
+  // One bounded observation decides the evidence slot for the whole execution. A slot
+  // that is not an own data property reads as omitted, which would silently downgrade
+  // the response to legacy present inference, so it is refused here without reading the
+  // accessor. Observing the slot a second time would let a stateful proxy answer
+  // "accessor" once and "data" once, and that pair of answers reaches the same silent
+  // downgrade -- so the captured snapshot below is the only answer anything consults.
+  const availabilityEvidenceSlot: OwnDataSlotV1 = fetchedRecord
+    ? resolveOwnDataSlot(fetchedRecord, 'availability_evidence')
+    : { kind: 'absent' };
+  if (
+    (reportingRowsInput !== undefined && !Array.isArray(reportingRowsInput)) ||
+    (mediaBuyDeliveriesInput !== undefined && !Array.isArray(mediaBuyDeliveriesInput))
+  ) {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
+  }
+  const reportingRows = reportingRowsInput as readonly unknown[] | undefined;
+  const mediaBuyDeliveries = mediaBuyDeliveriesInput as readonly unknown[] | undefined;
+  // Each collection declares its length exactly once. Reading it again let a collection
+  // admit five rows and then hand back none, sealing five real rows as an observed empty
+  // period: rowCount 0, explicit zero, coverage full.
+  const reportingRowsLength = boundedCollectionLength(reportingRows);
+  const mediaBuyDeliveriesLength = boundedCollectionLength(mediaBuyDeliveries);
+  const sourceDeclaredLength = isRows(fetched)
+    ? boundedCollectionLength(fetched)
+    : reportingRows !== undefined
+      ? reportingRowsLength
+      : mediaBuyDeliveriesLength;
+  if (
+    reportingRowsLength === undefined ||
+    mediaBuyDeliveriesLength === undefined ||
+    sourceDeclaredLength === undefined
+  ) {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
   }
   if (!isRows(fetched) && reportingRows === undefined && mediaBuyDeliveries === undefined) {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch omitted its row collection');
@@ -649,14 +656,16 @@ async function executeAndSeal(
   // identity read plus one read per requested metric and dimension, per row, and the
   // bytes the captured claims will occupy while validation runs.
   const captureLayout = captureLayoutFor(request);
+  const claimBearingRowCount =
+    sourceRowInputs.length + (availabilityEvidenceSlot.kind === 'data' ? auxiliaryRowInputs.length : 0);
   if (
     workUnitsExceedCap(
-      sourceRowInputs.length + auxiliaryRowInputs.length,
+      claimBearingRowCount,
       1 + request.requestedMetrics.length + request.requestedDimensions.length,
       INLINE_MAX_VALIDATION_WORK_UNITS_V1
     ) ||
     workUnitsExceedCap(
-      sourceRowInputs.length + auxiliaryRowInputs.length,
+      claimBearingRowCount,
       INLINE_RETAINED_BYTES_PER_ROW_V1 + captureLayout.fields.length * INLINE_RETAINED_BYTES_PER_CLAIM_V1,
       INLINE_MAX_VALIDATION_RETAINED_BYTES_V1
     )
@@ -674,6 +683,11 @@ async function executeAndSeal(
   // claim is captured -- the order these checks have always resolved in -- and a
   // requested field named after a reserved one reuses this same observation instead of
   // taking a second one the row could answer differently.
+  // Row status is settled before any other row field is observed. Reading a row's whole
+  // reserved set up front meant a failed row whose `totals` descriptor throws turned a
+  // retryable partial result into a terminal one. Each field is still read exactly once:
+  // status and `partial_data` in this pass, currency in the next, identity and `totals`
+  // in the claim capture.
   const sourceReserved: (RowReservedV1 | undefined)[] = [];
   const auxiliaryReserved: (RowReservedV1 | undefined)[] = [];
   for (const [rows, captured] of [
@@ -681,37 +695,41 @@ async function executeAndSeal(
     [auxiliaryRowInputs, auxiliaryReserved],
   ] as const) {
     for (const row of rows) {
-      const reserved = captureRowReserved(row);
+      const reserved = beginRowReserved(row);
       captured.push(reserved);
-      // Stop at the first row that settles the outcome: the rows after it are never read.
+      // Stop at the first row that settles the outcome: nothing after it is read.
       if (reserved !== undefined && reservedRowStatusIsUnavailable(reserved)) {
         return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
       }
     }
   }
-  if (
-    sourceReserved.some(
-      reserved => typeof reserved?.currency === 'string' && reserved.currency !== request.sourceSettings.currency
-    ) ||
-    auxiliaryReserved.some(
-      reserved => typeof reserved?.currency === 'string' && reserved.currency !== request.sourceSettings.currency
-    )
-  ) {
-    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
+  for (const reserved of [...sourceReserved, ...auxiliaryReserved]) {
+    if (reserved === undefined) continue;
+    readRowCurrency(reserved);
+    if (typeof reserved.currency === 'string' && reserved.currency !== request.sourceSettings.currency) {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
+    }
   }
-  const totalReservedRows = sourceReserved.length + auxiliaryReserved.length;
   // Observe every claim exactly once. Budgeting, scope checks, availability validation,
   // projection and the staged bytes all read these snapshots, so a row that answers
   // differently on a second read cannot charge one shape and perform another.
   let sourceSnapshots: readonly (RowSnapshotV1 | undefined)[];
   let auxiliarySnapshots: readonly (RowSnapshotV1 | undefined)[];
   try {
-    const store = createClaimStore(captureLayout, totalReservedRows);
+    // Only availability verification reads the auxiliary collection's claims. Capturing
+    // them on the legacy path billed and observed metric and dimension descriptors that
+    // nothing would consult: an unused auxiliary metric whose descriptor throws turned a
+    // previously admitted response terminal, and wide auxiliary rows exhausted the work
+    // budget outright.
+    const claimRowCount = sourceReserved.length + (strictClaims ? auxiliaryReserved.length : 0);
+    const store = createClaimStore(captureLayout, claimRowCount);
     sourceSnapshots = sourceReserved.map((reserved, index) =>
       captureRowSnapshot(reserved, store, index, strictClaims, chargeScan)
     );
     auxiliarySnapshots = auxiliaryReserved.map((reserved, index) =>
-      captureRowSnapshot(reserved, store, sourceReserved.length + index, strictClaims, chargeScan)
+      strictClaims
+        ? captureRowSnapshot(reserved, store, sourceReserved.length + index, strictClaims, chargeScan)
+        : captureRowIdentityOnly(reserved, store)
     );
   } catch (error) {
     if (error instanceof InlineWorkBudgetExhaustedError) {
@@ -1113,26 +1131,35 @@ const CLAIM_DISAGREE_V1 = 1 << 6;
  */
 type RowReservedV1 = {
   readonly record: Record<string, unknown>;
-  readonly mediaBuyId: unknown;
-  readonly currency: unknown;
   readonly status: unknown;
   readonly partialData: unknown;
-  readonly totals: unknown;
+  /** Filled by `readRowCurrency`, once, after every row's status has been settled. */
+  currency?: unknown;
+  /** Filled by `readRowIdentityAndTotals`, once, when claims are captured. */
+  mediaBuyId?: unknown;
+  totals?: unknown;
 };
 
 const INLINE_RESERVED_ROW_FIELDS_V1 = ['media_buy_id', 'currency', 'status', 'partial_data', 'totals'] as const;
 
-function captureRowReserved(row: unknown): RowReservedV1 | undefined {
+/** Observe only what row status needs, so a failed row costs nothing more than that. */
+function beginRowReserved(row: unknown): RowReservedV1 | undefined {
   const record = asRowRecord(row);
   if (!record) return undefined;
   return {
     record,
-    mediaBuyId: ownDataValue(record, 'media_buy_id'),
-    currency: ownDataValue(record, 'currency'),
     status: ownDataValue(record, 'status'),
     partialData: ownDataValue(record, 'partial_data'),
-    totals: ownDataValue(record, 'totals'),
   };
+}
+
+function readRowCurrency(reserved: RowReservedV1): void {
+  reserved.currency = ownDataValue(reserved.record, 'currency');
+}
+
+function readRowIdentityAndTotals(reserved: RowReservedV1): void {
+  reserved.mediaBuyId = ownDataValue(reserved.record, 'media_buy_id');
+  reserved.totals = ownDataValue(reserved.record, 'totals');
 }
 
 function reservedFieldValue(reserved: RowReservedV1, field: string): unknown {
@@ -1201,11 +1228,11 @@ function fieldSlotOf(snapshot: RowSnapshotV1, field: string): number {
 }
 
 function slotValue(snapshot: RowSnapshotV1, slot: number): string | number | undefined {
-  return slot < 0 ? undefined : snapshot.store.values[snapshot.offset + slot];
+  return slot < 0 || snapshot.offset < 0 ? undefined : snapshot.store.values[snapshot.offset + slot];
 }
 
 function slotFlags(snapshot: RowSnapshotV1, slot: number): number {
-  return slot < 0 ? 0 : (snapshot.store.flags[snapshot.offset + slot] ?? 0);
+  return slot < 0 || snapshot.offset < 0 ? 0 : (snapshot.store.flags[snapshot.offset + slot] ?? 0);
 }
 
 /** The resolved value for `field`: the direct claim when valid, else the `totals` claim. */
@@ -1226,6 +1253,7 @@ function captureRowSnapshot(
   chargeScan: (units: number) => void
 ): RowSnapshotV1 | undefined {
   if (!reserved) return undefined;
+  readRowIdentityAndTotals(reserved);
   const { record, totals } = reserved;
   const layout = store.layout;
   const offset = rowIndex * layout.fields.length;
@@ -1278,6 +1306,24 @@ function captureRowSnapshot(
   return {
     store,
     offset,
+    mediaBuyId: typeof reserved.mediaBuyId === 'string' ? reserved.mediaBuyId : undefined,
+  };
+}
+
+/**
+ * A snapshot that carries only the row's identity. Used for the auxiliary collection when
+ * no availability evidence will read its claims: the scope check needs `media_buy_id` and
+ * nothing else, so no metric or dimension descriptor is observed or billed.
+ */
+function captureRowIdentityOnly(
+  reserved: RowReservedV1 | undefined,
+  store: CapturedClaimStoreV1
+): RowSnapshotV1 | undefined {
+  if (!reserved) return undefined;
+  reserved.mediaBuyId = ownDataValue(reserved.record, 'media_buy_id');
+  return {
+    store,
+    offset: INLINE_NO_CLAIMS_OFFSET_V1,
     mediaBuyId: typeof reserved.mediaBuyId === 'string' ? reserved.mediaBuyId : undefined,
   };
 }
@@ -1924,7 +1970,6 @@ function snapshotOwnDataObject(
  * value the next check sees.
  */
 type DeliveryResponseSnapshotV1 = {
-  readonly status: string | undefined;
   readonly isFinal: unknown;
   readonly notificationType: unknown;
   readonly partialData: unknown;
@@ -1958,7 +2003,6 @@ function captureDeliveryResponse(record: Record<string, unknown> | undefined): D
   // temporal evidence rather than a missing one.
   const errors = record?.errors;
   return {
-    status: boundedLowerCaseStatus(record?.status),
     isFinal: record?.is_final,
     notificationType: record?.notification_type,
     partialData: record?.partial_data,

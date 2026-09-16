@@ -1968,6 +1968,176 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('fails closed on a malformed response status', async () => {
+    // A status that is present but not a string is an unreadable response, not an absent
+    // status. Narrowing it to absent let `status: 7` seal alongside otherwise valid rows.
+    for (const [index, status] of [7, true, {}, ['failed']].entries()) {
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          status,
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        }),
+        redactedReportingSourceOfferingV1
+      );
+      const result = await source.execute(request(`fixture-inline-malformed-status-${index}`), context());
+      assert.equal(
+        validateReportingSourceFailureV1(result, 'SOURCE_PERMANENT').code,
+        'SOURCE_PERMANENT',
+        `status ${JSON.stringify(status)} fails closed`
+      );
+    }
+  });
+
+  test('settles a nonterminal status before reading the row collections', async () => {
+    // `working` is a retryable not-ready verdict. Reading the row collections first let a
+    // throwing collection getter turn it terminal.
+    let rowCollectionReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const response = {
+        status: 'working',
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+      };
+      Object.defineProperty(response, 'reporting_rows', {
+        enumerable: true,
+        get: () => {
+          rowCollectionReads += 1;
+          throw new Error('row collection is unavailable');
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-nonterminal-status'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'NOT_READY').code, 'NOT_READY');
+    assert.equal(rowCollectionReads, 0, 'the row collection is not read once status settles the outcome');
+  });
+
+  test('observes the response status exactly once', async () => {
+    // The status was read for the precedence check and again into the response capture,
+    // so a status that answered once and then threw turned a valid response terminal.
+    let statusReads = 0;
+    const source = createInlineReportingSourceExecutor(input => {
+      const response = {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+      };
+      Object.defineProperty(response, 'status', {
+        enumerable: true,
+        get: () => {
+          statusReads += 1;
+          if (statusReads > 1) throw new Error('status is no longer readable');
+          return 'completed';
+        },
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    const result = await source.execute(request('fixture-inline-single-status-read'), context());
+    assert.equal(statusReads, 1, 'the response status is observed exactly once');
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+  });
+
+  test('settles row status before observing any other row field', async () => {
+    // A failed row is a retryable partial result. Capturing the row's whole reserved set
+    // up front let an unrelated `totals` descriptor make that verdict terminal.
+    let totalsReads = 0;
+    const source = createInlineReportingSourceExecutor(
+      () => [
+        new Proxy(
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', status: 'failed' },
+          {
+            getOwnPropertyDescriptor(target, property) {
+              if (property !== 'totals') return Reflect.getOwnPropertyDescriptor(target, property);
+              totalsReads += 1;
+              throw new Error('totals is not readable');
+            },
+          }
+        ),
+      ],
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-failed-row-totals'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    assert.equal(totalsReads, 0, 'a failed row is not read beyond its status');
+  });
+
+  test('leaves auxiliary claims unread without availability evidence', async () => {
+    // Without evidence nothing consults the auxiliary collection's claims, so its metric
+    // and dimension descriptors must not be observed or billed. Capturing them made an
+    // unused throwing descriptor terminal and wide auxiliary rows exhaust the budget.
+    let auxiliaryMetricReads = 0;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        media_buy_deliveries: [
+          new Proxy(
+            { media_buy_id: 'fixture-media-buy' },
+            {
+              getOwnPropertyDescriptor(target, property) {
+                if (property !== 'spend') return Reflect.getOwnPropertyDescriptor(target, property);
+                auxiliaryMetricReads += 1;
+                throw new Error('auxiliary spend is not readable');
+              },
+            }
+          ),
+        ],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-auxiliary-unread'), context());
+    assert.equal(result.ok, true, 'a legacy response is not failed by an unused auxiliary claim');
+    assert.equal(auxiliaryMetricReads, 0, 'auxiliary claims are not observed without evidence');
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+
+    // The auxiliary collection is still scope-checked from its identity alone.
+    const outOfScope = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        media_buy_deliveries: [{ media_buy_id: 'some-other-media-buy' }],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await outOfScope.execute(request('fixture-inline-auxiliary-out-of-scope'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+
+    // Auxiliary breadth no longer spends the work budget when nothing reads it.
+    const { offering, metrics, dimensions } = widenedOffering(500, 500);
+    const wideSlice = request('fixture-inline-auxiliary-width');
+    wideSlice.requestedMetrics = metrics;
+    wideSlice.requestedDimensions = dimensions;
+    const wideRow = { media_buy_id: 'fixture-media-buy' };
+    for (const metric of metrics) wideRow[metric] = 1;
+    for (const dimension of dimensions.slice(1)) wideRow[dimension] = 'v';
+    const wide = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ ...wideRow }],
+        media_buy_deliveries: Array.from({ length: 4_000 }, () => ({ media_buy_id: 'fixture-media-buy' })),
+      }),
+      offering
+    );
+    assert.equal(
+      (await wide.execute(wideSlice, context())).ok,
+      true,
+      'auxiliary rows do not spend the claim budget without evidence'
+    );
+  });
+
   test('settles the response status before reading anything else', async () => {
     // A reported failure is a retryable source failure. Capturing the row collections
     // first turned a throwing collection into a terminal verdict instead.
