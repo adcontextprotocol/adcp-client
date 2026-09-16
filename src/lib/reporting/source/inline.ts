@@ -1320,22 +1320,37 @@ function captureRowSnapshot(
     const direct = layout.reservedFields.has(field)
       ? claimOfValue(reservedFieldValue(reserved, field))
       : ownDataClaim(record, field);
-    const nested =
-      totalsRecord === undefined ? UNCLAIMED_V1 : totalsAliasesRow ? direct : ownDataClaim(totalsRecord, field);
-    // Charge before anything measures or canonicalizes either claim. A string's `length`
-    // is O(1), while its byte width, the zero test and the decimal canonicalization are
-    // each O(length) -- and each is a separate pass, so charging one pass let a claim be
-    // scanned several times over for a single charge. Only the retained value is charged
-    // against the projection budget, so a long string appearing as the discarded half of
-    // a duplicate claim -- a tiny direct value beside a huge `totals` restatement --
-    // otherwise bought full scans per row at no cost.
-    const passes = claimScanPasses(strictClaims, direct.claimed && nested.claimed);
-    chargeScan((claimScanWidth(direct.value, strictClaims) + claimScanWidth(nested.value, strictClaims)) * passes);
+    // Charge before anything measures the claim. A string's `length` is O(1), while its
+    // byte width, the zero test and the decimal canonicalization are each O(length) and
+    // each a separate pass, so charging one pass let a claim be scanned several times
+    // over for a single charge. Only the retained value is charged against the projection
+    // budget, so a long string appearing as the discarded half of a duplicate claim -- a
+    // tiny direct value beside a huge `totals` restatement -- otherwise bought full scans
+    // per row at no cost. Measuring costs the byte width always and the zero test only
+    // where evidence cells will read it.
+    const measurePasses = strictClaims ? 2 : 1;
+    chargeScan(claimScanWidth(direct.value, strictClaims) * measurePasses);
+    const measuredDirect = measureClaim(direct.value, strictClaims);
 
-    // Each measurement happens once per claim and is reused everywhere below.
-    const needCanonical = strictClaims && direct.claimed && nested.claimed;
-    const measuredDirect = measureClaim(direct.value, strictClaims, needCanonical);
-    const measuredNested = totalsAliasesRow ? measuredDirect : measureClaim(nested.value, strictClaims, needCanonical);
+    // Without availability evidence a valid direct value settles the field and `totals`
+    // is never consulted -- that is the direct-over-totals precedence this adapter has
+    // always had, and reading `totals` anyway let a throwing descriptor fail a legacy
+    // response the direct value had already proven. With evidence both claims are needed,
+    // because a duplicate claim must be reconciled rather than silently preferred.
+    let nested: RowClaimV1 = UNCLAIMED_V1;
+    let measuredNested: MeasuredClaimV1 = UNMEASURED_CLAIM_V1;
+    if (totalsRecord !== undefined && (strictClaims || !measuredDirect.valid)) {
+      if (totalsAliasesRow) {
+        // The same descriptor: reuse the one observation and the one measurement.
+        nested = direct;
+        measuredNested = measuredDirect;
+      } else {
+        nested = ownDataClaim(totalsRecord, field);
+        chargeScan(claimScanWidth(nested.value, strictClaims) * measurePasses);
+        measuredNested = measureClaim(nested.value, strictClaims);
+      }
+    }
+
     const resolved = measuredDirect.valid ? measuredDirect : measuredNested.valid ? measuredNested : undefined;
     const claimed = direct.claimed ? measuredDirect : measuredNested;
     let bits = 0;
@@ -1346,12 +1361,19 @@ function captureRowSnapshot(
     if (resolved?.isZero === true) bits |= CLAIM_VALUE_IS_ZERO_V1;
     if (claimed.valid && claimed.isZero) bits |= CLAIM_CLAIM_IS_ZERO_V1;
     if (
-      needCanonical &&
+      strictClaims &&
+      direct.claimed &&
+      nested.claimed &&
       measuredDirect.valid &&
       measuredNested.valid &&
-      !claimMeasurementsAgree(measuredDirect, measuredNested)
+      !Object.is(direct.value, nested.value)
     ) {
-      bits |= CLAIM_DISAGREE_V1;
+      // A canonical decimal form is only needed to reconcile a duplicate claim that is
+      // not already identical, so it is charged and computed exactly there.
+      chargeScan(claimScanWidth(direct.value, true) + claimScanWidth(nested.value, true));
+      const canonicalDirect = canonicalDecimalEvidence(measuredDirect.value as string | number);
+      const canonicalNested = canonicalDecimalEvidence(measuredNested.value as string | number);
+      if (canonicalDirect === undefined || canonicalDirect !== canonicalNested) bits |= CLAIM_DISAGREE_V1;
     }
     store.values[offset + slot] = resolved?.value;
     store.flags[offset + slot] = bits;
@@ -1402,42 +1424,15 @@ type MeasuredClaimV1 = {
   readonly value: string | number | undefined;
   readonly valid: boolean;
   readonly isZero: boolean;
-  readonly canonical: string | undefined;
 };
 
-const UNMEASURED_CLAIM_V1: MeasuredClaimV1 = {
-  value: undefined,
-  valid: false,
-  isZero: false,
-  canonical: undefined,
-};
+const UNMEASURED_CLAIM_V1: MeasuredClaimV1 = { value: undefined, valid: false, isZero: false };
 
-function measureClaim(value: unknown, strictClaims: boolean, needCanonical: boolean): MeasuredClaimV1 {
+function measureClaim(value: unknown, strictClaims: boolean): MeasuredClaimV1 {
   // The only byte-width scan of this claim.
   if (!isEvidenceValue(value)) return UNMEASURED_CLAIM_V1;
-  return {
-    value,
-    valid: true,
-    // The only zero test, and the only canonicalization.
-    isZero: strictClaims ? isZeroEvidenceValue(value) : false,
-    canonical: needCanonical ? canonicalDecimalEvidence(value) : undefined,
-  };
-}
-
-/** Two measured claims agree when they are identical or the same decimal quantity. */
-function claimMeasurementsAgree(direct: MeasuredClaimV1, nested: MeasuredClaimV1): boolean {
-  if (Object.is(direct.value, nested.value)) return true;
-  return direct.canonical !== undefined && direct.canonical === nested.canonical;
-}
-
-/**
- * Passes a claim is scanned in: its byte width always, its zero test whenever evidence
- * cells will read it, and its canonical form only when a duplicate claim must be
- * reconciled.
- */
-function claimScanPasses(strictClaims: boolean, duplicateClaim: boolean): number {
-  if (!strictClaims) return 1;
-  return duplicateClaim ? 3 : 2;
+  // The only zero test, and only where evidence cells will read it.
+  return { value, valid: true, isZero: strictClaims ? isZeroEvidenceValue(value) : false };
 }
 
 function claimScanWidth(value: unknown, strictClaims: boolean): number {

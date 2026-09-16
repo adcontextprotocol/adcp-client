@@ -1968,6 +1968,100 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('leaves totals unread when a direct metric already proves the field', async () => {
+    // Without availability evidence a valid direct value settles the metric and `totals`
+    // is never consulted. Reading it anyway let a throwing `totals` descriptor fail a
+    // legacy response that the direct value had already proven.
+    let nestedReads = 0;
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          {
+            media_buy_id: 'fixture-media-buy',
+            impressions: 10,
+            spend: '1.25',
+            totals: new Proxy(
+              {},
+              {
+                getOwnPropertyDescriptor(unusedTarget, property) {
+                  nestedReads += 1;
+                  throw new Error(`totals.${String(property)} is not readable`);
+                },
+              }
+            ),
+          },
+        ],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-totals-unread'), context());
+    assert.equal(result.ok, true, 'a direct metric proves the field without consulting totals');
+    assert.equal(nestedReads, 0, 'totals is not observed once the direct value settles the metric');
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+    assert.ok(manifest.metricAvailability.every(cell => cell.status === 'present'));
+
+    // The fallback is unchanged: an invalid direct value still consults `totals`, once.
+    let fallbackReads = 0;
+    const fallback = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          new Proxy(
+            { media_buy_id: 'fixture-media-buy', impressions: 10, spend: {} },
+            {
+              getOwnPropertyDescriptor(target, property) {
+                if (property !== 'totals') return Reflect.getOwnPropertyDescriptor(target, property);
+                return {
+                  configurable: true,
+                  enumerable: true,
+                  writable: true,
+                  value: new Proxy(
+                    { spend: '2.50' },
+                    {
+                      getOwnPropertyDescriptor(totalsTarget, totalsProperty) {
+                        if (totalsProperty === 'spend') fallbackReads += 1;
+                        return Reflect.getOwnPropertyDescriptor(totalsTarget, totalsProperty);
+                      },
+                    }
+                  ),
+                };
+              },
+            }
+          ),
+        ],
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const fell = await fallback.execute(request('fixture-inline-totals-fallback-once'), context());
+    assert.equal(fell.ok, true, 'an invalid direct value still falls back to totals');
+    assert.equal(fallbackReads, 1, 'the totals fallback is observed exactly once');
+
+    // With evidence both claims are still read, so a duplicate claim is reconciled
+    // rather than silently preferred.
+    const contradictory = createInlineReportingSourceExecutor(input => {
+      const availability_evidence = presentAvailability(input);
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', totals: { spend: '999.99' } },
+        ],
+        availability_evidence,
+      };
+    }, redactedReportingSourceOfferingV1);
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await contradictory.execute(request('fixture-inline-totals-still-reconciled'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+  });
+
   test('proves media_buy_id when it is a requested metric', async () => {
     // `media_buy_id` needs no captured claim to serve as a dimension, but as a requested
     // metric it does. Skipping it outright left the metric unproven, so a row that carried
