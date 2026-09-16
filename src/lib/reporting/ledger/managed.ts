@@ -373,11 +373,13 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
         receipt: withoutReceivedAt(receipt) as ReportingAdjustmentReceipt,
       })),
     ];
-    // Both arrays can be at their legal cap at once, and RC3 also requires one
-    // result per submitted receipt with `results` capped at 100 — a contract
-    // that cannot be satisfied above 100 combined entries. Refuse with a
-    // conformant error envelope instead of emitting an over-long `results`
-    // array. Tracked upstream as an RC3 request/response cap mismatch.
+    // RC3 bounds the batch as a whole too, in the request's
+    // `x-adcp-validation.batch_identity`: receipt ids "MUST be unique across
+    // receipts and adjustment_receipts, whose combined length MUST NOT exceed
+    // 100". The JSON Schema encodes only the two per-array caps, so a 200-entry
+    // request is schema-clean but spec-invalid — and unanswerable anyway, since
+    // `results` is capped at 100 while one result per submitted receipt is
+    // required. Refuse it with a conformant error envelope.
     if (entries.length > MAX_RECEIPT_RESULTS) {
       throw new AdcpError('VALIDATION_ERROR', {
         message:

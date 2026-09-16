@@ -10,5 +10,10 @@ Fix eight seller Managed Delivery and Reconciled Billing review blockers.
 - `runManagedDeliveryWorker` enforces the advertised `authorization_revocation_seconds`: cleanup attempts are clipped to the promised instant, retry leases never outlast the window, and a breached grant is reported as `revocationsOverdue`.
 - The receipt idempotency cache stores a compact per-entry verdict and rehydrates bodies from the append-only receipt table, with a 30-day retention sweep so a consumer at the batch cap is throttled rather than permanently locked out.
 - `canonical_adjustment_sha256` follows the pinned canonicalization contract instead of changing wire content for every Core adopter, and revisions or adjustments stored before the canonical digests existed replay without a false immutability conflict.
-- `sync_reporting_receipts` applies the RC3 per-array caps of 100 `receipts` and 100 `adjustment_receipts` independently rather than an invented combined cap.
+- `sync_reporting_receipts` applies the RC3 per-array caps of 100 `receipts` and 100 `adjustment_receipts` independently rather than an invented combined cap, while still refusing a batch that exceeds the 100-entry combined bound RC3 states in `x-adcp-validation.batch_identity`.
+- `installConfiguration` enforces the RC3 rule that a `billing` feed requires `required_finality: official`, which was never checked and was only accidentally covered by the receipt store's hard-coded finality.
 - Lifecycle reconciliation projects managed health and issues through the same projection the read path uses, so persisted transitions and webhooks agree with `get_reporting_status`.
+
+Lifecycle reconciliation folds consumer receipt severity into obligation health but never persists the receipt issues themselves, because the issue store has no consumer dimension and `get_reporting_status` republishes persisted issues to whichever consumer is reading. Seller-side managed delivery issues are still persisted and notified.
+
+Receipt batch replay is exact only while the destination authorization is current; a revoked entry replays as `failed`. This pre-existing fail-closed exception to the protocol-wide idempotent-replay rule is now stated in the guide rather than implied away.

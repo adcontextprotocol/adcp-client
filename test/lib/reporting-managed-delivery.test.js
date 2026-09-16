@@ -820,11 +820,21 @@ describe('seller managed reporting runtime', () => {
       subscribers,
     });
     assert.equal(requiredTransition.health, 'action_required');
-    assert.ok(
-      required.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REQUIRED'),
-      'the managed issue is persisted, not only projected at read time'
-    );
     assert.equal(notified.at(-1).health, 'action_required', 'the webhook carries the composed health');
+    // The severity is a seller-side fact and travels; the receipt issue is one
+    // consumer's own reconciliation and must not be persisted at obligation
+    // scope, because the issue store has no consumer dimension and the read
+    // path republishes persisted issues to whichever consumer is asking.
+    assert.equal(
+      required.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REQUIRED'),
+      false,
+      'a consumer-scoped receipt issue is never persisted at obligation scope'
+    );
+    assert.equal(
+      requiredTransition.issueIds.some(value => value.includes('receipt-required')),
+      false,
+      'nor published on the transition every subscriber on the account receives'
+    );
 
     const rejected = lifecycleStore([
       {
@@ -853,7 +863,18 @@ describe('seller managed reporting runtime', () => {
       subscribers,
     });
     assert.equal(rejectedTransition.health, 'action_required');
-    assert.ok(rejected.applied[0].projectedIssues.some(value => value.code === 'RECEIPT_REJECTED'));
+    assert.equal(
+      rejected.applied[0].projectedIssues.some(value =>
+        ['RECEIPT_REJECTED', 'ADJUSTMENT_RECEIPT_REJECTED'].includes(value.code)
+      ),
+      false,
+      "one consumer's rejection and its exact ingest timing stay out of the shared issue store"
+    );
+    assert.equal(
+      rejected.applied[0].projectedIssues.some(value => value.openedAt === '2026-08-27T04:05:00.000Z'),
+      false,
+      "another tenant's receipt ingest instant is never persisted"
+    );
 
     // Two consumers, one still outstanding: the seller's obligation is not
     // reconciled until every consumer that owes a receipt has accepted.
@@ -884,6 +905,44 @@ describe('seller managed reporting runtime', () => {
       subscribers,
     });
     assert.equal(mixedTransition.health, 'action_required');
+
+    // The seller-side half must still travel: a managed delivery failure is
+    // identical for every consumer, so it is persisted and notified. This is
+    // the "managed changes never notify" defect the fold exists to close, and
+    // proves the consumer-scoped filter is not over-broad.
+    const failedDelivery = lifecycleStore([]);
+    failedDelivery.getManagedLifecycleProjection = async () => ({
+      binding: lease().binding,
+      materializations: [
+        {
+          ...lease().materialization,
+          status: 'failed',
+          failed_at: '2026-08-27T04:02:00.000Z',
+          failure_code: 'DELIVERY_FAILED',
+        },
+      ],
+      materializationHistory: [
+        {
+          ...lease().materialization,
+          status: 'failed',
+          failed_at: '2026-08-27T04:02:00.000Z',
+          failure_code: 'DELIVERY_FAILED',
+        },
+      ],
+      consumers: [],
+    });
+    const deliveryTransition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: failedDelivery,
+      reporting_obligation_id: 'obligation-1',
+      ledgerAsOf: '2026-08-27T04:45:00.000Z',
+      subscribers,
+    });
+    assert.equal(deliveryTransition.health, 'action_required');
+    assert.ok(
+      failedDelivery.applied[0].projectedIssues.some(value => value.code === 'DELIVERY_FAILED'),
+      'a seller-side managed delivery failure is persisted and notified'
+    );
+    assert.ok(deliveryTransition.issueIds.some(value => value.includes('managed-delivery')));
 
     // A Core-only store has no managed projection and is left exactly as before.
     const coreOnly = lifecycleStore([]);

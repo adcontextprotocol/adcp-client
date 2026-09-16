@@ -82,6 +82,27 @@ export async function reconcileReportingStatusLifecycleV1(input: {
 }
 
 /**
+ * Receipt issues describe one consumer's own reconciliation, and their
+ * `openedAt` is that consumer's exact receipt ingest instant.
+ *
+ * The issue store is keyed by obligation and carries no consumer dimension, and
+ * `get_reporting_status` republishes persisted issues to whichever consumer is
+ * reading. Persisting these would therefore hand every other consumer on the
+ * same obligation another tenant's receipt state and timing — the same
+ * cross-tenant leak the handler already refuses to republish
+ * `CONSUMER_STATUS_MISMATCH` for. Their severity still folds into the
+ * obligation's `health`, which is a seller-side fact and leaks nothing; the
+ * issues themselves are recomputed per caller on every read from that caller's
+ * own receipts.
+ */
+const CONSUMER_SCOPED_RECEIPT_ISSUE_CODES: ReadonlySet<string> = new Set([
+  'RECEIPT_REQUIRED',
+  'RECEIPT_REJECTED',
+  'ADJUSTMENT_RECEIPT_REQUIRED',
+  'ADJUSTMENT_RECEIPT_REJECTED',
+]);
+
+/**
  * Folds the Managed Delivery projection into the Core projection for one
  * obligation, per consumer, keeping the most severe result.
  *
@@ -122,8 +143,14 @@ async function composeManagedLifecycleProjection(
     );
     if (!projected) continue;
     health = moreSevereReportingHealthV1(health, projected.projection.health);
+    // One consumer's outstanding receipt leaves the seller's obligation
+    // unreconciled for the obligation as a whole. That is the seller-side
+    // duty view and it is deliberate: `satisfied` is not caller-scoped.
     satisfied = satisfied && projected.projection.satisfied;
-    for (const issue of projected.projection.issues) issues.set(issue.issueId, issue);
+    for (const issue of projected.projection.issues) {
+      if (CONSUMER_SCOPED_RECEIPT_ISSUE_CODES.has(issue.code)) continue;
+      issues.set(issue.issueId, issue);
+    }
   }
   return { ...coreProjection, health, satisfied, issues: [...issues.values()] };
 }

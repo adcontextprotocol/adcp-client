@@ -408,6 +408,24 @@ describe('seller reporting ledger', () => {
       () => producer.installConfiguration({ ...valid, contract: { ...valid.contract, schemaVersion: 'other' } }),
       /contract does not match/
     );
+    // RC3 core/reporting-delivery-config states this unconditionally: "feed_purpose
+    // billing still requires required_finality official". A provisional snapshot
+    // revision would otherwise be able to take a terminal accepted billing receipt.
+    await assert.rejects(
+      () =>
+        producer.installConfiguration({
+          ...valid,
+          feedPurpose: 'billing',
+          requiredFinality: 'snapshot',
+          canonicalization: {
+            id: 'billing-rows-v1',
+            uri: 'https://schemas.fixture.example/canonicalization.json',
+            sha256: 'c'.repeat(64),
+            primaryKeys: valid.requestedDimensions.slice(0, 1),
+          },
+        }),
+      /Billing reporting requires official ledger finality/
+    );
     await assert.rejects(
       () =>
         producer.installConfiguration({

@@ -1200,6 +1200,16 @@ function validateConfigurationAgainstOffering(
     throw new Error('Authoritative source offerings require official ledger finality');
   }
   if (configuration.feedPurpose === 'billing') {
+    // RC3 states this unconditionally in `core/reporting-delivery-config`:
+    // "feed_purpose billing still requires required_finality official". It was
+    // never enforced here, and until the receipt store stopped hard-coding
+    // official finality nothing else enforced it either. Without it a billing
+    // configuration can accept a terminal accepted receipt against a
+    // provisional snapshot revision that a later revision supersedes, and an
+    // accepted leaf cannot be repaired.
+    if (configuration.requiredFinality !== 'official') {
+      throw new Error('Billing reporting requires official ledger finality');
+    }
     if (
       !configuration.canonicalization ||
       !/^[A-Za-z0-9_.:-]{1,128}$/.test(configuration.canonicalization.id) ||
