@@ -832,6 +832,44 @@ test('terminalizes a stale generation on a recovered attempt but keeps a live on
   );
 });
 
+test('keeps PersistentNotificationRuntime assignable for an implementation without the checkpoint members', () => {
+  // The checkpoint members were published as required under a minor changeset,
+  // which breaks structural assignment for any custom runtime written against
+  // an earlier release. They are optional, and an emission owner treats an
+  // absent flag as unproven rather than assuming support.
+  /** @type {import('../../dist/lib/server/index.js').PersistentNotificationRuntime} */
+  const legacyShaped = {
+    store: memoryNotificationSubscriptionStore(),
+    emitter: { emit: async () => {}, emitRecovered: async () => {}, forTenantScope: () => ({}) },
+    authorizeWebhookAttempt: async () => ({ decision: 'allow' }),
+    replace: async () => ({ outcome: 'unchanged', notificationConfigs: [] }),
+    read: async () => ({ notificationConfigs: [] }),
+    emit: async () => ({ notificationId: 'n', emissionId: 'e', matched: 0, deliveries: [] }),
+  };
+  assert.equal(legacyShaped.hasDeliveryAttemptCheckpoint, undefined);
+  assert.equal(legacyShaped.deliveryAttemptCheckpoint, undefined);
+
+  // And a runtime built without the option reports the same, so a consumer
+  // that requires the checkpoint fails closed rather than trusting it.
+  const runtime = createPersistentNotificationRuntime({
+    store: memoryNotificationSubscriptionStore(),
+    proofAdapter: { prove: async () => ({ proved: true }) },
+    validateDestination: async () => ({ allowed: true }),
+    authorizeDelivery: async () => ({ authorized: true }),
+    createEmitter: () => ({
+      forTenantScope() {
+        return this;
+      },
+      emit: async () => ({ delivery_id: 'd', idempotency_key: 'k', attempts: 0, delivered: false, errors: [] }),
+      emitRecovered: async () => {
+        throw new Error('unused');
+      },
+    }),
+  });
+  assert.equal(runtime.hasDeliveryAttemptCheckpoint, false);
+  assert.equal(runtime.deliveryAttemptCheckpoint, undefined);
+});
+
 test('fanout runs subscriber retry cycles with bounded concurrency and stable ordering', async () => {
   let active = 0;
   let peak = 0;

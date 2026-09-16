@@ -100,7 +100,7 @@ export interface PostgresReportingNotificationActivityOptions {
    * event it is handed to a runtime that runs the durable pre-POST checkpoint.
    */
   notifications: Pick<PersistentNotificationRuntime, 'emit'> &
-    Partial<Pick<PersistentNotificationRuntime, 'hasDeliveryAttemptCheckpoint'>>;
+    Partial<Pick<PersistentNotificationRuntime, 'hasDeliveryAttemptCheckpoint' | 'deliveryAttemptCheckpoint'>>;
   /** Stable deployment namespace. Defaults to `adcp-reporting`. */
   namespace?: string;
   /** Assert that the supplied database/schema is isolated to this deployment. */
@@ -150,6 +150,18 @@ export interface PostgresReportingNotificationActivityOptions {
    */
   maxRecipients?: number;
   /**
+   * Total recipient rows one notification may retain: the current fanout plus
+   * the pinned identities of subscribers that were addressed and then replaced
+   * or removed.
+   *
+   * Separate from `maxRecipients` because they bound different things. A
+   * maximum fanout of 10,000 that also has one former subscriber pinned needs
+   * 10,001 rows, which a single bound capped at the fanout ceiling could never
+   * express — the claim would be unsatisfiable and abandon undelivered.
+   * Defaults to twice `maxRecipients`, and must be at least `maxRecipients`.
+   */
+  maxRetainedRecipients?: number;
+  /**
    * Attempts after which a claim that keeps failing is abandoned rather than
    * retried forever. Defaults to 100.
    *
@@ -191,6 +203,11 @@ export interface PostgresReportingNotificationActivityRuntime {
  * means a valid fanout can never exceed what the activity runtime will store.
  */
 const MAX_SUPPORTED_RECIPIENTS = 10_000;
+/**
+ * Ceiling on retained rows per notification: the fanout ceiling plus room for
+ * the pinned identities of subscribers replaced during one notification's life.
+ */
+const MAX_SUPPORTED_RETAINED_RECIPIENTS = 100_000;
 /**
  * PostgreSQL refuses a btree entry wider than roughly a third of a page. Only
  * the recipient primary key is indexed, so this is what has to fit — and it is
@@ -235,6 +252,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
   projected_at           TIMESTAMPTZ,
   retain_until           TIMESTAMPTZ,
   delivery_intent_at     TIMESTAMPTZ,
+  abandoned_at           TIMESTAMPTZ,
   PRIMARY KEY (namespace, transition_id),
   CONSTRAINT ${raw}_valid_state CHECK (state IN ('pending', 'projected', 'abandoned')),
   CONSTRAINT ${raw}_valid_fingerprint CHECK (intent_fingerprint ~ '^[a-f0-9]{64}$'),
@@ -244,7 +262,7 @@ CREATE TABLE IF NOT EXISTS ${table} (
     (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
     -- Abandoned: bounded out of the pending set without ever being recorded as
     -- delivered, so it stops consuming tenant capacity but stays auditable.
-    (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL)
+    (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
   ),
   CONSTRAINT ${raw}_valid_delivery_intent CHECK (
     state = 'projected' OR delivery_intent_at IS NULL OR delivery_intent_at IS NOT NULL
@@ -252,19 +270,45 @@ CREATE TABLE IF NOT EXISTS ${table} (
 );
 
 ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_at TIMESTAMPTZ;
-ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_state;
-ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_state
-  CHECK (state IN ('pending', 'projected', 'abandoned'));
-ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_projection;
-ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_projection CHECK (
-  (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
-  (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
-  (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL)
-);
-DROP INDEX IF EXISTS idx_${raw}_retention;
-CREATE INDEX IF NOT EXISTS idx_${raw}_retention
-  ON ${table}(namespace, retain_until, activity_sequence)
-  WHERE state IN ('projected', 'abandoned');
+ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS abandoned_at TIMESTAMPTZ;
+
+-- Upgrade in place, once. Re-running a migration must not drop and re-add a
+-- constraint or rebuild an index: each takes a blocking lock and rescans the
+-- table on every deploy. These guards compare the installed definition and act
+-- only when it is genuinely out of date.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = '${raw}'::regclass AND conname = '${raw}_valid_state'
+       AND pg_get_constraintdef(oid) LIKE '%abandoned%'
+  ) THEN
+    ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_state;
+    ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_state
+      CHECK (state IN ('pending', 'projected', 'abandoned'));
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = '${raw}'::regclass AND conname = '${raw}_valid_projection'
+       AND pg_get_constraintdef(oid) LIKE '%abandoned_at%'
+  ) THEN
+    ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_projection;
+    ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_projection CHECK (
+      (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
+      (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
+      (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
+    );
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes
+     WHERE indexname = 'idx_${raw}_retention' AND indexdef LIKE '%abandoned%'
+  ) THEN
+    DROP INDEX IF EXISTS idx_${raw}_retention;
+    CREATE INDEX idx_${raw}_retention
+      ON ${table}(namespace, retain_until, activity_sequence)
+      WHERE state IN ('projected', 'abandoned');
+  END IF;
+END $$;
 
 -- One row per frozen recipient, carrying that recipient's own delivery state.
 --
@@ -360,8 +404,13 @@ export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificatio
 /** Durable store a checkpoint is bound to, so a mismatched pairing cannot be silent. */
 export interface ReportingNotificationAttemptCheckpointV1 {
   (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void>;
-  /** Exact `(queryable, namespace, table)` this checkpoint writes to. */
-  readonly activityStore: Readonly<{ db: ReportingLedgerTransactionV1; namespace: string; tableName: string }>;
+  /**
+   * Exact `(queryable, namespace, table)` this checkpoint writes to. Present on
+   * anything this module builds; absent on an adopter's own forwarder, which is
+   * then only acceptable when the runtime it is wired into exposes the
+   * checkpoint it invokes so identity can be compared directly.
+   */
+  readonly activityStore?: Readonly<{ db: ReportingLedgerTransactionV1; namespace: string; tableName: string }>;
 }
 
 export function createPostgresReportingNotificationAttemptCheckpoint(options: {
@@ -447,17 +496,39 @@ export function createPostgresReportingNotificationActivityRuntime(
         'wired into the notification runtime so its durable store can be verified against this one.'
     );
   }
-  if (options.attemptCheckpoint) {
+  // Two tiers, because each covers what the other cannot. When the runtime
+  // exposes the checkpoint it invokes, identity is the strongest possible
+  // check: two checkpoints can each be correctly built and still target
+  // different stores, and only identity catches that. When it does not — a
+  // custom port — the declared store binding is all there is to verify, so it
+  // becomes mandatory.
+  const wired = options.notifications.deliveryAttemptCheckpoint;
+  if (wired !== undefined && options.attemptCheckpoint && wired !== options.attemptCheckpoint) {
+    throw new TypeError(
+      'createPostgresReportingNotificationActivityRuntime: the notification runtime invokes a different ' +
+        'checkpoint than the one passed as attemptCheckpoint. Each can be correctly built and still target a ' +
+        'different store, in which case every delivery checkpoints nothing and is abandoned undelivered. Pass ' +
+        'the very object wired into checkpointDeliveryAttempt.'
+    );
+  }
+  if (options.attemptCheckpoint && wired === undefined && !options.attemptCheckpoint.activityStore) {
+    throw new TypeError(
+      'createPostgresReportingNotificationActivityRuntime: attemptCheckpoint declares no durable store and the ' +
+        'notification port does not expose the checkpoint it invokes, so neither its identity nor its target can ' +
+        'be verified. Build it with createPostgresReportingNotificationAttemptCheckpoint().'
+    );
+  }
+  if (options.attemptCheckpoint?.activityStore) {
     const bound = options.attemptCheckpoint.activityStore;
     const mismatch =
-      bound?.db !== options.db ||
-      bound?.namespace !== namespace ||
-      bound?.tableName !== (options.tableName ?? DEFAULT_TABLE);
+      bound.db !== options.db ||
+      bound.namespace !== namespace ||
+      bound.tableName !== (options.tableName ?? DEFAULT_TABLE);
     if (mismatch) {
       throw new TypeError(
         'createPostgresReportingNotificationActivityRuntime: attemptCheckpoint is bound to a different durable ' +
-          `store (namespace ${JSON.stringify(bound?.namespace)}, table ${JSON.stringify(bound?.tableName)}` +
-          `${bound?.db === options.db ? '' : ', different queryable'}) than this runtime (namespace ` +
+          `store (namespace ${JSON.stringify(bound.namespace)}, table ${JSON.stringify(bound.tableName)}` +
+          `${bound.db === options.db ? '' : ', different queryable'}) than this runtime (namespace ` +
           `${JSON.stringify(namespace)}, table ${JSON.stringify(options.tableName ?? DEFAULT_TABLE)}). ` +
           'A mismatched pair checkpoints nothing, so every delivery is suppressed until its binding retires and the ' +
           'notification is lost silently.'
@@ -479,6 +550,14 @@ export function createPostgresReportingNotificationActivityRuntime(
   boundedInteger(maxPendingPerTenant, 'maxPendingPerTenant', 1, 1_000_000);
   const maxRecipients = options.maxRecipients ?? MAX_SUPPORTED_RECIPIENTS;
   boundedInteger(maxRecipients, 'maxRecipients', 1, MAX_SUPPORTED_RECIPIENTS);
+  const maxRetainedRecipients = options.maxRetainedRecipients ?? maxRecipients * 2;
+  boundedInteger(maxRetainedRecipients, 'maxRetainedRecipients', 1, MAX_SUPPORTED_RETAINED_RECIPIENTS);
+  if (maxRetainedRecipients < maxRecipients) {
+    throw new TypeError(
+      `maxRetainedRecipients ${maxRetainedRecipients} is below maxRecipients ${maxRecipients}; a full fanout ` +
+        'could then never be retained and every claim at that size would abandon undelivered'
+    );
+  }
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   boundedInteger(maxAttempts, 'maxAttempts', 1, 100_000);
   const recipientRawTable = recipientTableName(rawTable);
@@ -625,7 +704,7 @@ export function createPostgresReportingNotificationActivityRuntime(
         await options.db.query(
           `SELECT namespace, transition_id, tenant_scope, account_id, obligation_id,
                   activity, intent_fingerprint, state, notification_required, lease_owner, lease_version,
-                  lease_expires_at, projected_at, retain_until, delivery_intent_at
+                  lease_expires_at, projected_at, retain_until, delivery_intent_at, abandoned_at
              FROM ${table} LIMIT 0`
         );
         await options.db.query(
@@ -710,6 +789,7 @@ export function createPostgresReportingNotificationActivityRuntime(
                 namespace,
                 claim,
                 maxRecipients,
+                maxRetainedRecipients,
                 candidates
               );
               return frozen;
@@ -786,7 +866,7 @@ export function createPostgresReportingNotificationActivityRuntime(
       const before = decodeCursor(input.cursor, namespace, input.tenantId, input.accountId);
       const result = await reportingActivityDatabaseOperation('Reporting account activity read failed', () =>
         options.db.query<ActivityRow>(
-          `SELECT activity, state, created_at, projected_at, retain_until, activity_sequence
+          `SELECT activity, state, created_at, projected_at, abandoned_at, activity_sequence
            FROM ${table}
           WHERE namespace = $1 AND tenant_scope = $2 AND account_id = $3
             AND ($4::bigint IS NULL OR activity_sequence < $4)
@@ -800,7 +880,7 @@ export function createPostgresReportingNotificationActivityRuntime(
         ...structuredClone(row.activity),
         recordedAt: asIso(row.created_at),
         ...(row.projected_at ? { notificationProjectedAt: asIso(row.projected_at) } : {}),
-        ...(row.state === 'abandoned' && row.retain_until ? { notificationAbandonedAt: asIso(row.retain_until) } : {}),
+        ...(row.abandoned_at ? { notificationAbandonedAt: asIso(row.abandoned_at) } : {}),
       }));
       const hasMore = result.rows.length > limit;
       return {
@@ -845,7 +925,7 @@ interface ActivityRow extends Record<string, unknown> {
   state: 'pending' | 'projected' | 'abandoned';
   created_at: Date | string;
   projected_at: Date | string | null;
-  retain_until: Date | string | null;
+  abandoned_at: Date | string | null;
   activity_sequence: string | number;
 }
 
@@ -989,6 +1069,7 @@ async function freezeClaimRecipients(
   namespace: string,
   claim: ClaimedActivity,
   maxRecipients: number,
+  maxRetainedRecipients: number,
   candidates: readonly NotificationRecipientRef[]
 ): Promise<readonly NotificationRecipientRef[]> {
   if (candidates.length > maxRecipients) {
@@ -1097,7 +1178,7 @@ async function freezeClaimRecipients(
           rows.map(entry => entry.fingerprint),
           rows.map(entry => entry.subscriberKey),
           rows.map(entry => JSON.stringify(entry.recipient)),
-          maxRecipients,
+          maxRetainedRecipients,
         ]
       )
   );
@@ -1107,9 +1188,9 @@ async function freezeClaimRecipients(
   }
   if (!verdict.ok) {
     throw new Error(
-      `Reporting notification recipient intent would hold ${verdict.retained} recipients, above maxRecipients ` +
-        `${maxRecipients}; nothing was changed. Raise maxRecipients to at least the number of distinct subscribers ` +
-        'this notification can address, or reduce the destination churn on it'
+      `Reporting notification recipient intent would hold ${verdict.retained} recipients, above ` +
+        `maxRetainedRecipients ${maxRetainedRecipients}; nothing was changed. Raise maxRetainedRecipients to at ` +
+        'least the fanout plus the distinct subscribers this notification can replace, or reduce its destination churn'
     );
   }
   return committed.rows.flatMap(row => (row.recipient === null ? [] : [row.recipient]));
@@ -1386,6 +1467,7 @@ async function abandonClaim(
   const result = await reportingActivityDatabaseOperation('Reporting notification abandonment failed', () =>
     db.query(
       `UPDATE ${table} SET state = 'abandoned',
+         abandoned_at = clock_timestamp(),
          retain_until = clock_timestamp() + ($5::bigint * INTERVAL '1 millisecond'),
          lease_owner = NULL, lease_expires_at = NULL
       WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'

@@ -408,8 +408,23 @@ export interface PersistentNotificationRuntime {
   readonly store: NotificationSubscriptionStore;
   readonly emitter: RecoverableWebhookEmitter;
   readonly authorizeWebhookAttempt: WebhookAttemptAuthorizer;
-  /** True when a durable pre-POST attempt checkpoint is wired. */
-  readonly hasDeliveryAttemptCheckpoint: boolean;
+  /**
+   * True when a durable pre-POST attempt checkpoint is wired.
+   *
+   * Optional so a custom implementation written against an earlier release
+   * still satisfies this interface structurally. An emission owner that needs
+   * the checkpoint treats an absent flag as "not proven" and fails closed.
+   */
+  readonly hasDeliveryAttemptCheckpoint?: boolean;
+  /**
+   * The checkpoint this runtime actually invokes, exposed so an emission owner
+   * can verify by identity that its own checkpoint is the one that runs.
+   * Declaring the capability is not the same as wiring the right function:
+   * two correctly-built checkpoints pointing at different stores each look
+   * valid in isolation, and the mismatch only shows up as deliveries that
+   * checkpoint nothing.
+   */
+  readonly deliveryAttemptCheckpoint?: NotificationDeliveryAttemptCheckpoint;
   replace(
     scope: Readonly<NotificationSubscriptionScope>,
     configs: readonly NotificationSubscriptionConfigInput[],

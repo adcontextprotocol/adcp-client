@@ -2105,7 +2105,9 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   // --- Seller reporting ledger ---
   ln(`## Seller Reporting Ledger`);
   ln();
-  ln(`Import from \`@adcp/sdk/reporting/ledger\`.`);
+  ln(
+    `Ledger symbols import from \`@adcp/sdk/reporting/ledger\`; \`createPostgresPersistentNotificationRuntime\` is a server symbol and imports from \`@adcp/sdk/server\`.`
+  );
   ln();
   ln('```typescript');
   ln(`const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });`);
@@ -2145,6 +2147,10 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  acknowledgeIsolatedDatabase: true,`);
   ln(`  notificationActivityPort: reportingActivity.port,`);
   ln(`});`);
+  ln();
+  ln(`// Every migration this wiring needs, before probing.`);
+  ln(`for (const sql of notifications.migrations.all) await pool.query(sql);`);
+  ln(`for (const sql of reportingActivity.migrations.all) await pool.query(sql);`);
   ln(`await reportingActivity.probe();`);
   ln(`// Run repeatedly from a durable scheduler; this call is bounded.`);
   ln(`await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });`);

@@ -185,12 +185,15 @@ wire payload but no public account-activity read task, so do not expose `listAct
 as an invented wire extension.
 
 Projected activity defaults to 90-day retention measured from projection (or
-from commit for finality-only records that require no wire projection). Override `retentionMs` only to
-match an explicit operator policy, schedule bounded `pruneProjected()` calls,
-and retain pending rows until they have been projected. The reporting worker
-retries failed projection without a terminal attempt cap; once the notification
-runtime has durably accepted every matched subscriber, its own webhook outbox
-owns delivery retry and retention. Supply `recoverOnce({ onError })` to report a
+from commit for finality-only records that require no wire projection).
+Abandoned activity is retained on the same schedule, measured from
+`abandoned_at`. Override `retentionMs` only to match an explicit operator
+policy, schedule bounded `pruneProjected()` calls — which reclaims projected and
+abandoned rows alike — and retain pending rows until they are settled. The
+reporting worker retries a failed projection up to `maxAttempts` (default 100)
+and then abandons the claim; once the notification runtime has durably accepted
+every matched subscriber, its own webhook outbox owns delivery retry and
+retention. Supply `recoverOnce({ onError })` to report a
 failed projection attempt without changing lease or retry semantics.
 `matched` reports how many active subscribers were checkpointed; a projected
 row with `matched: 0` is expected after revocation and does not claim network
@@ -227,8 +230,12 @@ advertised checkpoint support is the precise bug the checkpoint exists to
 prevent.
 
 The checkpoint is bound to the exact `(queryable, namespace, table)` it writes
-to, and the activity runtime requires that same object as `attemptCheckpoint`
-and refuses a mismatch at construction. Configuring the two independently was
+to, and the activity runtime requires that same object as `attemptCheckpoint`.
+It verifies in two tiers: when the port exposes `deliveryAttemptCheckpoint` —
+the checkpoint it actually invokes — that must be the identical object, because
+two correctly-built checkpoints can each look valid while targeting different
+stores. When it does not, the declared store binding becomes mandatory and is
+compared instead. Either way a mismatch is refused at construction. Configuring the two independently was
 undetectable at runtime: the checkpoint's update matched no row, every attempt
 was suppressed as retryable, the delivery binding eventually retired, the
 recipient settled terminal and the activity projected — losing the notification
@@ -274,8 +281,9 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
   many times before any send cannot accumulate rows. A settled recipient is left
   out of later emissions — it still gates projection, but re-addressing it would
   be redundant traffic.
-- Settled history is compacted to one row per subscriber, and `maxRecipients`
-  bounds **every retained row**. Counting only the addressable recipients let
+- Settled history is compacted to one row per subscriber, and
+  `maxRetainedRecipients` bounds **every retained row**. Counting only the
+  addressable recipients let
   terminal rows grow for the lifetime of a claim that kept retrying while fresh
   subscribers settled.
 - Every mutation — the replacement delete, the insert, compaction and
@@ -293,15 +301,18 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
   other source empty and the budget zero; gating only the row sources let that
   empty budget satisfy the check and reap the rows a successor had already
   frozen. After a takeover a stale worker is a strict no-op that refuses.
-- `maxRecipients` must be **at least** the notification runtime's
-  `maxFanoutCandidates`, plus headroom for the distinct subscribers one
-  notification accumulates as destinations churn. Setting it lower is a
-  misconfiguration: a legitimate fanout cannot be committed and the claim
-  retries until `maxAttempts` (default 100) abandons it. An abandoned claim
-  leaves the pending set — so it cannot exhaust `maxPendingPerTenant` and start
-  refusing writes for the whole tenant — while staying visible as
-  `notificationAbandonedAt` in account activity. It is never recorded as
-  delivered.
+- `maxRecipients` bounds one emission's fanout and must be **at least** the
+  notification runtime's `maxFanoutCandidates`. `maxRetainedRecipients` bounds
+  every stored row — that fanout plus the pinned identities of subscribers
+  addressed and then replaced — and defaults to twice `maxRecipients`. They are
+  separate because a maximum 10,000-recipient fanout with one former subscriber
+  pinned needs 10,001 rows, which a single bound capped at the fanout ceiling
+  could never express. Setting either below what a notification legitimately
+  needs is a misconfiguration: the claim retries until `maxAttempts` (default
+  100) abandons it. An abandoned claim leaves the pending set — so it cannot
+  exhaust `maxPendingPerTenant` and start refusing writes for the whole tenant —
+  while staying visible as `notificationAbandonedAt` (the real abandonment
+  instant) in account activity. It is never recorded as delivered.
 - The bound and the replacement are one statement, and the rows it measures are
   taken `FOR UPDATE`. Measuring separately let a concurrent checkpoint turn a
   revisable row into a pinned one after the budget approved the write: the

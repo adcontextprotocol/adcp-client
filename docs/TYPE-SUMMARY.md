@@ -2823,7 +2823,7 @@ type ReportingSourceExecutorResultV1 =
 
 ## Seller Reporting Ledger
 
-Import from `@adcp/sdk/reporting/ledger`.
+Ledger symbols import from `@adcp/sdk/reporting/ledger`; `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
 
 ```typescript
 const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
@@ -2863,6 +2863,10 @@ const transactionalStore = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
   notificationActivityPort: reportingActivity.port,
 });
+
+// Every migration this wiring needs, before probing.
+for (const sql of notifications.migrations.all) await pool.query(sql);
+for (const sql of reportingActivity.migrations.all) await pool.query(sql);
 await reportingActivity.probe();
 // Run repeatedly from a durable scheduler; this call is bounded.
 await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });

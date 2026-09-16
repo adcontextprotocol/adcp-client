@@ -264,6 +264,9 @@ export function createPersistentNotificationRuntime(
     emitter,
     authorizeWebhookAttempt,
     hasDeliveryAttemptCheckpoint: options.checkpointDeliveryAttempt !== undefined,
+    ...(options.checkpointDeliveryAttempt === undefined
+      ? {}
+      : { deliveryAttemptCheckpoint: options.checkpointDeliveryAttempt }),
     async replace(scope, configs, replaceOptions = {}): Promise<NotificationReplacementResult> {
       assertScope(scope);
       assertUniqueSubscribers(configs);
