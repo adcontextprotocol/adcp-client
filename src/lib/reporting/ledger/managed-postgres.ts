@@ -142,6 +142,12 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_batches (
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (account_id, consumer_id, idempotency_key)
 );
+-- Pruning asks "does any live replay row still name this receipt", which is a
+-- JSONB containment test. Unindexed it is a sequential scan of the whole
+-- replay cache per prune, which is what pushed the account lock past the Core
+-- store's five-second timeout on a long history.
+CREATE INDEX IF NOT EXISTS adcp_reporting_receipt_batches_results
+  ON adcp_reporting_receipt_batches USING GIN (results jsonb_path_ops);
 
 -- Agent-wide promises, durable and shared by every store instance and process
 -- that talks to this database. An in-memory bound only constrains the process
@@ -451,7 +457,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             `advertised horizon`
         );
       }
-      await advisoryLock(client, accountLock(input.account_id));
+      // Deliberately after the selection below, not before it: the receipt
+      // scan uses JSONB containment over the replay cache, which is not
+      // cheap on a long history, and holding the account lock across it
+      // pushed unrelated writes past the Core store's five-second
+      // account-lock timeout. Selection is read-only, so it is safe outside
+      // the lock; the deletes re-check their predicates by primary key.
       // One cutoff for every statement below, taken once. Re-evaluating
       // clock_timestamp() per statement moves the boundary mid-prune, which is
       // how a receipt could be skipped by the tombstone pass and then deleted
@@ -464,6 +475,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       ).rows[0]!.cutoff;
       // Batches first, so a replay row that has itself expired stops pinning
       // the receipts it names before those receipts are considered.
+      await advisoryLock(client, accountLock(input.account_id));
       const batches = await client.query(
         `DELETE FROM adcp_reporting_receipt_batches
           WHERE account_id = $1
@@ -486,6 +498,17 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
                    AND batch.consumer_id = receipt.consumer_id
                    AND batch.results @> jsonb_build_array(
                          jsonb_build_object('id', receipt.reporting_receipt_id))
+              )
+              -- An acceptance outlives its own age while the resource it
+              -- accepts is still readable. Pruning it sooner produced a
+              -- period that reads complete with no receipt to show for it,
+              -- which the wire schema forbids and a buyer recomputing the
+              -- association reports as ASSOCIATED_HISTORY_INCOMPLETE.
+              AND NOT EXISTS (
+                SELECT 1 FROM adcp_reporting_materializations live
+                 WHERE live.account_id = receipt.account_id
+                   AND live.materialization_id = receipt.data ->> 'reporting_materialization_id'
+                   AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
               )
             ORDER BY receipt.recorded_at LIMIT $2
          ), tombstoned AS (
@@ -694,12 +717,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
     await this.ensurePolicyRegistered();
     return this.transaction(async client => {
+      // One lock order everywhere in this store: policy, then account, then
+      // binding. Pruning took policy then account while this took account
+      // then policy, which is a textbook ABBA deadlock — PostgreSQL resolves
+      // it by aborting one side with 40P01.
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
       await advisoryLock(client, accountLock(binding.account_id));
       await advisoryLock(client, `adcp-reporting-binding:${binding.account_id}:${binding.delivery_config_id}`);
-      // Serialize against adoption. Without this an install could read an
-      // empty registry while a replica was mid-way through registering a
-      // narrower promise, and land a binding that promise does not cover.
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
       const existing = await client.query<QueryRow & { semantic_fingerprint: string }>(
         'SELECT semantic_fingerprint FROM adcp_reporting_managed_bindings WHERE configuration_id = $1',
         [binding.configurationId]
@@ -960,6 +984,12 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               AND authz.revoked_at IS NULL
             WHERE materialization.status = 'pending'
               AND ($1::text IS NULL OR materialization.account_id = $1)
+              -- Every claim of a pending row is a delivery attempt, settled
+              -- or not. The attempt column only advances in the planner, so a
+              -- row whose settle kept losing its lease was reclaimed without
+              -- bound and re-delivered each time. Lease generation is the
+              -- durable count of those attempts.
+              AND materialization.lease_generation < ${MAX_MATERIALIZATION_ATTEMPTS}
               -- One authoritative clock. settleMaterialization fences on
               -- clock_timestamp(), so issuing the lease from the caller's clock
               -- made ordinary NTP drift fatal: the claim succeeded, the settle
@@ -1000,6 +1030,36 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     });
   }
 
+  /**
+   * Fails materializations that have used every delivery attempt.
+   *
+   * The claim predicate stops handing them out, so without this they would
+   * stay `pending` — invisible to the planner, which skips an obligation with
+   * any pending row, and so never retried or replanned.
+   */
+  async failExhaustedMaterializations(input?: { account_id?: string; limit?: number }): Promise<number> {
+    const limit = input?.limit ?? 1_000;
+    positiveInteger(limit, 'limit');
+    const result = await this.query(
+      `UPDATE adcp_reporting_materializations SET status = 'failed',
+          data = data || jsonb_build_object(
+            'status', 'failed',
+            'failed_at', ${rfc3339Micro('clock_timestamp()')},
+            'failure_code', 'DELIVERY_ATTEMPTS_EXHAUSTED'
+          ),
+          changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
+        WHERE materialization_id IN (
+          SELECT materialization_id FROM adcp_reporting_materializations
+           WHERE status = 'pending'
+             AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
+             AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+             AND ($1::text IS NULL OR account_id = $1)
+           ORDER BY created_at LIMIT $2)`,
+      [input?.account_id ?? null, limit]
+    );
+    return result.rowCount ?? 0;
+  }
+
   async settleMaterialization(input: {
     lease: ReportingManagedDeliveryLeaseV1;
     now: string;
@@ -1013,6 +1073,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         }
       | { status: 'failed'; failure_code: string };
   }): Promise<boolean> {
+    // Defaulting to zero silently accepted a resource that satisfies no
+    // retention at all, including one already expired, whenever a caller
+    // drove the store directly. The binding's own promise is the floor.
+    const minimumRetentionDays = input.minimum_resource_retention_days ?? input.lease.binding.resource_retention_days;
+    if (!Number.isSafeInteger(minimumRetentionDays) || minimumRetentionDays < 0) {
+      throw new RangeError('minimum_resource_retention_days must be a non-negative safe integer');
+    }
     return this.transaction(async client => {
       const { lease } = input;
       await advisoryLock(client, accountLock(lease.binding.account_id));
@@ -1051,7 +1118,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           outcome.status,
           JSON.stringify(materialization),
           outcome.status === 'failed' ? null : outcome.resource.expires_at,
-          input.minimum_resource_retention_days ?? 0,
+          minimumRetentionDays,
         ]
       );
       // A settle refused purely because the database considers the resource
@@ -1068,8 +1135,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
                 'failure_code', 'RESOURCE_RETENTION_INSUFFICIENT'
               ),
               changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
+            -- Deliberately not fenced on an unexpired lease. If the settle
+            -- waited on the account lock until the lease expired, both it and
+            -- this terminalizer rejected, leaving the row pending —
+            -- reclaimable forever, and re-delivered each time. Owner and
+            -- generation still fence it against a newer holder.
             WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3
-              AND lease_expires_at > clock_timestamp() AND status = 'pending'`,
+              AND status = 'pending'`,
           [lease.materialization.reporting_materialization_id, lease.owner, lease.generation]
         );
       }

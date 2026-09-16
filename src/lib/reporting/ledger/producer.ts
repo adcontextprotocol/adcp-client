@@ -60,7 +60,10 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           ? { supersededAt: new Date(instant(input.supersededAt, 'supersededAt')).toISOString() }
           : {}),
       };
-      const offering = requiredOffering(offeringById, normalizedInput.offeringId);
+      // Resolve stored generations before the offering. An offering can be
+      // withdrawn, and an installed generation is immutable — looking the
+      // offering up first made reinstalling one throw "Unknown reporting
+      // source offering" without ever reading the ledger.
       const existing = (await options.store.listConfigurations(normalizedInput.account.account_id)).filter(
         value => value.delivery_config_id === normalizedInput.delivery_config_id
       );
@@ -79,8 +82,9 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         }
         return replay;
       }
-      // Only a genuinely new generation is held to current rules.
-      validateConfigurationAgainstOffering(normalizedInput, offering);
+      // Only a genuinely new generation is held to current rules, and only a
+      // new generation needs a live offering.
+      validateConfigurationAgainstOffering(normalizedInput, requiredOffering(offeringById, normalizedInput.offeringId));
       if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
         throw new Error('Reporting configuration version cannot regress');
       }

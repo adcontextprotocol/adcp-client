@@ -1305,6 +1305,76 @@ describe('seller managed reporting runtime', () => {
     );
   });
 
+  test('does not let the fail-safe consumer inherit another consumer tombstone', async () => {
+    const period = { start: '2026-08-27T03:00:00.000Z', end: '2026-08-27T04:00:00.000Z', sourceTimezone: 'UTC' };
+    const obligation = {
+      reporting_obligation_id: 'obligation-failsafe-1',
+      configurationId: 'config-1',
+      account: { account_id: 'account-1' },
+      requiredFinality: 'official',
+      period,
+      expectedAt: period.end,
+      recoveryDeadlineAt: '2026-08-27T04:30:00.000Z',
+      state: 'pending',
+      attemptCount: 1,
+      coverage: { status: 'full' },
+    };
+    const revision = {
+      reporting_revision_id: 'revision-1',
+      reporting_obligation_id: 'obligation-failsafe-1',
+      revisionNumber: 1,
+      finality: 'official',
+      kind: 'official',
+    };
+    const delivered = {
+      ...lease().materialization,
+      status: 'delivered',
+      ready_at: '2026-08-27T04:00:01.000Z',
+      resource: outcome().resource,
+      verification: outcome().verification,
+    };
+    const applied = [];
+    const store = {
+      getObligation: async () => structuredClone(obligation),
+      listRevisions: async () => [structuredClone(revision)],
+      listAdjustments: async () => [],
+      listTransitions: async () => [],
+      markTransitionNotified: async () => {},
+      getManagedLifecycleProjection: async () => ({
+        binding: lease().binding,
+        materializations: [delivered],
+        materializationHistory: [delivered],
+        // Consumer A accepted and its body was pruned. The roster is not
+        // provably complete, so the fold keeps an anonymous stand-in for
+        // "someone unknown may still owe a receipt".
+        consumers: [],
+        obligatedConsumerIds: [],
+        obligatedConsumerRosterComplete: false,
+        tombstonedAcceptedSubjects: [
+          { kind: 'revision', subjectId: 'revision-1', consumerId: 'https://consumer-a.example' },
+        ],
+        tombstonedDeliveredRevisionIds: ['revision-1'],
+      }),
+      applyLifecycleProjection: async input => {
+        applied.push(structuredClone(input));
+        return { applied: true, transitionInserted: Boolean(input.transition) };
+      },
+    };
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: 'obligation-failsafe-1',
+      ledgerAsOf: '2026-08-27T04:10:00.000Z',
+    });
+    // The stand-in owns no acceptance. Letting it match every tombstone made
+    // one consumer's pruned receipt satisfy "someone unknown", flipping the
+    // obligation to complete while real consumers were still pending.
+    assert.equal(transition?.health, 'action_required');
+    assert.ok(
+      applied[0].projectedIssues.some(value => value.issueId.includes('reconciliation-outstanding')),
+      'the obligation still reports outstanding reconciliation'
+    );
+  });
+
   test('backs off when the compare-and-set retry budget is exhausted', async () => {
     const period = { start: '2026-08-27T03:00:00.000Z', end: '2026-08-27T04:00:00.000Z', sourceTimezone: 'UTC' };
     const obligation = {

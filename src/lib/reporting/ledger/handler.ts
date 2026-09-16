@@ -727,6 +727,14 @@ export function projectManagedDelivery(
   const relevantReceipts = requiredRevision
     ? receipts.filter(value => value.reporting_revision_id === requiredRevision.reporting_revision_id)
     : [];
+  // What the response actually emits for this obligation: every revision's
+  // receipts, not only the currently required one.
+  const obligationReceipts = receipts.filter(
+    value => value.reporting_obligation_id === obligation.reporting_obligation_id
+  );
+  const obligationAdjustmentReceipts = adjustmentReceipts.filter(value =>
+    adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
+  );
   const revisionLeaf = currentReceiptLeaf(relevantReceipts);
   const adjustmentLeaves = adjustments.map(adjustment =>
     currentAdjustmentReceiptLeaf(
@@ -829,19 +837,19 @@ export function projectManagedDelivery(
     // adjustments — so counting only live rows emitted a schema-invalid
     // `complete` with `receipt_count: 0` the moment an acceptance was pruned,
     // and left a tombstoned adjustment counted as still pending.
-    receiptCount: relevantReceipts.length + (revisionAcceptedByTombstone ? 1 : 0),
-    acceptedReceiptCount:
-      relevantReceipts.filter(value => value.status === 'accepted').length + (revisionAcceptedByTombstone ? 1 : 0),
-    adjustmentReceiptCount:
-      adjustmentReceipts.filter(value =>
-        adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
-      ).length + tombstonedAdjustmentIds.size,
-    acceptedAdjustmentReceiptCount:
-      adjustmentReceipts.filter(
-        value =>
-          value.status === 'accepted' &&
-          adjustments.some(adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id)
-      ).length + tombstonedAdjustmentIds.size,
+    // Counters describe exactly the records this response emits, nothing
+    // more and nothing less. Counting only the required revision's receipts
+    // undercounted a superseded revision's receipts, which the periods view
+    // does emit; adding tombstones overcounted records that no longer exist.
+    // Either way a buyer recomputing the association reports
+    // ASSOCIATED_HISTORY_INCOMPLETE. Tombstones keep their real job — they
+    // stop a settled subject reopening on the write path — and retention now
+    // refuses to prune a receipt whose resource is still readable, so a
+    // period can never read complete with nothing to show for it.
+    receiptCount: obligationReceipts.length,
+    acceptedReceiptCount: obligationReceipts.filter(value => value.status === 'accepted').length,
+    adjustmentReceiptCount: obligationAdjustmentReceipts.length,
+    acceptedAdjustmentReceiptCount: obligationAdjustmentReceipts.filter(value => value.status === 'accepted').length,
     pendingAdjustmentReceiptCount: adjustments.filter(
       (adjustment, index) =>
         adjustmentLeaves[index]?.status !== 'accepted' &&

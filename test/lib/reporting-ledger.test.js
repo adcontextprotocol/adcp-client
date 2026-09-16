@@ -529,6 +529,24 @@ describe('seller reporting ledger', () => {
     const replayed = await producer.installConfiguration(legacyBilling);
     assert.equal(replayed.configurationId, 'configuration-legacy-billing');
     assert.equal(store.configurations.size, 1, 'no second generation is written');
+
+    // The offering can also be withdrawn. A stored generation is immutable,
+    // so reinstalling it must still return the stored row — resolving the
+    // offering before reading the ledger made it throw "Unknown reporting
+    // source offering" without ever looking.
+    const withdrawn = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+      offerings: [],
+      contact: { name: 'Reporting operations' },
+    });
+    const replayedWithoutOffering = await withdrawn.installConfiguration(legacyBilling);
+    assert.equal(replayedWithoutOffering.configurationId, 'configuration-legacy-billing');
+    // A genuinely new generation still needs a live offering.
+    await assert.rejects(
+      () => withdrawn.installConfiguration({ ...legacyBilling, delivery_config_version: 99 }),
+      /Unknown reporting source offering/
+    );
   });
 
   test('replays a configuration fingerprinted before instant normalization', async () => {

@@ -331,9 +331,14 @@ async function composeManagedLifecycleProjection(
       // Scoped to the consumer being projected. An acceptance A left behind
       // must never settle the obligation for B, which would let a webhook go
       // complete while B's own read still says action_required.
-      (managed.tombstonedAcceptedSubjects ?? []).filter(
-        value => consumer.consumer_id === undefined || value.consumerId === consumer.consumer_id
-      ),
+      // The anonymous fail-safe consumer owns no acceptances. Matching every
+      // tombstone to it let one consumer's pruned acceptance satisfy the
+      // stand-in for "someone unknown may still owe a receipt", flipping an
+      // incomplete-roster obligation to complete while real consumers were
+      // still pending.
+      consumer.consumer_id === undefined
+        ? []
+        : (managed.tombstonedAcceptedSubjects ?? []).filter(value => value.consumerId === consumer.consumer_id),
       managed.tombstonedDeliveredRevisionIds ?? []
     );
     if (!projected) continue;

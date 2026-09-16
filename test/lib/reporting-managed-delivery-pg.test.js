@@ -1130,6 +1130,16 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
   });
 
   async function seedSkewLedger(suffix = 'skew', reconciliationMode = 'delivery_only', seedOptions = {}) {
+    return seedSkewLedgerInto(core, managed, suffix, reconciliationMode, seedOptions);
+  }
+
+  async function seedSkewLedgerInto(
+    core,
+    managed,
+    suffix = 'skew',
+    reconciliationMode = 'delivery_only',
+    seedOptions = {}
+  ) {
     const nowMs = Date.now();
     const now = new Date(nowMs).toISOString();
     const period = {
@@ -1587,7 +1597,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     await pool.query(
       `UPDATE adcp_reporting_materializations
-          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb((clock_timestamp() - INTERVAL '1 day')::text))
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
         WHERE account_id = $1`,
       [aged.accountId]
     );
@@ -2282,6 +2292,14 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         WHERE account_id = $1`,
       [tomb.accountId]
     );
+    // An acceptance is held while its resource is still readable, so the
+    // horizon has to pass before the body may be pruned.
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [tomb.accountId]
+    );
     const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
     const pruned = await retaining.pruneExpiredEvidence({ account_id: tomb.accountId });
     assert.equal(pruned.receipts, 1, 'the body aged out');
@@ -2717,7 +2735,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     await pool.query(
       `UPDATE adcp_reporting_materializations
           SET recorded_at = clock_timestamp() - INTERVAL '200 days',
-              data = jsonb_set(data, '{resource,expires_at}', to_jsonb((clock_timestamp() - INTERVAL '1 day')::text))
+              data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
         WHERE account_id = $1`,
       [conclusions.accountId]
     );
@@ -2847,6 +2865,14 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     await pool.query(
       `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [shared.accountId]
+    );
+    // An acceptance is held while its resource is still readable, so the
+    // horizon has to pass before the body may be pruned.
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
         WHERE account_id = $1`,
       [shared.accountId]
     );
@@ -2990,7 +3016,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
   });
 
-  test('counts a pruned acceptance so a settled period stays schema-valid', async () => {
+  test('holds an acceptance while its resource is readable and keeps counters on emitted records', async () => {
     const counters = await seedSkewLedger('counters', 'consumer_receipt');
     const adapter = {
       verificationProfiles: ['canonical_digest'],
@@ -3007,13 +3033,67 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     counters.materialization = settled.rows[0].data;
     const context = { account: { id: counters.accountId }, agent: { agent_url: 'https://counters-buyer.example' } };
-    await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const rejected = await sync(
       {
         idempotency_key: 'receipt-counters-0001',
-        receipts: [receipt(counters, { reporting_receipt_id: 'receipt-counters-0001' })],
+        receipts: [
+          receipt(counters, {
+            reporting_receipt_id: 'receipt-counters-rejected-01',
+            status: 'rejected',
+            observed_row_count: 99,
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+          }),
+        ],
       },
       context
     );
+    assert.equal(rejected.results[0].result, 'recorded');
+    await sync(
+      {
+        idempotency_key: 'receipt-counters-0002',
+        receipts: [
+          receipt(counters, {
+            reporting_receipt_id: 'receipt-counters-accepted-01',
+            supersedes_reporting_receipt_id: 'receipt-counters-rejected-01',
+          }),
+        ],
+      },
+      context
+    );
+
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    const status = await getStatus(
+      { account: { account_id: counters.accountId }, view: 'periods', period: counters.period },
+      context
+    );
+    const period = status.periods[0];
+    // Counters must describe exactly what the response emits. Counting only
+    // the required revision's receipts undercounted the repaired chain, which
+    // a buyer recomputing the association reports as
+    // ASSOCIATED_HISTORY_INCOMPLETE.
+    assert.equal(
+      period.receipt_count,
+      status.receipts.filter(value => value.reporting_obligation_id === period.reporting_obligation_id).length,
+      'receipt_count equals the receipts actually emitted'
+    );
+    assert.equal(
+      period.accepted_receipt_count,
+      status.receipts.filter(
+        value => value.reporting_obligation_id === period.reporting_obligation_id && value.status === 'accepted'
+      ).length
+    );
+    assert.equal(period.receipt_count, 2, 'both the rejected and the repairing receipt are counted');
+    assert.equal(
+      validateResponse('get_reporting_status', status, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.3').issues)
+    );
+
+    // Retention holds the acceptance while the resource it accepts is still
+    // readable, so a period can never read complete with nothing to show.
     await pool.query(
       `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
         WHERE account_id = $1`,
@@ -3025,23 +3105,183 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       [counters.accountId]
     );
     const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
-    assert.equal((await retaining.pruneExpiredEvidence({ account_id: counters.accountId })).receipts, 1);
-
-    const status = await ledger.createReportingStatusHandler(core, {
-      resolveConsumerId: value => value.agent.agent_url,
-    })({ account: { account_id: counters.accountId }, view: 'periods', period: counters.period }, context);
-    const period = status.periods[0];
-    assert.equal(period.reconciliation_status, 'accepted');
-    // RC3 requires a consumer_receipt period reading healthy/complete to
-    // report at least one receipt and one accepted receipt, and no pending
-    // adjustments. Counting only live rows emitted complete with zero.
-    assert.ok(period.receipt_count >= 1, 'the pruned acceptance still counts');
-    assert.ok(period.accepted_receipt_count >= 1);
-    assert.equal(period.pending_adjustment_count, 0);
     assert.equal(
-      validateResponse('get_reporting_status', status, '3.2.0-rc.3').valid,
+      (await retaining.pruneExpiredEvidence({ account_id: counters.accountId })).receipts,
+      0,
+      'an acceptance outlives its own age while its resource is readable'
+    );
+    const stillValid = await getStatus(
+      { account: { account_id: counters.accountId }, view: 'periods', period: counters.period },
+      context
+    );
+    assert.equal(validateResponse('get_reporting_status', stillValid, '3.2.0-rc.3').valid, true);
+
+    // Once the resource horizon passes, both may go together.
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}',
+                to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [counters.accountId]
+    );
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: counters.accountId })).receipts, 2);
+    const afterPrune = await getStatus(
+      { account: { account_id: counters.accountId }, view: 'periods', period: counters.period },
+      context
+    );
+    assert.equal(
+      afterPrune.periods[0].receipt_count,
+      0,
+      'counters still describe emitted records once the bodies are gone'
+    );
+    assert.notEqual(afterPrune.periods[0].health, 'complete', 'and the period no longer claims to be settled');
+    assert.equal(
+      validateResponse('get_reporting_status', afterPrune, '3.2.0-rc.3').valid,
       true,
-      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.3').issues)
+      JSON.stringify(validateResponse('get_reporting_status', afterPrune, '3.2.0-rc.3').issues)
+    );
+  });
+
+  test('advances the roster refresh cursor past a full page', async () => {
+    // Its own schema: the cursor is global, so a shared schema full of other
+    // obligations makes "which page did it pick" unanswerable.
+    const { Pool } = require('pg');
+    const cursorSchema = `${schema}_cursor`;
+    await bootstrap.query(`CREATE SCHEMA "${cursorSchema}"`);
+    const cursorPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${cursorSchema}"` });
+    try {
+      await cursorPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await cursorPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const cursorCore = new ledger.PostgresReportingLedgerStore(cursorPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const cursorManaged = new ledger.PostgresReportingManagedDeliveryStore(cursorPool);
+      assert.equal(await cursorManaged.probe(cursorCore), true);
+      const ids = [];
+      for (const suffix of ['one', 'two']) {
+        const seeded = await seedSkewLedgerInto(cursorCore, cursorManaged, `cursor${suffix}`, 'consumer_receipt');
+        ids.push(seeded.obligation.reporting_obligation_id);
+      }
+      const seen = [];
+      const rosterStore = new ledger.PostgresReportingLedgerStore(cursorPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+        obligatedConsumers: async input => {
+          seen.push(input.reporting_obligation_id);
+          return { ids: [], complete: true, version: 'c1' };
+        },
+      });
+      // One obligation per page. Ordering by the reconciliation watermark —
+      // which a refresh never advances — made every sweep re-read the same
+      // first row, so nothing beyond one page was ever refreshed and those
+      // obligations' roster changes could never re-arm.
+      assert.equal(await rosterStore.refreshObligatedConsumerRosterVersions({ limit: 1 }), 1);
+      assert.equal(await rosterStore.refreshObligatedConsumerRosterVersions({ limit: 1 }), 1);
+      assert.deepEqual([...seen].sort(), [...ids].sort(), 'successive pages advance to new obligations');
+      const refreshed = await cursorPool.query(
+        `SELECT obligation_id, roster_refreshed_at FROM adcp_reporting_lifecycle_state
+          WHERE obligation_id = ANY($1::text[])`,
+        [ids]
+      );
+      assert.equal(refreshed.rowCount, 2);
+      for (const row of refreshed.rows) assert.ok(row.roster_refreshed_at, 'the refresh cursor is recorded');
+    } finally {
+      await cursorPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${cursorSchema}" CASCADE`);
+    }
+  });
+
+  test('uses one lock order so pruning and binding install cannot deadlock', async () => {
+    const racer = await seedSkewLedger('lockorder', 'delivery_only', { install: false, stopAfterBinding: true });
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    // Pruning took policy then account while install took account then
+    // policy. Run them against each other repeatedly; an ABBA order fails
+    // with 40P01 rather than serializing.
+    for (let round = 0; round < 12; round += 1) {
+      const outcomes = await Promise.allSettled([
+        retaining.pruneExpiredEvidence({ account_id: racer.accountId }),
+        managed.installBinding(racer.binding),
+      ]);
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          assert.equal(
+            /deadlock detected|40P01/.test(String(outcome.reason?.cause ?? outcome.reason)),
+            false,
+            `deadlock on round ${round}: ${String(outcome.reason?.cause ?? outcome.reason)}`
+          );
+        }
+      }
+    }
+  });
+
+  test('bounds delivery attempts when a worker keeps dying before it settles', async () => {
+    const stuck = await seedSkewLedger('leaseloss');
+    assert.equal(await managed.planMaterializations({ account_id: stuck.accountId }), 1);
+    let claims = 0;
+    // A worker that claims and dies. Nothing settles and nothing
+    // terminalizes, and `attempt` only advances in the planner — so the row
+    // used to be reclaimable without bound and the adapter re-delivered on
+    // every pass. Lease generation is now the durable attempt count.
+    for (let round = 0; round < 12; round += 1) {
+      const claimed = await managed.claimMaterialization({
+        owner: `crash-worker-${round}`,
+        now: new Date().toISOString(),
+        lease_milliseconds: 1,
+        account_id: stuck.accountId,
+      });
+      if (!claimed) break;
+      claims += 1;
+      await new Promise(resolve => setTimeout(resolve, 3));
+    }
+    assert.equal(claims, 5, 'delivery attempts are capped rather than unbounded');
+
+    // A row that used every attempt must not sit pending and invisible: the
+    // planner skips an obligation with any pending row, so it would never be
+    // retried or replanned.
+    const beforeSweep = await pool.query(`SELECT status FROM adcp_reporting_materializations WHERE account_id = $1`, [
+      stuck.accountId,
+    ]);
+    assert.equal(beforeSweep.rows[0].status, 'pending');
+    assert.equal(await managed.failExhaustedMaterializations({ account_id: stuck.accountId }), 1);
+    const row = await pool.query(
+      `SELECT status, data ->> 'failure_code' AS failure_code FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [stuck.accountId]
+    );
+    assert.equal(row.rows[0].status, 'failed');
+    assert.equal(row.rows[0].failure_code, 'DELIVERY_ATTEMPTS_EXHAUSTED');
+  });
+
+  test('defaults settlement retention to the binding promise and refuses nonsense', async () => {
+    const promised = await seedSkewLedger('retentiondefault');
+    await managed.planMaterializations({ account_id: promised.accountId });
+    const claimed = await managed.claimMaterialization({
+      owner: 'default-worker',
+      now: new Date().toISOString(),
+      lease_milliseconds: 120_000,
+      account_id: promised.accountId,
+    });
+    assert.ok(claimed);
+    assert.equal(claimed.binding.resource_retention_days, 30);
+    const outcome = materializationOutcome(promised);
+    // Satisfies no retention at all, and is already expired.
+    outcome.resource.expires_at = new Date(Date.now() - 86_400_000).toISOString();
+    // Omitting the argument used to mean zero, which accepted this.
+    assert.equal(
+      await managed.settleMaterialization({ lease: claimed, now: new Date().toISOString(), outcome }),
+      false,
+      'the binding promise is the floor when the caller names none'
+    );
+    await assert.rejects(
+      () =>
+        managed.settleMaterialization({
+          lease: claimed,
+          now: new Date().toISOString(),
+          outcome: materializationOutcome(promised),
+          minimum_resource_retention_days: -1,
+        }),
+      /non-negative safe integer/
     );
   });
 

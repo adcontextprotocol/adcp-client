@@ -261,6 +261,10 @@ ALTER TABLE adcp_reporting_lifecycle_state
   ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE adcp_reporting_lifecycle_state
   ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+ALTER TABLE adcp_reporting_lifecycle_state
+  ADD COLUMN IF NOT EXISTS roster_refreshed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS adcp_reporting_lifecycle_state_roster_refreshed
+  ON adcp_reporting_lifecycle_state (roster_refreshed_at, obligation_id);
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_transitions (
   transition_id TEXT PRIMARY KEY,
@@ -2428,9 +2432,14 @@ ${managedDueArm}       )
     version: string;
   }): Promise<void> {
     await this.query(
-      `INSERT INTO adcp_reporting_lifecycle_state (obligation_id, current_roster_version, processed_at)
-       VALUES ($1, $2, clock_timestamp())
-       ON CONFLICT (obligation_id) DO UPDATE SET current_roster_version = EXCLUDED.current_roster_version`,
+      `INSERT INTO adcp_reporting_lifecycle_state
+         (obligation_id, current_roster_version, roster_refreshed_at, processed_at)
+       VALUES ($1, $2, clock_timestamp(), clock_timestamp())
+       ON CONFLICT (obligation_id) DO UPDATE SET
+         current_roster_version = EXCLUDED.current_roster_version,
+         -- Advances the refresh cursor, never the reconciliation watermark:
+         -- observing a roster is not reconciling an obligation.
+         roster_refreshed_at = clock_timestamp()`,
       [input.reporting_obligation_id, input.version]
     );
   }
@@ -2454,7 +2463,12 @@ ${managedDueArm}       )
          LEFT JOIN adcp_reporting_lifecycle_state state
            ON state.obligation_id = obligation.obligation_id
         WHERE ($1::text IS NULL OR obligation.account_id = $1)
-        ORDER BY state.processed_at NULLS FIRST, obligation.obligation_id
+        -- Its own cursor, advanced by the refresh itself. Ordering by the
+        -- reconciliation watermark, which a refresh never moves, meant every
+        -- sweep re-read the same first page and nothing beyond one page of quiet
+        -- obligations was ever refreshed, so their roster changes could never
+        -- re-arm.
+        ORDER BY state.roster_refreshed_at NULLS FIRST, obligation.obligation_id
         LIMIT $2`,
       [input.account_id ?? null, input.limit]
     );
