@@ -40,6 +40,11 @@ const reporting = createReliableReportingService({
   // Resolve from trusted commercial/account state. The result is frozen into
   // the generation and every obligation; no request-body fallback exists.
   resolveCurrency: account => account.ctx_metadata.gam.currency,
+  // The authorization boundary for shared upstream networks: return only the
+  // constituents this account may report on. Never echo the declaration.
+  resolveCoverage: async account => ({
+    constituents: await bookings.authorizedReportingConstituents(account.id),
+  }),
   resolveConsumerId: ctx => {
     if (!ctx.agent) throw new Error('Authenticated buyer-agent registry required');
     return ctx.agent.agent_url;
@@ -63,10 +68,16 @@ place them in a manual capability override.
 
 Install a buyer declaration after the account and its media-buy scope have
 been authorized and resolved. `installConfiguration` intentionally accepts no
-account, `sourceScope`, contract, timezone, or currency fields from the
-declaration. Pass the framework-resolved `ctx.account`; trusted callbacks
-derive the remaining lineage. `expectedCurrency` and
-`expectedSourceTimezone` are optional assertions and fail closed on conflict.
+account, `sourceScope`, contract, timezone, currency, `constituents`, or
+`mediaBuyIds` fields from the declaration. Pass the framework-resolved
+`ctx.account`; trusted callbacks derive the remaining lineage. `resolveCoverage`
+is the media-buy/package authorization boundary and must derive the denominator
+from the resolved account: `sourceScope` may legitimately name a shared upstream
+network, in which case the constituent list is the only thing keeping one
+buyer's orders out of another buyer's report. `mediaBuyIds` is always derived
+from the returned constituents, so a buyer-named order ID can never reach
+`fetchSlice`. `expectedCurrency`, `expectedSourceTimezone`, and
+`expectedMediaBuyIds` are optional assertions and fail closed on conflict.
 The service rejects credential-shaped keys and `ctx_metadata` anywhere in the
 returned `sourceScope`, then applies the source contract and existing ledger
 immutability checks. Return the resulting secret-free configuration state from
@@ -76,7 +87,12 @@ For tenant-partitioned jobs, call `runCycle({ accountId })`, or configure
 `start({ accountIds: [...] })`. Every planner and worker call receives that
 same account boundary. A deployment-owned worker must explicitly pass
 `deploymentWide: true`; use that form only when one trusted service instance is
-authorized for every account in the store. Planning is resumable and bounded;
+authorized for every account in the store. Widening is reachable only through
+that opt-in: a cycle with a missing, empty, or overlong `accountId` is refused
+rather than silently promoted to a deployment-wide scan. Under `accountIds`,
+one account's failed cycle is reported to `onError` and the remaining accounts
+still run, so a persistently failing tenant cannot starve the tenants behind
+it. Planning is resumable and bounded;
 set `maxObligationsPerAccount` and `maxWorkerIterationsPerAccount` for tighter
 operational limits. `stop()` aborts current source work, waits for settlement,
 and wakes a sleeping scheduler immediately. Planning is a bounded ledger
@@ -138,8 +154,12 @@ resolvers, and replace manual producer/handler/capability assembly with
 `runWorker` with `runCycle` or `start`. Remove manual reporting capability
 overrides so discovery has one owner. Existing configuration IDs and semantic
 fingerprints remain compatible because the service delegates installation to
-the existing producer. With one installed adapter, pre-service obligations
-without the reserved adapter route continue through that sole adapter. A
+the existing producer: replaying a generation that predates the reserved
+adapter route key reuses its stored `sourceScope` verbatim, so the fingerprint
+still matches and the replay does not trip generation immutability. Only new
+generations carry the reserved key. With one installed adapter, pre-service
+obligations without the reserved adapter route continue through that sole
+adapter. A
 multi-adapter migration must create a new immutable configuration generation
 with an explicit route. Existing custom source executors that need pagination
 or durable staged objects should stay on the advanced primitives until a
@@ -154,7 +174,7 @@ an authorized wire reporting configuration to the service's resolved input and
 calling `installConfiguration`; the service does not claim a generic mapping
 that the current protocol does not define.
 
-Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline.
+Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline: the service refuses a configuration whose `officialAfterMilliseconds` disagrees with the `schedule.delivery_sla` its offering advertises, and omitting the field derives that same advertised value.
 
 Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and exact decimal control totals for requested numeric metrics. A revision number and obligation are immutable. Official revisions are terminal; later source corrections are immutable adjustments bound to the official revision, never superseding revisions. Status snapshots omit row payloads, are capped at 8 MiB, expire after 15 minutes, and keep cursor pages stable over the flat obligation/revision/adjustment union. A periods response returns an opaque `changes_checkpoint`; echo that value verbatim as `changes_after` rather than supplying a timestamp. Account-scoped write/snapshot locks make those checkpoints gap-free for SDK store writes. The default table set is deployment-wide; use a dedicated database/schema and acknowledge that boundary explicitly. `sourceScope` must contain opaque routing identities only—never credentials or bearer tokens—because it is retained with the obligation.
 

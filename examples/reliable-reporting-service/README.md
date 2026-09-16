@@ -39,6 +39,11 @@ const reporting = createReliableReportingService({
     sourceTimezone: account.ctx_metadata.provider.timezone,
   }),
   resolveCurrency: account => account.ctx_metadata.provider.currency,
+  // Authorization boundary: the constituents this account may report on, read
+  // from your booking system rather than echoed from the buyer's declaration.
+  resolveCoverage: async account => ({
+    constituents: await bookings.authorizedReportingConstituents(account.id),
+  }),
   resolveConsumerId: ctx => {
     if (!ctx.agent) throw new Error('Authenticated buyer-agent registry required');
     return ctx.agent.agent_url;
@@ -66,7 +71,9 @@ process.once('SIGTERM', async () => {
 
 For tenant-partitioned scheduling, replace `deploymentWide: true` with
 `accountIds: () => tenantDirectory.reportingAccountIds()`. A resolver must
-return an array; it can never fall back to a deployment-wide scan. Configure an
+return an array; it can never fall back to a deployment-wide scan, and an
+empty or missing account ID is refused rather than widened. One account's
+failed cycle reaches `onError` without skipping the accounts behind it. Configure an
 authenticated `agentRegistry` before using the `ctx.agent` consumer identity
 shown above.
 
@@ -84,9 +91,10 @@ const frozen = await reporting.installConfiguration(resolvedConfiguration, {
 });
 ```
 
-`resolvedConfiguration` contains reporting semantics and the authorized
-denominator, but no account identity, source scope, source contract, timezone,
-or currency. The service derives those only from the already-resolved account.
+`resolvedConfiguration` contains reporting semantics only: no account identity,
+source scope, source contract, timezone, currency, `constituents`, or
+`mediaBuyIds`. The denominator comes from `resolveCoverage`, so a buyer cannot
+name another buyer's media buys on a shared upstream network. The service derives those only from the already-resolved account.
 See [the ledger guide](../../docs/guides/REPORTING-LEDGER.md) for the complete
 input shape, per-account scheduling, migration from manual wiring, and the
 conformance helper.

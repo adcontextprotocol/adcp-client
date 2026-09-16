@@ -71,8 +71,6 @@ function configuration(overrides = {}) {
     requiredFinality: 'snapshot',
     requestedMetrics: request.requestedMetrics,
     requestedDimensions: request.requestedDimensions,
-    constituents: request.coverage.constituents,
-    mediaBuyIds: request.coverage.mediaBuyIds,
     schedule: {
       anchor: '2026-09-01T00:00:00.000Z',
       periodMilliseconds: 86_400_000,
@@ -83,6 +81,18 @@ function configuration(overrides = {}) {
     expectedCurrency: 'USD',
     expectedSourceTimezone: 'UTC',
     ...overrides,
+  };
+}
+
+/** Only this account's own media buy; naming another account's ID is not authorized. */
+function authorizedConstituent(accountId) {
+  const [template] = redactedReportingSourceRequestV1().coverage.constituents;
+  const mediaBuyId = `media-buy-${accountId}`;
+  return {
+    ...structuredClone(template),
+    constituentId: `constituent-${accountId}`,
+    mediaBuyId,
+    productBinding: { ...structuredClone(template.productBinding), mediaBuyId },
   };
 }
 
@@ -105,6 +115,7 @@ function serviceFixture(overrides = {}) {
       sourceTimezone: 'UTC',
     }),
     resolveCurrency: account => currencies.get(account.id),
+    resolveCoverage: account => ({ constituents: [authorizedConstituent(account.id)] }),
     ...overrides,
   });
   return { service, store, currencies, reportingAdapter };
@@ -415,6 +426,7 @@ describe('ReliableReportingService', () => {
             statusRetentionDays: redactedReportingSourceOfferingV1.retentionDays,
             resolveSource: () => ({ adapterId: 'fixture', sourceScope: {}, sourceTimezone: 'UTC' }),
             resolveCurrency: () => 'USD',
+            resolveCoverage: account => ({ constituents: [authorizedConstituent(account.id)] }),
           }),
         /Core API delivery only/
       );
@@ -469,6 +481,240 @@ describe('ReliableReportingService', () => {
       'lifecycle_start_stop',
       'capability_truthfulness',
     ]);
+  });
+
+  test('keeps media-buy lineage trusted so one buyer cannot report on another buyer', async () => {
+    const calls = [];
+    const reportingAdapter = adapter(calls);
+    // A shared upstream network: sourceScope alone separates nothing, so the
+    // constituent denominator is the whole authorization boundary.
+    const { service, store } = serviceFixture({
+      adapters: { fixture: reportingAdapter },
+      resolveSource: () => ({
+        adapterId: 'fixture',
+        sourceScope: { network_id: 'shared-network' },
+        sourceTimezone: 'UTC',
+      }),
+    });
+    const attacker = { account: { id: 'account-a', ctx_metadata: {} } };
+    const victimConstituent = authorizedConstituent('account-b');
+
+    // A declaration can no longer carry its own denominator at all.
+    for (const injected of [{ constituents: [victimConstituent] }, { mediaBuyIds: ['media-buy-account-b'] }]) {
+      await assert.rejects(
+        service.installConfiguration({ ...configuration(), ...injected }, attacker),
+        /must not supply trusted lineage field (constituents|mediaBuyIds)/,
+        `buyer-supplied ${Object.keys(injected)[0]} must be refused`
+      );
+    }
+
+    // An assertion that disagrees with the authorized scope fails closed
+    // instead of widening it.
+    await assert.rejects(
+      service.installConfiguration(
+        configuration({ expectedMediaBuyIds: ['media-buy-account-a', 'media-buy-account-b'] }),
+        attacker
+      ),
+      /conflicts with the configuration media-buy assertion/
+    );
+
+    const installed = await service.installConfiguration(
+      configuration({ expectedMediaBuyIds: ['media-buy-account-a'] }),
+      attacker
+    );
+    assert.deepEqual(installed.mediaBuyIds, ['media-buy-account-a']);
+    assert.deepEqual(
+      installed.constituents.map(value => value.constituentId),
+      ['constituent-account-a']
+    );
+
+    // Drive a real cycle and prove the victim's ID never reaches the adapter.
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    store.configurations.get(installed.configurationId).schedule.anchor = anchor;
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].request.media_buy_ids, ['media-buy-account-a']);
+    assert.equal(JSON.stringify(calls[0]).includes('media-buy-account-b'), false);
+    assert.equal(JSON.stringify(calls[0]).includes('constituent-account-b'), false);
+  });
+
+  test('refuses a coverage resolution that is missing, empty, or self-contradicting', async () => {
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    for (const [resolveCoverage, expected] of [
+      [() => undefined, /authorized constituent denominator/],
+      [() => ({ constituents: 'all' }), /authorized constituent denominator/],
+      [() => ({ constituents: [] }), /at least 1|too_small|greater than or equal/i],
+      [
+        () => ({
+          constituents: [authorizedConstituent('account-a'), authorizedConstituent('account-a')],
+        }),
+        /unique constituent identities/,
+      ],
+    ]) {
+      const { service } = serviceFixture({ resolveCoverage });
+      await assert.rejects(service.installConfiguration(configuration(), context), expected);
+    }
+  });
+
+  test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
+    const { service } = serviceFixture();
+    const seen = [];
+    service.producer.planObligations = async (_now, options) => {
+      seen.push(['plan', options?.account_id]);
+      return [];
+    };
+    service.producer.runWorker = async options => {
+      seen.push(['worker', options?.account_id]);
+      return { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 };
+    };
+
+    for (const cycle of [{ accountId: '' }, { accountId: '   '.repeat(100) }, {}, { deploymentWide: false }]) {
+      await assert.rejects(
+        service.runCycle(cycle),
+        /deploymentWide: true or a bounded non-empty accountId/,
+        `an unscoped cycle must fail closed: ${JSON.stringify(cycle)}`
+      );
+    }
+    await assert.rejects(
+      service.runCycle({ deploymentWide: true, accountId: 'account-a' }),
+      /cannot combine deploymentWide with an accountId/
+    );
+    assert.deepEqual(seen, [], 'no rejected cycle reached the producer');
+
+    await service.runCycle({ deploymentWide: true });
+    assert.deepEqual(seen, [
+      ['plan', undefined],
+      ['worker', undefined],
+    ]);
+  });
+
+  test('pins the official deadline to the advertised delivery SLA', async () => {
+    const officialAdapter = adapter();
+    const { cadence, ...sourceOffering } = officialAdapter.sourceOffering;
+    officialAdapter.sourceOffering = {
+      ...sourceOffering,
+      publicationClass: 'AUTHORITATIVE',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '02:00', daysAfterPeriodEnd: 0 },
+        expectedAvailabilityLag: cadence.expectedAvailabilityLag,
+        worstCaseAvailabilityLag: cadence.worstCaseAvailabilityLag,
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P7D',
+        correctionPolicy: 'immutable_correction',
+      },
+      revisionSemantics: 'official_with_declared_correction_policy',
+    };
+    officialAdapter.deliveryOffering.supported_finality = ['official'];
+    officialAdapter.deliveryOffering.schedule.delivery_sla = 'PT2H';
+    const { service } = serviceFixture({ adapters: { fixture: officialAdapter } });
+    const advertised = service.capabilities.offerings[0].schedule.delivery_sla;
+    assert.equal(advertised, 'PT2H');
+
+    const official = overrides =>
+      configuration({
+        requiredFinality: 'official',
+        finalityPolicy: {
+          policyId: 'policy-1',
+          basis: 'contractual_cutoff',
+          durationAfterPeriodEndMilliseconds: 7_200_000,
+        },
+        schedule: {
+          anchor: '2026-09-01T00:00:00.000Z',
+          periodMilliseconds: 86_400_000,
+          deliverySlaMilliseconds: 7_200_000,
+          recoveryWindowMilliseconds: 86_400_000,
+          ...overrides,
+        },
+      });
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+
+    await assert.rejects(
+      service.installConfiguration(official({ officialAfterMilliseconds: 21_600_000 }), context),
+      /official deadline must equal the advertised delivery SLA/,
+      'a divergent official deadline would make discovery untruthful'
+    );
+
+    // The omitted deadline derives the advertised SLA, and an explicit one may
+    // only restate it; both describe the same expected_at.
+    const derived = await service.installConfiguration(official(), context);
+    assert.equal(derived.schedule.officialAfterMilliseconds, undefined);
+    assert.equal(derived.schedule.deliverySlaMilliseconds, 7_200_000);
+    const restated = await service.installConfiguration(
+      { ...official({ officialAfterMilliseconds: 7_200_000 }), delivery_config_id: 'delivery-config-restated' },
+      context
+    );
+    assert.equal(restated.schedule.officialAfterMilliseconds, 7_200_000);
+  });
+
+  test('replays a pre-service configuration generation without breaking its fingerprint', async () => {
+    const { service, store } = serviceFixture();
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+
+    // Exactly what a pre-service deployment installed straight through the
+    // producer: no reserved adapter route key in sourceScope.
+    const legacy = await service.producer.installConfiguration({
+      ...ledgerInput,
+      account: { account_id: 'account-a' },
+      sourceScope: { network_id: 'network-account-a' },
+      sourceTimezone: 'UTC',
+      sourceSettings: { ...sourceSettings, currency: 'USD' },
+      contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+      constituents: [authorizedConstituent('account-a')],
+      mediaBuyIds: ['media-buy-account-a'],
+    });
+    assert.equal(legacy.sourceScope._adcp_reporting_adapter, undefined);
+
+    const replayed = await service.installConfiguration(configuration(), context);
+    assert.equal(replayed.configurationId, legacy.configurationId);
+    assert.equal(replayed.semanticFingerprint, legacy.semanticFingerprint);
+    assert.deepEqual(replayed.sourceScope, { network_id: 'network-account-a' });
+    assert.equal((await store.listConfigurations('account-a')).length, 1);
+
+    // The keyless scope is reused only for that exact predecessor: a changed
+    // route still fails immutability, and a new generation carries the key.
+    const rerouted = serviceFixture({
+      store,
+      resolveSource: () => ({ adapterId: 'fixture', sourceScope: { network_id: 'other' }, sourceTimezone: 'UTC' }),
+    });
+    await assert.rejects(rerouted.service.installConfiguration(configuration(), context), /immutable/i);
+
+    const next = await service.installConfiguration(configuration({ delivery_config_version: 2 }), context);
+    assert.deepEqual(next.sourceScope, {
+      network_id: 'network-account-a',
+      _adcp_reporting_adapter: 'fixture',
+    });
+  });
+
+  test('keeps scheduling later tenants after one account cycle fails', async () => {
+    const { service } = serviceFixture();
+    const planned = [];
+    const errors = [];
+    service.producer.planObligations = async (_now, options) => {
+      planned.push(options?.account_id);
+      if (options?.account_id === 'account-a') throw new Error('account-a upstream is down');
+      return [];
+    };
+    service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+
+    service.start({
+      intervalMilliseconds: 60_000,
+      accountIds: ['account-a', 'account-b', 'account-c'],
+      onError: error => {
+        errors.push(String(error));
+      },
+    });
+    while (planned.length < 3) await new Promise(resolve => setImmediate(resolve));
+    await service.stop();
+
+    assert.deepEqual(planned, ['account-a', 'account-b', 'account-c']);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /account-a upstream is down/);
   });
 
   test('runs explicitly per account and shuts down a deployment-wide scheduler gracefully', async () => {

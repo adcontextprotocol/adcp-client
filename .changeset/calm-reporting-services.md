@@ -2,4 +2,4 @@
 '@adcp/sdk': minor
 ---
 
-Add an adapter-first Reliable Reporting Core service that composes trusted account and currency routing, the existing source executor and ledger, bounded scheduling, native decisioning-platform handlers, truthful capabilities, and a reusable conformance helper.
+Add an adapter-first Reliable Reporting Core service that composes trusted account and currency routing, the existing source executor and ledger, bounded scheduling, native decisioning-platform handlers, truthful capabilities, and a reusable conformance helper. Media-buy and package lineage is trusted: declarations cannot supply `constituents` or `mediaBuyIds`, and a required `resolveCoverage` callback derives the authorized denominator from the resolved account. Cycles fail closed on an unscoped account instead of widening to a deployment-wide scan, official configurations must name the delivery SLA their offering advertises, pre-service configuration generations replay without tripping generation immutability, and one account's failed cycle no longer starves the accounts scheduled behind it.

@@ -3,6 +3,7 @@ import type { RequestContext } from '../../server/decisioning/context';
 import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
 import { scanArgsForCredentials } from '../../server/credential-policy';
+import { canonicalize } from '../../utils/jcs';
 import type { ReportingDeliveryCapabilities, ReportingDeliveryOffering } from '../../types/tools.generated';
 import { ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
 import {
@@ -21,6 +22,8 @@ import {
   type ReportingSourceWithReaderV1,
 } from '../ledger';
 import {
+  ReportingCoverageConstituentIdentityV1Schema,
+  SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1,
   ReportingSourceOfferingV1Schema,
   ReportingSourceScopeV1Schema,
   createInlineReportingSourceExecutor,
@@ -38,6 +41,15 @@ export interface ReliableReportingAdapterV1 {
   readonly sourceOffering: ReportingSourceOfferingV1;
   readonly deliveryOffering: ReportingDeliveryOffering;
   readonly fetchSlice: InlineReportingDeliveryFetchV1;
+}
+
+/**
+ * The media-buy/package denominator this account's credential is authorized to
+ * report on. `mediaBuyIds` is always derived from `constituents`, so the two
+ * can never disagree.
+ */
+export interface ReliableReportingCoverageV1 {
+  constituents: ReportingLedgerConfigurationV1['constituents'];
 }
 
 export interface ReliableReportingSourceRouteV1 {
@@ -59,6 +71,8 @@ type LedgerInstallInput = Omit<
   | 'sourceTimezone'
   | 'sourceSettings'
   | 'contract'
+  | 'constituents'
+  | 'mediaBuyIds'
 >;
 
 /**
@@ -71,6 +85,8 @@ export interface ReliableReportingConfigurationInputV1 extends LedgerInstallInpu
   expectedCurrency?: string;
   /** Optional assertion from account setup; disagreement fails closed. */
   expectedSourceTimezone?: string;
+  /** Optional assertion of the requested media-buy scope; disagreement fails closed. */
+  expectedMediaBuyIds?: readonly string[];
 }
 
 export interface ReliableReportingInstallContextV1<TCtxMeta = Record<string, unknown>> {
@@ -122,6 +138,19 @@ export interface CreateReliableReportingServiceOptionsV1<TCtxMeta = Record<strin
     account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
     configuration: Readonly<ReliableReportingConfigurationInputV1>
   ): string | Promise<string>;
+  /**
+   * Authorize and derive the media-buy/package denominator for this account.
+   *
+   * This is an authorization boundary, not a convenience: `sourceScope` may
+   * legitimately resolve to a shared upstream network, so the constituent list
+   * is the only thing separating one buyer's orders from another's on that
+   * network. It must be derived from the resolved account, never echoed from
+   * the buyer's declaration.
+   */
+  resolveCoverage(
+    account: Pick<Account<TCtxMeta>, 'id' | 'ctx_metadata'>,
+    configuration: Readonly<ReliableReportingConfigurationInputV1>
+  ): ReliableReportingCoverageV1 | Promise<ReliableReportingCoverageV1>;
   /** Enables authenticated consumer-scoped status reads and sync_reporting_status. */
   resolveConsumerId?: (context: RequestContext<Account<TCtxMeta>>) => string | Promise<string>;
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
@@ -277,9 +306,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         deliveryOffering,
         options.automatedRecoveryWindowSeconds
       );
-      const [route, currency] = await Promise.all([
+      const [route, currency, coverage] = await Promise.all([
         options.resolveSource(context.account, frozenInput),
         options.resolveCurrency(context.account, frozenInput),
+        options.resolveCoverage(context.account, frozenInput),
       ]);
       if (!route || typeof route !== 'object' || !route.sourceScope || typeof route.sourceScope !== 'object') {
         throw new TypeError('resolveSource must return an adapter, sourceScope, and sourceTimezone');
@@ -300,6 +330,13 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       ) {
         throw new TypeError('Trusted reporting timezone conflicts with the configuration timezone assertion');
       }
+      const { constituents, mediaBuyIds } = trustedCoverage(coverage);
+      if (
+        configuration.expectedMediaBuyIds !== undefined &&
+        !sameIdMembers(configuration.expectedMediaBuyIds, mediaBuyIds)
+      ) {
+        throw new TypeError('Trusted reporting coverage conflicts with the configuration media-buy assertion');
+      }
       if (Object.prototype.hasOwnProperty.call(route.sourceScope, ADAPTER_SCOPE_KEY)) {
         throw new TypeError('Reporting sourceScope contains an SDK-reserved key');
       }
@@ -307,18 +344,23 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
       if (credentialPaths.length > 0 || containsContextMetadata(route.sourceScope)) {
         throw new TypeError('Reporting sourceScope must contain non-secret routing identifiers only');
       }
-      const sourceScope = ReportingSourceScopeV1Schema.parse({
+      const routedScope = ReportingSourceScopeV1Schema.parse({
         ...structuredClone(route.sourceScope),
         [ADAPTER_SCOPE_KEY]: route.adapterId,
       });
+      const sourceScope =
+        (await keylessPredecessorScope(options.store, context.account.id, frozenInput, route.sourceScope)) ??
+        routedScope;
       const {
         expectedCurrency: _currency,
         expectedSourceTimezone: _timezone,
+        expectedMediaBuyIds: _mediaBuyIds,
         sourceSettings,
         ...ledgerInput
       } = frozenInput;
       void _currency;
       void _timezone;
+      void _mediaBuyIds;
       return producer.installConfiguration({
         ...ledgerInput,
         account: { account_id: context.account.id },
@@ -326,6 +368,8 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         sourceTimezone: normalizedTimezone,
         sourceSettings: { ...sourceSettings, currency: normalizedCurrency },
         contract: structuredClone(offering.contract),
+        constituents,
+        mediaBuyIds,
       });
     },
 
@@ -350,17 +394,18 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     },
 
     async runCycle(cycle) {
+      const accountId = cycleAccountId(cycle);
       const planningNow = cycle.now ?? new Date();
       cycle.signal?.throwIfAborted();
       const planned = await producer.planObligations(planningNow.toISOString(), {
-        ...(cycle.accountId ? { account_id: cycle.accountId } : {}),
+        ...(accountId !== undefined ? { account_id: accountId } : {}),
         ...(cycle.maxObligations !== undefined ? { maxObligations: cycle.maxObligations } : {}),
       });
       cycle.signal?.throwIfAborted();
       const result = await producer.runWorker({
         ...(cycle.signal ? { signal: cycle.signal } : {}),
         ...(cycle.now ? { now: () => cycle.now! } : {}),
-        ...(cycle.accountId ? { account_id: cycle.accountId } : {}),
+        ...(accountId !== undefined ? { account_id: accountId } : {}),
         ...(cycle.maxWorkerIterations !== undefined ? { maxIterations: cycle.maxWorkerIterations } : {}),
         ...(cycle.retryDelayMilliseconds !== undefined ? { retryDelayMilliseconds: cycle.retryDelayMilliseconds } : {}),
         ...(cycle.executionDeadlineMilliseconds !== undefined
@@ -431,16 +476,21 @@ async function schedulerLoop<TCtxMeta>(
   signal: AbortSignal
 ): Promise<void> {
   while (!signal.aborted) {
+    let accountIds: Array<string | undefined> = [];
     try {
-      const accountIds: Array<string | undefined> = options.deploymentWide
+      accountIds = options.deploymentWide
         ? [undefined]
         : validateAccountIds(
             typeof options.accountIds === 'function' ? await options.accountIds() : options.accountIds
           );
-      for (const accountId of accountIds) {
-        if (signal.aborted) break;
+    } catch (error) {
+      await reportSchedulerError(options, signal, error);
+    }
+    for (const accountId of accountIds) {
+      if (signal.aborted) break;
+      try {
         await service.runCycle({
-          ...(accountId ? { accountId } : { deploymentWide: true as const }),
+          ...(accountId === undefined ? { deploymentWide: true as const } : { accountId }),
           signal,
           ...(options.maxObligationsPerAccount !== undefined
             ? { maxObligations: options.maxObligationsPerAccount }
@@ -458,17 +508,27 @@ async function schedulerLoop<TCtxMeta>(
             ? { settlementGraceMilliseconds: options.settlementGraceMilliseconds }
             : {}),
         });
-      }
-    } catch (error) {
-      if (!signal.aborted && options.onError) {
-        try {
-          await options.onError(error);
-        } catch {
-          // Error observers must not terminate the reporting lifecycle.
-        }
+      } catch (error) {
+        // One tenant's cycle failure must not starve the tenants queued behind
+        // it: a persistently failing account would otherwise skip every later
+        // account on every interval, indefinitely.
+        await reportSchedulerError(options, signal, error);
       }
     }
     if (!signal.aborted) await abortableDelay(options.intervalMilliseconds, signal);
+  }
+}
+
+async function reportSchedulerError(
+  options: ReliableReportingSchedulerOptionsV1,
+  signal: AbortSignal,
+  error: unknown
+): Promise<void> {
+  if (signal.aborted || !options.onError) return;
+  try {
+    await options.onError(error);
+  } catch {
+    // Error observers must not terminate the reporting lifecycle.
   }
 }
 
@@ -496,6 +556,58 @@ function validateAccountIds(values: readonly string[]): Array<string | undefined
     unique.add(value);
   }
   return [...unique];
+}
+
+/**
+ * Resolve the account a cycle may touch, failing closed.
+ *
+ * `accountId: ''` is a well-typed value that would otherwise fall through the
+ * old truthiness test and silently widen one tenant's cycle into a
+ * deployment-wide scan. Widening the scope is only ever reachable through the
+ * explicit `deploymentWide: true` opt-in.
+ */
+function cycleAccountId(cycle: ReliableReportingCycleOptionsV1): string | undefined {
+  const requested = (cycle as { accountId?: unknown }).accountId;
+  if (cycle.deploymentWide === true) {
+    if (requested !== undefined) {
+      throw new TypeError('Reliable reporting cycles cannot combine deploymentWide with an accountId');
+    }
+    return undefined;
+  }
+  if (typeof requested !== 'string' || requested.length === 0 || requested.length > 255) {
+    throw new TypeError('Reliable reporting cycles require deploymentWide: true or a bounded non-empty accountId');
+  }
+  return requested;
+}
+
+/**
+ * Keep pre-service configuration generations replayable.
+ *
+ * Generations installed through the producer directly stored `sourceScope`
+ * exactly as the seller resolved it, without the reserved adapter route key.
+ * Adding that key on a same-generation replay would change the semantic
+ * fingerprint and surface as `Reporting configuration generation is immutable`,
+ * contradicting the documented migration path. Reuse the stored keyless scope
+ * when it matches the freshly resolved route; the producer still refuses the
+ * install if any other semantic field moved, and a keyless generation can never
+ * be created here because only an existing record is ever reused.
+ */
+async function keylessPredecessorScope(
+  store: ReportingLedgerStore,
+  accountId: string,
+  configuration: Pick<ReliableReportingConfigurationInputV1, 'delivery_config_id' | 'delivery_config_version'>,
+  resolvedScope: Record<string, unknown>
+): Promise<Record<string, unknown> | undefined> {
+  const predecessor = (await store.listConfigurations(accountId)).find(
+    value =>
+      value.delivery_config_id === configuration.delivery_config_id &&
+      value.delivery_config_version === configuration.delivery_config_version
+  );
+  if (!predecessor || Object.prototype.hasOwnProperty.call(predecessor.sourceScope, ADAPTER_SCOPE_KEY)) {
+    return undefined;
+  }
+  if (canonicalize(predecessor.sourceScope) !== canonicalize(resolvedScope)) return undefined;
+  return structuredClone(predecessor.sourceScope);
 }
 
 function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: ReportingDeliveryOffering): void {
@@ -556,9 +668,55 @@ function validateConfigurationAgainstDeliveryOffering(
   ) {
     throw new TypeError('Reporting configuration schedule does not match its delivery offering');
   }
+  // `expected_at` derives from `officialAfterMilliseconds ?? deliverySlaMilliseconds`,
+  // while discovery only ever publishes the offering's `schedule.delivery_sla`. A
+  // divergent official deadline would therefore advertise an availability promise
+  // the ledger never intends to meet, so the two must name one truthful value: the
+  // offering SLA when the deadline is omitted, and exactly that SLA when it is set.
+  if (
+    configuration.schedule.officialAfterMilliseconds !== undefined &&
+    configuration.schedule.officialAfterMilliseconds !== configuration.schedule.deliverySlaMilliseconds
+  ) {
+    throw new TypeError('Reporting official deadline must equal the advertised delivery SLA of its offering');
+  }
   if (configuration.schedule.recoveryWindowMilliseconds > automatedRecoveryWindowSeconds * 1_000) {
     throw new TypeError('Reporting configuration recovery window exceeds the advertised maximum');
   }
+}
+
+/**
+ * Validate the seller-resolved denominator and derive its media-buy scope.
+ *
+ * Deriving `mediaBuyIds` here rather than accepting it keeps the producer's
+ * "media-buy scope equals the constituent denominator" invariant unreachable by
+ * construction, so no buyer-named ID can ride along beside an authorized
+ * constituent and reach `fetchSlice`.
+ */
+function trustedCoverage(coverage: ReliableReportingCoverageV1): {
+  constituents: ReportingLedgerConfigurationV1['constituents'];
+  mediaBuyIds: string[];
+} {
+  if (!coverage || typeof coverage !== 'object' || !Array.isArray(coverage.constituents)) {
+    throw new TypeError('resolveCoverage must return an authorized constituent denominator');
+  }
+  const constituents = ReportingCoverageConstituentIdentityV1Schema.array()
+    .min(1)
+    .max(SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1)
+    .parse(structuredClone(coverage.constituents)) as ReportingLedgerConfigurationV1['constituents'];
+  const constituentIds = new Set(constituents.map(value => value.constituentId));
+  if (constituentIds.size !== constituents.length) {
+    throw new TypeError('resolveCoverage must return unique constituent identities');
+  }
+  const mediaBuyIds = [
+    ...new Set(constituents.map(value => value.mediaBuyId).filter((value): value is string => Boolean(value))),
+  ].sort();
+  return { constituents, mediaBuyIds };
+}
+
+function sameIdMembers(left: readonly string[], right: readonly string[]): boolean {
+  if (!Array.isArray(left)) throw new TypeError('expectedMediaBuyIds must be an array of media buy IDs');
+  const expected = new Set(left);
+  return expected.size === right.length && right.every(value => expected.has(value));
 }
 
 function trustedCurrency(value: string): string {
@@ -581,7 +739,16 @@ function trustedTimezone(value: string): string {
 }
 
 function assertNoUntrustedLineageFields(configuration: Record<string, unknown>): void {
-  for (const field of ['account', 'sourceScope', 'sourceTimezone', 'contract', 'currency', 'ctx_metadata']) {
+  for (const field of [
+    'account',
+    'sourceScope',
+    'sourceTimezone',
+    'contract',
+    'currency',
+    'ctx_metadata',
+    'constituents',
+    'mediaBuyIds',
+  ]) {
     if (Object.prototype.hasOwnProperty.call(configuration, field)) {
       throw new TypeError(`Reporting configuration must not supply trusted lineage field ${field}`);
     }
