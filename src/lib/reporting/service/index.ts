@@ -232,6 +232,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   positiveInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
 
   const sources = new Map<string, ReportingSourceWithReaderV1>();
+  const adapterOfferings = new Map<string, ReportingSourceOfferingV1>();
   const offerings = new Map<string, ReportingSourceOfferingV1>();
   const deliveryOfferings: ReportingDeliveryOffering[] = [];
   for (const [adapterId, adapter] of adapterEntries) {
@@ -268,6 +269,11 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     // executor applies (media_buy applicability, one format) is authoritative.
     validateDeliveryOffering(routedOffering, deliveryOffering);
     sources.set(adapterId, source);
+    // Keyed by adapter, not by offering ID: the route must resolve to the exact
+    // executor instance whose contract was validated here. A global offering
+    // lookup would let an executor that happens to expose another adapter's ID
+    // be selected while that other adapter's contract is the one stored.
+    adapterOfferings.set(adapterId, routedOffering);
     offerings.set(routedOffering.offeringId, routedOffering);
     deliveryOfferings.push(deliveryOffering);
   }
@@ -371,9 +377,15 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         throw new TypeError('resolveSource must return an adapter, sourceScope, and sourceTimezone');
       }
       const source = sources.get(route.adapterId);
-      if (!source) throw new TypeError('resolveSource selected an unknown reporting adapter');
-      if (source.capabilities.offerings.every(value => value.offeringId !== offering.offeringId)) {
+      const adapterOffering = adapterOfferings.get(route.adapterId);
+      if (!source || !adapterOffering) throw new TypeError('resolveSource selected an unknown reporting adapter');
+      // The adapter's own validated offering must be the selected one — not
+      // merely an offering its executor happens to expose.
+      if (adapterOffering.offeringId !== offering.offeringId) {
         throw new TypeError('Resolved reporting adapter does not provide the selected offering');
+      }
+      if (canonicalize(adapterOffering.contract) !== canonicalize(offering.contract)) {
+        throw new TypeError('Resolved reporting adapter contract differs from the selected offering');
       }
       const normalizedCurrency = trustedCurrency(currency);
       const normalizedTimezone = trustedTimezone(route.sourceTimezone);
@@ -838,9 +850,15 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
     if (delivery.schedule.alignment === 'utc' && reportingUtcOffsetMinutesV1(pinnedTimezone, now) !== 0) {
       throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
     }
+    // Boundaries are derived from the protocol origin, so the zone has to hold
+    // one offset all the way from 1970 — not merely today. Asia/Singapore
+    // (+07:30 to +08:00) and Asia/Kathmandu (+05:30 to +05:45) are rock stable
+    // now, yet their 1970 grid is half an hour off local midnight, so no P1D
+    // anchor is installable and the offering must not be advertised. Faithful
+    // civil-time boundary arithmetic would lift this; until it exists, refuse.
     assertConstantUtcOffset(
       pinnedTimezone,
-      now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS,
+      reportingScheduleOriginV1(delivery.schedule.alignment === 'utc' ? 'utc' : 'source_timezone', pinnedTimezone),
       now + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS
     );
   }
@@ -869,6 +887,22 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
   }
   if (delivery.reporting_profile.primary_keys.length === 0) {
     throw new TypeError('Delivery offering requires at least one reporting primary key');
+  }
+  if (delivery.reporting_profile.grain !== source.grain) {
+    throw new TypeError('Delivery offering grain does not match its source offering grain');
+  }
+  if (
+    delivery.schedule.period_timezone_policy === 'fixed' &&
+    source.sourceTimezone.ianaTimezone !== undefined &&
+    delivery.schedule.period_timezone !== source.sourceTimezone.ianaTimezone
+  ) {
+    throw new TypeError('Delivery offering pins a period timezone its source offering does not declare');
+  }
+  if (delivery.supported_finality.length === 0) {
+    throw new TypeError('Delivery offering must advertise at least one supported finality');
+  }
+  if (new Set(delivery.supported_finality).size !== delivery.supported_finality.length) {
+    throw new TypeError('Delivery offering supported finality values must be unique');
   }
 }
 

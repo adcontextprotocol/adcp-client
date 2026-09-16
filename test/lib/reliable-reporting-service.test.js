@@ -853,29 +853,13 @@ describe('ReliableReportingService', () => {
       /is not on a 'source_timezone' period boundary/
     );
 
-    // A delivery offering that advertises UTC periods while its source resolves
-    // to a different zone. The source/offering timezone agreement check does
-    // not see this: it compares the *source* offering, not the advertised
-    // period timezone buyers read from discovery.
-    const mismatched = zonedFixture('Asia/Kolkata', { periodTimezone: 'UTC' });
-    await assert.rejects(
-      mismatched.service.installConfiguration(
-        configuration({
-          expectedSourceTimezone: 'Asia/Kolkata',
-          schedule: {
-            anchor: '2026-09-01T18:30:00.000Z',
-            periodMilliseconds: 86_400_000,
-            deliverySlaMilliseconds: 0,
-            recoveryWindowMilliseconds: 86_400_000,
-          },
-        }),
-        context
-      ),
-      /pins a period timezone that is not the resolved source timezone/
+    // A delivery offering that pins a period timezone its source offering does
+    // not declare is now refused before it can be advertised.
+    assert.throws(
+      () => zonedFixture('Asia/Kolkata', { periodTimezone: 'UTC' }),
+      /pins a period timezone its source offering does not declare/
     );
 
-    // A DST-observing zone: `anchor + n * 24h` drifts off local midnight after
-    // the transition, so fixed-length periods cannot express its local days.
     assert.throws(
       () => zonedFixture('America/New_York'),
       /UTC offset/,
@@ -1830,6 +1814,161 @@ describe('ReliableReportingService', () => {
       /changes its UTC offset/,
       'a change-and-return inside the span must not pass'
     );
+  });
+
+  test('reclaims staged evidence and accounting with the execution it evicts', async () => {
+    const retained = createInlineReportingSourceExecutor(
+      () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = period => `feed-period-${String(period).padStart(4, '0')}`;
+    const request = period => redactedReportingSourceRequestV1({ sourceExecutionKey: key(period) });
+
+    const first = request(0);
+    const sealed = await retained.execute(first, ctx());
+    assert.equal(sealed.ok, true);
+    const manifest = JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8'));
+    const staged = (manifest.objects ?? manifest.publication?.objects ?? [])[0];
+    const readInput = {
+      objectRef: staged.objectRef,
+      objectGeneration: staged.objectGeneration,
+      sourceScope: first.sourceScope,
+      account: first.account,
+      delivery_config_id: first.delivery_config_id,
+      delivery_config_version: first.delivery_config_version,
+      report_definition_id: first.report_definition_id,
+      reporting_obligation_id: first.reporting_obligation_id,
+      maxBytes: 1024 * 1024,
+      signal: new AbortController().signal,
+    };
+    const before = await retained.read(readInput);
+    assert.ok(before.byteLength > 0, 'staged evidence is readable while its execution is retained');
+
+    // Fill the scope so the first execution is the one reclaimed.
+    for (let period = 1; period <= 100; period += 1) {
+      assert.equal((await retained.execute(request(period), ctx())).ok, true, `period ${period}`);
+    }
+
+    // The staged object is reclaimed with its execution, rather than lingering
+    // under its old generation for a later replay to re-stage over.
+    await assert.rejects(
+      retained.read(readInput),
+      /Inline staged object was not found/,
+      'evicting an execution must reclaim its staged evidence too'
+    );
+
+    // Its bytes returned to the budget, so the scope keeps admitting work.
+    for (let period = 101; period <= 130; period += 1) {
+      assert.equal((await retained.execute(request(period), ctx())).ok, true, `period ${period} must still stage`);
+    }
+  });
+
+  test('never advertises a zone whose protocol grid has no installable anchor', async () => {
+    // Stable today, but their offset moved after the 1970 origin, so every
+    // boundary derived from that origin misses local midnight by 30 or 15
+    // minutes and no P1D anchor can ever install.
+    for (const timezone of ['Asia/Singapore', 'Asia/Kathmandu']) {
+      assert.throws(
+        () => zonedFixture(timezone),
+        /changes its UTC offset/,
+        `${timezone} has no installable protocol anchor and must not be advertised`
+      );
+    }
+
+    // A zone that has held one offset since the origin is still advertisable.
+    const kolkata = zonedFixture('Asia/Kolkata');
+    assert.equal(kolkata.service.capabilities.offerings[0].schedule.period_timezone, 'Asia/Kolkata');
+  });
+
+  test('binds each route to its own adapter executor, not a shared offering ID', async () => {
+    // A second adapter whose executor also exposes the first adapter's offering
+    // ID must not be selectable for it.
+    const primary = adapter();
+    const secondary = adapter();
+    secondary.sourceOffering = structuredClone(primary.sourceOffering);
+    secondary.sourceOffering.offeringId = 'fixture-secondary';
+    secondary.deliveryOffering = structuredClone(primary.deliveryOffering);
+    secondary.deliveryOffering.offering_id = 'fixture-secondary';
+
+    const { service } = serviceFixture({
+      adapters: { primary, secondary },
+      resolveSource: () => ({
+        adapterId: 'secondary',
+        sourceScope: { network_id: 'shared' },
+        sourceTimezone: 'UTC',
+      }),
+    });
+
+    // The configuration names the primary offering while routing to secondary.
+    await assert.rejects(
+      service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } }),
+      /does not provide the selected offering/
+    );
+
+    // Routing to the adapter that actually owns the offering installs.
+    const consistent = serviceFixture({
+      adapters: { primary, secondary },
+      resolveSource: () => ({ adapterId: 'primary', sourceScope: { network_id: 'shared' }, sourceTimezone: 'UTC' }),
+    });
+    const installed = await consistent.service.installConfiguration(configuration(), {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    assert.equal(installed.sourceScope._adcp_reporting_adapter, 'primary');
+  });
+
+  test('binds the full delivery contract to its executor at construction', async () => {
+    const grainMismatch = adapter();
+    grainMismatch.deliveryOffering.reporting_profile.grain = 'source_hour';
+    assert.throws(() => serviceFixture({ adapters: { fixture: grainMismatch } }), /grain does not match/);
+
+    const emptyFinality = adapter();
+    emptyFinality.deliveryOffering.supported_finality = [];
+    assert.throws(() => serviceFixture({ adapters: { fixture: emptyFinality } }), /at least one supported finality/);
+
+    const duplicateFinality = adapter();
+    duplicateFinality.deliveryOffering.supported_finality = ['snapshot', 'snapshot'];
+    assert.throws(
+      () => serviceFixture({ adapters: { fixture: duplicateFinality } }),
+      /supported finality values must be unique/
+    );
+  });
+
+  test('refuses a schedule identity that does not describe its own boundaries', async () => {
+    // The producer is a public surface, and the status projection emits this
+    // identity verbatim as the installed schedule.
+    const { service } = serviceFixture();
+    const input = configuration();
+    const { expectedCurrency, expectedSourceTimezone, sourceSettings, ...ledgerInput } = input;
+    const install = schedule =>
+      service.producer.installConfiguration({
+        ...ledgerInput,
+        schedule: { ...ledgerInput.schedule, ...schedule },
+        account: { account_id: 'account-a' },
+        sourceScope: { network_id: 'n' },
+        sourceTimezone: 'UTC',
+        sourceSettings: { ...sourceSettings, currency: 'USD' },
+        contract: structuredClone(redactedReportingSourceOfferingV1.contract),
+        constituents: [authorizedConstituent('account-a')],
+        mediaBuyIds: ['media-buy-account-a'],
+      });
+
+    await assert.rejects(install({ periodDuration: 'P1M' }), /periodDuration does not describe/);
+    await assert.rejects(install({ deliverySlaDuration: 'PT1H' }), /deliverySlaDuration does not describe/);
+    await assert.rejects(
+      install({ alignment: 'utc', periodTimezone: 'UTC' }),
+      /utc alignment must not declare a period timezone/
+    );
+    await assert.rejects(install({ periodTimezone: 'UTC' }), /requires an explicit schedule alignment/);
+    await assert.rejects(
+      install({ alignment: 'source_timezone', periodTimezone: 'Asia/Kolkata' }),
+      /periodTimezone does not match the configured source timezone/
+    );
+
+    // The identity the service itself installs is consistent.
+    const ok = await install({ periodDuration: 'P1D', alignment: 'source_timezone', periodTimezone: 'UTC' });
+    assert.equal(ok.schedule.periodDuration, 'P1D');
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {

@@ -1094,6 +1094,56 @@ function boundedDiagnostic(value: unknown): string {
     .slice(0, 64);
 }
 
+/** Unparseable is simply "does not describe": a calendar duration such as P1M
+ * has no fixed millisecond width, so it can never match these boundaries. */
+function identityDurationMilliseconds(value: string): number | undefined {
+  try {
+    return reportingIsoDurationMillisecondsV1(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The echoed schedule identity is a public producer input, and the status
+ * projection emits it verbatim as the installed schedule. Unvalidated, a
+ * caller could install `periodDuration: 'P1M'` over daily millisecond
+ * boundaries and have the ledger advertise a monthly schedule it never runs.
+ */
+function assertScheduleIdentityMatchesBoundaries(
+  schedule: ReportingLedgerConfigurationV1['schedule'],
+  sourceTimezone: string
+): void {
+  if (schedule.periodDuration !== undefined) {
+    if (identityDurationMilliseconds(schedule.periodDuration) !== schedule.periodMilliseconds) {
+      throw new Error('Reporting periodDuration does not describe the configured period boundaries');
+    }
+  }
+  if (schedule.deliverySlaDuration !== undefined) {
+    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== schedule.deliverySlaMilliseconds) {
+      throw new Error('Reporting deliverySlaDuration does not describe the configured delivery SLA');
+    }
+  }
+  if (schedule.alignment === undefined) {
+    if (schedule.periodTimezone !== undefined) {
+      throw new Error('Reporting periodTimezone requires an explicit schedule alignment');
+    }
+    return;
+  }
+  if (!['utc', 'account_timezone', 'source_timezone', 'billing_cycle'].includes(schedule.alignment)) {
+    throw new Error('Reporting schedule alignment is not a recognized value');
+  }
+  // reporting-schedule.json: billing_cycle and source_timezone carry a period
+  // timezone; utc and account_timezone forbid one.
+  const carriesTimezone = schedule.alignment === 'billing_cycle' || schedule.alignment === 'source_timezone';
+  if (!carriesTimezone && schedule.periodTimezone !== undefined) {
+    throw new Error(`Reporting ${schedule.alignment} alignment must not declare a period timezone`);
+  }
+  if (carriesTimezone && schedule.periodTimezone !== undefined && schedule.periodTimezone !== sourceTimezone) {
+    throw new Error('Reporting periodTimezone does not match the configured source timezone');
+  }
+}
+
 function validateConfigurationAgainstOffering(
   configuration: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'>,
   offering: ReportingSourceOfferingV1
@@ -1128,6 +1178,7 @@ function validateConfigurationAgainstOffering(
   for (const offset of configuration.schedule.restatementMilliseconds ?? []) {
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
+  assertScheduleIdentityMatchesBoundaries(configuration.schedule, configuration.sourceTimezone);
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');

@@ -245,7 +245,25 @@ export function createInlineReportingSourceExecutor(
         return awaitInlineExecution(existing, context.signal, request.deadline.deadlineAt);
       }
 
-      if (executions.size >= INLINE_MAX_EXECUTIONS_V1 && !(evictSettled && reclaimSettled(executions))) {
+      const exhaustedGlobally = executions.size >= INLINE_MAX_EXECUTIONS_V1;
+      const exhaustedForScope =
+        [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length >=
+        INLINE_MAX_EXECUTIONS_PER_SCOPE_V1;
+      if ((exhaustedGlobally || exhaustedForScope) && !evictSettled) {
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          `Inline reporting ${exhaustedGlobally ? 'replay' : 'scope replay'} capacity is exhausted; supply a ` +
+            'durable executor or an explicit replayRetention policy for long-lived feeds'
+        );
+      }
+      // Admission is decided before anything is reclaimed. Evicting first and
+      // then refusing the request would destroy a replayable execution to admit
+      // work that never ran.
+      if (activeExecutions >= INLINE_MAX_CONCURRENT_EXECUTIONS_V1) {
+        return failure('RATE_LIMITED', 'retryable', 'Inline reporting concurrency capacity is exhausted');
+      }
+      if (exhaustedGlobally && !reclaimSettled(executions, storage)) {
         return failure(
           'QUOTA_EXHAUSTED',
           'terminal',
@@ -253,20 +271,13 @@ export function createInlineReportingSourceExecutor(
             'replayRetention policy for long-lived feeds'
         );
       }
-      if (
-        [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length >=
-          INLINE_MAX_EXECUTIONS_PER_SCOPE_V1 &&
-        !(evictSettled && reclaimSettled(executions, scopeKey))
-      ) {
+      if (exhaustedForScope && !reclaimSettled(executions, storage, scopeKey)) {
         return failure(
           'QUOTA_EXHAUSTED',
           'terminal',
           'Inline reporting scope replay capacity is exhausted; supply a durable executor or an explicit ' +
             'replayRetention policy for long-lived feeds'
         );
-      }
-      if (activeExecutions >= INLINE_MAX_CONCURRENT_EXECUTIONS_V1) {
-        return failure('RATE_LIMITED', 'retryable', 'Inline reporting concurrency capacity is exhausted');
       }
 
       activeExecutions += 1;
@@ -905,12 +916,31 @@ function inlineDeliveryDates(request: ReportingSourceSliceRequestV1): { start: s
  *
  * Only settled entries with no waiters are eligible, and only to admit new
  * work: an in-flight execution and anything awaiting it are never disturbed.
+ *
+ * The execution, its staged evidence, and the byte accounting are reclaimed
+ * together. Dropping only the execution entry left the staged object behind
+ * under its old generation, so a later replay of that key re-executed and
+ * re-staged the same ref under a new generation — leaving a reader pinned to
+ * the original generation unable to read it — while the scope byte budget
+ * never recovered.
  */
-function reclaimSettled(executions: Map<string, ExecutionEntry>, scopeKey?: string): boolean {
+function reclaimSettled(
+  executions: Map<string, ExecutionEntry>,
+  storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> },
+  scopeKey?: string
+): boolean {
   for (const [key, entry] of executions) {
     if (entry.pending || entry.waiters > 0) continue;
     if (scopeKey !== undefined && entry.scopeKey !== scopeKey) continue;
     executions.delete(key);
+    const objectRef = `inline-${key.slice(0, 32)}`;
+    const stored = storage.objects.get(objectRef);
+    if (stored) {
+      storage.objects.delete(objectRef);
+      storage.totalBytes -= stored.bytes.byteLength;
+      const remaining = (storage.scopeBytes.get(entry.scopeKey) ?? 0) - stored.bytes.byteLength;
+      storage.scopeBytes.set(entry.scopeKey, Math.max(0, remaining));
+    }
     return true;
   }
   return false;
