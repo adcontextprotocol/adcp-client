@@ -2050,28 +2050,68 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     ledgerAsOf: string;
   }): Promise<ReportingManagedLifecycleProjectionV1 | null> {
     if (!this.managedDelivery) return null;
-    const base = await this.transaction(async client => {
-      if (!(await this.managedTablesInstalled(client))) return null;
-      const obligation = await client.query<QueryResultRow & { configuration_id: string }>(
-        'SELECT configuration_id FROM adcp_reporting_obligations WHERE obligation_id = $1',
-        [input.reporting_obligation_id]
-      );
-      const configurationId = obligation.rows[0]?.configuration_id;
-      if (!configurationId) return null;
-      const [binding] = await this.listSnapshotManagedBindings(client, [configurationId]);
-      if (!binding) return null;
-      const obligationIds = [input.reporting_obligation_id];
-      const [materializations, materializationHistory] = await Promise.all([
-        this.listSnapshotMaterializationProjection(client, obligationIds, input.ledgerAsOf),
-        this.listSnapshotMaterializations(client, obligationIds, input.ledgerAsOf),
-      ]);
-      // Every consumer, not just one authenticated caller: a persisted
-      // transition is account-level, so the reconciler needs each consumer's
-      // own receipt chain to fold the most severe outcome.
-      const receipts = await client.query<
-        JsonRow<ReportingReceipt | ReportingAdjustmentReceipt> & { consumer_id: string; receipt_kind: string }
-      >(
-        `SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
+    const base = await this.transaction(
+      async client => {
+        if (!(await this.managedTablesInstalled(client))) return null;
+        const obligation = await client.query<QueryResultRow & { configuration_id: string }>(
+          'SELECT configuration_id FROM adcp_reporting_obligations WHERE obligation_id = $1',
+          [input.reporting_obligation_id]
+        );
+        const configurationId = obligation.rows[0]?.configuration_id;
+        if (!configurationId) return null;
+        const [binding] = await this.listSnapshotManagedBindings(client, [configurationId]);
+        if (!binding) return null;
+        // Read the mutable rows once, with the columns needed to place them at
+        // `ledgerAsOf` rather than at now. `status` lives in a row that is
+        // updated in place, so a materialization recorded before the cutoff but
+        // settled after it must project as it stood at the cutoff — otherwise a
+        // later settlement is backdated into an earlier transition. `changed_at`
+        // is when the row left `pending`, so `changed_at > ledgerAsOf` means it
+        // was still pending then; the same applies to a revocation, which only
+        // counts once `revoked_at` is at or before the cutoff.
+        const asOf = Date.parse(input.ledgerAsOf);
+        if (!Number.isFinite(asOf)) throw new TypeError('ledgerAsOf must be an RFC 3339 instant');
+        const rows = await client.query<
+          JsonRow<ReportingMaterialization> & { changed_at: Date; revoked_at: Date | null }
+        >(
+          `SELECT materialization.data, materialization.changed_at, authz.revoked_at
+           FROM adcp_reporting_materializations materialization
+           JOIN adcp_reporting_destination_authorizations authz
+             ON authz.account_id = materialization.account_id
+            AND authz.destination_ref = materialization.destination_ref
+            AND authz.generation = materialization.authorization_generation
+          WHERE materialization.obligation_id = $1
+            AND materialization.recorded_at <= $2
+          ORDER BY materialization.attempt, materialization.materialization_id
+          LIMIT $3`,
+          [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+        );
+        if (rows.rows.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting lifecycle projection exceeds the managed materialization limit');
+        }
+        const placed = rows.rows.map(row => {
+          const atAsOf = row.changed_at.getTime() > asOf ? pendingAtCutoff(row.data) : clone(row.data);
+          const revokedAt = row.revoked_at && row.revoked_at.getTime() <= asOf ? row.revoked_at : null;
+          return { atAsOf, revokedAt };
+        });
+        const materializationHistory = placed.map(value => value.atAsOf);
+        const materializations = placed.map(({ atAsOf, revokedAt }) =>
+          revokedAt && (atAsOf.status === 'available' || atAsOf.status === 'delivered')
+            ? {
+                ...atAsOf,
+                status: 'failed' as const,
+                failed_at: revokedAt.toISOString(),
+                failure_code: 'AUTHORIZATION_REVOKED',
+              }
+            : atAsOf
+        );
+        // Every consumer, not just one authenticated caller: a persisted
+        // transition is account-level, so the reconciler needs each consumer's
+        // own receipt chain to fold the most severe outcome.
+        const receipts = await client.query<
+          JsonRow<ReportingReceipt | ReportingAdjustmentReceipt> & { consumer_id: string; receipt_kind: string }
+        >(
+          `SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
            FROM adcp_reporting_receipts receipt
           -- Ordered and cut off by the database clock, exactly as every other
           -- receipt read path is, so a skewed host cannot make the lifecycle
@@ -2091,51 +2131,61 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             )
           ORDER BY receipt.consumer_id, receipt.recorded_at, receipt.reporting_receipt_id
           LIMIT $3`,
-        [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
-      );
-      if (receipts.rows.length > MAX_SNAPSHOT_ITEMS) {
-        throw new Error('Reporting lifecycle projection exceeds the managed receipt limit');
-      }
-      const byConsumer = new Map<string, ReportingManagedLifecycleProjectionV1['consumers'][number]>();
-      for (const row of receipts.rows) {
-        const consumer = byConsumer.get(row.consumer_id) ?? {
-          consumer_id: row.consumer_id,
-          receipts: [],
-          adjustmentReceipts: [],
-        };
-        if (row.receipt_kind === 'revision') consumer.receipts.push(clone(row.data) as ReportingReceipt);
-        else consumer.adjustmentReceipts.push(clone(row.data) as ReportingAdjustmentReceipt);
-        byConsumer.set(row.consumer_id, consumer);
-      }
-      // Widen the roster past "who has already submitted a receipt" with every
-      // consumer that has engaged with this obligation at all. It is still not
-      // provably complete: destination authorizations and managed bindings are
-      // keyed by (account_id, destination_ref, generation) with no consumer
-      // dimension, so nothing durable here enumerates who owes a receipt. Say
-      // so, and let the reconciler stay conservative.
-      const engaged = await client.query<QueryResultRow & { consumer_id: string }>(
-        `SELECT DISTINCT consumer_id FROM adcp_reporting_consumer_statuses
+          [input.reporting_obligation_id, input.ledgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+        );
+        if (receipts.rows.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting lifecycle projection exceeds the managed receipt limit');
+        }
+        const byConsumer = new Map<string, ReportingManagedLifecycleProjectionV1['consumers'][number]>();
+        for (const row of receipts.rows) {
+          const consumer = byConsumer.get(row.consumer_id) ?? {
+            consumer_id: row.consumer_id,
+            receipts: [],
+            adjustmentReceipts: [],
+          };
+          if (row.receipt_kind === 'revision') consumer.receipts.push(clone(row.data) as ReportingReceipt);
+          else consumer.adjustmentReceipts.push(clone(row.data) as ReportingAdjustmentReceipt);
+          byConsumer.set(row.consumer_id, consumer);
+        }
+        // Widen the roster past "who has already submitted a receipt" with every
+        // consumer that has engaged with this obligation at all. It is still not
+        // provably complete: destination authorizations and managed bindings are
+        // keyed by (account_id, destination_ref, generation) with no consumer
+        // dimension, so nothing durable here enumerates who owes a receipt. Say
+        // so, and let the reconciler stay conservative.
+        const engaged = await client.query<QueryResultRow & { consumer_id: string }>(
+          `SELECT DISTINCT consumer_id FROM adcp_reporting_consumer_statuses
           WHERE obligation_id = $1 AND consumer_id <> '__legacy_unscoped_consumer__'
           ORDER BY consumer_id LIMIT $2`,
-        [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1]
-      );
-      if (engaged.rows.length > MAX_SNAPSHOT_ITEMS) {
-        throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
-      }
-      const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
-      // Read last, inside the same transaction as everything above, so the
-      // token covers exactly the state this projection was computed from.
-      const managedStateVersion = await this.readManagedStateVersion(client, input.reporting_obligation_id);
-      return {
-        binding,
-        materializations,
-        materializationHistory,
-        consumers: [...byConsumer.values()],
-        obligatedConsumerIds: observed,
-        obligatedConsumerRosterComplete: false,
-        managedStateVersion,
-      };
-    });
+          [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1]
+        );
+        if (engaged.rows.length > MAX_SNAPSHOT_ITEMS) {
+          throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
+        }
+        const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
+        // Read last, inside the same transaction as everything above, so the
+        // token covers exactly the state this projection was computed from.
+        const managedStateVersion = await this.readManagedStateVersion(client, input.reporting_obligation_id);
+        return {
+          binding,
+          materializations,
+          materializationHistory,
+          consumers: [...byConsumer.values()],
+          obligatedConsumerIds: observed,
+          obligatedConsumerRosterComplete: false,
+          managedStateVersion,
+        };
+        // REPEATABLE READ, not the default. Under READ COMMITTED every statement
+        // above takes its own snapshot, so a settle committing between the
+        // materialization read and the digest read produced the one pairing that
+        // defeats the CAS entirely: health computed from pre-settle rows carrying
+        // a token that already matched post-settle state, which apply would then
+        // accept. One snapshot for the reads and the token makes that pairing
+        // unrepresentable. The transaction is read-only, so it cannot abort on a
+        // write conflict.
+      },
+      { isolation: 'REPEATABLE READ' }
+    );
     if (!base || !this.obligatedConsumers) return base;
     // Deliberately outside the transaction above. The documented purpose of
     // this hook is an external authorization lookup, and this subsystem's one
@@ -2778,6 +2828,24 @@ async function withReportingCallbackDeadline<T>(value: Promise<T>, milliseconds:
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * A materialization as it stood before it was settled.
+ *
+ * `changed_at` records when the row left `pending`, so a row whose
+ * `changed_at` is after the cutoff had none of its settlement evidence then.
+ */
+function pendingAtCutoff(value: ReportingMaterialization): ReportingMaterialization {
+  const {
+    ready_at: _readyAt,
+    resource: _resource,
+    verification: _verification,
+    failed_at: _failedAt,
+    failure_code: _failureCode,
+    ...pending
+  } = clone(value);
+  return { ...pending, status: 'pending' };
 }
 
 function accountLock(accountId: string): string {

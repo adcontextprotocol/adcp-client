@@ -20,6 +20,8 @@ export async function reconcileReportingStatusLifecycleV1(
     reporting_obligation_id: string;
     ledgerAsOf: string;
     subscribers?: readonly ReportingLedgerSubscriberV1[];
+    /** Clock used to take a fresh cutoff when a CAS retry re-projects. */
+    now?: () => Date;
   },
   attempt = 0
 ): Promise<ReportingLedgerStatusTransitionV1 | null> {
@@ -93,7 +95,16 @@ export async function reconcileReportingStatusLifecycleV1(
     // `complete` would otherwise stay persisted and notified. Bounded, so a
     // genuinely hot obligation degrades to the sweep instead of spinning.
     if (attempt + 1 >= MAX_LIFECYCLE_CAS_ATTEMPTS) return null;
-    return reconcileReportingStatusLifecycleV1(input, attempt + 1);
+    // Re-project against a fresh cutoff. Reusing the original would re-read
+    // the same as-of bounded view that just lost the race and reapply the
+    // health the CAS refused, so the retry could only ever fail again or, once
+    // the token happened to match, write a cutoff-stale health. Never move the
+    // cutoff backwards: a lagging clock must not rewind an obligation past a
+    // transition already recorded at the later instant.
+    const retryAt = (input.now ?? (() => new Date()))();
+    const ledgerAsOf =
+      Date.parse(retryAt.toISOString()) > Date.parse(input.ledgerAsOf) ? retryAt.toISOString() : input.ledgerAsOf;
+    return reconcileReportingStatusLifecycleV1({ ...input, ledgerAsOf }, attempt + 1);
   }
   if (!transition || !applied.transitionInserted) return null;
   const notified = await notifyTransition(transition, obligation.account.account_id, input.subscribers);

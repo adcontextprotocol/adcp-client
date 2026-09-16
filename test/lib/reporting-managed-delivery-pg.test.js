@@ -1129,7 +1129,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.deepEqual(unrelated.adjustment_receipts ?? [], []);
   });
 
-  async function seedSkewLedger(suffix = 'skew', reconciliationMode = 'delivery_only') {
+  async function seedSkewLedger(suffix = 'skew', reconciliationMode = 'delivery_only', seedOptions = {}) {
     const nowMs = Date.now();
     const now = new Date(nowMs).toISOString();
     const period = {
@@ -1191,7 +1191,10 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       resource_retention_days: 30,
       created_at: now,
     });
-    await managed.installBinding(binding);
+    if (seedOptions.install !== false) await managed.installBinding(binding);
+    // installBinding refuses a first binding once the configuration has any
+    // obligation, so a test exercising the install path itself must stop here.
+    if (seedOptions.stopAfterBinding) return { accountId, now, period, configuration, binding };
     const obligation = {
       reporting_obligation_id: `obligation-managed-${suffix}-1`,
       configurationId: configuration.configurationId,
@@ -1498,8 +1501,8 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
   });
 
-  test('frees managed capacity by pruning evidence past its retention', async () => {
-    const aged = await seedSkewLedger('retention');
+  test('frees managed capacity without breaking replay or an advertised horizon', async () => {
+    const aged = await seedSkewLedger('retention', 'consumer_receipt');
     const adapter = {
       verificationProfiles: ['canonical_digest'],
       revocationFencesDeliveryGenerations: true,
@@ -1513,40 +1516,364 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       maxIterations: 2,
       account_id: aged.accountId,
     });
+    const settled = await pool.query(
+      `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+      [aged.obligation.reporting_obligation_id]
+    );
+    aged.materialization = settled.rows[0].data;
 
-    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 30 });
+    const context = { account: { id: aged.accountId }, agent: { agent_url: 'https://retention-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const replayRequest = {
+      idempotency_key: 'receipt-retention-replay-0001',
+      receipts: [receipt(aged, { reporting_receipt_id: 'receipt-retention-0001' })],
+    };
+    const original = await sync(replayRequest, context);
+    assert.equal(original.results[0].result, 'recorded');
+
+    // Retention has a floor: it may not cut inside the replay window or inside
+    // an advertised status horizon.
+    assert.throws(
+      () => new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 29 }),
+      /at least the 30-day receipt replay retention/
+    );
+    assert.throws(
+      () =>
+        new ledger.PostgresReportingManagedDeliveryStore(pool, {
+          evidenceRetentionDays: 60,
+          statusRetentionDays: 90,
+        }),
+      /at least the advertised statusRetentionDays \(90\)/
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, {
+      evidenceRetentionDays: 90,
+      statusRetentionDays: 90,
+    });
+
     assert.deepEqual(
       await retaining.pruneExpiredEvidence({ account_id: aged.accountId }),
       { materializations: 0, receipts: 0, batches: 0 },
       'nothing inside the retention window is ever removed'
     );
 
-    // Age the settled materialization past the window.
+    // Age both the receipt and the materialization past the window, but leave
+    // the replay batch row and the resource horizon live.
     await pool.query(
-      `UPDATE adcp_reporting_materializations SET recorded_at = clock_timestamp() - INTERVAL '90 days'
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
         WHERE account_id = $1`,
       [aged.accountId]
     );
-    const pruned = await retaining.pruneExpiredEvidence({ account_id: aged.accountId });
-    assert.equal(pruned.materializations, 1, 'evidence past the advertised retention frees capacity');
-
-    // A lifetime cap would have counted the aged row forever; active scope does not.
-    const lifetime = await pool.query(
-      `SELECT COUNT(*)::integer AS count FROM adcp_reporting_materializations WHERE account_id = $1`,
+    await pool.query(
+      `UPDATE adcp_reporting_materializations SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
       [aged.accountId]
     );
-    assert.equal(lifetime.rows[0].count, 0);
+    const heldByReplay = await retaining.pruneExpiredEvidence({ account_id: aged.accountId });
+    assert.equal(heldByReplay.receipts, 0, 'a receipt named by a live replay row outlives its own age');
+    assert.equal(
+      heldByReplay.materializations,
+      0,
+      'a materialization whose resource is still readable outlives its own age'
+    );
+    const stillReplays = await sync(replayRequest, context);
+    assert.deepEqual(stillReplays, original, 'exact replay survives a prune at the boundary');
+
+    // Expire the replay row and the resource horizon; only now may they go.
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [aged.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb((clock_timestamp() - INTERVAL '1 day')::text))
+        WHERE account_id = $1`,
+      [aged.accountId]
+    );
+    const freed = await retaining.pruneExpiredEvidence({ account_id: aged.accountId });
+    assert.equal(freed.batches, 1, 'the expired replay row goes first so it stops pinning its receipts');
+    assert.equal(freed.receipts, 1, 'the receipt goes once nothing live references it');
+    assert.equal(freed.materializations, 1, 'the materialization goes once its resource horizon has passed');
+
     assert.equal(
       await retaining.planMaterializations({ account_id: aged.accountId }),
       1,
       'the account keeps working after reaching and clearing its cap'
     );
 
-    // Without the option the store keeps its previous lifetime accounting and
-    // refuses to prune rather than silently deleting retained evidence.
+    // Without the option the store keeps lifetime accounting and refuses to
+    // prune rather than silently deleting retained evidence.
     await assert.rejects(
       () => managed.pruneExpiredEvidence({ account_id: aged.accountId }),
       /requires PostgresReportingManagedDeliveryStore\(\{ evidenceRetentionDays \}\)/
+    );
+  });
+
+  test('pairs no stale projection with a current token when a settle interleaves its reads', async () => {
+    const race = await seedSkewLedger('interleave');
+    await managed.planMaterializations({ account_id: race.accountId });
+    const claimed = await managed.claimMaterialization({
+      owner: 'interleave-worker',
+      now: new Date().toISOString(),
+      lease_milliseconds: 120_000,
+      account_id: race.accountId,
+    });
+    assert.ok(claimed, 'a pending materialization is waiting to be settled');
+
+    // Commit the settle from an independent connection at the precise moment
+    // the projection has read its materialization rows and has not yet read
+    // the digest. Under READ COMMITTED those are two snapshots, so the pairing
+    // that defeats the CAS is exactly: pre-settle health, post-settle token.
+    const { Pool } = require('pg');
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+    let interleaved = 0;
+    const interleavingPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = async (sql, values) => {
+          const result = await query(sql, values);
+          if (
+            interleaved === 0 &&
+            typeof sql === 'string' &&
+            sql.includes('materialization.changed_at') &&
+            sql.includes('authz.revoked_at')
+          ) {
+            interleaved += 1;
+            // A committed managed-state change on an independent connection,
+            // issued directly so nothing in the store's own locking can be
+            // mistaken for the isolation property under test.
+            const outcome = materializationOutcome(race);
+            const settled = await sidePool.query(
+              `UPDATE adcp_reporting_materializations
+                  SET status = 'available', changed_at = clock_timestamp(),
+                      lease_owner = NULL, lease_expires_at = NULL, data = data || $2::jsonb
+                WHERE materialization_id = $1`,
+              [
+                claimed.materialization.reporting_materialization_id,
+                JSON.stringify({
+                  status: 'available',
+                  ready_at: new Date().toISOString(),
+                  resource: outcome.resource,
+                  verification: outcome.verification,
+                }),
+              ]
+            );
+            assert.equal(settled.rowCount, 1, 'the interleaved settle really did commit mid-projection');
+          }
+          return result;
+        };
+        const release = client.release.bind(client);
+        client.release = (...args) => {
+          client.query = query;
+          client.release = release;
+          return release(...args);
+        };
+        return client;
+      },
+      query: (sql, values) => pool.query(sql, values),
+      end: async () => {},
+    };
+
+    try {
+      const racing = new ledger.PostgresReportingLedgerStore(interleavingPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const ledgerAsOf = new Date(Date.now() + 60_000).toISOString();
+      const projection = await racing.getManagedLifecycleProjection({
+        reporting_obligation_id: race.obligation.reporting_obligation_id,
+        ledgerAsOf,
+      });
+      assert.equal(interleaved, 1, 'the interleaving actually fired — otherwise this test proves nothing');
+      // One snapshot: the projection did not see the settle, so its token
+      // cannot be the post-settle one either.
+      assert.equal(
+        projection.materializationHistory.every(value => value.status === 'pending'),
+        true,
+        'the projection is internally consistent with the snapshot it read'
+      );
+      const current = await core.getManagedLifecycleProjection({
+        reporting_obligation_id: race.obligation.reporting_obligation_id,
+        ledgerAsOf,
+      });
+      assert.notEqual(
+        projection.managedStateVersion,
+        current.managedStateVersion,
+        'the snapshot token differs from committed state, so apply must refuse it'
+      );
+
+      const stale = await core.applyLifecycleProjection({
+        reporting_obligation_id: race.obligation.reporting_obligation_id,
+        expectedRevisionIds: [race.revision.reporting_revision_id],
+        expectedPreviousHealth: 'waiting',
+        expectedObligationState: race.obligation.state,
+        expectedAttemptCount: race.obligation.attemptCount,
+        projectedIssues: [],
+        ledgerAsOf,
+        expectedManagedStateVersion: projection.managedStateVersion,
+      });
+      assert.equal(stale.applied, false, 'a health computed before the settle can never be applied');
+      const fresh = await core.applyLifecycleProjection({
+        reporting_obligation_id: race.obligation.reporting_obligation_id,
+        expectedRevisionIds: [race.revision.reporting_revision_id],
+        expectedPreviousHealth: 'waiting',
+        expectedObligationState: race.obligation.state,
+        expectedAttemptCount: race.obligation.attemptCount,
+        projectedIssues: [],
+        ledgerAsOf,
+        expectedManagedStateVersion: current.managedStateVersion,
+      });
+      assert.equal(fresh.applied, true, 'and the same apply succeeds against post-settle state — not vacuous');
+    } finally {
+      await sidePool.end();
+    }
+  });
+
+  test('does not backdate a later settlement into an earlier cutoff', async () => {
+    const backdate = await seedSkewLedger('backdate');
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(backdate),
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    assert.equal(await managed.planMaterializations({ account_id: backdate.accountId }), 1);
+    // `recorded_at` is a microsecond timestamp while `toISOString()` truncates
+    // to milliseconds, so a cutoff taken in the same millisecond as the insert
+    // would sort before it. Step past the boundary rather than race it.
+    await new Promise(resolve => setTimeout(resolve, 5));
+    // After the row exists, before it is settled.
+    const beforeSettle = new Date().toISOString();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 2,
+      account_id: backdate.accountId,
+    });
+
+    const earlier = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: backdate.obligation.reporting_obligation_id,
+      ledgerAsOf: beforeSettle,
+    });
+    assert.deepEqual(
+      earlier.materializationHistory.map(value => value.status),
+      ['pending'],
+      'at a cutoff before the settle the row was still pending'
+    );
+    assert.equal(earlier.materializationHistory[0].resource, undefined);
+    assert.equal(earlier.materializationHistory[0].verification, undefined);
+
+    const later = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: backdate.obligation.reporting_obligation_id,
+      ledgerAsOf: new Date().toISOString(),
+    });
+    assert.deepEqual(
+      later.materializationHistory.map(value => value.status),
+      ['available'],
+      'and at a cutoff after it the settlement is visible'
+    );
+  });
+
+  test('releases a failed cleanup lease so a short window stays retry-eligible', async () => {
+    const quick = await seedSkewLedger('failfast');
+    await managed.revokeDestination({
+      account_id: quick.accountId,
+      destination_ref: quick.binding.destination_ref,
+      generation: 1,
+      revoked_at: new Date().toISOString(),
+    });
+    let attempts = 0;
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => materializationOutcome(quick),
+      read: async () => Buffer.from(''),
+      revoke: async () => {
+        attempts += 1;
+        throw new Error('provider unavailable');
+      },
+    };
+    // A long lease with a short advertised window: holding the lease as the
+    // retry delay would make the grant unreclaimable for 30 s while the 1 s
+    // promise elapsed, so it would look leased rather than overdue.
+    const first = await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 1,
+      account_id: quick.accountId,
+      authorizationRevocationSeconds: 1,
+      leaseMilliseconds: 30_000,
+      deliveryDeadlineMilliseconds: 10_000,
+    });
+    assert.equal(attempts, 1);
+    assert.equal(first.revocationsCompleted, 0);
+    const released = await pool.query(
+      `SELECT cleanup_lease_owner, cleanup_lease_expires_at, cleanup_lease_generation
+         FROM adcp_reporting_destination_authorizations
+        WHERE account_id = $1 AND destination_ref = $2 AND generation = 1`,
+      [quick.accountId, quick.binding.destination_ref]
+    );
+    assert.equal(released.rows[0].cleanup_lease_owner, null, 'the failed attempt released its lease immediately');
+    assert.equal(released.rows[0].cleanup_lease_expires_at, null);
+    assert.equal(Number(released.rows[0].cleanup_lease_generation), 1, 'the attempt still counted for ordering');
+
+    // Immediately retryable, and the elapsed SLA is reported independently of
+    // any lease still being held.
+    adapter.revoke = async () => {
+      attempts += 1;
+    };
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    const second = await ledger.runManagedDeliveryWorker(managed, adapter, {
+      maxIterations: 2,
+      account_id: quick.accountId,
+      authorizationRevocationSeconds: 1,
+      leaseMilliseconds: 30_000,
+      deliveryDeadlineMilliseconds: 10_000,
+    });
+    assert.equal(attempts, 2, 'the grant was reclaimable at once, not after the lease');
+    assert.equal(second.revocationsCompleted, 1);
+    assert.ok(second.revocationsOverdue >= 1, 'overdue follows the SLA, not the lease');
+  });
+
+  test('refuses a post-start binding that would widen the advertised recovery window', async () => {
+    // The agent advertises 0s. Startup saw no binding, so only the write path
+    // can stop a wider one arriving later.
+    const bounded = new ledger.PostgresReportingManagedDeliveryStore(pool, { advertisedRecoveryWindowSeconds: 0 });
+    assert.equal(await bounded.probe(core), true);
+    const wide = await seedSkewLedger('postbind', 'delivery_only', { install: false, stopAfterBinding: true });
+    await assert.rejects(
+      () => bounded.installBinding(wide.binding),
+      error =>
+        /transaction failed/.test(String(error)) &&
+        /advertises automated_recovery_window_seconds 0s/.test(String(error.cause))
+    );
+    const absent = await pool.query('SELECT 1 FROM adcp_reporting_managed_bindings WHERE configuration_id = $1', [
+      wide.configuration.configurationId,
+    ]);
+    assert.equal(absent.rowCount, 0, 'nothing was written');
+
+    // Concurrent installs of the same binding are serialized and both refused.
+    const raced = await Promise.allSettled([
+      bounded.installBinding(wide.binding),
+      bounded.installBinding(wide.binding),
+    ]);
+    assert.deepEqual(
+      raced.map(value => value.status),
+      ['rejected', 'rejected']
+    );
+
+    // A runtime adopts its own advertised value into the store, and refuses to
+    // share a store already bound to a different one.
+    const adopting = new ledger.PostgresReportingManagedDeliveryStore(pool);
+    adopting.adoptAdvertisedRecoveryWindowSeconds(60);
+    adopting.adoptAdvertisedRecoveryWindowSeconds(60);
+    assert.throws(
+      () => adopting.adoptAdvertisedRecoveryWindowSeconds(30),
+      /already bound to an advertised recovery window of 60s/
+    );
+    assert.deepEqual(
+      await adopting.installBinding(wide.binding),
+      { inserted: true },
+      'a 60s bound admits a 60s window'
     );
   });
 

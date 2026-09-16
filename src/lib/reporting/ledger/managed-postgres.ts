@@ -188,6 +188,29 @@ type StoredBatch = { results: StoredReceiptBatchResult[]; request_fingerprint: s
 
 export interface PostgresReportingManagedDeliveryStoreOptions {
   /**
+   * The `automated_recovery_window_seconds` this deployment advertises.
+   *
+   * The capability is agent-wide and immutable once published, while bindings
+   * arrive over time, so validating only at startup leaves the window open:
+   * an agent advertising 60s starts clean and a 900s binding installed an hour
+   * later silently makes the published promise false until the next restart.
+   * Set here, `installBinding` refuses any Core configuration whose recovery
+   * window exceeds the advertised bound, inside the same transaction that
+   * checks binding eligibility. `createReportingManagedDeliveryRuntime` adopts
+   * its own advertised value into the store at wiring time, so setting it
+   * explicitly is only needed when bindings are installed without a runtime.
+   */
+  advertisedRecoveryWindowSeconds?: number;
+  /**
+   * The `status_retention_days` this deployment advertises.
+   *
+   * Supply it together with `evidenceRetentionDays` so the store can refuse a
+   * retention shorter than a horizon you have already promised. Pruning
+   * evidence the capability document still says is queryable is a broken
+   * promise, not a capacity optimisation.
+   */
+  statusRetentionDays?: number;
+  /**
    * Days of managed evidence an account is still accountable for.
    *
    * MAX_MATERIALIZATIONS_PER_ACCOUNT and MAX_RECEIPTS_PER_CONSUMER are
@@ -208,14 +231,56 @@ export interface PostgresReportingManagedDeliveryStoreOptions {
 
 export class PostgresReportingManagedDeliveryStore implements ReportingManagedDeliveryStore {
   private readonly evidenceRetentionDays: number | undefined;
+  private readonly statusRetentionDays: number | undefined;
+  private advertisedRecoveryWindowSeconds: number | undefined;
+
+  /**
+   * Records the agent-wide advertised recovery window so later binding
+   * installs are held to it. Idempotent for the same value; a disagreement is
+   * refused rather than silently taking the newer one, because two runtimes
+   * publishing different windows over one store cannot both be honoured.
+   */
+  adoptAdvertisedRecoveryWindowSeconds(seconds: number): void {
+    nonnegativeSafeInteger(seconds, 'automatedRecoveryWindowSeconds');
+    if (this.advertisedRecoveryWindowSeconds !== undefined && this.advertisedRecoveryWindowSeconds !== seconds) {
+      throw new Error(
+        `Managed store is already bound to an advertised recovery window of ` +
+          `${this.advertisedRecoveryWindowSeconds}s and cannot also advertise ${seconds}s`
+      );
+    }
+    this.advertisedRecoveryWindowSeconds = seconds;
+  }
 
   constructor(
     private readonly pool: ReportingPgPool,
     options: PostgresReportingManagedDeliveryStoreOptions = {}
   ) {
+    if (options.statusRetentionDays !== undefined) positiveInteger(options.statusRetentionDays, 'statusRetentionDays');
     if (options.evidenceRetentionDays !== undefined) {
       positiveInteger(options.evidenceRetentionDays, 'evidenceRetentionDays');
+      // Retention has a floor, not just a value. Idempotent receipt replay is
+      // promised for RECEIPT_BATCH_RETENTION_MS, and `status_retention_days`
+      // is promised on the wire, so evidence may only age out behind both —
+      // otherwise pruning silently breaks a replay or a horizon the capability
+      // document still advertises.
+      const replayFloorDays = Math.ceil(RECEIPT_BATCH_RETENTION_MS / 86_400_000);
+      if (options.evidenceRetentionDays < replayFloorDays) {
+        throw new RangeError(
+          `evidenceRetentionDays must be at least the ${replayFloorDays}-day receipt replay retention`
+        );
+      }
+      if (options.statusRetentionDays !== undefined && options.evidenceRetentionDays < options.statusRetentionDays) {
+        throw new RangeError(
+          `evidenceRetentionDays must be at least the advertised statusRetentionDays ` +
+            `(${options.statusRetentionDays}); pruning inside an advertised horizon breaks it`
+        );
+      }
     }
+    if (options.advertisedRecoveryWindowSeconds !== undefined) {
+      nonnegativeSafeInteger(options.advertisedRecoveryWindowSeconds, 'advertisedRecoveryWindowSeconds');
+      this.advertisedRecoveryWindowSeconds = options.advertisedRecoveryWindowSeconds;
+    }
+    this.statusRetentionDays = options.statusRetentionDays;
     this.evidenceRetentionDays = options.evidenceRetentionDays;
   }
 
@@ -248,31 +313,58 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     const days = this.evidenceRetentionDays;
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(input.account_id));
-      const materializations = await client.query(
-        `DELETE FROM adcp_reporting_materializations
-          WHERE materialization_id IN (
-            SELECT materialization_id FROM adcp_reporting_materializations
-             WHERE account_id = $1
-               AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
-               AND status <> 'pending'
-               AND lease_owner IS NULL
-             ORDER BY recorded_at LIMIT $3)`,
-        [input.account_id, days, limit]
-      );
-      const receipts = await client.query(
-        `DELETE FROM adcp_reporting_receipts
-          WHERE (account_id, consumer_id, reporting_receipt_id) IN (
-            SELECT account_id, consumer_id, reporting_receipt_id FROM adcp_reporting_receipts
-             WHERE account_id = $1
-               AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
-             ORDER BY recorded_at LIMIT $3)`,
-        [input.account_id, days, limit]
-      );
+      // Batches first, so a replay row that has itself expired stops pinning
+      // the receipts it names before those receipts are considered.
       const batches = await client.query(
         `DELETE FROM adcp_reporting_receipt_batches
           WHERE account_id = $1
             AND recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 millisecond')`,
         [input.account_id, RECEIPT_BATCH_RETENTION_MS]
+      );
+      // A receipt may be older than the batch that replays it — a later key
+      // can name an earlier receipt, and `unchanged` results do exactly that —
+      // so age alone is not sufficient. Keep any receipt a surviving replay row
+      // still references, or that replay would rehydrate a body that no longer
+      // exists and answer a repeated key with a spurious failure.
+      const receipts = await client.query(
+        `DELETE FROM adcp_reporting_receipts target
+          WHERE (target.account_id, target.consumer_id, target.reporting_receipt_id) IN (
+            SELECT receipt.account_id, receipt.consumer_id, receipt.reporting_receipt_id
+              FROM adcp_reporting_receipts receipt
+             WHERE receipt.account_id = $1
+               AND receipt.recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
+               AND NOT EXISTS (
+                 SELECT 1 FROM adcp_reporting_receipt_batches batch
+                  WHERE batch.account_id = receipt.account_id
+                    AND batch.consumer_id = receipt.consumer_id
+                    AND batch.results @> jsonb_build_array(
+                          jsonb_build_object('id', receipt.reporting_receipt_id))
+               )
+             ORDER BY receipt.recorded_at LIMIT $3)`,
+        [input.account_id, days, limit]
+      );
+      // Never drop a materialization whose resource is still readable, nor one
+      // a retained receipt names as its evidence: both are horizons this
+      // deployment is still advertising.
+      const materializations = await client.query(
+        `DELETE FROM adcp_reporting_materializations target
+          WHERE target.materialization_id IN (
+            SELECT materialization.materialization_id
+              FROM adcp_reporting_materializations materialization
+             WHERE materialization.account_id = $1
+               AND materialization.recorded_at < clock_timestamp() - ($2::bigint * INTERVAL '1 day')
+               AND materialization.status <> 'pending'
+               AND materialization.lease_owner IS NULL
+               AND COALESCE(
+                     (materialization.data -> 'resource' ->> 'expires_at')::timestamptz <= clock_timestamp(),
+                     true)
+               AND NOT EXISTS (
+                 SELECT 1 FROM adcp_reporting_receipts receipt
+                  WHERE receipt.account_id = materialization.account_id
+                    AND receipt.data ->> 'reporting_materialization_id' = materialization.materialization_id
+               )
+             ORDER BY materialization.recorded_at LIMIT $3)`,
+        [input.account_id, days, limit]
       );
       return {
         materializations: materializations.rowCount ?? 0,
@@ -421,7 +513,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         return { inserted: false };
       }
       const eligible = await client.query<
-        QueryRow & { configuration: { feedPurpose?: string; canonicalization?: unknown } }
+        QueryRow & {
+          configuration: {
+            feedPurpose?: string;
+            canonicalization?: unknown;
+            schedule?: { recoveryWindowMilliseconds?: number };
+          };
+        }
       >(
         `SELECT configuration.data AS configuration FROM adcp_reporting_configurations configuration
           JOIN adcp_reporting_destination_authorizations authz
@@ -444,6 +542,25 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       );
       if (!eligible.rowCount) throw new Error('Managed binding is not authorized for the exact Core configuration');
       const configuration = eligible.rows[0]!.configuration;
+      // Same bound the runtime checks at startup, applied on the authoritative
+      // write path so a binding installed after start — or concurrently with
+      // another install — cannot widen the deployment past what is published.
+      // Both installs serialize on the per-configuration advisory lock taken
+      // above, so neither can observe the other half-applied.
+      if (this.advertisedRecoveryWindowSeconds !== undefined) {
+        const windowMilliseconds = Number(configuration.schedule?.recoveryWindowMilliseconds);
+        if (!Number.isFinite(windowMilliseconds) || windowMilliseconds < 0) {
+          throw new Error('Managed binding Core configuration has no usable recovery window');
+        }
+        const windowSeconds = Math.ceil(windowMilliseconds / 1_000);
+        if (windowSeconds > this.advertisedRecoveryWindowSeconds) {
+          throw new Error(
+            `Managed binding Core recovery window is ${windowSeconds}s but this agent advertises ` +
+              `automated_recovery_window_seconds ${this.advertisedRecoveryWindowSeconds}s; installing it would ` +
+              `publish a recovery bound the deployment does not keep`
+          );
+        }
+      }
       if (configuration.feedPurpose !== binding.feed_purpose) {
         throw new Error('Managed binding feed purpose differs from the exact Core configuration');
       }
@@ -771,6 +888,24 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         input.lease.owner,
         input.lease.generation,
         input.completed_at,
+      ]
+    );
+    return result.rowCount === 1;
+  }
+
+  async releaseRevocation(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean> {
+    const result = await this.query(
+      `UPDATE adcp_reporting_destination_authorizations
+          SET cleanup_lease_owner = NULL, cleanup_lease_expires_at = NULL
+        WHERE account_id = $1 AND destination_ref = $2 AND generation = $3
+          AND cleanup_lease_owner = $4 AND cleanup_lease_generation = $5
+          AND cleanup_completed_at IS NULL`,
+      [
+        input.lease.authorization.account_id,
+        input.lease.authorization.destination_ref,
+        input.lease.authorization.generation,
+        input.lease.owner,
+        input.lease.generation,
       ]
     );
     return result.rowCount === 1;
@@ -1228,6 +1363,10 @@ function digest(value: unknown): string {
 function managedBindingFingerprint(binding: ReportingManagedDeliveryBindingV1): string {
   const { created_at: _createdAt, semantic_fingerprint: _fingerprint, ...semantic } = binding;
   return digest(semantic);
+}
+
+function nonnegativeSafeInteger(value: number, name: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) throw new RangeError(`${name} must be a non-negative safe integer`);
 }
 
 function positiveInteger(value: number, name: string): void {

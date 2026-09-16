@@ -87,6 +87,15 @@ export interface ReportingManagedDeliveryStore {
   probe(coreStore: ReportingLedgerStore): Promise<boolean>;
   /** Recovery windows of the Core configurations that have installed managed bindings. */
   listInstalledRecoveryWindowSeconds(): Promise<number[]>;
+  /**
+   * Records the agent-wide advertised recovery window so the store can hold
+   * later binding installs to it.
+   *
+   * Optional for compatibility. A store without it is validated only against
+   * the bindings present at startup, which leaves a binding installed later
+   * free to exceed the published bound until the next restart.
+   */
+  adoptAdvertisedRecoveryWindowSeconds?(seconds: number): void;
   authorizeDestination(
     input: Omit<ReportingDestinationAuthorizationV1, 'revoked_at' | 'cleanup_completed_at'>
   ): Promise<void>;
@@ -118,6 +127,17 @@ export interface ReportingManagedDeliveryStore {
     account_id?: string;
   }): Promise<ReportingDestinationRevocationLeaseV1 | null>;
   completeRevocation(input: { lease: ReportingDestinationRevocationLeaseV1; completed_at: string }): Promise<boolean>;
+  /**
+   * Releases a cleanup lease after a failed attempt so the grant is
+   * immediately reclaimable.
+   *
+   * Optional for compatibility; a store without it keeps the lease as the
+   * retry delay, which defers the next attempt and hides an overdue grant
+   * behind a lease that has not expired yet. `claimRevocation` orders by
+   * `cleanup_lease_generation`, and a failed attempt has already incremented
+   * it, so releasing cannot let one broken grant starve the queue.
+   */
+  releaseRevocation?(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean>;
   getReadableResource(input: {
     account_id: string;
     resource_ref: string;
@@ -250,6 +270,10 @@ export async function createReportingManagedDeliveryRuntime<
   // honours it; going later does not. So one agent-wide value is truthful
   // exactly when it is at least every installed window, and the conservative
   // agent-wide policy is to require that bound and nothing more.
+  // Hand the store the bound before reading the installed set, so a binding
+  // racing this wiring is already held to it rather than slipping in between
+  // the check and the first enforced install.
+  options.store.adoptAdvertisedRecoveryWindowSeconds?.(options.automatedRecoveryWindowSeconds);
   const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
   const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
   if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
@@ -598,8 +622,15 @@ export async function runManagedDeliveryWorker(
         counts.revocationsCompleted += 1;
       }
     } catch {
-      // Retain the lease as a bounded retry delay so one broken provider grant
-      // cannot be selected repeatedly and starve the rest of the queue.
+      // Release immediately rather than holding the lease as a backoff. The
+      // lease is not an SLA instrument: holding it deferred the next attempt
+      // by up to a full lease and left the grant unreclaimable, so a short
+      // advertised window elapsed while the row still looked leased rather
+      // than overdue and retry-eligible. Starvation is prevented by ordering
+      // instead — `claimRevocation` sorts by `cleanup_lease_generation`, which
+      // this failed attempt already incremented, so a repeatedly failing grant
+      // is deprioritised behind every healthy one.
+      await store.releaseRevocation?.({ lease: revocation });
     }
   }
 
