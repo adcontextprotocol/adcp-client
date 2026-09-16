@@ -1215,9 +1215,8 @@ function readRowCurrency(reserved: RowReservedV1): void {
   reserved.currency = ownDataValue(reserved.record, 'currency');
 }
 
-function readRowIdentityAndTotals(reserved: RowReservedV1): void {
+function readRowIdentity(reserved: RowReservedV1): void {
   reserved.mediaBuyId = ownDataValue(reserved.record, 'media_buy_id');
-  reserved.totals = ownDataValue(reserved.record, 'totals');
 }
 
 function reservedFieldValue(reserved: RowReservedV1, field: string): unknown {
@@ -1306,19 +1305,36 @@ function captureRowSnapshot(
   chargeScan: (units: number) => void
 ): RowSnapshotV1 | undefined {
   if (!reserved) return undefined;
-  readRowIdentityAndTotals(reserved);
-  const { record, totals } = reserved;
+  readRowIdentity(reserved);
+  const { record } = reserved;
   const layout = store.layout;
   const offset = rowIndex * layout.fields.length;
-  const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
+  // `totals` is itself observed only when a nested claim is actually needed, and then
+  // exactly once for the row. Reading the slot up front let a row whose `totals`
+  // descriptor throws fail a response every direct value had already proven -- the
+  // fallback never wanted the slot, so it must not be touched.
+  let totalsObserved = false;
+  let totalsRecord: Record<string, unknown> | undefined;
   // `totals` aliasing its own row addresses the same descriptor twice. Reuse the single
   // observation instead of taking a second one a stateful row could answer differently.
-  const totalsAliasesRow = totalsRecord === record;
+  let totalsAliasesRow = false;
+  const observeTotals = (): unknown => {
+    if (!totalsObserved) {
+      totalsObserved = true;
+      reserved.totals = ownDataValue(record, 'totals');
+      totalsRecord =
+        typeof reserved.totals === 'object' && reserved.totals !== null
+          ? (reserved.totals as Record<string, unknown>)
+          : undefined;
+      totalsAliasesRow = totalsRecord === record;
+    }
+    return reserved.totals;
+  };
   for (let slot = 0; slot < layout.fields.length; slot += 1) {
     const field = layout.fields[slot]!;
     // A requested field named after a reserved one resolves to the reserved observation.
     const direct = layout.reservedFields.has(field)
-      ? claimOfValue(reservedFieldValue(reserved, field))
+      ? claimOfValue(field === 'totals' ? observeTotals() : reservedFieldValue(reserved, field))
       : ownDataClaim(record, field);
     // Charge before anything measures the claim. A string's `length` is O(1), while its
     // byte width, the zero test and the decimal canonicalization are each O(length) and
@@ -1329,7 +1345,7 @@ function captureRowSnapshot(
     // per row at no cost. Measuring costs the byte width always and the zero test only
     // where evidence cells will read it.
     const measurePasses = strictClaims ? 2 : 1;
-    chargeScan(claimScanWidth(direct.value, strictClaims) * measurePasses);
+    chargeScan(measureScanWidth(direct.value) * measurePasses);
     const measuredDirect = measureClaim(direct.value, strictClaims);
 
     // Without availability evidence a valid direct value settles the field and `totals`
@@ -1339,15 +1355,18 @@ function captureRowSnapshot(
     // because a duplicate claim must be reconciled rather than silently preferred.
     let nested: RowClaimV1 = UNCLAIMED_V1;
     let measuredNested: MeasuredClaimV1 = UNMEASURED_CLAIM_V1;
-    if (totalsRecord !== undefined && (strictClaims || !measuredDirect.valid)) {
-      if (totalsAliasesRow) {
-        // The same descriptor: reuse the one observation and the one measurement.
-        nested = direct;
-        measuredNested = measuredDirect;
-      } else {
-        nested = ownDataClaim(totalsRecord, field);
-        chargeScan(claimScanWidth(nested.value, strictClaims) * measurePasses);
-        measuredNested = measureClaim(nested.value, strictClaims);
+    if (strictClaims || !measuredDirect.valid) {
+      observeTotals();
+      if (totalsRecord !== undefined) {
+        if (totalsAliasesRow) {
+          // The same descriptor: reuse the one observation and the one measurement.
+          nested = direct;
+          measuredNested = measuredDirect;
+        } else {
+          nested = ownDataClaim(totalsRecord, field);
+          chargeScan(measureScanWidth(nested.value) * measurePasses);
+          measuredNested = measureClaim(nested.value, strictClaims);
+        }
       }
     }
 
@@ -1369,8 +1388,11 @@ function captureRowSnapshot(
       !Object.is(direct.value, nested.value)
     ) {
       // A canonical decimal form is only needed to reconcile a duplicate claim that is
-      // not already identical, so it is charged and computed exactly there.
-      chargeScan(claimScanWidth(direct.value, true) + claimScanWidth(nested.value, true));
+      // not already identical, so it is charged and computed exactly there -- and only
+      // here is a number charged the width it expands to, because only here is it
+      // expanded. Charging that width for measuring refused direct-only numeric claims
+      // that never cost more than a finite check.
+      chargeScan(canonicalScanWidth(direct.value) + canonicalScanWidth(nested.value));
       const canonicalDirect = canonicalDecimalEvidence(measuredDirect.value as string | number);
       const canonicalNested = canonicalDecimalEvidence(measuredNested.value as string | number);
       if (canonicalDirect === undefined || canonicalDirect !== canonicalNested) bits |= CLAIM_DISAGREE_V1;
@@ -1435,11 +1457,23 @@ function measureClaim(value: unknown, strictClaims: boolean): MeasuredClaimV1 {
   return { value, valid: true, isZero: strictClaims ? isZeroEvidenceValue(value) : false };
 }
 
-function claimScanWidth(value: unknown, strictClaims: boolean): number {
+/**
+ * Cost of measuring a claim once: a string is walked by its byte-width test and its zero
+ * test, while a number's are both constant time.
+ */
+function measureScanWidth(value: unknown): number {
+  return typeof value === 'string' ? value.length + 1 : 1;
+}
+
+/**
+ * Cost of canonicalizing a claim into plain decimal. A string is walked; a number is
+ * expanded, and exponent notation expands by its exponent, so `5e-324` materializes 326
+ * digits from six printed characters.
+ */
+function canonicalScanWidth(value: unknown): number {
   if (typeof value === 'string') return value.length + 1;
   if (typeof value !== 'number') return 1;
-  // Only a strict duplicate-claim comparison canonicalizes a number into plain decimal.
-  return strictClaims ? numericScanUnits(value) : 1;
+  return numericScanUnits(value);
 }
 
 /**
