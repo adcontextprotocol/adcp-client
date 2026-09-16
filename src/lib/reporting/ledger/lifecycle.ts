@@ -187,6 +187,14 @@ async function composeManagedLifecycleProjection(
   // and `openedAt` is the obligation's own expectation instant, never a
   // consumer's receipt ingest time — so it explains the health without
   // reintroducing the leak.
+  //
+  // It deliberately collapses all four suppressed codes into RECEIPT_REQUIRED
+  // with a buyer-side action, even though the read path makes the two REJECTED
+  // codes seller-responsible. Distinguishing them here would disclose that
+  // some principal rejected the evidence, which is the cross-consumer fact the
+  // suppression exists to withhold. The trade is a recommended action that can
+  // point the wrong way on an obligation whose real problem is a rejection;
+  // the operator still has the accurate, caller-scoped issue on any read.
   if (suppressedReceiptIssue) {
     const issueId = `reporting-issue.reconciliation-outstanding.${obligation.reporting_obligation_id}`;
     issues.set(issueId, {

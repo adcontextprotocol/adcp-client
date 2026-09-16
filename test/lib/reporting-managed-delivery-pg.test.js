@@ -863,6 +863,40 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     });
     assert.equal(supplied.obligatedConsumerRosterComplete, true);
     assert.deepEqual(supplied.obligatedConsumerIds, ['https://governance.example', 'https://snapshot-buyer.example']);
+
+    // The hook's documented purpose is an external authorization lookup, so it
+    // must never be awaited inside the authoritative transaction: a hung auth
+    // service would pin a pooled connection and a snapshot per reconcile, and
+    // the managed store shares the Core pool. Prove it by issuing an
+    // independent query from inside the callback — that can only succeed if a
+    // connection is free, which it is not while the store's own transaction is
+    // still open on a single-connection pool.
+    const { Pool } = require('pg');
+    const singleConnection = new Pool({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${schema}"`,
+      max: 1,
+    });
+    try {
+      let reentrantRows = -1;
+      const serialized = new ledger.PostgresReportingLedgerStore(singleConnection, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+        obligatedConsumers: async () => {
+          const probe = await singleConnection.query('SELECT 1 AS ok');
+          reentrantRows = probe.rowCount;
+          return { ids: ['https://snapshot-buyer.example'], complete: true };
+        },
+      });
+      const outside = await serialized.getManagedLifecycleProjection({
+        reporting_obligation_id: snapshotFixture.obligation.reporting_obligation_id,
+        ledgerAsOf: new Date(Date.parse(snapshotFixture.now) + 600_000).toISOString(),
+      });
+      assert.equal(reentrantRows, 1, 'the callback runs with the store transaction already committed');
+      assert.equal(outside.obligatedConsumerRosterComplete, true);
+    } finally {
+      await singleConnection.end();
+    }
   });
 
   test('settles a lease issued under host clock skew against the database clock', async () => {

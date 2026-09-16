@@ -393,10 +393,13 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
     // RC3 bounds the batch as a whole too, in the request's
     // `x-adcp-validation.batch_identity`: receipt ids "MUST be unique across
     // receipts and adjustment_receipts, whose combined length MUST NOT exceed
-    // 100". The JSON Schema encodes only the two per-array caps, so a 200-entry
-    // request is schema-clean but spec-invalid — and unanswerable anyway, since
-    // `results` is capped at 100 while one result per submitted receipt is
-    // required. Refuse it with a conformant error envelope.
+    // 100". That bound is normative prose: JSON Schema encodes only the two
+    // per-array caps, and `x-adcp-validation` is registered as an AJV keyword
+    // for commercial-terms only, not on the reporting validation path. So this
+    // check is the only thing enforcing it — do not delete it as redundant
+    // with schema validation. A 200-entry request is schema-clean but
+    // spec-invalid, and unanswerable regardless, since `results` is capped at
+    // 100 while one result per submitted receipt is required.
     if (entries.length > MAX_RECEIPT_RESULTS) {
       throw new AdcpError('VALIDATION_ERROR', {
         message:

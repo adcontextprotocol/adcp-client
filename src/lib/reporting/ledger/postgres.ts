@@ -330,6 +330,14 @@ export interface PostgresReportingLedgerStoreOptions {
    * reconciled on a lifecycle transition. Wire this to whatever your
    * authorization layer knows and return `complete: true` to get accurate
    * reconciled transitions and webhooks.
+   *
+   * `complete: true` is taken at your word, and this is the only place in the
+   * subsystem where an adopter assertion can mark billing reconciled: a roster
+   * omitting a principal that owes a receipt makes that duty vanish from the
+   * fold, so the obligation can be persisted and notified reconciled while
+   * that principal never accepted. It is invoked outside the store's
+   * transaction and under a deadline, so it may do I/O — but it must not be
+   * slower than that deadline.
    */
   obligatedConsumers?: (input: {
     reporting_obligation_id: string;
@@ -2028,7 +2036,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     ledgerAsOf: string;
   }): Promise<ReportingManagedLifecycleProjectionV1 | null> {
     if (!this.managedDelivery) return null;
-    return this.transaction(async client => {
+    const base = await this.transaction(async client => {
       if (!(await this.managedTablesInstalled(client))) return null;
       const obligation = await client.query<QueryResultRow & { configuration_id: string }>(
         'SELECT configuration_id FROM adcp_reporting_obligations WHERE obligation_id = $1',
@@ -2098,23 +2106,36 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
         throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
       }
       const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
-      // An adopter-supplied roster is authoritative and is the only way this
-      // store can report a complete one.
-      const supplied = this.obligatedConsumers
-        ? await this.obligatedConsumers({
-            reporting_obligation_id: input.reporting_obligation_id,
-            account_id: binding.account_id,
-          })
-        : undefined;
       return {
         binding,
         materializations,
         materializationHistory,
         consumers: [...byConsumer.values()],
-        obligatedConsumerIds: supplied ? [...new Set([...supplied.ids, ...observed])].sort() : observed,
-        obligatedConsumerRosterComplete: supplied?.complete === true,
+        obligatedConsumerIds: observed,
+        obligatedConsumerRosterComplete: false,
       };
     });
+    if (!base || !this.obligatedConsumers) return base;
+    // Deliberately outside the transaction above. The documented purpose of
+    // this hook is an external authorization lookup, and this subsystem's one
+    // structural rule is that no network I/O happens inside the authoritative
+    // transaction: a hung auth service would otherwise pin a pooled connection
+    // and a snapshot per in-flight reconcile, and `probe` requires the managed
+    // store to share the Core pool, so Core reads would drain with it. Bounded
+    // for the same reason every adapter call is.
+    const supplied = await withReportingCallbackDeadline(
+      this.obligatedConsumers({
+        reporting_obligation_id: input.reporting_obligation_id,
+        account_id: base.binding.account_id,
+      }),
+      OBLIGATED_CONSUMERS_DEADLINE_MS,
+      'Reporting obligated-consumer lookup deadline elapsed'
+    );
+    const ids = [...new Set([...supplied.ids, ...(base.obligatedConsumerIds ?? [])])].sort();
+    if (ids.length > MAX_SNAPSHOT_ITEMS) {
+      throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
+    }
+    return { ...base, obligatedConsumerIds: ids, obligatedConsumerRosterComplete: supplied.complete === true };
   }
 
   private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {
@@ -2674,6 +2695,23 @@ function adjustmentLegacyCanonicalDigestReplay(
       wireAdjustment: withoutDigest as ReportingLedgerAdjustmentV1['wireAdjustment'],
     }) === adjustmentIdentityFingerprint(stored)
   );
+}
+
+const OBLIGATED_CONSUMERS_DEADLINE_MS = 10_000;
+
+/** Bounds an adopter callback so a hung dependency cannot stall a reconcile. */
+async function withReportingCallbackDeadline<T>(value: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      value,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function accountLock(accountId: string): string {
