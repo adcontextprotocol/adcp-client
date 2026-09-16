@@ -46,7 +46,46 @@ const source = createInlineReportingSourceExecutor(getMediaBuyDelivery, offering
 
 Return `null` while the report is not ready, `[]` for a real observed zero-row period, and rows for success. A `get_media_buy_delivery` response must include its exact `reporting_period`, matching `currency`, and either `reporting_rows` or `media_buy_deliveries`. An unclassified throw becomes retryable `SOURCE_TRANSIENT`; throw `InlineReportingSourceError` to retain a specific typed classification. Partial-data flags, unavailable counts, response errors, and unproved full constituent coverage fail closed with `PARTIAL_RESULT`.
 
-The inline adapter narrows the supplied offering to `basic`, non-paginated `media_buy` execution. Every nonzero row must identify an admitted `media_buy_id` and contain each requested metric (directly or under `totals`) and requested dimension; extra or unidentified rows are rejected. Only the identifier and requested evidence fields are retained. `[]` is the only implicit proof of an all-zero period. A response that omits both row collections is a failure, and unfinished pagination is partial. Authoritative publication additionally requires `is_final: true` or a `final`/`adjusted` notification. The fetch context carries the frozen source settings and semantic contract; group reads are rejected because this compatibility adapter cannot prove them. Each inline executor instance admits at most 100 retained executions and 32 MiB per caller scope, 1,000 executions and 256 MiB total, 16 concurrent fetches, and 64 MiB per object. Capacity exhaustion is terminal for that instance; replace it with a durable executor when those bounded compatibility limits are too small.
+When availability differs by metric, add the versioned `availability_evidence` envelope to the existing response object. The callback request supplies the frozen `constituents` mapping; use its `constituent_id` values rather than deriving manifest identities from media-buy IDs. Cells cover the exact requested constituent/metric matrix once each. The adapter supplies semantic-contract IDs and checksums from the offering.
+
+```ts
+const source = createInlineReportingSourceExecutor(async input => ({
+  reporting_period: { start: input.start_date, end: input.end_date },
+  currency: 'USD',
+  reporting_rows: [
+    { media_buy_id: input.constituents[0].media_buy_id, impressions: 10, clicks: 0 },
+  ],
+  availability_evidence: {
+    version: '1.0',
+    cells: [
+      {
+        constituent_id: input.constituents[0].constituent_id,
+        metric: 'impressions',
+        status: 'present',
+        data_through: input.end_date,
+      },
+      {
+        constituent_id: input.constituents[0].constituent_id,
+        metric: 'clicks',
+        status: 'explicit_zero',
+        data_through: input.end_date,
+      },
+      {
+        constituent_id: input.constituents[0].constituent_id,
+        metric: 'viewability',
+        status: 'delayed',
+        reason: 'Provider processing is not closed',
+      },
+    ],
+  },
+}), offering);
+```
+
+`present` and `explicit_zero` require `data_through` and forbid a reason. `unsupported`, `delayed`, `partial`, `stale`, and `missing` require a bounded reason and may carry `data_through`. Reasons are retained in durable manifest evidence: use stable non-secret explanations, never credentials or raw provider payloads. A row must contain every metric marked `present`; when that constituent has rows, every row must also carry zero for a metric marked `explicit_zero`. Rows cannot contain values for `unsupported`, `delayed`, or `missing` cells. Mixed cells roll up to existing manifest constituent and coverage states in the request's canonical constituent/metric order. A request for full coverage still returns `PARTIAL_RESULT` when the cell matrix proves only partial or no coverage, and an authoritative/final response cannot seal until every cell is present or explicit-zero through period end.
+
+Malformed versions or cells, duplicates, missing cells, unrequested constituent/metric keys, invalid watermarks, and row/evidence contradictions fail with `INTEGRITY_FAILED` before objects are staged. Evidence with no rows may prove either that every cell is explicit-zero or that cells are unavailable; it cannot combine available and unavailable claims without rows. Omitting `availability_evidence` retains the prior all-cells-derived behavior for row arrays and existing response objects.
+
+The inline adapter narrows the supplied offering to `basic`, non-paginated `media_buy` execution. Every nonzero row must identify an admitted `media_buy_id` and contain each requested dimension. Without `availability_evidence`, it must also contain every requested metric (directly or under `totals`); extra or unidentified rows are rejected. Only the identifier and requested evidence fields are retained. `[]` is the only implicit proof of an all-zero period. A response that omits both row collections is a failure, and unfinished pagination is partial. Authoritative publication additionally requires `is_final: true` or a `final`/`adjusted` notification. The fetch context carries the frozen source settings and semantic contract; group reads are rejected because this compatibility adapter cannot prove them. Each inline executor instance admits at most 100 retained executions and 32 MiB per caller scope, 1,000 executions and 256 MiB total, 16 concurrent fetches, 64 MiB per object, and 5,000,000 row/cell checks per evidence-bearing response. Capacity exhaustion is terminal for that instance; replace it with a durable executor when those bounded compatibility limits are too small.
 
 The object reader MUST authorize and confine every `objectRef` to the supplied `sourceScope`, account, delivery configuration, report definition, and obligation tuple. The harness supplies scope from the frozen request, never from the manifest. Its default pre-read budget is 512 MiB per object and 2 GiB per slice; pass `objectReadLimits` to conformance when a declared adapter format legitimately needs different bounds.
 

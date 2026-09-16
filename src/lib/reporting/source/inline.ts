@@ -1,11 +1,21 @@
 import { createHash } from 'node:crypto';
+import { z } from 'zod';
 
 import { buildReportingSourceManifestV1 } from './builder';
 import { validateReportingSourceRequestAgainstCapabilitiesV1 } from './conformance';
-import { canonicalJsonV1, REPORTING_SOURCE_CONTRACT_VERSION_V1 } from './manifest';
+import {
+  canonicalJsonV1,
+  ReportingEvidenceReasonV1Schema,
+  ReportingExternalIdV1Schema,
+  REPORTING_SOURCE_CONTRACT_VERSION_V1,
+  SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1,
+  SourceBatchContractError,
+  type ReportingSourceManifestV1,
+} from './manifest';
 import {
   completedReportingSourceResponseV1,
   reportingIsoDurationMillisecondsV1,
+  ReportingMetricOrDimensionNameV1Schema,
   reportingSourceCapabilitiesV1,
   ReportingSourceErrorV1Schema,
   ReportingSourceOfferingV1Schema,
@@ -21,12 +31,46 @@ import {
 export interface InlineReportingDeliveryRequestV1 {
   account: { account_id: string };
   media_buy_ids: string[];
+  /** Frozen manifest constituents. Use constituent_id when returning availability evidence. */
+  constituents: Array<Readonly<{ constituent_id: string; media_buy_id: string }>>;
   start_date: string;
   end_date: string;
   /** Exact source observation ceiling for snapshot reads within the requested period. */
   source_read_cutoff_at: string;
   requested_metrics: string[];
   reporting_dimensions: Record<string, Record<string, never>>;
+}
+
+export const INLINE_REPORTING_AVAILABILITY_EVIDENCE_VERSION_V1 = '1.0' as const;
+
+type InlineReportingAvailableMetricEvidenceV1 = Readonly<{
+  constituent_id: string;
+  metric: string;
+  status: 'present' | 'explicit_zero';
+  data_through: string;
+  reason?: never;
+}>;
+
+type InlineReportingUnavailableMetricEvidenceV1 = Readonly<{
+  constituent_id: string;
+  metric: string;
+  status: 'unsupported' | 'delayed' | 'partial' | 'stale' | 'missing';
+  reason: string;
+  data_through?: string;
+}>;
+
+/** One bounded availability claim for an exact requested constituent-metric cell. */
+export type InlineReportingMetricEvidenceV1 =
+  | InlineReportingAvailableMetricEvidenceV1
+  | InlineReportingUnavailableMetricEvidenceV1;
+
+/**
+ * Versioned inline evidence envelope. When supplied, cells must cover the exact
+ * requested constituent-metric matrix once each.
+ */
+export interface InlineReportingAvailabilityEvidenceV1 {
+  version: typeof INLINE_REPORTING_AVAILABILITY_EVIDENCE_VERSION_V1;
+  cells: readonly InlineReportingMetricEvidenceV1[];
 }
 
 export interface InlineReportingDeliveryResponseV1 {
@@ -43,6 +87,7 @@ export interface InlineReportingDeliveryResponseV1 {
   status?: string;
   is_final?: boolean;
   notification_type?: 'scheduled' | 'final' | 'delayed' | 'adjusted' | 'window_update';
+  availability_evidence?: InlineReportingAvailabilityEvidenceV1;
 }
 
 export type InlineReportingDeliveryResultV1 = readonly unknown[] | InlineReportingDeliveryResponseV1 | null;
@@ -105,6 +150,29 @@ const INLINE_MAX_OBJECT_BYTES_V1 = 64 * 1_024 * 1_024;
 const INLINE_MAX_TOTAL_OBJECT_BYTES_V1 = 256 * 1_024 * 1_024;
 const INLINE_MAX_SCOPE_OBJECT_BYTES_V1 = 32 * 1_024 * 1_024;
 const INLINE_MAX_ROWS_V1 = 100_000;
+const INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 = 5_000_000;
+
+const InlineReportingMetricEvidenceV1Schema = z.discriminatedUnion('status', [
+  z.strictObject({
+    constituent_id: ReportingExternalIdV1Schema,
+    metric: ReportingMetricOrDimensionNameV1Schema,
+    status: z.enum(['present', 'explicit_zero']),
+    data_through: z.string().trim().min(1).max(64),
+    reason: z.never().optional(),
+  }),
+  z.strictObject({
+    constituent_id: ReportingExternalIdV1Schema,
+    metric: ReportingMetricOrDimensionNameV1Schema,
+    status: z.enum(['unsupported', 'delayed', 'partial', 'stale', 'missing']),
+    reason: ReportingEvidenceReasonV1Schema,
+    data_through: z.string().trim().min(1).max(64).optional(),
+  }),
+]);
+
+const InlineReportingAvailabilityEvidenceV1Schema = z.strictObject({
+  version: z.literal(INLINE_REPORTING_AVAILABILITY_EVIDENCE_VERSION_V1),
+  cells: z.array(InlineReportingMetricEvidenceV1Schema).min(1).max(SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1),
+});
 
 /**
  * Adapt a synchronous delivery handler to the reporting-source contract.
@@ -326,6 +394,10 @@ async function executeAndSeal(
       {
         account: structuredClone(request.account),
         media_buy_ids: [...request.coverage.mediaBuyIds],
+        constituents: request.coverage.constituents.map(constituent => ({
+          constituent_id: constituent.constituentId,
+          media_buy_id: constituent.mediaBuyId!,
+        })),
         start_date: deliveryDates.start,
         end_date: deliveryDates.end,
         source_read_cutoff_at: request.period.sourceReadCutoffAt,
@@ -359,6 +431,18 @@ async function executeAndSeal(
   if (fetched === null) {
     return failure('NOT_READY', 'retryable', 'Reporting data is not ready');
   }
+  const fetchedRecord = !isRows(fetched) ? (fetched as unknown as Record<string, unknown>) : undefined;
+  const reportingRowsInput = fetchedRecord ? ownDataValue(fetchedRecord, 'reporting_rows') : undefined;
+  const mediaBuyDeliveriesInput = fetchedRecord ? ownDataValue(fetchedRecord, 'media_buy_deliveries') : undefined;
+  const availabilityEvidenceInput = fetchedRecord ? ownDataValue(fetchedRecord, 'availability_evidence') : undefined;
+  if (
+    (reportingRowsInput !== undefined && !Array.isArray(reportingRowsInput)) ||
+    (mediaBuyDeliveriesInput !== undefined && !Array.isArray(mediaBuyDeliveriesInput))
+  ) {
+    return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned an invalid row collection');
+  }
+  const reportingRows = reportingRowsInput as readonly unknown[] | undefined;
+  const mediaBuyDeliveries = mediaBuyDeliveriesInput as readonly unknown[] | undefined;
   const responseStatus = !isRows(fetched) ? fetched.status?.toLowerCase() : undefined;
   if (['failed', 'error', 'canceled', 'cancelled', 'rejected'].includes(responseStatus ?? '')) {
     return failure('SOURCE_TRANSIENT', 'retryable', 'Inline delivery fetch reported failure');
@@ -394,7 +478,7 @@ async function executeAndSeal(
   ) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned unfinished pagination');
   }
-  if (!isRows(fetched) && fetched.reporting_rows === undefined && fetched.media_buy_deliveries === undefined) {
+  if (!isRows(fetched) && reportingRows === undefined && mediaBuyDeliveries === undefined) {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch omitted its row collection');
   }
   if (
@@ -414,36 +498,118 @@ async function executeAndSeal(
   }
   if (
     !isRows(fetched) &&
-    ((fetched.reporting_rows?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
-      (fetched.media_buy_deliveries?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
-      (fetched.reporting_rows?.length ?? 0) + (fetched.media_buy_deliveries?.length ?? 0) > INLINE_MAX_ROWS_V1)
+    ((reportingRows?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
+      (mediaBuyDeliveries?.length ?? 0) > INLINE_MAX_ROWS_V1 ||
+      (reportingRows?.length ?? 0) + (mediaBuyDeliveries?.length ?? 0) > INLINE_MAX_ROWS_V1)
   ) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline delivery fetch exceeded the row limit');
   }
   if (
     !isRows(fetched) &&
-    fetched.reporting_rows !== undefined &&
-    fetched.media_buy_deliveries !== undefined &&
-    (fetched.reporting_rows.length === 0) !== (fetched.media_buy_deliveries.length === 0)
+    reportingRows !== undefined &&
+    mediaBuyDeliveries !== undefined &&
+    (reportingRows.length === 0) !== (mediaBuyDeliveries.length === 0)
   ) {
     return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row collections disagree about zero delivery');
   }
 
-  const sourceRows = isRows(fetched)
+  const sourceRowInputs = isRows(fetched)
     ? [...fetched]
-    : fetched.reporting_rows !== undefined
-      ? [...fetched.reporting_rows]
-      : [...(fetched.media_buy_deliveries ?? [])];
-  if (sourceRows.length > INLINE_MAX_ROWS_V1) {
+    : reportingRows !== undefined
+      ? [...reportingRows]
+      : [...(mediaBuyDeliveries ?? [])];
+  if (sourceRowInputs.length > INLINE_MAX_ROWS_V1) {
     return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline delivery fetch exceeded the row limit');
   }
-  const evidenceRows = isRows(fetched)
-    ? sourceRows
-    : [...(fetched.reporting_rows ?? []), ...(fetched.media_buy_deliveries ?? [])];
-  if (evidenceRows.some(row => rowIsUnavailable(row))) {
+  const auxiliaryRowInputs = !isRows(fetched) && reportingRows !== undefined ? [...(mediaBuyDeliveries ?? [])] : [];
+  let availabilityEvidence: z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> | undefined;
+  if (!isRows(fetched) && availabilityEvidenceInput !== undefined) {
+    try {
+      availabilityEvidence = parseInlineAvailabilityEvidence(
+        availabilityEvidenceInput as InlineReportingAvailabilityEvidenceV1,
+        request
+      );
+    } catch {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is invalid');
+    }
+  }
+  if (
+    availabilityEvidence !== undefined &&
+    sourceRowInputs.length + auxiliaryRowInputs.length >
+      Math.floor(INLINE_MAX_AVAILABILITY_ROW_CELL_CHECKS_V1 / request.requestedMetrics.length)
+  ) {
+    return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline availability verification exceeded the row-cell limit');
+  }
+  const allRowInputs = [...sourceRowInputs, ...auxiliaryRowInputs];
+  if (allRowInputs.some(row => rowIsUnavailable(row))) {
     return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery fetch returned an unavailable row');
   }
-  if (sourceRows.length > 0) {
+  if (
+    allRowInputs.some(row => {
+      const currency = rowCurrency(row);
+      return currency !== undefined && currency !== request.sourceSettings.currency;
+    })
+  ) {
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
+  }
+  const remainingCapacity = Math.min(
+    INLINE_MAX_OBJECT_BYTES_V1,
+    INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
+    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
+  );
+  let projectionBudget = remainingCapacity;
+  let auxiliaryProjectionBudget = INLINE_MAX_OBJECT_BYTES_V1;
+  let rows: readonly Record<string, unknown>[];
+  let auxiliaryRows: readonly Record<string, unknown>[];
+  try {
+    rows = sourceRowInputs.map(row =>
+      projectEvidenceRow(
+        row,
+        request,
+        upperBound => {
+          if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
+          projectionBudget -= upperBound;
+        },
+        {
+          allowMissingMetrics: true,
+          allowMissingDimensions: true,
+          strictMetricClaims: availabilityEvidence !== undefined,
+          includeDimensions: true,
+        }
+      )
+    );
+    auxiliaryRows = auxiliaryRowInputs.map(row =>
+      projectEvidenceRow(
+        row,
+        request,
+        upperBound => {
+          if (upperBound > auxiliaryProjectionBudget) throw new RangeError('Inline projection capacity exhausted');
+          auxiliaryProjectionBudget -= upperBound;
+        },
+        {
+          allowMissingMetrics: true,
+          allowMissingDimensions: true,
+          strictMetricClaims: availabilityEvidence !== undefined,
+          includeDimensions: false,
+        }
+      )
+    );
+  } catch (error) {
+    if (error instanceof RangeError) {
+      return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+    }
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+  }
+  const evidenceRows = [...rows, ...auxiliaryRows];
+  const rowsByMediaBuyId = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const mediaBuyId = rowMediaBuyId(row);
+    if (!mediaBuyId) continue;
+    const grouped = rowsByMediaBuyId.get(mediaBuyId) ?? [];
+    grouped.push(row);
+    rowsByMediaBuyId.set(mediaBuyId, grouped);
+  }
+  if (rows.length > 0) {
     const admittedMediaBuyIds = new Set(
       request.coverage.constituents.flatMap(constituent => (constituent.mediaBuyId ? [constituent.mediaBuyId] : []))
     );
@@ -451,21 +617,16 @@ async function executeAndSeal(
       return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery fetch returned an out-of-scope row');
     }
     if (
-      evidenceRows.some(row => rowCurrency(row) !== undefined && rowCurrency(row) !== request.sourceSettings.currency)
-    ) {
-      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row currency does not match source settings');
-    }
-    if (
       request.coverage.constituents.some(constituent => {
         if (constituent.constituentKind !== 'media_buy' || !constituent.mediaBuyId) return true;
-        const constituentRows = sourceRows.filter(row => rowMediaBuyId(row) === constituent.mediaBuyId);
+        const constituentRows = rowsByMediaBuyId.get(constituent.mediaBuyId) ?? [];
         return (
-          constituentRows.length === 0 ||
-          constituentRows.some(
-            row =>
-              request.requestedMetrics.some(metric => !rowHasField(row, metric)) ||
-              request.requestedDimensions.some(dimension => !rowHasDimension(row, dimension))
-          )
+          constituentRows.some(row =>
+            request.requestedDimensions.some(dimension => !rowHasDimension(row, dimension))
+          ) ||
+          (availabilityEvidence === undefined &&
+            (constituentRows.length === 0 ||
+              constituentRows.some(row => request.requestedMetrics.some(metric => !rowHasField(row, metric)))))
         );
       })
     ) {
@@ -476,25 +637,19 @@ async function executeAndSeal(
       );
     }
   }
-  const remainingCapacity = Math.min(
-    INLINE_MAX_OBJECT_BYTES_V1,
-    INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
-    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
-  );
-  let projectionBudget = remainingCapacity;
-  let rows: readonly Record<string, unknown>[];
-  try {
-    rows = sourceRows.map(row =>
-      projectEvidenceRow(row, request, upperBound => {
-        if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
-        projectionBudget -= upperBound;
-      })
+  if (availabilityEvidence !== undefined) {
+    const rowEvidenceFailure = validateRowsAgainstAvailabilityEvidence(
+      rows,
+      evidenceRows,
+      request,
+      availabilityEvidence.cells
     );
-  } catch (error) {
-    if (error instanceof RangeError) {
-      return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+    if (rowEvidenceFailure === 'partial') {
+      return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery rows do not prove every metric marked present');
     }
-    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+    if (rowEvidenceFailure === 'integrity') {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery rows contradict availability evidence');
+    }
   }
   const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
   if (
@@ -559,25 +714,280 @@ async function executeAndSeal(
     byteCount: bytes.byteLength,
     rowCount: rows.length,
   } as const;
-  const explicitZero = rows.length === 0;
-  const status = explicitZero ? ('explicit_zero' as const) : ('present' as const);
-  const coverageConstituents = request.coverage.constituents.map(constituent => ({
-    ...constituent,
-    status,
-    dataThrough,
-  }));
   const declaredMetrics = new Map(offering.metrics.map(metric => [metric.name, metric]));
-  const built = buildReportingSourceManifestV1({
-    level: 'basic',
-    request,
-    stagedCommitRef: `inline-manifest-${executionNamespace.slice(0, 32)}`,
-    objects: [object],
-    completeness: {
-      terminal: true as const,
-      rowsComplete: true as const,
-      requestedGroupsComplete: true as const,
-    },
-    controlTotals: [],
+  const constituentIdsWithRows = new Set(
+    request.coverage.constituents
+      .filter(constituent => constituent.mediaBuyId && rowsByMediaBuyId.has(constituent.mediaBuyId))
+      .map(constituent => constituent.constituentId)
+  );
+  let projectedAvailability: InlineAvailabilityProjection;
+  if (availabilityEvidence) {
+    try {
+      projectedAvailability = projectInlineAvailabilityEvidence(
+        availabilityEvidence.cells,
+        request,
+        declaredMetrics,
+        deliveryDates,
+        dataThrough,
+        rows.length,
+        constituentIdsWithRows
+      );
+    } catch {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is contradictory');
+    }
+  } else {
+    projectedAvailability = projectLegacyAvailability(request, declaredMetrics, dataThrough, rows.length);
+  }
+  if (request.coverage.expected === 'full' && projectedAvailability.coverageStatus !== 'full') {
+    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery evidence does not satisfy full requested coverage');
+  }
+  if (
+    request.publicationClass === 'AUTHORITATIVE' &&
+    projectedAvailability.metricAvailability.some(
+      cell => !['present', 'explicit_zero'].includes(cell.status) || Date.parse(cell.dataThrough ?? '') !== endMs
+    )
+  ) {
+    return failure('PARTIAL_RESULT', 'retryable', 'Authoritative inline reporting has incomplete metric evidence');
+  }
+  let built;
+  try {
+    built = buildReportingSourceManifestV1({
+      level: 'basic',
+      request,
+      stagedCommitRef: `inline-manifest-${executionNamespace.slice(0, 32)}`,
+      objects: [object],
+      completeness: {
+        terminal: true as const,
+        rowsComplete: true as const,
+        requestedGroupsComplete: true as const,
+      },
+      controlTotals: [],
+      metricAvailability: projectedAvailability.metricAvailability,
+      coverage: {
+        status: projectedAvailability.coverageStatus,
+        constituents: projectedAvailability.coverageConstituents,
+      },
+      observedAt,
+      dataThrough,
+      finalityEvidence: {
+        owner: 'adapter' as const,
+        basis:
+          request.publicationClass === 'PROVISIONAL_SNAPSHOT'
+            ? ('provisional_observation' as const)
+            : ('source_declared' as const),
+        observedAt,
+        ...(request.publicationClass === 'AUTHORITATIVE' ? { evidenceRef: 'get_media_buy_delivery.is_final' } : {}),
+      },
+      explicitZero: projectedAvailability.explicitZero,
+      acquiredAt,
+      ...(rows.length === 0 ? {} : { eventTimeRange: { start: request.period.start, end: dataThrough } }),
+      warnings: [],
+    });
+  } catch (error) {
+    if (!availabilityEvidence) throw error;
+    if (error instanceof SourceBatchContractError && error.code === 'SOURCE_MANIFEST_TOO_LARGE') {
+      return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline reporting manifest exceeded the bounded size limit');
+    }
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is contradictory');
+  }
+  // A synchronous adopter callback can block the event loop past the timer.
+  // Check the absolute deadline before publishing any replayable evidence.
+  if (Date.parse(deadlineAt) <= Date.now()) {
+    return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
+  }
+  storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
+  storage.totalBytes += bytes.byteLength;
+  storage.scopeBytes.set(scopeKey, (storage.scopeBytes.get(scopeKey) ?? 0) + bytes.byteLength);
+  return {
+    ok: true,
+    response: completedReportingSourceResponseV1({ request, manifest: built.reference }),
+    manifestBytes: built.manifestBytes,
+  };
+}
+
+type InlineAvailabilityCell = ReportingSourceManifestV1['metricAvailability'][number];
+type InlineCoverageConstituent = ReportingSourceManifestV1['coverage']['constituents'][number];
+type InlineAvailabilityProjection = {
+  metricAvailability: InlineAvailabilityCell[];
+  coverageConstituents: InlineCoverageConstituent[];
+  coverageStatus: ReportingSourceManifestV1['coverage']['status'];
+  explicitZero: boolean;
+};
+
+function parseInlineAvailabilityEvidence(
+  input: InlineReportingAvailabilityEvidenceV1,
+  request: ReportingSourceSliceRequestV1
+): z.output<typeof InlineReportingAvailabilityEvidenceV1Schema> {
+  const inputCells =
+    typeof input === 'object' && input !== null
+      ? ownDataValue(input as unknown as Record<string, unknown>, 'cells')
+      : undefined;
+  if (!Array.isArray(inputCells) || inputCells.length > SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1) {
+    throw new TypeError('Availability evidence exceeds the cell limit');
+  }
+  const parsed = InlineReportingAvailabilityEvidenceV1Schema.parse(input);
+  const expected = new Set(
+    request.coverage.constituents.flatMap(constituent =>
+      request.requestedMetrics.map(metric => availabilityCellKey(constituent.constituentId, metric))
+    )
+  );
+  const seen = new Set<string>();
+  for (const cell of parsed.cells) {
+    const key = availabilityCellKey(cell.constituent_id, cell.metric);
+    if (!expected.has(key) || seen.has(key)) throw new TypeError('Availability cell is duplicate or out of scope');
+    seen.add(key);
+  }
+  if (seen.size !== expected.size) throw new TypeError('Availability evidence must cover the requested matrix');
+  const cellsByKey = new Map(parsed.cells.map(cell => [availabilityCellKey(cell.constituent_id, cell.metric), cell]));
+  return {
+    ...parsed,
+    cells: request.coverage.constituents.flatMap(constituent =>
+      request.requestedMetrics.map(metric => {
+        const cell = cellsByKey.get(availabilityCellKey(constituent.constituentId, metric));
+        if (!cell) throw new TypeError('Availability evidence must cover the requested matrix');
+        return cell;
+      })
+    ),
+  };
+}
+
+function validateRowsAgainstAvailabilityEvidence(
+  sourceRows: readonly unknown[],
+  evidenceRows: readonly unknown[],
+  request: ReportingSourceSliceRequestV1,
+  cells: readonly z.output<typeof InlineReportingMetricEvidenceV1Schema>[]
+): 'partial' | 'integrity' | undefined {
+  const cellsByConstituent = new Map<string, Array<(typeof cells)[number]>>();
+  const constituentIdByMediaBuyId = new Map<string, string>();
+  const sourceRowsByConstituent = new Map<string, unknown[]>();
+  const evidenceRowsByConstituent = new Map<string, unknown[]>();
+  for (const constituent of request.coverage.constituents) {
+    cellsByConstituent.set(constituent.constituentId, []);
+    sourceRowsByConstituent.set(constituent.constituentId, []);
+    evidenceRowsByConstituent.set(constituent.constituentId, []);
+    if (constituent.mediaBuyId) constituentIdByMediaBuyId.set(constituent.mediaBuyId, constituent.constituentId);
+  }
+  for (const cell of cells) cellsByConstituent.get(cell.constituent_id)?.push(cell);
+  for (const row of sourceRows) {
+    const constituentId = constituentIdByMediaBuyId.get(rowMediaBuyId(row) ?? '');
+    if (constituentId) sourceRowsByConstituent.get(constituentId)?.push(row);
+  }
+  for (const row of evidenceRows) {
+    const constituentId = constituentIdByMediaBuyId.get(rowMediaBuyId(row) ?? '');
+    if (constituentId) evidenceRowsByConstituent.get(constituentId)?.push(row);
+  }
+  for (const constituent of request.coverage.constituents) {
+    const sourceConstituentRows = sourceRowsByConstituent.get(constituent.constituentId) ?? [];
+    const allConstituentRows = evidenceRowsByConstituent.get(constituent.constituentId) ?? [];
+    for (const cell of cellsByConstituent.get(constituent.constituentId) ?? []) {
+      if (cell.status === 'present') {
+        if (sourceConstituentRows.length === 0) return 'partial';
+        for (const row of sourceConstituentRows) {
+          if (!rowHasField(row, cell.metric)) return 'partial';
+        }
+      }
+      if (cell.status === 'explicit_zero' && sourceConstituentRows.length > 0) {
+        for (const row of sourceConstituentRows) {
+          const value = rowFieldValue(row, cell.metric);
+          if (value === undefined || !isZeroEvidenceValue(value)) return 'integrity';
+        }
+      }
+      for (const row of allConstituentRows) {
+        const claim = rowFieldClaim(row, cell.metric);
+        if (claim.claimed && !isEvidenceValue(claim.value)) return 'integrity';
+        if (!isEvidenceValue(claim.value)) continue;
+        if (cell.status === 'explicit_zero' && !isZeroEvidenceValue(claim.value)) return 'integrity';
+        if (['unsupported', 'delayed', 'missing'].includes(cell.status)) return 'integrity';
+      }
+    }
+  }
+  return undefined;
+}
+
+function projectInlineAvailabilityEvidence(
+  cells: readonly z.output<typeof InlineReportingMetricEvidenceV1Schema>[],
+  request: ReportingSourceSliceRequestV1,
+  declaredMetrics: ReadonlyMap<string, ReportingSourceOfferingV1['metrics'][number]>,
+  deliveryDates: { start: string; end: string },
+  manifestDataThrough: string,
+  rowCount: number,
+  constituentIdsWithRows: ReadonlySet<string>
+): InlineAvailabilityProjection {
+  const startMs = Date.parse(request.period.start);
+  const manifestDataThroughMs = Date.parse(manifestDataThrough);
+  const metricAvailability = cells.map(cell => {
+    const metric = declaredMetrics.get(cell.metric);
+    if (!metric) throw new TypeError(`Offering does not declare ${cell.metric}`);
+    const dataThrough = cell.data_through
+      ? normalizeDeliveryInstant(cell.data_through, deliveryDates, request.period)
+      : undefined;
+    const dataThroughMs = dataThrough === undefined ? undefined : Date.parse(dataThrough);
+    if (
+      dataThroughMs !== undefined &&
+      (!Number.isFinite(dataThroughMs) ||
+        dataThroughMs < startMs ||
+        dataThroughMs > manifestDataThroughMs ||
+        (['present', 'explicit_zero'].includes(cell.status) &&
+          constituentIdsWithRows.has(cell.constituent_id) &&
+          dataThroughMs === startMs))
+    ) {
+      throw new TypeError('Availability dataThrough exceeds the manifest window');
+    }
+    return {
+      constituentId: cell.constituent_id,
+      metric: cell.metric,
+      semanticContractId: metric.semanticContractId,
+      semanticContractVersion: metric.semanticContractVersion,
+      semanticContractSha256: metric.semanticContractSha256,
+      status: cell.status,
+      ...(dataThrough ? { dataThrough } : {}),
+      ...(cell.reason ? { reason: cell.reason } : {}),
+    } satisfies InlineAvailabilityCell;
+  });
+  const coverageConstituents = request.coverage.constituents.map(constituent => {
+    const constituentCells = metricAvailability.filter(cell => cell.constituentId === constituent.constituentId);
+    const status = rollUpInlineConstituentStatus(constituentCells.map(cell => cell.status));
+    const dataThrough = earliestDataThrough(constituentCells);
+    const reason = constituentCells.find(cell => cell.reason)?.reason;
+    if (!['present', 'explicit_zero'].includes(status) && !reason) {
+      throw new TypeError('Unavailable constituent roll-up requires supplied evidence');
+    }
+    return {
+      ...constituent,
+      status,
+      ...(dataThrough ? { dataThrough } : {}),
+      ...(reason && !['present', 'explicit_zero'].includes(status) ? { reason } : {}),
+    } satisfies InlineCoverageConstituent;
+  });
+  const allCellsExplicitZero = metricAvailability.every(cell => cell.status === 'explicit_zero');
+  if (
+    rowCount === 0 &&
+    metricAvailability.some(cell => ['present', 'explicit_zero'].includes(cell.status)) &&
+    !allCellsExplicitZero
+  ) {
+    throw new TypeError('Zero-row evidence has contradictory available cells');
+  }
+  const fullyCovered = coverageConstituents.filter(constituent =>
+    ['present', 'explicit_zero'].includes(constituent.status)
+  ).length;
+  const someCoverage = fullyCovered > 0 || coverageConstituents.some(constituent => constituent.status === 'partial');
+  return {
+    metricAvailability,
+    coverageConstituents,
+    coverageStatus: fullyCovered === coverageConstituents.length ? 'full' : someCoverage ? 'partial' : 'none',
+    explicitZero: rowCount === 0 && allCellsExplicitZero,
+  };
+}
+
+function projectLegacyAvailability(
+  request: ReportingSourceSliceRequestV1,
+  declaredMetrics: ReadonlyMap<string, ReportingSourceOfferingV1['metrics'][number]>,
+  dataThrough: string,
+  rowCount: number
+): InlineAvailabilityProjection {
+  const explicitZero = rowCount === 0;
+  const status = explicitZero ? ('explicit_zero' as const) : ('present' as const);
+  return {
     metricAvailability: request.coverage.constituents.flatMap(constituent =>
       request.requestedMetrics.map(metricName => {
         const metric = declaredMetrics.get(metricName);
@@ -593,39 +1003,38 @@ async function executeAndSeal(
         };
       })
     ),
-    coverage: {
-      status: 'full' as const,
-      constituents: coverageConstituents,
-    },
-    observedAt,
-    dataThrough,
-    finalityEvidence: {
-      owner: 'adapter' as const,
-      basis:
-        request.publicationClass === 'PROVISIONAL_SNAPSHOT'
-          ? ('provisional_observation' as const)
-          : ('source_declared' as const),
-      observedAt,
-      ...(request.publicationClass === 'AUTHORITATIVE' ? { evidenceRef: 'get_media_buy_delivery.is_final' } : {}),
-    },
+    coverageConstituents: request.coverage.constituents.map(constituent => ({
+      ...constituent,
+      status,
+      dataThrough,
+    })),
+    coverageStatus: 'full',
     explicitZero,
-    acquiredAt,
-    ...(explicitZero ? {} : { eventTimeRange: { start: request.period.start, end: dataThrough } }),
-    warnings: [],
-  });
-  // A synchronous adopter callback can block the event loop past the timer.
-  // Check the absolute deadline before publishing any replayable evidence.
-  if (Date.parse(deadlineAt) <= Date.now()) {
-    return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
-  }
-  storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
-  storage.totalBytes += bytes.byteLength;
-  storage.scopeBytes.set(scopeKey, (storage.scopeBytes.get(scopeKey) ?? 0) + bytes.byteLength);
-  return {
-    ok: true,
-    response: completedReportingSourceResponseV1({ request, manifest: built.reference }),
-    manifestBytes: built.manifestBytes,
   };
+}
+
+function rollUpInlineConstituentStatus(
+  statuses: readonly InlineAvailabilityCell['status'][]
+): InlineCoverageConstituent['status'] {
+  if (statuses.every(status => status === 'explicit_zero')) return 'explicit_zero';
+  if (statuses.every(status => status === 'present' || status === 'explicit_zero')) return 'present';
+  if (statuses.every(status => status === 'unsupported')) return 'unsupported';
+  if (statuses.every(status => status === 'missing')) return 'missing';
+  if (statuses.every(status => ['unsupported', 'delayed', 'missing'].includes(status))) return 'delayed';
+  if (statuses.every(status => ['unsupported', 'delayed', 'stale', 'missing'].includes(status))) return 'stale';
+  return 'partial';
+}
+
+function earliestDataThrough(cells: readonly InlineAvailabilityCell[]): string | undefined {
+  return cells.reduce<string | undefined>((earliest, cell) => {
+    if (!cell.dataThrough) return earliest;
+    if (!earliest || Date.parse(cell.dataThrough) < Date.parse(earliest)) return cell.dataThrough;
+    return earliest;
+  }, undefined);
+}
+
+function availabilityCellKey(constituentId: string, metric: string): string {
+  return `${constituentId}\0${metric}`;
 }
 
 function encodeRows(
@@ -786,11 +1195,25 @@ function rowFieldValue(row: unknown, field: string): string | number | undefined
   return isEvidenceValue(nested) ? nested : undefined;
 }
 
+function rowFieldClaim(row: unknown, field: string): { claimed: boolean; value?: unknown } {
+  if (typeof row !== 'object' || row === null) return { claimed: false };
+  const record = row as Record<string, unknown>;
+  const direct = ownDataClaim(record, field);
+  if (direct.claimed) return direct;
+  const totals = ownDataValue(record, 'totals');
+  if (typeof totals !== 'object' || totals === null) return { claimed: false };
+  return ownDataClaim(totals as Record<string, unknown>, field);
+}
+
 function isEvidenceValue(value: unknown): value is string | number {
   return (
     (typeof value === 'number' && Number.isFinite(value)) ||
     (typeof value === 'string' && value.length > 0 && Buffer.byteLength(value, 'utf8') <= INLINE_MAX_OBJECT_BYTES_V1)
   );
+}
+
+function isZeroEvidenceValue(value: string | number): boolean {
+  return typeof value === 'number' ? value === 0 : /^-?0(?:\.0+)?$/.test(value);
 }
 
 function rowHasDimension(row: unknown, dimension: string): boolean {
@@ -804,6 +1227,13 @@ function isRows(value: InlineReportingDeliveryResultV1): value is readonly unkno
 function ownDataValue(record: Record<string, unknown>, field: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(record, field);
   return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+}
+
+function ownDataClaim(record: Record<string, unknown>, field: string): { claimed: boolean; value?: unknown } {
+  const descriptor = Object.getOwnPropertyDescriptor(record, field);
+  return descriptor && 'value' in descriptor && descriptor.value !== undefined
+    ? { claimed: true, value: descriptor.value }
+    : { claimed: false };
 }
 
 function rowCurrency(row: unknown): string | undefined {
@@ -826,34 +1256,62 @@ function rowIsUnavailable(row: unknown): boolean {
 function projectEvidenceRow(
   row: unknown,
   request: ReportingSourceSliceRequestV1,
-  consumeBudget: (upperBound: number) => void
+  consumeBudget: (upperBound: number) => void,
+  options: Readonly<{
+    allowMissingMetrics: boolean;
+    allowMissingDimensions: boolean;
+    strictMetricClaims: boolean;
+    includeDimensions: boolean;
+  }>
 ): Record<string, unknown> {
   if (typeof row !== 'object' || row === null || Array.isArray(row)) throw new TypeError('Invalid row');
   const record = row as Record<string, unknown>;
   const projected: Record<string, unknown> = { media_buy_id: rowMediaBuyId(row) };
-  for (const dimension of request.requestedDimensions) {
-    if (dimension === 'media_buy_id') continue;
-    const value = rowFieldValue(record, dimension);
-    if (!isEvidenceValue(value)) throw new TypeError('Invalid dimension evidence');
-    consumeBudget(jsonEvidenceUpperBound(value));
-    projected[dimension] = value;
+  if (options.includeDimensions) {
+    for (const dimension of request.requestedDimensions) {
+      if (dimension === 'media_buy_id') continue;
+      const value = rowFieldValue(record, dimension);
+      if (!isEvidenceValue(value)) {
+        if (options.allowMissingDimensions) continue;
+        throw new TypeError('Invalid dimension evidence');
+      }
+      consumeBudget(jsonEvidenceUpperBound(value));
+      projected[dimension] = value;
+    }
   }
   const totals = ownDataValue(record, 'totals');
+  const totalsRecord = typeof totals === 'object' && totals !== null ? (totals as Record<string, unknown>) : undefined;
   const projectedTotals: Record<string, unknown> = {};
   for (const metric of request.requestedMetrics) {
-    const direct = ownDataValue(record, metric);
-    if (isEvidenceValue(direct)) {
-      consumeBudget(jsonEvidenceUpperBound(direct));
-      projected[metric] = direct;
-      continue;
+    let value: unknown;
+    let directValue = false;
+    if (options.strictMetricClaims) {
+      const direct = ownDataClaim(record, metric);
+      if (direct.claimed) {
+        if (!isEvidenceValue(direct.value)) throw new TypeError('Invalid metric evidence');
+        value = direct.value;
+        directValue = true;
+      } else if (totalsRecord) {
+        const nested = ownDataClaim(totalsRecord, metric);
+        if (nested.claimed && !isEvidenceValue(nested.value)) throw new TypeError('Invalid metric evidence');
+        value = nested.value;
+      }
+    } else {
+      const direct = ownDataValue(record, metric);
+      if (isEvidenceValue(direct)) {
+        value = direct;
+        directValue = true;
+      } else if (totalsRecord) {
+        value = ownDataValue(totalsRecord, metric);
+      }
     }
-    const total =
-      typeof totals === 'object' && totals !== null
-        ? ownDataValue(totals as Record<string, unknown>, metric)
-        : undefined;
-    if (!isEvidenceValue(total)) throw new TypeError('Invalid metric evidence');
-    consumeBudget(jsonEvidenceUpperBound(total));
-    projectedTotals[metric] = total;
+    if (!isEvidenceValue(value)) {
+      if (options.allowMissingMetrics) continue;
+      throw new TypeError('Invalid metric evidence');
+    }
+    consumeBudget(jsonEvidenceUpperBound(value));
+    if (directValue) projected[metric] = value;
+    else projectedTotals[metric] = value;
   }
   if (Object.keys(projectedTotals).length > 0) projected.totals = projectedTotals;
   return projected;

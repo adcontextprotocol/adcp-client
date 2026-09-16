@@ -7,6 +7,7 @@ const {
   parseVerifiedReportingSourceManifestV1,
   redactedReportingSourceOfferingV1,
   redactedReportingSourceRequestV1,
+  reportingCoverageDenominatorFingerprintV1,
   runReportingSourceReplayConformanceV1,
   validateReportingSourceFailureV1,
 } = require('../../dist/lib/reporting/source/index.js');
@@ -17,6 +18,20 @@ function request(sourceExecutionKey) {
 
 function context() {
   return { signal: new AbortController().signal };
+}
+
+function presentAvailability(input) {
+  return {
+    version: '1.0',
+    cells: input.constituents.flatMap(constituent =>
+      input.requested_metrics.map(metric => ({
+        constituent_id: constituent.constituent_id,
+        metric,
+        status: 'present',
+        data_through: input.end_date,
+      }))
+    ),
+  };
 }
 
 describe('createInlineReportingSourceExecutor', () => {
@@ -45,7 +60,586 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(calls[0].input.start_date, '2026-09-01');
     assert.equal(calls[0].input.end_date, '2026-09-02');
     assert.equal(calls[0].input.source_read_cutoff_at, slice.period.sourceReadCutoffAt);
+    assert.deepEqual(calls[0].input.constituents, [
+      { constituent_id: 'fixture-constituent', media_buy_id: 'fixture-media-buy' },
+    ]);
     assert.deepEqual(calls[0].scope, slice.sourceScope);
+  });
+
+  test('projects independent metric cells and offering-owned semantic identities', async () => {
+    let calls = 0;
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.metrics.push(
+      {
+        ...offering.metrics[0],
+        name: 'clicks',
+        semanticContractId: 'delivery.clicks',
+      },
+      {
+        ...offering.metrics[0],
+        name: 'viewability',
+        semanticContractId: 'delivery.viewability',
+      },
+      {
+        ...offering.metrics[0],
+        name: 'completed_views',
+        semanticContractId: 'delivery.completed_views',
+      }
+    );
+    const source = createInlineReportingSourceExecutor(input => {
+      calls += 1;
+      return {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', clicks: 0 }],
+        availability_evidence: {
+          version: '1.0',
+          cells: [
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'impressions',
+              status: 'present',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'spend',
+              status: 'present',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'clicks',
+              status: 'explicit_zero',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'viewability',
+              status: 'delayed',
+              reason: 'Provider has not closed viewability processing',
+              data_through: input.start_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'completed_views',
+              status: 'unsupported',
+              reason: 'Inventory does not support completed views',
+            },
+          ],
+        },
+      };
+    }, offering);
+    const slice = request('fixture-inline-mixed-cells');
+    slice.requestedMetrics.push('clicks', 'viewability', 'completed_views');
+    slice.coverage.expected = 'partial';
+    const manifest = await runReportingSourceReplayConformanceV1({
+      level: 'basic',
+      executor: source,
+      request: slice,
+      objectReader: source,
+    });
+
+    assert.equal(manifest.coverage.status, 'partial');
+    assert.equal(manifest.coverage.constituents[0].status, 'partial');
+    assert.equal(manifest.explicitZero, false);
+    assert.deepEqual(
+      manifest.metricAvailability.map(cell => [cell.metric, cell.status]),
+      [
+        ['impressions', 'present'],
+        ['spend', 'present'],
+        ['clicks', 'explicit_zero'],
+        ['viewability', 'delayed'],
+        ['completed_views', 'unsupported'],
+      ]
+    );
+    assert.equal(
+      manifest.metricAvailability.find(cell => cell.metric === 'clicks').semanticContractId,
+      'delivery.clicks'
+    );
+    assert.equal(
+      manifest.metricAvailability.find(cell => cell.metric === 'viewability').dataThrough,
+      slice.period.start
+    );
+    assert.equal(calls, 1, 'availability evidence is sealed once and replayed byte-for-byte');
+  });
+
+  test('canonicalizes adopter cell order before hashing and roll-up', async () => {
+    const buildSource = reverse =>
+      createInlineReportingSourceExecutor(input => {
+        const evidence = presentAvailability(input);
+        if (reverse) evidence.cells.reverse();
+        return {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+          availability_evidence: evidence,
+        };
+      }, redactedReportingSourceOfferingV1);
+    const slice = request('fixture-inline-canonical-cell-order');
+    const left = await buildSource(false).execute(slice, context());
+    const right = await buildSource(true).execute(slice, context());
+    assert.equal(left.ok, true);
+    assert.equal(right.ok, true);
+    const leftManifest = parseVerifiedReportingSourceManifestV1(left.response.manifest, left.manifestBytes, 'basic');
+    const rightManifest = parseVerifiedReportingSourceManifestV1(right.response.manifest, right.manifestBytes, 'basic');
+    assert.equal(leftManifest.publication.contentFingerprint, rightManifest.publication.contentFingerprint);
+    assert.deepEqual(
+      rightManifest.metricAvailability.map(cell => cell.metric),
+      slice.requestedMetrics
+    );
+  });
+
+  test('seals evidenced empty periods only when zero and unavailable claims remain coherent', async () => {
+    for (const item of [
+      {
+        key: 'explicit-zero',
+        status: 'explicit_zero',
+        cell: (input, metric) => ({
+          constituent_id: input.constituents[0].constituent_id,
+          metric,
+          status: 'explicit_zero',
+          data_through: input.end_date,
+        }),
+        coverage: 'full',
+        explicitZero: true,
+      },
+      {
+        key: 'delayed',
+        status: 'delayed',
+        cell: (input, metric) => ({
+          constituent_id: input.constituents[0].constituent_id,
+          metric,
+          status: 'delayed',
+          reason: 'Provider processing is delayed',
+        }),
+        coverage: 'none',
+        explicitZero: false,
+      },
+      ...['unsupported', 'missing', 'stale', 'partial'].map(status => ({
+        key: status,
+        status,
+        cell: (input, metric) => ({
+          constituent_id: input.constituents[0].constituent_id,
+          metric,
+          status,
+          reason: `Provider reports ${status} metric availability`,
+        }),
+        coverage: status === 'partial' ? 'partial' : 'none',
+        explicitZero: false,
+      })),
+    ]) {
+      const source = createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [],
+          availability_evidence: {
+            version: '1.0',
+            cells: input.requested_metrics.map(metric => item.cell(input, metric)),
+          },
+        }),
+        redactedReportingSourceOfferingV1
+      );
+      const slice = request(`fixture-inline-evidenced-empty-${item.key}`);
+      if (item.coverage !== 'full') slice.coverage.expected = 'partial';
+      const result = await source.execute(slice, context());
+      assert.equal(result.ok, true);
+      const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+      assert.equal(manifest.coverage.status, item.coverage);
+      assert.equal(manifest.coverage.constituents[0].status, item.status);
+      assert.equal(manifest.explicitZero, item.explicitZero);
+    }
+  });
+
+  test('rejects mixed available and unavailable empty evidence and retries full no-coverage requests', async () => {
+    const mixed = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [],
+        availability_evidence: {
+          version: '1.0',
+          cells: [
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: input.requested_metrics[0],
+              status: 'explicit_zero',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: input.requested_metrics[1],
+              status: 'delayed',
+              reason: 'Provider processing is delayed',
+            },
+          ],
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const mixedSlice = request('fixture-inline-empty-mixed-availability');
+    mixedSlice.coverage.expected = 'partial';
+    assert.equal(
+      validateReportingSourceFailureV1(await mixed.execute(mixedSlice, context()), 'INTEGRITY_FAILED').code,
+      'INTEGRITY_FAILED'
+    );
+
+    const delayed = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [],
+        availability_evidence: {
+          version: '1.0',
+          cells: input.requested_metrics.map(metric => ({
+            constituent_id: input.constituents[0].constituent_id,
+            metric,
+            status: 'delayed',
+            reason: 'Provider processing is delayed',
+          })),
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await delayed.execute(request('fixture-inline-full-no-coverage'), context()),
+        'PARTIAL_RESULT'
+      ).code,
+      'PARTIAL_RESULT'
+    );
+  });
+
+  test('retains partial and stale row values without claiming complete availability', async () => {
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: {
+          version: '1.0',
+          cells: [
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'impressions',
+              status: 'partial',
+              reason: 'Provider returned an incomplete impression total',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'spend',
+              status: 'stale',
+              reason: 'Provider spend watermark is stale',
+              data_through: input.end_date,
+            },
+          ],
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-partial-stale-values');
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'partial');
+    assert.deepEqual(
+      manifest.metricAvailability.map(cell => cell.status),
+      ['partial', 'stale']
+    );
+  });
+
+  test('keeps partial provider support scoped to the affected constituent and metric', async () => {
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' },
+          { media_buy_id: 'fixture-media-buy-2', impressions: 20 },
+        ],
+        availability_evidence: {
+          version: '1.0',
+          cells: input.constituents.flatMap(constituent =>
+            input.requested_metrics.map(metric =>
+              constituent.media_buy_id === 'fixture-media-buy-2' && metric === 'spend'
+                ? {
+                    constituent_id: constituent.constituent_id,
+                    metric,
+                    status: 'unsupported',
+                    reason: 'Spend is unavailable for this inventory',
+                  }
+                : {
+                    constituent_id: constituent.constituent_id,
+                    metric,
+                    status: 'present',
+                    data_through: input.end_date,
+                  }
+            )
+          ),
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-constituent-support');
+    const second = structuredClone(slice.coverage.constituents[0]);
+    second.constituentId = 'fixture-constituent-2';
+    second.mediaBuyId = 'fixture-media-buy-2';
+    second.productBinding.bindingId = 'fixture-product-binding-2';
+    second.productBinding.mediaBuyId = 'fixture-media-buy-2';
+    slice.coverage.constituents.push(second);
+    slice.coverage.mediaBuyIds.push('fixture-media-buy-2');
+    slice.coverage.denominatorFingerprint = reportingCoverageDenominatorFingerprintV1(slice.coverage.constituents);
+    const fullResult = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(fullResult, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+    slice.identity.sourceExecutionKey = 'fixture-inline-constituent-support-partial';
+    slice.coverage.expected = 'partial';
+
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.deepEqual(
+      manifest.coverage.constituents.map(constituent => [constituent.constituentId, constituent.status]),
+      [
+        ['fixture-constituent', 'present'],
+        ['fixture-constituent-2', 'partial'],
+      ]
+    );
+    assert.equal(
+      manifest.metricAvailability.find(
+        cell => cell.constituentId === 'fixture-constituent-2' && cell.metric === 'spend'
+      ).status,
+      'unsupported'
+    );
+  });
+
+  test('rejects malformed, duplicate, incomplete, and out-of-scope availability evidence', async () => {
+    const mutations = [
+      evidence => {
+        evidence.version = '2.0';
+      },
+      evidence => {
+        evidence.cells.push(structuredClone(evidence.cells[0]));
+      },
+      evidence => {
+        evidence.cells.pop();
+      },
+      evidence => {
+        evidence.cells[0].constituent_id = 'unrequested-constituent';
+      },
+      evidence => {
+        evidence.cells[0].metric = 'unrequested_metric';
+      },
+      evidence => {
+        delete evidence.cells[0].data_through;
+      },
+      evidence => {
+        evidence.cells[0].reason = 'Present cannot also be unavailable';
+      },
+      evidence => {
+        evidence.cells[0] = {
+          constituent_id: 'fixture-constituent',
+          metric: 'impressions',
+          status: 'delayed',
+        };
+      },
+      evidence => {
+        evidence.cells[0].data_through = 'not-an-instant';
+      },
+      evidence => {
+        evidence.cells[0].data_through = '2099-01-01T00:00:00.000Z';
+      },
+      evidence => {
+        evidence.cells[0].extra = true;
+      },
+      evidence => {
+        evidence.cells = Array(1_001).fill(evidence.cells[0]);
+      },
+    ];
+    for (const [index, mutate] of mutations.entries()) {
+      const source = createInlineReportingSourceExecutor(input => {
+        const availability_evidence = presentAvailability(input);
+        mutate(availability_evidence);
+        return {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+          availability_evidence,
+        };
+      }, redactedReportingSourceOfferingV1);
+      const result = await source.execute(request(`fixture-inline-invalid-evidence-${index}`), context());
+      assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    }
+  });
+
+  test('fails closed when rows contradict unavailable or explicit-zero cells', async () => {
+    for (const [index, item] of [
+      { status: 'unsupported', reason: 'Metric is unsupported', value: 10 },
+      { status: 'delayed', reason: 'Metric is delayed', value: 10 },
+      { status: 'missing', reason: 'Metric is missing', value: 10 },
+      { status: 'unsupported', reason: 'Metric is unsupported', value: false },
+      { status: 'explicit_zero', data_through: '2026-09-02', value: 1 },
+      { status: 'explicit_zero', data_through: '2026-09-02', value: undefined },
+    ].entries()) {
+      const source = createInlineReportingSourceExecutor(input => {
+        const availability_evidence = presentAvailability(input);
+        availability_evidence.cells[0] = {
+          constituent_id: input.constituents[0].constituent_id,
+          metric: 'impressions',
+          status: item.status,
+          ...(item.reason ? { reason: item.reason } : {}),
+          ...(item.data_through ? { data_through: item.data_through } : {}),
+        };
+        return {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: item.value, spend: '1.25' }],
+          availability_evidence,
+        };
+      }, redactedReportingSourceOfferingV1);
+      const result = await source.execute(request(`fixture-inline-row-evidence-conflict-${index}`), context());
+      assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+    }
+  });
+
+  test('does not treat a present cell with missing row values as complete', async () => {
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10 }],
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-present-missing-value'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'PARTIAL_RESULT').code, 'PARTIAL_RESULT');
+  });
+
+  test('requires positive elapsed watermarks for available cells backed by rows', async () => {
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: {
+          ...presentAvailability(input),
+          cells: presentAvailability(input).cells.map(cell => ({ ...cell, data_through: input.start_date })),
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await source.execute(request('fixture-inline-zero-width-cell-watermark'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+  });
+
+  test('keeps missing dimensions retryable when availability evidence is supplied', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    offering.dimensions.push({ name: 'region', support: 'exact' });
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        availability_evidence: presentAvailability(input),
+      }),
+      offering
+    );
+    const slice = request('fixture-inline-evidenced-missing-dimension');
+    slice.requestedDimensions.push('region');
+    assert.equal(
+      validateReportingSourceFailureV1(await source.execute(slice, context()), 'PARTIAL_RESULT').code,
+      'PARTIAL_RESULT'
+    );
+  });
+
+  test('validates the same row snapshot that is staged and rejects accessor-backed row collections', async () => {
+    let spendReads = 0;
+    const row = new Proxy(
+      { media_buy_id: 'fixture-media-buy', impressions: 10 },
+      {
+        getOwnPropertyDescriptor(target, property) {
+          if (property === 'spend') {
+            spendReads += 1;
+            return spendReads === 1
+              ? undefined
+              : { configurable: true, enumerable: true, writable: true, value: '999.99' };
+          }
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      }
+    );
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [row],
+        availability_evidence: {
+          version: '1.0',
+          cells: [
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'impressions',
+              status: 'present',
+              data_through: input.end_date,
+            },
+            {
+              constituent_id: input.constituents[0].constituent_id,
+              metric: 'spend',
+              status: 'missing',
+              reason: 'Provider did not return spend',
+            },
+          ],
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-single-row-snapshot');
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    const object = manifest.objects[0];
+    const bytes = await source.read({
+      sourceScope: slice.sourceScope,
+      account: slice.account,
+      delivery_config_id: slice.delivery_config_id,
+      delivery_config_version: slice.delivery_config_version,
+      report_definition_id: slice.report_definition_id,
+      reporting_obligation_id: slice.reporting_obligation_id,
+      objectRef: object.objectRef,
+      objectGeneration: object.objectGeneration,
+      maxBytes: object.byteCount,
+      signal: context().signal,
+    });
+    assert.equal(spendReads, 1);
+    assert.equal(Object.hasOwn(JSON.parse(Buffer.from(bytes).toString('utf8').trim()), 'spend'), false);
+
+    const accessorSource = createInlineReportingSourceExecutor(input => {
+      const response = {
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+      };
+      Object.defineProperty(response, 'reporting_rows', {
+        enumerable: true,
+        get: () => [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+      });
+      return response;
+    }, redactedReportingSourceOfferingV1);
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await accessorSource.execute(request('fixture-inline-accessor-row-collection'), context()),
+        'SOURCE_PERMANENT'
+      ).code,
+      'SOURCE_PERMANENT'
+    );
   });
 
   test('requires explicit temporal evidence for a partial-period source cutoff', async () => {
@@ -120,6 +714,68 @@ describe('createInlineReportingSourceExecutor', () => {
       signal: context().signal,
     });
     assert.equal(JSON.parse(Buffer.from(bytes).toString('utf8').trim()).region, 'fixture-region');
+  });
+
+  test('preserves legacy fallback from invalid direct fields to valid nested totals', async () => {
+    const source = createInlineReportingSourceExecutor(
+      () => [
+        {
+          media_buy_id: 'fixture-media-buy',
+          impressions: null,
+          totals: { impressions: 10, spend: '1.25' },
+        },
+      ],
+      redactedReportingSourceOfferingV1
+    );
+    const slice = request('fixture-inline-legacy-nested-fallback');
+    const result = await source.execute(slice, context());
+    assert.equal(result.ok, true);
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    const object = manifest.objects[0];
+    const bytes = await source.read({
+      sourceScope: slice.sourceScope,
+      account: slice.account,
+      delivery_config_id: slice.delivery_config_id,
+      delivery_config_version: slice.delivery_config_version,
+      report_definition_id: slice.report_definition_id,
+      reporting_obligation_id: slice.reporting_obligation_id,
+      objectRef: object.objectRef,
+      objectGeneration: object.objectGeneration,
+      maxBytes: object.byteCount,
+      signal: context().signal,
+    });
+    assert.deepEqual(JSON.parse(Buffer.from(bytes).toString('utf8').trim()), {
+      media_buy_id: 'fixture-media-buy',
+      totals: { impressions: 10, spend: '1.25' },
+    });
+  });
+
+  test('accepts nonempty rows when every evidenced metric is explicitly zero', async () => {
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 0, spend: '0.00' }],
+        availability_evidence: {
+          ...presentAvailability(input),
+          cells: presentAvailability(input).cells.map(cell => ({
+            ...cell,
+            status: 'explicit_zero',
+          })),
+        },
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const manifest = await runReportingSourceReplayConformanceV1({
+      level: 'basic',
+      executor: source,
+      request: request('fixture-inline-row-level-zero'),
+      objectReader: source,
+    });
+    assert.equal(manifest.rowCount, 1);
+    assert.equal(manifest.explicitZero, false);
+    assert.equal(manifest.coverage.constituents[0].status, 'explicit_zero');
+    assert.ok(manifest.metricAvailability.every(cell => cell.status === 'explicit_zero'));
   });
 
   test('treats [] as an observed zero-row period', async () => {
@@ -480,6 +1136,75 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(manifest.finality.evidence.basis, 'source_declared');
   });
 
+  test('rejects authoritative final claims with incomplete or nonfinal metric evidence', async () => {
+    const { cadence, ...offeringBase } = redactedReportingSourceOfferingV1;
+    const offering = {
+      ...offeringBase,
+      publicationClass: 'AUTHORITATIVE',
+      revisionSemantics: 'official_with_declared_correction_policy',
+      finalization: {
+        schedule: { sourceLocalReadyTime: '00:00', daysAfterPeriodEnd: 1 },
+        expectedAvailabilityLag: 'PT1H',
+        worstCaseAvailabilityLag: 'P1D',
+        triggerSupport: cadence.triggerSupport,
+        correctionWindow: 'P1D',
+        correctionPolicy: 'none',
+      },
+    };
+    const cases = [
+      {
+        code: 'PARTIAL_RESULT',
+        mutate: evidence => {
+          evidence.cells[1] = {
+            constituent_id: 'fixture-constituent',
+            metric: 'spend',
+            status: 'delayed',
+            reason: 'Spend close is delayed',
+          };
+        },
+      },
+      {
+        code: 'PARTIAL_RESULT',
+        mutate: evidence => {
+          evidence.cells[1].data_through = '2026-09-01T12:00:00.000Z';
+        },
+      },
+      {
+        code: 'INTEGRITY_FAILED',
+        mutate: evidence => {
+          evidence.cells.pop();
+        },
+      },
+    ];
+    for (const [index, item] of cases.entries()) {
+      const source = createInlineReportingSourceExecutor(input => {
+        const availability_evidence = presentAvailability(input);
+        item.mutate(availability_evidence);
+        return {
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            {
+              media_buy_id: 'fixture-media-buy',
+              impressions: 1,
+              ...(availability_evidence.cells[1]?.status === 'delayed' ? {} : { spend: '0.10' }),
+            },
+          ],
+          data_through: input.end_date,
+          observed_at: input.end_date,
+          is_final: true,
+          notification_type: 'final',
+          availability_evidence,
+        };
+      }, offering);
+      const slice = request(`fixture-inline-authoritative-evidence-${index}`);
+      slice.publicationClass = 'AUTHORITATIVE';
+      slice.finality = { revisionKind: 'authoritative' };
+      const result = await source.execute(slice, context());
+      assert.equal(validateReportingSourceFailureV1(result, item.code).code, item.code);
+    }
+  });
+
   test('rejects requests outside the narrowed inline offering', async () => {
     const source = createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1);
     const slice = request('fixture-inline-unknown-offering');
@@ -607,6 +1332,73 @@ describe('createInlineReportingSourceExecutor', () => {
     }
     ready = true;
     assert.equal((await source.execute(request('fixture-inline-recovered'), context())).ok, true);
+  });
+
+  test('bounds sparse row-by-cell availability verification work', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    for (let index = offering.metrics.length; index < 1_000; index += 1) {
+      offering.metrics.push({
+        ...offering.metrics[0],
+        name: `metric_${String(index).padStart(4, '0')}`,
+        semanticContractId: `delivery.metric_${String(index).padStart(4, '0')}`,
+      });
+    }
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: Array(5_001).fill({ media_buy_id: 'fixture-media-buy' }),
+        availability_evidence: {
+          version: '1.0',
+          cells: input.requested_metrics.map(metric => ({
+            constituent_id: input.constituents[0].constituent_id,
+            metric,
+            status: 'partial',
+            reason: 'Provider returned partial data',
+          })),
+        },
+      }),
+      offering
+    );
+    const slice = request('fixture-inline-row-cell-cap');
+    slice.requestedMetrics = offering.metrics.map(metric => metric.name);
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(result, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
+  });
+
+  test('classifies a bounded but oversized availability manifest as quota exhaustion', async () => {
+    const offering = structuredClone(redactedReportingSourceOfferingV1);
+    for (let index = offering.metrics.length; index < 1_000; index += 1) {
+      offering.metrics.push({
+        ...offering.metrics[0],
+        name: `metric_${String(index).padStart(4, '0')}`,
+        semanticContractId: `delivery.metric_${String(index).padStart(4, '0')}.${'x'.repeat(180)}`,
+        semanticContractVersion: 'v'.repeat(128),
+      });
+    }
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [],
+        availability_evidence: {
+          version: '1.0',
+          cells: input.requested_metrics.map(metric => ({
+            constituent_id: input.constituents[0].constituent_id,
+            metric,
+            status: 'unsupported',
+            reason: 'x'.repeat(512),
+          })),
+        },
+      }),
+      offering
+    );
+    const slice = request('fixture-inline-manifest-cap');
+    slice.requestedMetrics = offering.metrics.map(metric => metric.name);
+    slice.coverage.expected = 'partial';
+    const result = await source.execute(slice, context());
+    assert.equal(validateReportingSourceFailureV1(result, 'QUOTA_EXHAUSTED').code, 'QUOTA_EXHAUSTED');
   });
 
   test('rejects oversized scalar evidence before JSON serialization', async () => {
