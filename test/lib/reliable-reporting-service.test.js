@@ -112,10 +112,16 @@ function authorizedConstituent(accountId) {
 /** A fixture whose offering and resolver agree on one non-UTC source timezone. */
 function zonedFixture(
   timezone,
-  { alignment = 'source_timezone', periodDuration = 'P1D', minimumWindow, periodTimezone } = {}
+  { alignment = 'source_timezone', periodDuration = 'P1D', minimumWindow, periodTimezone, accountResolved } = {}
 ) {
   const zoned = adapter();
-  zoned.sourceOffering.sourceTimezone = { ...zoned.sourceOffering.sourceTimezone, ianaTimezone: timezone };
+  // `account_resolved` leaves the zone unknown until the account is resolved,
+  // so the construction-time gate cannot see it and install-time validation is
+  // what runs. Pinning it instead makes construction the decisive gate.
+  zoned.sourceOffering.sourceTimezone = accountResolved
+    ? { ...zoned.sourceOffering.sourceTimezone, ianaTimezone: undefined }
+    : { ...zoned.sourceOffering.sourceTimezone, ianaTimezone: timezone };
+  if (accountResolved) delete zoned.sourceOffering.sourceTimezone.ianaTimezone;
   if (minimumWindow) {
     zoned.sourceOffering.windowing = { ...zoned.sourceOffering.windowing, minimumWindow };
   }
@@ -123,13 +129,15 @@ function zonedFixture(
   zoned.deliveryOffering.schedule =
     alignment === 'utc'
       ? { ...base, alignment, period_duration: periodDuration }
-      : {
-          ...base,
-          alignment,
-          period_duration: periodDuration,
-          period_timezone_policy: 'fixed',
-          period_timezone: periodTimezone ?? timezone,
-        };
+      : accountResolved
+        ? { ...base, alignment, period_duration: periodDuration, period_timezone_policy: 'account_resolved' }
+        : {
+            ...base,
+            alignment,
+            period_duration: periodDuration,
+            period_timezone_policy: 'fixed',
+            period_timezone: periodTimezone ?? timezone,
+          };
   return serviceFixture({
     adapters: { fixture: zoned },
     resolveSource: account => ({
@@ -823,23 +831,9 @@ describe('ReliableReportingService', () => {
       );
     }
 
-    // UTC-aligned offerings need a zero-offset source timezone.
-    const utcAligned = zonedFixture('Asia/Kolkata', { alignment: 'utc' });
-    await assert.rejects(
-      utcAligned.service.installConfiguration(
-        configuration({
-          expectedSourceTimezone: 'Asia/Kolkata',
-          schedule: {
-            anchor: '2026-09-01T18:30:00.000Z', // Kolkata-local midnight
-            periodMilliseconds: 86_400_000,
-            deliverySlaMilliseconds: 0,
-            recoveryWindowMilliseconds: 86_400_000,
-          },
-        }),
-        context
-      ),
-      /UTC offset is zero/
-    );
+    // UTC-aligned offerings need a zero-offset source timezone, and the zone is
+    // pinned, so this is decidable before the offering is ever published.
+    assert.throws(() => zonedFixture('Asia/Kolkata', { alignment: 'utc' }), /UTC offset is zero/);
 
     // An anchor off the protocol period boundary: the executor refuses every
     // slice, so the generation must never install.
@@ -882,14 +876,20 @@ describe('ReliableReportingService', () => {
 
     // A DST-observing zone: `anchor + n * 24h` drifts off local midnight after
     // the transition, so fixed-length periods cannot express its local days.
-    const dst = zonedFixture('America/New_York');
+    assert.throws(
+      () => zonedFixture('America/New_York'),
+      /UTC offset/,
+      'a pinned DST zone cannot hold local midnight and must not be advertised'
+    );
+
+    // The same zone behind an account_resolved policy is unknown until install,
+    // so install-time validation is what has to catch it.
+    const lateDst = zonedFixture('America/New_York', { accountResolved: true });
     await assert.rejects(
-      dst.service.installConfiguration(
+      lateDst.service.installConfiguration(
         configuration({
           expectedSourceTimezone: 'America/New_York',
           schedule: {
-            // On the zone's own protocol grid (its 1970 origin is 05:00Z under
-            // EST), so the phase is right and only DST behavior is under test.
             anchor: '2026-01-01T05:00:00.000Z',
             periodMilliseconds: 86_400_000,
             deliverySlaMilliseconds: 0,
@@ -898,22 +898,23 @@ describe('ReliableReportingService', () => {
         }),
         context
       ),
-      /UTC offset/,
-      'a DST zone cannot hold local midnight under fixed-length periods'
+      /UTC offset/
     );
 
     // Sub-day windows have no source-local midnight boundary, so the offering
-    // is refused at construction and never reaches capabilities.
+    // is refused at construction and never reaches capabilities. The inline
+    // executor rejects the window first; an injected executor would instead
+    // trip the delivery-offering whole-day gate.
     assert.throws(
       () => zonedFixture('UTC', { periodDuration: 'PT12H', minimumWindow: 'PT12H' }),
-      /not a whole number of source-local days/
+      /whole source-day fixed windows|not a whole number of source-local days/
     );
 
     // A historical anchor whose offset change lands between the anchor and the
     // periods being generated now. Asia/Almaty held UTC+6 through 2023 and
     // moved to UTC+5 on 2024-03-01, so a 2022 generation looks stable for its
     // first year and every currently generated boundary sits at 23:00 local.
-    const almaty = zonedFixture('Asia/Almaty');
+    const almaty = zonedFixture('Asia/Almaty', { accountResolved: true });
     await assert.rejects(
       almaty.service.installConfiguration(
         configuration({
@@ -1248,7 +1249,7 @@ describe('ReliableReportingService', () => {
     // "now + horizon" would put the span end before its start, so the loop body
     // would never run and a DST zone would install.
     for (const timezone of ['America/Santiago', 'Australia/Sydney']) {
-      const zone = zonedFixture(timezone);
+      const zone = zonedFixture(timezone, { accountResolved: true });
       await assert.rejects(
         zone.service.installConfiguration(
           configuration({
@@ -1675,6 +1676,160 @@ describe('ReliableReportingService', () => {
     optimistic.deliveryOffering.schedule.delivery_sla = 'PT6H';
     const truthful = serviceFixture({ adapters: { fixture: optimistic } });
     assert.equal(truthful.service.capabilities.offerings[0].schedule.delivery_sla, 'PT6H');
+  });
+
+  test('validates delivery metadata against the executor offering that actually routes', async () => {
+    // An injected executor answering the declared ID with a different contract
+    // would advertise definition A while storing and requesting B.
+    const declared = adapter();
+    const impostorOffering = structuredClone(declared.sourceOffering);
+    impostorOffering.contract = {
+      ...impostorOffering.contract,
+      report_definition_id: 'delivery-daily-v2-impostor',
+    };
+    const impostor = createInlineReportingSourceExecutor(declared.fetchSlice, impostorOffering);
+    assert.throws(
+      () =>
+        serviceFixture({
+          adapters: {
+            fixture: {
+              sourceOffering: declared.sourceOffering,
+              deliveryOffering: declared.deliveryOffering,
+              executor: impostor,
+            },
+          },
+        }),
+      /executor offering contract differs from its declared source offering/
+    );
+
+    // An executor exposing the declared ID more than once is equally ambiguous.
+    const duplicate = {
+      capabilities: {
+        ...impostor.capabilities,
+        offerings: [structuredClone(declared.sourceOffering), structuredClone(declared.sourceOffering)],
+      },
+      execute: impostor.execute,
+      read: impostor.read,
+    };
+    assert.throws(
+      () =>
+        serviceFixture({
+          adapters: {
+            fixture: {
+              sourceOffering: declared.sourceOffering,
+              deliveryOffering: declared.deliveryOffering,
+              executor: duplicate,
+            },
+          },
+        }),
+      /exactly one offering with its declared ID/
+    );
+  });
+
+  test('keeps a 130-period feed producing under an explicit replay retention policy', async () => {
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = period => `feed-period-${String(period).padStart(4, '0')}`;
+    const executor = options =>
+      createInlineReportingSourceExecutor(() => [], structuredClone(redactedReportingSourceOfferingV1), options);
+
+    // Default: every admitted execution is retained, so an admitted key stays
+    // replayable and the scope terminalizes at 100 periods.
+    const bounded = executor(undefined);
+    let boundedFailures = 0;
+    let firstFailure;
+    for (let period = 0; period < 130; period += 1) {
+      const result = await bounded.execute(
+        redactedReportingSourceRequestV1({ sourceExecutionKey: key(period) }),
+        ctx()
+      );
+      if (!result.ok) {
+        boundedFailures += 1;
+        firstFailure ??= { period, code: result.error.code };
+      }
+    }
+    assert.deepEqual(firstFailure, { period: 100, code: 'QUOTA_EXHAUSTED' });
+    assert.equal(boundedFailures, 30, 'periods 101-130 terminalize without an explicit policy');
+
+    // Opting in keeps the same feed producing for all 130 periods.
+    const retained = executor({ replayRetention: { evictSettled: true } });
+    for (let period = 0; period < 130; period += 1) {
+      const result = await retained.execute(
+        redactedReportingSourceRequestV1({ sourceExecutionKey: key(period) }),
+        ctx()
+      );
+      assert.equal(result.ok, true, `period ${period} must still produce`);
+    }
+
+    // The service surfaces the same policy on its adapter.
+    const { service } = serviceFixture({
+      adapters: { fixture: { ...adapter(), inlineReplayRetention: { evictSettled: true } } },
+    });
+    const installed = await service.installConfiguration(configuration(), {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    assert.equal(installed.account.account_id, 'account-a');
+  });
+
+  test('keeps a legacy generation projecting the identity it was installed with', async () => {
+    const { service, store } = serviceFixture();
+    const now = new Date();
+    const boundary = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const anchor = new Date(boundary - 86_400_000).toISOString();
+    const input = configuration();
+    input.schedule.anchor = anchor;
+    const installed = await service.installConfiguration(input, {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    store.configurations.get(installed.configurationId).installedAt = anchor;
+    await service.runCycle({ accountId: 'account-a', maxObligations: 1, maxWorkerIterations: 1 });
+
+    // Strip the stored identity the way a pre-existing generation has it. Such
+    // a generation was installed as billing_cycle and has always been projected
+    // that way; re-deriving from its boundaries would call it `utc` and drop
+    // the period_anchor its immutable schedule match depends on.
+    store.configurations.get(installed.configurationId).schedule.alignment = undefined;
+    for (const obligation of store.obligations.values()) {
+      delete obligation.schedule.alignment;
+      delete obligation.schedule.periodDuration;
+      delete obligation.schedule.periodTimezone;
+      delete obligation.schedule.deliverySlaDuration;
+    }
+
+    const status = await service.platform.getReportingStatus(
+      { account: { account_id: 'account-a' }, view: 'periods' },
+      { account: { id: 'account-a' }, agent: { agent_url: 'https://buyer.example' } }
+    );
+    const [obligation] = status.periods;
+    assert.equal(obligation.schedule.alignment, 'billing_cycle');
+    assert.equal(obligation.schedule.period_anchor, anchor, 'billing_cycle requires its anchor');
+    assert.equal(obligation.schedule.period_timezone, 'UTC', 'billing_cycle requires its timezone');
+  });
+
+  test('catches a source timezone that changed and changed back inside the span', async () => {
+    // Asia/Tehran ran +04:30 through the summers of 2021 and 2022 and has been
+    // a constant +03:30 since. Both transitions sit far outside any window
+    // around today, and the offset today equals the offset at a 2021 anchor —
+    // so only a scan of the whole span from the anchor sees them.
+    const tehran = zonedFixture('Asia/Tehran', { accountResolved: true });
+    const origin = reportingScheduleOriginV1('source_timezone', 'Asia/Tehran');
+    const target = Date.parse('2021-01-15T00:00:00.000Z');
+    const anchorMs = origin + Math.ceil((target - origin) / 86_400_000) * 86_400_000;
+    await assert.rejects(
+      tehran.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: 'Asia/Tehran',
+          schedule: {
+            anchor: new Date(anchorMs).toISOString(),
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        { account: { id: 'account-a', ctx_metadata: {} } }
+      ),
+      /changes its UTC offset/,
+      'a change-and-return inside the span must not pass'
+    );
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {

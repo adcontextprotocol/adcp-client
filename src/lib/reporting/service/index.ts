@@ -21,6 +21,7 @@ import {
   type ReportingProducerV1,
   type ReportingSourceWithReaderV1,
 } from '../ledger';
+import type { InlineReportingReplayRetentionV1 } from '../source';
 import {
   ReportingCoverageConstituentIdentityV1Schema,
   SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1,
@@ -44,11 +45,18 @@ export interface ReliableReportingAdapterV1 {
   readonly sourceOffering: ReportingSourceOfferingV1;
   readonly deliveryOffering: ReportingDeliveryOffering;
   /**
-   * Adapted through the bounded inline executor, whose replay table is capped
-   * per scope. Reclamation keeps a long-lived feed running, but a deployment
-   * that needs durable cross-restart replay should supply `executor` instead.
+   * Adapted through the bounded inline executor, which retains every admitted
+   * execution so an admitted key stays replayable — and therefore caps a scope
+   * at 100 slices. A scheduled feed that outlives that ceiling must supply
+   * `executor`, or opt in to `inlineReplayRetention`; without one of those it
+   * terminalizes with QUOTA_EXHAUSTED and does not recover.
    */
   readonly fetchSlice?: InlineReportingDeliveryFetchV1;
+  /**
+   * Explicit bounded replay window for the inline executor. Trades the lifetime
+   * replay guarantee for a feed that keeps producing; never applied silently.
+   */
+  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;
   /**
    * Escape hatch for feeds the inline executor cannot serve: pagination,
    * durable staged objects, or replay that must survive process restarts.
@@ -232,20 +240,33 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     const deliveryOffering = ReportingDeliveryOfferingSchema.parse(
       structuredClone(adapter.deliveryOffering)
     ) as ReportingDeliveryOffering;
-    validateDeliveryOffering(sourceOffering, deliveryOffering);
     if (offerings.has(sourceOffering.offeringId)) throw new TypeError('Reporting offering IDs must be unique');
     if ((adapter.fetchSlice === undefined) === (adapter.executor === undefined)) {
       throw new TypeError('Each reporting adapter requires exactly one of fetchSlice or executor');
     }
-    const source = adapter.executor ?? createInlineReportingSourceExecutor(adapter.fetchSlice!, sourceOffering);
-    // The inline executor narrows the offering it will actually honor — most
-    // importantly to `media_buy` constituent applicability. Publish and validate
-    // against that narrowed view, or a `package_item` denominator installs
-    // cleanly against the declared applicability and then fails every execute.
-    const routedOffering = source.capabilities.offerings.find(
+    const source =
+      adapter.executor ??
+      createInlineReportingSourceExecutor(adapter.fetchSlice!, sourceOffering, {
+        ...(adapter.inlineReplayRetention ? { replayRetention: adapter.inlineReplayRetention } : {}),
+      });
+    // The executor's own offering is the one that governs every request and is
+    // stored on each generation, so it — not the declaration beside it — is
+    // what the delivery metadata must be validated against. Matching on ID
+    // alone would let an injected executor answer with a different contract
+    // under the same ID: advertise definition A, store and request B.
+    const routed = source.capabilities.offerings.filter(
       candidate => candidate.offeringId === sourceOffering.offeringId
     );
-    if (!routedOffering) throw new TypeError('Reporting adapter executor did not expose its own offering');
+    if (routed.length !== 1) {
+      throw new TypeError('Reporting adapter executor must expose exactly one offering with its declared ID');
+    }
+    const routedOffering = routed[0]!;
+    if (canonicalize(routedOffering.contract) !== canonicalize(sourceOffering.contract)) {
+      throw new TypeError('Reporting adapter executor offering contract differs from its declared source offering');
+    }
+    // Validated against the routed offering, so the narrowing the inline
+    // executor applies (media_buy applicability, one format) is authoritative.
+    validateDeliveryOffering(routedOffering, deliveryOffering);
     sources.set(adapterId, source);
     offerings.set(routedOffering.offeringId, routedOffering);
     deliveryOfferings.push(deliveryOffering);
@@ -805,6 +826,24 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
       );
     }
   }
+  // When the zone is pinned by either offering, its feasibility is decidable
+  // here. Publishing a fixed America/New_York schedule, or `utc` alignment over
+  // a nonzero-offset zone, advertises a schedule every installation refuses.
+  const pinnedTimezone =
+    delivery.schedule.period_timezone_policy === 'fixed'
+      ? delivery.schedule.period_timezone
+      : source.sourceTimezone.ianaTimezone;
+  if (pinnedTimezone) {
+    const now = Date.now();
+    if (delivery.schedule.alignment === 'utc' && reportingUtcOffsetMinutesV1(pinnedTimezone, now) !== 0) {
+      throw new TypeError('UTC-aligned reporting requires a source timezone whose UTC offset is zero');
+    }
+    assertConstantUtcOffset(
+      pinnedTimezone,
+      now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS,
+      now + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS
+    );
+  }
   const period = reportingIsoDurationMillisecondsV1(delivery.schedule.period_duration);
   const min = reportingIsoDurationMillisecondsV1(source.windowing.minimumWindow);
   const max = reportingIsoDurationMillisecondsV1(source.windowing.maximumWindow);
@@ -930,8 +969,10 @@ const DAY_MILLISECONDS = 86_400_000;
  * two probes.
  */
 const OFFSET_PROBE_STEP_DAYS = 10;
-/** Periods the planner may still backfill inside a recovery window. */
+/** Construction-time window when no anchor exists yet. */
 const OFFSET_BACKWARD_HORIZON_DAYS = 400;
+/** Bounds the install-time scan; ~57 years of 10-day probes is a few ms. */
+const MAX_OFFSET_SPAN_DAYS = 100 * 365;
 /** Periods the planner will generate before this configuration is revisited. */
 const OFFSET_FORWARD_HORIZON_DAYS = 400;
 
@@ -997,31 +1038,43 @@ function assertSupportedScheduleSemantics(
     );
   }
 
-  // Only the window the planner actually touches needs scanning. The boundary
-  // check below is what catches an offset change between the origin and today.
+  // Scan the whole span the planner can generate obligations across, from the
+  // anchor through the forward horizon. A window around today would miss a zone
+  // that changed and changed back: today's offset matches the anchor's, every
+  // boundary the window samples is local midnight, and the periods in between
+  // silently land at 01:00 local while the planner still schedules them.
   const now = Date.now();
-  const spanStartMs = Math.max(anchorMs, now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS);
-  // Anchor from the later of now and the anchor itself. Ending the span at
-  // `now + horizon` would put spanEnd before spanStart for a future-dated
-  // generation, so the scan body would never run and a DST zone would install.
   const spanEndMs = Math.max(now, anchorMs) + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
-  const ordinal = Math.ceil((spanStartMs - originMs) / schedule.periodMilliseconds);
-  const firstBoundaryMs = originMs + ordinal * schedule.periodMilliseconds;
-  if (!reportingIsSourceLocalMidnightV1(firstBoundaryMs, sourceTimezone)) {
+  if (spanEndMs - anchorMs > MAX_OFFSET_SPAN_DAYS * DAY_MILLISECONDS) {
     throw new TypeError(
-      'Reporting source timezone has changed its UTC offset since the schedule origin; the periods being ' +
-        'generated now do not land on source-local midnight'
+      'Reporting configuration anchor is too far from the operational horizon to verify its source timezone; ' +
+        'anchor the generation on a more recent protocol boundary'
     );
   }
-  const spanOffset = reportingUtcOffsetMinutesV1(sourceTimezone, spanStartMs);
-  for (let instant = spanStartMs; instant < spanEndMs; instant += OFFSET_PROBE_STEP_DAYS * DAY_MILLISECONDS) {
-    if (reportingUtcOffsetMinutesV1(sourceTimezone, instant) !== spanOffset) {
+  assertConstantUtcOffset(sourceTimezone, anchorMs, spanEndMs);
+  if (!reportingIsSourceLocalMidnightV1(anchorMs, sourceTimezone)) {
+    throw new TypeError('Reporting configuration anchor does not land on source-local midnight');
+  }
+}
+
+/**
+ * Refuse a zone whose UTC offset moves anywhere in `[startMs, endMs]`.
+ *
+ * The spec generates calendar durations with local civil-time arithmetic across
+ * transitions; this service multiplies fixed milliseconds. The two agree only
+ * while the offset holds still, so any change in the operational span means
+ * boundaries drift off source-local midnight.
+ */
+function assertConstantUtcOffset(timeZone: string, startMs: number, endMs: number): void {
+  const baseline = reportingUtcOffsetMinutesV1(timeZone, startMs);
+  for (let instant = startMs; instant < endMs; instant += OFFSET_PROBE_STEP_DAYS * DAY_MILLISECONDS) {
+    if (reportingUtcOffsetMinutesV1(timeZone, instant) !== baseline) {
       throw new TypeError(
         'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
       );
     }
   }
-  if (reportingUtcOffsetMinutesV1(sourceTimezone, spanEndMs) !== spanOffset) {
+  if (reportingUtcOffsetMinutesV1(timeZone, endMs) !== baseline) {
     throw new TypeError(
       'Reporting source timezone changes its UTC offset; fixed-length periods cannot express its local days'
     );

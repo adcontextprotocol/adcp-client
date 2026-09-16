@@ -110,10 +110,33 @@ const INLINE_MAX_ROWS_V1 = 100_000;
  * Adapt a synchronous delivery handler to the reporting-source contract.
  * The returned object is both the executor and its generation-pinned reader.
  */
+/**
+ * Explicit replay-retention policy for the inline executor.
+ *
+ * By default every admitted execution is retained, which is what makes an
+ * admitted key replayable for the executor's lifetime — and what caps a scope
+ * at `INLINE_MAX_EXECUTIONS_PER_SCOPE_V1` slices. A scheduled feed that outlives
+ * that ceiling must either install a durable executor or opt in here, which
+ * trades the lifetime replay guarantee for a bounded window: a replay of an
+ * evicted key re-executes instead of returning its recorded result. Opting in
+ * is safe against the ledger, which binds each obligation to an immutable
+ * revision and refuses to rewrite one, but it is never applied silently.
+ */
+export interface InlineReportingReplayRetentionV1 {
+  /** Reclaim the oldest settled execution to admit new work. */
+  readonly evictSettled: true;
+}
+
+export interface CreateInlineReportingSourceExecutorOptionsV1 {
+  readonly replayRetention?: InlineReportingReplayRetentionV1;
+}
+
 export function createInlineReportingSourceExecutor(
   deliveryFetch: InlineReportingDeliveryFetchV1,
-  offeringInput: ReportingSourceOfferingV1
+  offeringInput: ReportingSourceOfferingV1,
+  executorOptions: CreateInlineReportingSourceExecutorOptionsV1 = {}
 ): InlineReportingSourceExecutorV1 {
+  const evictSettled = executorOptions.replayRetention?.evictSettled === true;
   const parsedOffering = ReportingSourceOfferingV1Schema.parse(offeringInput);
   if (!parsedOffering.sourceExecution.manifestLevels.includes('basic')) {
     throw new TypeError('Inline reporting requires a basic manifest offering');
@@ -222,21 +245,24 @@ export function createInlineReportingSourceExecutor(
         return awaitInlineExecution(existing, context.signal, request.deadline.deadlineAt);
       }
 
-      if (executions.size >= INLINE_MAX_EXECUTIONS_V1) {
+      if (executions.size >= INLINE_MAX_EXECUTIONS_V1 && !(evictSettled && reclaimSettled(executions))) {
         return failure(
           'QUOTA_EXHAUSTED',
           'terminal',
-          'Inline reporting replay capacity is exhausted; supply a durable executor for long-lived feeds'
+          'Inline reporting replay capacity is exhausted; supply a durable executor or an explicit ' +
+            'replayRetention policy for long-lived feeds'
         );
       }
       if (
         [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length >=
-        INLINE_MAX_EXECUTIONS_PER_SCOPE_V1
+          INLINE_MAX_EXECUTIONS_PER_SCOPE_V1 &&
+        !(evictSettled && reclaimSettled(executions, scopeKey))
       ) {
         return failure(
           'QUOTA_EXHAUSTED',
           'terminal',
-          'Inline reporting scope replay capacity is exhausted; supply a durable executor for long-lived feeds'
+          'Inline reporting scope replay capacity is exhausted; supply a durable executor or an explicit ' +
+            'replayRetention policy for long-lived feeds'
         );
       }
       if (activeExecutions >= INLINE_MAX_CONCURRENT_EXECUTIONS_V1) {
@@ -872,6 +898,22 @@ function inlineDeliveryDates(request: ReportingSourceSliceRequestV1): { start: s
   const end = sourceLocalMidnightDate(request.period.end, request.period.sourceTimezone);
   if (start !== request.period.sourceLocalDate) throw new RangeError('sourceLocalDate does not match period start');
   return { start, end };
+}
+
+/**
+ * Reclaim the oldest settled execution so an opted-in feed can keep producing.
+ *
+ * Only settled entries with no waiters are eligible, and only to admit new
+ * work: an in-flight execution and anything awaiting it are never disturbed.
+ */
+function reclaimSettled(executions: Map<string, ExecutionEntry>, scopeKey?: string): boolean {
+  for (const [key, entry] of executions) {
+    if (entry.pending || entry.waiters > 0) continue;
+    if (scopeKey !== undefined && entry.scopeKey !== scopeKey) continue;
+    executions.delete(key);
+    return true;
+  }
+  return false;
 }
 
 function sourceLocalMidnightDate(instant: string, timeZone: string): string {

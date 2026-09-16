@@ -703,30 +703,3 @@ export function reportingScheduleOriginV1(alignment: 'utc' | 'source_timezone', 
   }
   return instant;
 }
-
-/**
- * Which alignment an installed fixed-millisecond schedule actually describes.
- *
- * A generation whose boundaries fall on the normative `utc` or `source_timezone`
- * origins must be reported as that alignment: projecting it as `billing_cycle`
- * both contradicts discovery and forces a `period_anchor` the wire schema
- * forbids for the derived alignments.
- */
-export function reportingDeriveScheduleAlignmentV1(input: {
-  periodMilliseconds: number;
-  anchorMs: number;
-  sourceTimezone: string;
-}): 'utc' | 'source_timezone' | 'billing_cycle' {
-  const { periodMilliseconds, anchorMs, sourceTimezone } = input;
-  if (!Number.isFinite(anchorMs) || periodMilliseconds <= 0 || periodMilliseconds % 86_400_000 !== 0) {
-    return 'billing_cycle';
-  }
-  const onOrigin = (alignment: 'utc' | 'source_timezone'): boolean => {
-    const origin = reportingScheduleOriginV1(alignment, sourceTimezone);
-    const delta = anchorMs - origin;
-    return ((delta % periodMilliseconds) + periodMilliseconds) % periodMilliseconds === 0;
-  };
-  if (reportingUtcOffsetMinutesV1(sourceTimezone, anchorMs) === 0 && onOrigin('utc')) return 'utc';
-  if (onOrigin('source_timezone')) return 'source_timezone';
-  return 'billing_cycle';
-}

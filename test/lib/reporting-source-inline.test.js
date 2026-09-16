@@ -593,8 +593,8 @@ describe('createInlineReportingSourceExecutor', () => {
     const failure = validateReportingSourceFailureV1(exhausted, 'QUOTA_EXHAUSTED');
     assert.equal(failure.code, 'QUOTA_EXHAUSTED');
     // Retaining every admitted execution is what keeps the replay below sound,
-    // so the ceiling is real. Say what a feed that outlives it should do.
-    assert.match(failure.safeMessage, /durable executor for long-lived feeds/);
+    // so the ceiling is real. Name both supported ways past it.
+    assert.match(failure.safeMessage, /durable executor or an explicit replayRetention policy/);
     assert.equal((await source.execute(admitted, context())).ok, true, 'an admitted key remains replayable');
 
     const otherScope = request('fixture-inline-other-scope');

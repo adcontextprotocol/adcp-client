@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { ADCP_MAJOR_VERSION, ADCP_VERSION } from '../../version';
 import { AdcpError } from '../../server/decisioning/async-outcome';
 import type { GetReportingStatusResponse } from '../../types';
-import { canonicalJsonV1, reportingDeriveScheduleAlignmentV1 } from '../source';
+import { canonicalJsonV1 } from '../source';
 import {
   evaluateReportingLedgerCoverageV1,
   relevantReportingLedgerConfigurations,
@@ -831,17 +831,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * alignment the buyer was promised.
  */
 function wireSchedule(obligation: ReportingLedgerObligationV1) {
-  const anchorMs = Date.parse(obligation.schedule.anchor);
-  // Echo the identity the configuration was installed with. Only a generation
-  // that predates the stored identity falls back to deriving one, which keeps
-  // pre-existing ledgers projecting exactly as they did before.
-  const alignment =
-    obligation.schedule.alignment ??
-    reportingDeriveScheduleAlignmentV1({
-      periodMilliseconds: obligation.schedule.periodMilliseconds,
-      anchorMs,
-      sourceTimezone: obligation.period.sourceTimezone,
-    });
+  // Echo the identity the configuration was installed with. A generation that
+  // predates the stored identity keeps the projection it has always emitted:
+  // deriving one from the boundaries cannot recover the installed alignment,
+  // and would silently rewrite a P1D billing_cycle schedule anchored at UTC
+  // midnight into `utc`, dropping the period_anchor and period_timezone that
+  // its immutable installed-schedule match depends on.
+  const alignment = obligation.schedule.alignment ?? 'billing_cycle';
   const periodTimezone = obligation.schedule.periodTimezone ?? obligation.period.sourceTimezone;
   return {
     period_duration: obligation.schedule.periodDuration ?? `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
