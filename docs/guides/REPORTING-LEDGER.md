@@ -55,14 +55,24 @@ only for health changes:
 import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
 import {
   createPostgresReportingNotificationActivityRuntime,
+  createPostgresReportingNotificationAttemptCheckpoint,
   PostgresReportingLedgerStore,
   REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
   REPORTING_LEDGER_MIGRATION,
 } from '@adcp/sdk/reporting/ledger';
 
+// Build the durable pre-POST checkpoint first. The notification runtime needs
+// it, and the activity runtime verifies it targets the same durable store —
+// a mismatched pair checkpoints nothing and loses notifications silently, so
+// both are refused at construction.
+const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
+  db: pool,
+  namespace: 'seller-production',
+});
 const notifications = createPostgresPersistentNotificationRuntime({
   db: pool,
   publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: attemptCheckpoint,
   subscriptions: { acknowledgeIsolatedDatabase: true },
   ...notificationOptions, // proof, protected credentials, webhooks, authorization
 });
@@ -71,6 +81,8 @@ const reportingActivity = createPostgresReportingNotificationActivityRuntime({
   notifications,
   // Use a deployment-unique value whenever a PostgreSQL schema is shared.
   namespace: 'seller-production',
+  // The same checkpoint, so its store can be verified against this runtime's.
+  attemptCheckpoint,
   // Pure host-owned mapping from an internal ledger account. Never derive
   // this from transition data, an incoming request body, or ctx_metadata.
   tenantScopeForAccount: accountId => durableAccountDirectory.tenantFor(accountId),
@@ -81,15 +93,6 @@ const reportingActivity = createPostgresReportingNotificationActivityRuntime({
 await pool.query(REPORTING_LEDGER_MIGRATION);
 for (const sql of notifications.migrations.all) await pool.query(sql);
 for (const sql of reportingActivity.migrations.all) await pool.query(sql);
-
-// Wire the durable pre-POST checkpoint. Build it before the notification
-// runtime; probe() below fails closed if it is missing.
-// const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
-//   db: pool,
-//   namespace: 'seller-production',
-// });
-// ... then pass `checkpointDeliveryAttempt: attemptCheckpoint` to
-// createPostgresPersistentNotificationRuntime above.
 
 // Before enabling the port, keep legacy subscribers configured and run
 // retryReportingStatusNotificationsV1() until listPendingTransitions() is empty.
@@ -223,6 +226,14 @@ silently stopped checkpointing reporting deliveries while the runtime still
 advertised checkpoint support is the precise bug the checkpoint exists to
 prevent.
 
+The checkpoint is bound to the exact `(queryable, namespace, table)` it writes
+to, and the activity runtime requires that same object as `attemptCheckpoint`
+and refuses a mismatch at construction. Configuring the two independently was
+undetectable at runtime: the checkpoint's update matched no row, every attempt
+was suppressed as retryable, the delivery binding eventually retired, the
+recipient settled terminal and the activity projected — losing the notification
+with no error anywhere.
+
 Construction and `probe()` both fail closed unless the notification port proves
 it runs the checkpoint. A custom `{ emit }` port must set
 `hasDeliveryAttemptCheckpoint: true`, asserting that it forwards the event it is
@@ -282,6 +293,15 @@ Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
   other source empty and the budget zero; gating only the row sources let that
   empty budget satisfy the check and reap the rows a successor had already
   frozen. After a takeover a stale worker is a strict no-op that refuses.
+- `maxRecipients` must be **at least** the notification runtime's
+  `maxFanoutCandidates`, plus headroom for the distinct subscribers one
+  notification accumulates as destinations churn. Setting it lower is a
+  misconfiguration: a legitimate fanout cannot be committed and the claim
+  retries until `maxAttempts` (default 100) abandons it. An abandoned claim
+  leaves the pending set — so it cannot exhaust `maxPendingPerTenant` and start
+  refusing writes for the whole tenant — while staying visible as
+  `notificationAbandonedAt` in account activity. It is never recorded as
+  delivered.
 - The bound and the replacement are one statement, and the rows it measures are
   taken `FOR UPDATE`. Measuring separately let a concurrent checkpoint turn a
   revisable row into a pinned one after the budget approved the write: the

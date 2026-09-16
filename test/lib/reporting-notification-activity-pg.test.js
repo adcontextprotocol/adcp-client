@@ -30,6 +30,16 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
   let checkpointCalls = 0;
   const checkpoints = new Map();
   const checkpointNamespaces = new Set(['reporting-activity-tests']);
+  /** One checkpoint per namespace, bound to the store its runtime uses. */
+  function checkpointFor(candidate) {
+    if (!checkpoints.has(candidate)) {
+      checkpoints.set(
+        candidate,
+        ledger.createPostgresReportingNotificationAttemptCheckpoint({ db: pool, namespace: candidate })
+      );
+    }
+    return checkpoints.get(candidate);
+  }
 
   /** Minimal write-only credential binding store for the legacy Bearer path. */
   function credentialAdapter() {
@@ -78,14 +88,8 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     attemptCheckpoint = async input => {
       let lastError;
       for (const candidate of checkpointNamespaces) {
-        if (!checkpoints.has(candidate)) {
-          checkpoints.set(
-            candidate,
-            ledger.createPostgresReportingNotificationAttemptCheckpoint({ db: pool, namespace: candidate })
-          );
-        }
         try {
-          return await checkpoints.get(candidate)(input);
+          return await checkpointFor(candidate)(input);
         } catch (error) {
           lastError = error;
         }
@@ -145,6 +149,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       notifications,
       namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
       tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
     });
     await pool.query(ledger.REPORTING_LEDGER_MIGRATION);
@@ -215,6 +220,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const crashRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -307,6 +313,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const oversizedCursor = `ract1.${Buffer.from(
       JSON.stringify({
         namespace: 'reporting-activity-tests',
+        attemptCheckpoint: checkpointFor('reporting-activity-tests'),
         tenantId: 'tenant-a',
         accountId: 'account-a',
         before: '9223372036854775808',
@@ -410,6 +417,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       projected: 0,
       retried: 0,
       leaseLost: 0,
+      abandoned: 0,
     });
     assert.equal(fetchCalls.length, before);
   });
@@ -439,6 +447,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const crashRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
       tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -525,6 +534,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       projected: 0,
       retried: 0,
       leaseLost: 0,
+      abandoned: 0,
     });
     assert.equal(delivered().length, 1);
   });
@@ -546,6 +556,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const skipping = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         // Declares the capability, then drops the freeze on the floor.
@@ -663,6 +674,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           projected: 0,
           retried: 0,
           leaseLost: 0,
+          abandoned: 0,
         }
       );
       assert.equal(delivered().length, 1, `${scenario.reason}: the replay adds no delivery`);
@@ -689,6 +701,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const storeFailureRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -765,6 +778,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const straddleRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -928,6 +942,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       const capturingRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
         db: pool,
         namespace: recovery.namespace,
+        attemptCheckpoint: checkpointFor(recovery.namespace),
         tenantScopeForAccount: () => 'tenant-a',
         notifications: {
           hasDeliveryAttemptCheckpoint: true,
@@ -980,6 +995,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const overflowRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       maxRecipients: 2,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: { hasDeliveryAttemptCheckpoint: true, emit: event => event.freezeRecipients(oversized) },
@@ -1008,6 +1024,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           db: pool,
           notifications,
           namespace: 'reporting-activity-tests',
+          attemptCheckpoint: checkpointFor('reporting-activity-tests'),
           tenantScopeForAccount: () => 'tenant-a',
           maxRecipients: 10_001,
         }),
@@ -1022,6 +1039,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         db: pool,
         notifications,
         namespace: 'n'.repeat(255),
+        attemptCheckpoint: checkpointFor('n'.repeat(255)),
         tenantScopeForAccount: () => 'tenant-a',
         maxRecipients: 10_000,
       })
@@ -1032,6 +1050,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           db: pool,
           notifications,
           namespace: 'n'.repeat(256),
+          attemptCheckpoint: checkpointFor('n'.repeat(256)),
           tenantScopeForAccount: () => 'tenant-a',
         }),
       /namespace must be a non-empty UTF-8 string of at most 255 bytes/,
@@ -1055,6 +1074,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const maskedRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -1114,6 +1134,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       ledger.createPostgresReportingNotificationActivityRuntime({
         db: pool,
         namespace: recovery.namespace,
+        attemptCheckpoint: checkpointFor(recovery.namespace),
         tenantScopeForAccount: () => 'tenant-a',
         // Deliberately uncheckpointed: this is the hazard A/B.
         acknowledgeMissingAttemptCheckpoint: true,
@@ -1319,6 +1340,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const straddleRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -1399,6 +1421,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const churnRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -1482,6 +1505,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       hasDeliveryAttemptCheckpoint: true,
       notifications: {
@@ -1510,6 +1534,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       const checkpointRace = ledger.createPostgresReportingNotificationAttemptCheckpoint({
         db: holder,
         namespace: recovery.namespace,
+        attemptCheckpoint: checkpointFor(recovery.namespace),
       });
       await checkpointRace({
         scope: generationOne.scope,
@@ -1554,6 +1579,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         ledger.createPostgresReportingNotificationAttemptCheckpoint({
           db: pool,
           namespace: recovery.namespace,
+          attemptCheckpoint: checkpointFor(recovery.namespace),
         })({
           scope: generationOne.scope,
           eventAnchor: 'account',
@@ -1651,6 +1677,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const terminalRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -1709,6 +1736,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         ledger.createPostgresReportingNotificationActivityRuntime({
           db: pool,
           namespace: 'reporting-activity-tests',
+          attemptCheckpoint: checkpointFor('reporting-activity-tests'),
           tenantScopeForAccount: () => 'tenant-a',
           notifications: { emit: async () => ({ notificationId: 'x', emissionId: 'y', matched: 0, deliveries: [] }) },
         }),
@@ -1721,6 +1749,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
           .createPostgresReportingNotificationActivityRuntime({
             db: pool,
             namespace: 'reporting-activity-tests',
+            attemptCheckpoint: checkpointFor('reporting-activity-tests'),
             tenantScopeForAccount: () => 'tenant-a',
             acknowledgeMissingAttemptCheckpoint: true,
             notifications: {
@@ -1765,6 +1794,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       maxRecipients: 1,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
@@ -1792,6 +1822,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       await ledger.createPostgresReportingNotificationAttemptCheckpoint({
         db: holder,
         namespace: recovery.namespace,
+        attemptCheckpoint: checkpointFor(recovery.namespace),
       })({
         scope: generationOne.scope,
         eventAnchor: 'account',
@@ -1874,6 +1905,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const overflowing = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       maxRecipients: 1,
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
@@ -1907,6 +1939,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       notifications,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       maxRecipients: 4,
       tenantScopeForAccount: () => 'tenant-a',
     });
@@ -1991,6 +2024,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2013,6 +2047,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const extended = ledger.createPostgresReportingNotificationAttemptCheckpoint({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       eventTypes: ['some.other.event'],
     });
     await extended({
@@ -2081,6 +2116,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2123,6 +2159,11 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const stale = ledger.createPostgresReportingNotificationActivityRuntime({
       db: racingDb,
       namespace: recovery.namespace,
+      // Bound to the same wrapped queryable this runtime uses.
+      attemptCheckpoint: ledger.createPostgresReportingNotificationAttemptCheckpoint({
+        db: racingDb,
+        namespace: recovery.namespace,
+      }),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2190,6 +2231,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const freezeOnly = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: recovery.namespace,
+      attemptCheckpoint: checkpointFor(recovery.namespace),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2264,6 +2306,172 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       'its recipient was never reaped by a racing takeover'
     );
     assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 1);
+  });
+
+  test('refuses a checkpoint bound to a different durable store', async () => {
+    // The checkpoint and the runtime used to configure namespace and table
+    // independently. A mismatched pair checkpoints nothing: every delivery is
+    // suppressed as retryable, the binding eventually retires, the recipient
+    // settles terminal and the activity projects — losing the notification with
+    // no error anywhere.
+    for (const [label, mismatched] of [
+      [
+        'namespace',
+        () =>
+          ledger.createPostgresReportingNotificationAttemptCheckpoint({
+            db: pool,
+            namespace: 'reporting-activity-somewhere-else',
+          }),
+      ],
+      [
+        'table',
+        () =>
+          ledger.createPostgresReportingNotificationAttemptCheckpoint({
+            db: pool,
+            namespace: 'reporting-activity-tests',
+            tableName: 'adcp_other_activity',
+          }),
+      ],
+      [
+        'queryable',
+        () =>
+          ledger.createPostgresReportingNotificationAttemptCheckpoint({
+            db: { query: async () => ({ rows: [], rowCount: 0 }) },
+            namespace: 'reporting-activity-tests',
+          }),
+      ],
+    ]) {
+      assert.throws(
+        () =>
+          ledger.createPostgresReportingNotificationActivityRuntime({
+            db: pool,
+            notifications,
+            namespace: 'reporting-activity-tests',
+            attemptCheckpoint: mismatched(),
+            tenantScopeForAccount: () => 'tenant-a',
+          }),
+        /bound to a different durable store/,
+        `${label} mismatch is refused at construction`
+      );
+    }
+    // The matching pair is accepted, and omitting it entirely is refused.
+    assert.doesNotThrow(() =>
+      ledger.createPostgresReportingNotificationActivityRuntime({
+        db: pool,
+        notifications,
+        namespace: 'reporting-activity-tests',
+        attemptCheckpoint: checkpointFor('reporting-activity-tests'),
+        tenantScopeForAccount: () => 'tenant-a',
+      })
+    );
+    assert.throws(
+      () =>
+        ledger.createPostgresReportingNotificationActivityRuntime({
+          db: pool,
+          notifications,
+          namespace: 'reporting-activity-tests',
+          tenantScopeForAccount: () => 'tenant-a',
+        }),
+      /requires attemptCheckpoint/
+    );
+  });
+
+  test('abandons a claim that can never succeed instead of poisoning tenant capacity', async () => {
+    // An over-fanout configuration cannot fix itself by retrying. Without a
+    // terminal bound the claim stayed pending forever, and enough of them reach
+    // maxPendingPerTenant and start refusing writes for the whole tenant.
+    const scope = {
+      kind: 'account',
+      tenantId: 'tenant-a',
+      principalId: 'principal-abandon',
+      accountId: 'account-abandon',
+    };
+    const recovery = isolatedActivity('abandon-bound', { maxRecipients: 1, maxAttempts: 3 });
+    await notifications.replace(scope, [
+      { subscriber_id: 'abandon-a', url: 'https://buyer.example/abandon-a', event_types: ['reporting.status_changed'] },
+      { subscriber_id: 'abandon-b', url: 'https://buyer.example/abandon-b', event_types: ['reporting.status_changed'] },
+    ]);
+    const obligation = await putObligation('abandon-bound', scope.accountId, recovery.store);
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: recovery.store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+    });
+    assert.ok(transition);
+    const pendingForTenant = async () =>
+      (
+        await pool.query(
+          `SELECT count(*)::integer AS total FROM adcp_reporting_notification_activity
+            WHERE namespace = $1 AND tenant_scope = 'tenant-a' AND state = 'pending'`,
+          [recovery.namespace]
+        )
+      ).rows[0].total;
+    assert.equal(await pendingForTenant(), 1);
+
+    let abandoned = 0;
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      await makeClaimEligible(recovery.namespace, transition.transitionId);
+      const pass = await recovery.activity.recoverOnce({
+        ownerToken: `abandon-worker-${attempt}`,
+        limit: 1,
+        retryAfterMs: 1,
+      });
+      abandoned += pass.abandoned;
+      assert.equal(pass.projected, 0, 'an unsatisfiable claim is never recorded as delivered');
+    }
+    assert.equal(abandoned, 1, 'the claim is abandoned once the attempt bound is reached');
+    assert.equal(await pendingForTenant(), 0, 'and it stops consuming the tenant pending capacity');
+    assert.equal(fetchCalls.filter(value => value.body.notification_id === transition.transitionId).length, 0);
+
+    // It is auditable, and never claimed again.
+    const page = await recovery.activity.listActivity({ tenantId: 'tenant-a', accountId: scope.accountId });
+    const record = page.activities.find(value => value.transitionId === transition.transitionId);
+    assert.ok(record?.notificationAbandonedAt, 'the abandonment is visible to operators');
+    assert.equal(record.notificationProjectedAt, undefined, 'and is not reported as delivered');
+    const afterwards = await recovery.activity.recoverOnce({ ownerToken: 'abandon-worker-after', limit: 1 });
+    assert.equal(afterwards.claimed, 0);
+  });
+
+  test('constructs the runtimes exactly as both canonical documentation examples show', async () => {
+    // The published examples are copy-paste starting points. When they omitted
+    // checkpointDeliveryAttempt / attemptCheckpoint, copying either one threw
+    // at construction. This pins the shape of both, and of the generator that
+    // emits one of them.
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const sources = {
+      'docs/guides/REPORTING-LEDGER.md': fs.readFileSync(
+        path.join(__dirname, '..', '..', 'docs', 'guides', 'REPORTING-LEDGER.md'),
+        'utf8'
+      ),
+      'docs/TYPE-SUMMARY.md': fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'TYPE-SUMMARY.md'), 'utf8'),
+      'scripts/generate-agent-docs.ts': fs.readFileSync(
+        path.join(__dirname, '..', '..', 'scripts', 'generate-agent-docs.ts'),
+        'utf8'
+      ),
+    };
+    for (const [name, text] of Object.entries(sources)) {
+      const example = text.slice(text.indexOf('createPostgresReportingNotificationActivityRuntime({'));
+      assert.ok(
+        text.includes('createPostgresReportingNotificationAttemptCheckpoint({'),
+        `${name}: builds the durable pre-POST checkpoint`
+      );
+      assert.ok(text.includes('checkpointDeliveryAttempt: attemptCheckpoint'), `${name}: wires it into notifications`);
+      assert.ok(
+        /attemptCheckpoint,?\s*`?\)?;?\s*$|attemptCheckpoint,/m.test(example),
+        `${name}: passes it to the activity runtime`
+      );
+    }
+
+    // And the documented shape really constructs.
+    const documented = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: pool,
+      notifications,
+      namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
+      tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
+    });
+    await documented.probe();
   });
 
   test('refuses legacy subscribers beside the transactional port', async () => {
@@ -2399,6 +2607,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       projected: 0,
       retried: 0,
       leaseLost: 0,
+      abandoned: 0,
     });
     assert.equal(delivered().length, 1, 'notification stays exactly-once across the replay');
     const page = await activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b' });
@@ -2501,6 +2710,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       projected: 0,
       retried: 0,
       leaseLost: 0,
+      abandoned: 0,
     });
     assert.equal(delivered().length, 1, 'notification stays exactly-once across the replay');
   });
@@ -2575,6 +2785,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         projected: 0,
         retried: 0,
         leaseLost: 0,
+        abandoned: 0,
       });
       assert.equal(delivered().length, 1, `${scenario.label}: notification stays exactly-once across the replay`);
       const page = await activity.listActivity({ tenantId: 'tenant-b', accountId: 'account-b' });
@@ -2605,6 +2816,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const slowRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2634,6 +2846,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const staleRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2676,6 +2889,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const slowRuntime = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       namespace: 'reporting-activity-tests',
+      attemptCheckpoint: checkpointFor('reporting-activity-tests'),
       tenantScopeForAccount: () => 'tenant-a',
       notifications: {
         hasDeliveryAttemptCheckpoint: true,
@@ -2700,6 +2914,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       notifications,
       namespace: 'reporting-capacity-tests',
+      attemptCheckpoint: checkpointFor('reporting-capacity-tests'),
       tenantScopeForAccount: () => 'tenant-a',
       maxPendingPerTenant: 1,
     });
@@ -2757,6 +2972,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       notifications,
       namespace,
+      attemptCheckpoint: checkpointFor(namespace),
       tenantScopeForAccount: () => tenantId,
     });
     const obligation = await putObligation('maximum-escaped-cursor', accountId);
@@ -2789,12 +3005,14 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       notifications,
       namespace: 'reporting-prune-tests',
+      attemptCheckpoint: checkpointFor('reporting-prune-tests'),
       tenantScopeForAccount: () => 'tenant-a',
     });
     const otherActivity = ledger.createPostgresReportingNotificationActivityRuntime({
       db: pool,
       notifications,
       namespace: 'reporting-prune-other',
+      attemptCheckpoint: checkpointFor('reporting-prune-other'),
       tenantScopeForAccount: () => 'tenant-a',
     });
     const obligation = await putObligation('pruning', 'account-a');
@@ -2915,11 +3133,13 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       db: pool,
       notifications,
       namespace: isolatedNamespace,
+      attemptCheckpoint: checkpointFor(isolatedNamespace),
       tenantScopeForAccount: accountId => (accountId === 'account-b' ? 'tenant-b' : 'tenant-a'),
       ...overrides,
     });
     return {
       namespace: isolatedNamespace,
+      attemptCheckpoint: checkpointFor(isolatedNamespace),
       activity: isolated,
       store: new ledger.PostgresReportingLedgerStore(pool, {
         acknowledgeIsolatedDatabase: true,

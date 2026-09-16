@@ -2121,9 +2121,16 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);
   ln();
+  ln(`// Build the durable pre-POST checkpoint first: the notification runtime`);
+  ln(`// needs it, and the activity runtime verifies it targets the same store.`);
+  ln(`const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({`);
+  ln(`  db: pool,`);
+  ln(`  namespace: 'seller-production',`);
+  ln(`});`);
   ln(`const notifications = createPostgresPersistentNotificationRuntime({`);
   ln(`  db: pool,`);
   ln(`  publisherScope: 'seller-production',`);
+  ln(`  checkpointDeliveryAttempt: attemptCheckpoint,`);
   ln(`  subscriptions: { acknowledgeIsolatedDatabase: true },`);
   ln(`  ...notificationOptions,`);
   ln(`});`);
@@ -2131,6 +2138,7 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`  db: pool,`);
   ln(`  notifications,`);
   ln(`  namespace: 'seller-production',`);
+  ln(`  attemptCheckpoint,`);
   ln(`  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),`);
   ln(`});`);
   ln(`const transactionalStore = new PostgresReportingLedgerStore(pool, {`);

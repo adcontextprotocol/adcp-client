@@ -2839,9 +2839,16 @@ const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });
 
+// Build the durable pre-POST checkpoint first: the notification runtime
+// needs it, and the activity runtime verifies it targets the same store.
+const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
+  db: pool,
+  namespace: 'seller-production',
+});
 const notifications = createPostgresPersistentNotificationRuntime({
   db: pool,
   publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: attemptCheckpoint,
   subscriptions: { acknowledgeIsolatedDatabase: true },
   ...notificationOptions,
 });
@@ -2849,6 +2856,7 @@ const reportingActivity = createPostgresReportingNotificationActivityRuntime({
   db: pool,
   notifications,
   namespace: 'seller-production',
+  attemptCheckpoint,
   tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),
 });
 const transactionalStore = new PostgresReportingLedgerStore(pool, {

@@ -23,6 +23,7 @@ const REPORTING_STATUS_EVENT_TYPE = 'reporting.status_changed';
 const DEFAULT_NAMESPACE = 'adcp-reporting';
 const DEFAULT_RETENTION_MS = 90 * 24 * 60 * 60 * 1_000;
 const DEFAULT_MAX_PENDING_PER_TENANT = 100_000;
+const DEFAULT_MAX_ATTEMPTS = 100;
 const MAX_ACTIVITY_BYTES = 64 * 1024;
 const MAX_CURSOR_BYTES = 16 * 1024;
 
@@ -52,6 +53,8 @@ export interface ReportingAccountActivityV1 {
 export interface ReportingAccountActivityRecordV1 extends ReportingAccountActivityV1 {
   recordedAt: string;
   notificationProjectedAt?: string;
+  /** Set when the claim was bounded out of the pending set without delivering. */
+  notificationAbandonedAt?: string;
 }
 
 export interface ReportingAccountActivityPageV1 {
@@ -66,6 +69,8 @@ export interface ReportingNotificationRecoveryMetricsV1 {
   projected: number;
   retried: number;
   leaseLost: number;
+  /** Claims bounded out of the pending set after `maxAttempts`; never delivered. */
+  abandoned: number;
 }
 
 /**
@@ -121,14 +126,41 @@ export interface PostgresReportingNotificationActivityOptions {
    */
   acknowledgeMissingAttemptCheckpoint?: boolean;
   /**
+   * The very checkpoint wired into the notification runtime.
+   *
+   * Required, because the checkpoint writes to a `(queryable, namespace,
+   * table)` triple of its own and a mismatch is otherwise undetectable at
+   * runtime: its update would match no row, every attempt would be suppressed
+   * as retryable, the delivery binding would eventually retire, the recipient
+   * would settle terminal and the activity would project — losing the
+   * notification silently. Passing the same object lets that be refused at
+   * construction instead.
+   */
+  attemptCheckpoint?: ReportingNotificationAttemptCheckpointV1;
+  /**
    * Largest recipient fanout whose frozen intent this runtime will store.
-   * Defaults to 10,000 — the ceiling the persistent notification runtime
-   * enforces on `maxFanoutCandidates` — so a valid fanout can never exceed it.
-   * Lower it only below that runtime's configured `maxFanoutCandidates`, never
-   * above: a fanout larger than this cannot be committed and would retry until
-   * it aged out.
+   *
+   * Must be **at least** the notification runtime's `maxFanoutCandidates`, plus
+   * headroom for the distinct subscribers one notification can accumulate as
+   * destinations churn. Defaults to 10,000 — the ceiling that runtime enforces
+   * on `maxFanoutCandidates` — so the default can never be exceeded by a valid
+   * fanout. Setting it *below* `maxFanoutCandidates` is a misconfiguration: a
+   * legitimate fanout then cannot be committed and the claim retries until
+   * `maxAttempts` abandons it.
    */
   maxRecipients?: number;
+  /**
+   * Attempts after which a claim that keeps failing is abandoned rather than
+   * retried forever. Defaults to 100.
+   *
+   * Without a bound, a claim that can never succeed — an over-fanout
+   * configuration, a permanently unreachable dependency — stays pending
+   * indefinitely, and enough of them reach `maxPendingPerTenant` and start
+   * refusing new activity writes for the whole tenant. An abandoned claim stops
+   * consuming that capacity while staying visible for operators; it is never
+   * recorded as delivered.
+   */
+  maxAttempts?: number;
 }
 
 export interface PostgresReportingNotificationActivityRuntime {
@@ -204,12 +236,15 @@ CREATE TABLE IF NOT EXISTS ${table} (
   retain_until           TIMESTAMPTZ,
   delivery_intent_at     TIMESTAMPTZ,
   PRIMARY KEY (namespace, transition_id),
-  CONSTRAINT ${raw}_valid_state CHECK (state IN ('pending', 'projected')),
+  CONSTRAINT ${raw}_valid_state CHECK (state IN ('pending', 'projected', 'abandoned')),
   CONSTRAINT ${raw}_valid_fingerprint CHECK (intent_fingerprint ~ '^[a-f0-9]{64}$'),
   CONSTRAINT ${raw}_valid_activity CHECK (jsonb_typeof(activity) = 'object'),
   CONSTRAINT ${raw}_valid_projection CHECK (
     (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
-    (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL)
+    (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
+    -- Abandoned: bounded out of the pending set without ever being recorded as
+    -- delivered, so it stops consuming tenant capacity but stays auditable.
+    (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL)
   ),
   CONSTRAINT ${raw}_valid_delivery_intent CHECK (
     state = 'projected' OR delivery_intent_at IS NULL OR delivery_intent_at IS NOT NULL
@@ -217,6 +252,19 @@ CREATE TABLE IF NOT EXISTS ${table} (
 );
 
 ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_at TIMESTAMPTZ;
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_state;
+ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_state
+  CHECK (state IN ('pending', 'projected', 'abandoned'));
+ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_projection;
+ALTER TABLE ${table} ADD CONSTRAINT ${raw}_valid_projection CHECK (
+  (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
+  (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL) OR
+  (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL)
+);
+DROP INDEX IF EXISTS idx_${raw}_retention;
+CREATE INDEX IF NOT EXISTS idx_${raw}_retention
+  ON ${table}(namespace, retain_until, activity_sequence)
+  WHERE state IN ('projected', 'abandoned');
 
 -- One row per frozen recipient, carrying that recipient's own delivery state.
 --
@@ -283,7 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_${raw}_account_activity
   ON ${table}(namespace, tenant_scope, account_id, activity_sequence DESC);
 CREATE INDEX IF NOT EXISTS idx_${raw}_retention
   ON ${table}(namespace, retain_until, activity_sequence)
-  WHERE state = 'projected';
+  WHERE state IN ('projected', 'abandoned');
 `.trim();
 }
 
@@ -309,6 +357,13 @@ export const REPORTING_NOTIFICATION_ACTIVITY_MIGRATION = getReportingNotificatio
  * lease: a checkpoint only ever makes a recipient less revisable, which is the
  * safe direction, and an outbox worker legitimately holds no activity lease.
  */
+/** Durable store a checkpoint is bound to, so a mismatched pairing cannot be silent. */
+export interface ReportingNotificationAttemptCheckpointV1 {
+  (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void>;
+  /** Exact `(queryable, namespace, table)` this checkpoint writes to. */
+  readonly activityStore: Readonly<{ db: ReportingLedgerTransactionV1; namespace: string; tableName: string }>;
+}
+
 export function createPostgresReportingNotificationAttemptCheckpoint(options: {
   db: ReportingLedgerTransactionV1;
   namespace?: string;
@@ -322,22 +377,20 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
    * extends the owned set; it can never remove the reporting event.
    */
   eventTypes?: readonly string[];
-}): (input: Readonly<NotificationDeliveryAttemptCheckpointInput>) => Promise<void> {
+}): ReportingNotificationAttemptCheckpointV1 {
   if (!options?.db || typeof options.db.query !== 'function') {
     throw new TypeError('createPostgresReportingNotificationAttemptCheckpoint requires a PostgreSQL queryable');
   }
   const namespace = options.namespace ?? DEFAULT_NAMESPACE;
   assertIdentifier(namespace, 'namespace', 255);
-  const recipientTable = quoteIdentifier(
-    recipientTableName(options.tableName ?? DEFAULT_TABLE),
-    MAX_RECIPIENT_TABLE_BYTES
-  );
+  const rawTable = options.tableName ?? DEFAULT_TABLE;
+  const recipientTable = quoteIdentifier(recipientTableName(rawTable), MAX_RECIPIENT_TABLE_BYTES);
   // Always owns the reporting event. Letting configuration replace the set
   // would silently stop checkpointing reporting deliveries while the runtime
   // still advertises checkpoint support, which is the exact shape of the bug
   // the checkpoint exists to prevent.
   const owned = new Set([REPORTING_STATUS_EVENT_TYPE, ...(options.eventTypes ?? [])]);
-  return async input => {
+  const checkpoint = async (input: Readonly<NotificationDeliveryAttemptCheckpointInput>): Promise<void> => {
     if (!owned.has(input.eventType)) return;
     const fingerprint = recipientFingerprint({
       scope: input.scope,
@@ -360,6 +413,9 @@ export function createPostgresReportingNotificationAttemptCheckpoint(options: {
       );
     }
   };
+  return Object.assign(checkpoint, {
+    activityStore: Object.freeze({ db: options.db, namespace, tableName: rawTable }),
+  }) as ReportingNotificationAttemptCheckpointV1;
 }
 
 export function createPostgresReportingNotificationActivityRuntime(
@@ -385,6 +441,29 @@ export function createPostgresReportingNotificationActivityRuntime(
     );
   }
   const namespace = options.namespace ?? DEFAULT_NAMESPACE;
+  if (!options.attemptCheckpoint && !options.acknowledgeMissingAttemptCheckpoint) {
+    throw new TypeError(
+      'createPostgresReportingNotificationActivityRuntime requires attemptCheckpoint: pass the very checkpoint ' +
+        'wired into the notification runtime so its durable store can be verified against this one.'
+    );
+  }
+  if (options.attemptCheckpoint) {
+    const bound = options.attemptCheckpoint.activityStore;
+    const mismatch =
+      bound?.db !== options.db ||
+      bound?.namespace !== namespace ||
+      bound?.tableName !== (options.tableName ?? DEFAULT_TABLE);
+    if (mismatch) {
+      throw new TypeError(
+        'createPostgresReportingNotificationActivityRuntime: attemptCheckpoint is bound to a different durable ' +
+          `store (namespace ${JSON.stringify(bound?.namespace)}, table ${JSON.stringify(bound?.tableName)}` +
+          `${bound?.db === options.db ? '' : ', different queryable'}) than this runtime (namespace ` +
+          `${JSON.stringify(namespace)}, table ${JSON.stringify(options.tableName ?? DEFAULT_TABLE)}). ` +
+          'A mismatched pair checkpoints nothing, so every delivery is suppressed until its binding retires and the ' +
+          'notification is lost silently.'
+      );
+    }
+  }
   const development = process.env.NODE_ENV === 'test' || process.env.NODE_ENV === 'development';
   if (!development && options.namespace === undefined && !options.acknowledgeIsolatedDatabase) {
     throw new TypeError(
@@ -400,6 +479,8 @@ export function createPostgresReportingNotificationActivityRuntime(
   boundedInteger(maxPendingPerTenant, 'maxPendingPerTenant', 1, 1_000_000);
   const maxRecipients = options.maxRecipients ?? MAX_SUPPORTED_RECIPIENTS;
   boundedInteger(maxRecipients, 'maxRecipients', 1, MAX_SUPPORTED_RECIPIENTS);
+  const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
+  boundedInteger(maxAttempts, 'maxAttempts', 1, 100_000);
   const recipientRawTable = recipientTableName(rawTable);
   const recipientTable = quoteIdentifier(recipientRawTable, MAX_RECIPIENT_TABLE_BYTES);
   // Reject an unstorable configuration at construction instead of discovering it
@@ -575,6 +656,7 @@ export function createPostgresReportingNotificationActivityRuntime(
         projected: 0,
         retried: 0,
         leaseLost: 0,
+        abandoned: 0,
       };
       // Claim one row at a time. Pre-claiming a batch would let later leases
       // expire while an earlier subscriber fanout is still running.
@@ -671,9 +753,17 @@ export function createPostgresReportingNotificationActivityRuntime(
           else metrics.leaseLost += 1;
         } catch (error) {
           reportProjectionError(recoveryOptions.onError, error, claim);
-          const released = !leaseLost && (await releaseClaim(options.db, table, namespace, claim, retryAfterMs));
-          if (released) metrics.retried += 1;
-          else metrics.leaseLost += 1;
+          // `attemptCount` is this claim's own attempt, so the bound is reached
+          // when it equals maxAttempts.
+          if (!leaseLost && claim.attemptCount >= maxAttempts) {
+            const abandoned = await abandonClaim(options.db, table, namespace, claim, retentionMs);
+            if (abandoned) metrics.abandoned += 1;
+            else metrics.leaseLost += 1;
+          } else {
+            const released = !leaseLost && (await releaseClaim(options.db, table, namespace, claim, retryAfterMs));
+            if (released) metrics.retried += 1;
+            else metrics.leaseLost += 1;
+          }
         } finally {
           clearInterval(heartbeat);
         }
@@ -696,7 +786,7 @@ export function createPostgresReportingNotificationActivityRuntime(
       const before = decodeCursor(input.cursor, namespace, input.tenantId, input.accountId);
       const result = await reportingActivityDatabaseOperation('Reporting account activity read failed', () =>
         options.db.query<ActivityRow>(
-          `SELECT activity, state, created_at, projected_at, activity_sequence
+          `SELECT activity, state, created_at, projected_at, retain_until, activity_sequence
            FROM ${table}
           WHERE namespace = $1 AND tenant_scope = $2 AND account_id = $3
             AND ($4::bigint IS NULL OR activity_sequence < $4)
@@ -710,6 +800,7 @@ export function createPostgresReportingNotificationActivityRuntime(
         ...structuredClone(row.activity),
         recordedAt: asIso(row.created_at),
         ...(row.projected_at ? { notificationProjectedAt: asIso(row.projected_at) } : {}),
+        ...(row.state === 'abandoned' && row.retain_until ? { notificationAbandonedAt: asIso(row.retain_until) } : {}),
       }));
       const hasMore = result.rows.length > limit;
       return {
@@ -734,7 +825,8 @@ export function createPostgresReportingNotificationActivityRuntime(
         options.db.query(
           `WITH expired AS (
            SELECT namespace, transition_id FROM ${table}
-            WHERE namespace = $1 AND state = 'projected' AND retain_until <= clock_timestamp()
+            WHERE namespace = $1 AND state IN ('projected', 'abandoned')
+              AND retain_until <= clock_timestamp()
             ORDER BY retain_until, activity_sequence
             FOR UPDATE SKIP LOCKED LIMIT $2
          )
@@ -750,9 +842,10 @@ export function createPostgresReportingNotificationActivityRuntime(
 
 interface ActivityRow extends Record<string, unknown> {
   activity: ReportingAccountActivityV1;
-  state: 'pending' | 'projected';
+  state: 'pending' | 'projected' | 'abandoned';
   created_at: Date | string;
   projected_at: Date | string | null;
+  retain_until: Date | string | null;
   activity_sequence: string | number;
 }
 
@@ -1269,6 +1362,36 @@ async function releaseClaim(
         AND lease_owner = $3 AND lease_version = $4::bigint
         AND lease_expires_at >= clock_timestamp()`,
       [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion, retryAfterMs]
+    )
+  );
+  return result.rowCount === 1;
+}
+
+/**
+ * Bounds a claim that cannot succeed.
+ *
+ * A claim with no terminal bound retries forever, and enough of them reach
+ * `maxPendingPerTenant` and start refusing new activity writes for the whole
+ * tenant. Abandoning leaves the pending set — so it cannot poison capacity —
+ * without ever being recorded as delivered, and it is retained so an operator
+ * can see it. Lease-fenced like every other settlement.
+ */
+async function abandonClaim(
+  db: ReportingLedgerTransactionV1,
+  table: string,
+  namespace: string,
+  claim: ClaimedActivity,
+  retentionMs: number
+): Promise<boolean> {
+  const result = await reportingActivityDatabaseOperation('Reporting notification abandonment failed', () =>
+    db.query(
+      `UPDATE ${table} SET state = 'abandoned',
+         retain_until = clock_timestamp() + ($5::bigint * INTERVAL '1 millisecond'),
+         lease_owner = NULL, lease_expires_at = NULL
+      WHERE namespace = $1 AND transition_id = $2 AND state = 'pending'
+        AND lease_owner = $3 AND lease_version = $4::bigint
+        AND lease_expires_at >= clock_timestamp()`,
+      [namespace, claim.transitionId, claim.leaseOwner, claim.leaseVersion, retentionMs]
     )
   );
   return result.rowCount === 1;
