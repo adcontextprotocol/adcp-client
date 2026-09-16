@@ -269,18 +269,41 @@ CREATE TABLE IF NOT EXISTS ${table} (
   )
 );
 
-ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS delivery_intent_at TIMESTAMPTZ;
-ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS abandoned_at TIMESTAMPTZ;
-
--- Upgrade in place, once. Re-running a migration must not drop and re-add a
--- constraint or rebuild an index: each takes a blocking lock and rescans the
--- table on every deploy. These guards compare the installed definition and act
--- only when it is genuinely out of date.
+-- Upgrade in place, once, and touch nothing on a rerun.
+--
+-- Every statement here is guarded on the catalog, including the column adds:
+-- \`ADD COLUMN IF NOT EXISTS\` still takes ACCESS EXCLUSIVE to discover the
+-- column already exists, so a rerun during normal traffic blocks behind ordinary
+-- readers and fails outright under a lock_timeout. An already-upgraded rerun now
+-- issues no table-locking statement at all.
+--
+-- Every guard is scoped to this schema's table by resolving it once to a
+-- regclass. A database-wide lookup by index name would see an upgraded index in
+-- another schema and skip the upgrade here, leaving that deployment with a
+-- projected-only retention index that cannot serve abandonment pruning.
 DO $$
+DECLARE
+  activity_table regclass := to_regclass('${raw}');
+  stale_index oid;
 BEGIN
+  IF activity_table IS NULL THEN
+    RETURN;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = activity_table AND attname = 'delivery_intent_at' AND NOT attisdropped
+  ) THEN
+    ALTER TABLE ${table} ADD COLUMN delivery_intent_at TIMESTAMPTZ;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_attribute
+     WHERE attrelid = activity_table AND attname = 'abandoned_at' AND NOT attisdropped
+  ) THEN
+    ALTER TABLE ${table} ADD COLUMN abandoned_at TIMESTAMPTZ;
+  END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
-     WHERE conrelid = '${raw}'::regclass AND conname = '${raw}_valid_state'
+     WHERE conrelid = activity_table AND conname = '${raw}_valid_state'
        AND pg_get_constraintdef(oid) LIKE '%abandoned%'
   ) THEN
     ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_state;
@@ -289,7 +312,7 @@ BEGIN
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
-     WHERE conrelid = '${raw}'::regclass AND conname = '${raw}_valid_projection'
+     WHERE conrelid = activity_table AND conname = '${raw}_valid_projection'
        AND pg_get_constraintdef(oid) LIKE '%abandoned_at%'
   ) THEN
     ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${raw}_valid_projection;
@@ -299,11 +322,20 @@ BEGIN
       (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
     );
   END IF;
+  SELECT index_class.oid INTO stale_index
+    FROM pg_index
+    JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+   WHERE pg_index.indrelid = activity_table
+     AND index_class.relname = 'idx_${raw}_retention'
+     AND pg_get_indexdef(pg_index.indexrelid) NOT LIKE '%abandoned%';
+  IF stale_index IS NOT NULL THEN
+    EXECUTE format('DROP INDEX %s', stale_index::regclass);
+  END IF;
   IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-     WHERE indexname = 'idx_${raw}_retention' AND indexdef LIKE '%abandoned%'
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_retention'
   ) THEN
-    DROP INDEX IF EXISTS idx_${raw}_retention;
     CREATE INDEX idx_${raw}_retention
       ON ${table}(namespace, retain_until, activity_sequence)
       WHERE state IN ('projected', 'abandoned');

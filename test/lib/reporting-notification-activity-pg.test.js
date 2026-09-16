@@ -2745,6 +2745,137 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(second.abandoned, 0);
   });
 
+  test('reruns every migration under a held read lock without blocking', async () => {
+    // `ADD COLUMN IF NOT EXISTS` still takes ACCESS EXCLUSIVE to discover the
+    // column is already there, so a rerun during ordinary traffic queued behind
+    // readers and failed outright under a lock_timeout. An already-upgraded
+    // rerun must issue no table-locking statement at all.
+    const { Pool } = require('pg');
+    const schemaName = `adcp_reporting_rerun_${process.pid}`;
+    await bootstrap.query(`CREATE SCHEMA "${schemaName}"`);
+    const migrationPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schemaName}"` });
+    const readerPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schemaName}"` });
+    const runtime = ledger.createPostgresReportingNotificationActivityRuntime({
+      db: migrationPool,
+      notifications,
+      namespace: 'rerun-tests',
+      attemptCheckpoint,
+      tenantScopeForAccount: () => 'tenant-a',
+    });
+    const reader = await readerPool.connect();
+    try {
+      await migrationPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      for (const sql of runtime.migrations.all) await migrationPool.query(sql);
+      const before = await activityDefinitions(migrationPool);
+
+      // An ordinary reader holds ACCESS SHARE for the whole rerun.
+      await reader.query('BEGIN');
+      await reader.query('SELECT 1 FROM adcp_reporting_notification_activity LIMIT 0');
+      const migrator = await migrationPool.connect();
+      try {
+        await migrator.query("SET lock_timeout = '250ms'");
+        for (const sql of runtime.migrations.all) {
+          await migrator.query(sql);
+        }
+      } finally {
+        migrator.release();
+      }
+      await reader.query('COMMIT');
+
+      assert.deepEqual(await activityDefinitions(migrationPool), before, 'the rerun changed no constraint or index');
+    } finally {
+      reader.release();
+      await migrationPool.end();
+      await readerPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`);
+    }
+  });
+
+  test('upgrades a later schema even when an earlier one is already current', async () => {
+    // The retention-index guard looked the index up by name across the whole
+    // database. With schema A upgraded, schema B's guard saw A's new index and
+    // skipped, leaving B on a projected-only index that cannot serve
+    // abandonment pruning.
+    const { Pool } = require('pg');
+    const schemas = [`adcp_reporting_multi_a_${process.pid}`, `adcp_reporting_multi_b_${process.pid}`];
+    const pools = [];
+    try {
+      for (const name of schemas) await bootstrap.query(`CREATE SCHEMA "${name}"`);
+      for (const name of schemas) {
+        pools.push(new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${name}"` }));
+      }
+      const [poolA, poolB] = pools;
+      const runtimeFor = target =>
+        ledger.createPostgresReportingNotificationActivityRuntime({
+          db: target,
+          notifications,
+          namespace: 'multi-schema-tests',
+          attemptCheckpoint,
+          tenantScopeForAccount: () => 'tenant-a',
+        });
+
+      // A is installed fresh and is therefore already current.
+      await poolA.query(ledger.REPORTING_LEDGER_MIGRATION);
+      for (const sql of runtimeFor(poolA).migrations.all) await poolA.query(sql);
+      assert.match(await retentionIndexDefinition(poolA), /abandoned/, 'schema A is current');
+
+      // B still carries the earlier shape: projected-only retention index and
+      // pre-abandonment constraints.
+      await poolB.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await poolB.query(`
+        CREATE TABLE adcp_reporting_notification_activity (
+          namespace TEXT NOT NULL, transition_id TEXT NOT NULL,
+          activity_sequence BIGSERIAL NOT NULL UNIQUE, tenant_scope TEXT NOT NULL,
+          account_id TEXT NOT NULL, obligation_id TEXT NOT NULL, activity JSONB NOT NULL,
+          intent_fingerprint TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+          notification_required BOOLEAN NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0,
+          next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+          lease_owner TEXT, lease_version BIGINT NOT NULL DEFAULT 0, lease_expires_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+          projected_at TIMESTAMPTZ, retain_until TIMESTAMPTZ,
+          PRIMARY KEY (namespace, transition_id),
+          CONSTRAINT adcp_reporting_notification_activity_valid_state
+            CHECK (state IN ('pending', 'projected')),
+          CONSTRAINT adcp_reporting_notification_activity_valid_projection CHECK (
+            (state = 'pending' AND notification_required AND projected_at IS NULL AND retain_until IS NULL) OR
+            (state = 'projected' AND projected_at IS NOT NULL AND retain_until IS NOT NULL)
+          )
+        );
+        CREATE INDEX idx_adcp_reporting_notification_activity_retention
+          ON adcp_reporting_notification_activity(namespace, retain_until, activity_sequence)
+          WHERE state = 'projected';
+      `);
+      assert.doesNotMatch(await retentionIndexDefinition(poolB), /abandoned/, 'schema B starts on the old shape');
+
+      for (const sql of runtimeFor(poolB).migrations.all) await poolB.query(sql);
+
+      assert.match(
+        await retentionIndexDefinition(poolB),
+        /abandoned/,
+        'schema B is upgraded even though schema A was already current'
+      );
+      const constraints = await poolB.query(
+        `SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conrelid = 'adcp_reporting_notification_activity'::regclass ORDER BY conname`
+      );
+      const byName = Object.fromEntries(constraints.rows.map(row => [row.conname, row.def]));
+      assert.match(byName.adcp_reporting_notification_activity_valid_state, /abandoned/);
+      assert.match(byName.adcp_reporting_notification_activity_valid_projection, /abandoned_at/);
+      const columns = await poolB.query(
+        `SELECT attname FROM pg_attribute
+          WHERE attrelid = 'adcp_reporting_notification_activity'::regclass AND NOT attisdropped
+            AND attname IN ('abandoned_at', 'delivery_intent_at')`
+      );
+      assert.equal(columns.rows.length, 2, 'the upgrade added both columns in schema B');
+
+      // Schema A is untouched by B's upgrade.
+      assert.match(await retentionIndexDefinition(poolA), /abandoned/);
+    } finally {
+      for (const target of pools) await target.end();
+      for (const name of schemas) await bootstrap.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`);
+    }
+  });
+
   test('refuses legacy subscribers beside the transactional port', async () => {
     const obligation = await putObligation('subscriber-conflict', 'account-a');
     await assert.rejects(
@@ -3429,6 +3560,17 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         WHERE namespace = $1 AND transition_id = $2`,
       [intentNamespace, transitionId]
     );
+  }
+
+  async function retentionIndexDefinition(target) {
+    const result = await target.query(
+      `SELECT pg_get_indexdef(index_class.oid) AS def
+         FROM pg_index
+         JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+        WHERE pg_index.indrelid = 'adcp_reporting_notification_activity'::regclass
+          AND index_class.relname = 'idx_adcp_reporting_notification_activity_retention'`
+    );
+    return result.rows[0]?.def ?? '';
   }
 
   /** Constraint and index identities; a drop/recreate changes their oids. */
