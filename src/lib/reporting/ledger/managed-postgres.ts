@@ -205,6 +205,8 @@ const MAX_RECEIPTS_PER_ARRAY = 100;
 /** RC3 `maxItems` on the response `results` array. */
 const MAX_RECEIPT_RESULTS = 100;
 const MAX_MATERIALIZATION_ATTEMPTS = 5;
+/** Keeps a failed cleanup from being reclaimed inside the same worker tick. */
+const REVOCATION_RETRY_BACKOFF_MS = 5_000;
 /**
  * Idempotent replay is a bounded guarantee, not an unbounded archive. Without a
  * retention bound a consumer that reached MAX_RECEIPT_BATCHES_PER_CONSUMER was
@@ -433,7 +435,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // just this instance's option. Another runtime may advertise a longer
     // status horizon, and pruning inside it would break a promise this
     // process never made but the deployment did.
-    const registered = await this.transaction(client => this.readPolicy(client));
+    // Read the registry under the adoption lock, and hold it for the prune:
+    // approving 90 days while another replica is registering 365 would delete
+    // inside a horizon that is about to be advertised.
+    const registered = await this.transaction(async client => {
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
+      return this.readPolicy(client);
+    });
     const days = this.evidenceRetentionDays;
     if (registered.statusRetentionDays !== null && days < registered.statusRetentionDays) {
       throw new Error(
@@ -688,6 +696,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     return this.transaction(async client => {
       await advisoryLock(client, accountLock(binding.account_id));
       await advisoryLock(client, `adcp-reporting-binding:${binding.account_id}:${binding.delivery_config_id}`);
+      // Serialize against adoption. Without this an install could read an
+      // empty registry while a replica was mid-way through registering a
+      // narrower promise, and land a binding that promise does not cover.
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
       const existing = await client.query<QueryRow & { semantic_fingerprint: string }>(
         'SELECT semantic_fingerprint FROM adcp_reporting_managed_bindings WHERE configuration_id = $1',
         [binding.configurationId]
@@ -702,6 +714,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         QueryRow & {
           configuration: {
             feedPurpose?: string;
+            requiredFinality?: string;
             canonicalization?: unknown;
             schedule?: { recoveryWindowMilliseconds?: number };
           };
@@ -753,6 +766,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       // not_required that no capability document can justify.
       if (binding.feed_purpose === 'billing' && binding.reconciliation_mode !== 'consumer_receipt') {
         throw new Error('Billing managed bindings require consumer-receipt reconciliation');
+      }
+      // Revalidate the Core configuration here, atomically with the install.
+      // billing implies required_finality official is enforced at Core
+      // install, so a generation created before that check existed still
+      // sits in the database and would otherwise be bindable — letting a
+      // terminal accepted billing receipt land on a provisional revision.
+      if (binding.feed_purpose === 'billing' && configuration.requiredFinality !== 'official') {
+        throw new Error('Billing managed bindings require a Core configuration with official finality');
       }
       if (configuration.feedPurpose !== binding.feed_purpose) {
         throw new Error('Managed binding feed purpose differs from the exact Core configuration');
@@ -982,6 +1003,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   async settleMaterialization(input: {
     lease: ReportingManagedDeliveryLeaseV1;
     now: string;
+    /** Retention the database must see satisfied, not just the worker. */
+    minimum_resource_retention_days?: number;
     outcome:
       | {
           status: 'available' | 'delivered';
@@ -1013,11 +1036,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
              changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
           WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3
             AND lease_expires_at > clock_timestamp() AND status = 'pending' AND authorization_generation = $4
-            -- Expiry is judged by the clock that stores it. A worker running
-            -- behind could otherwise publish a resource the database already
-            -- considers expired, leaving a delivered materialization whose
-            -- bytes no reader can fetch.
-            AND ($7::timestamptz IS NULL OR $7::timestamptz > clock_timestamp())`,
+            -- Retention is judged entirely by the clock that stores it. A
+            -- worker running behind could otherwise satisfy the window on its
+            -- own clock and publish a resource the database already considers
+            -- expired, or under-retain one — leaving a delivered
+            -- materialization whose bytes no reader can fetch.
+            AND ($7::timestamptz IS NULL
+                 OR $7::timestamptz >= clock_timestamp() + ($8::bigint * INTERVAL '1 day'))`,
         [
           lease.materialization.reporting_materialization_id,
           lease.owner,
@@ -1026,8 +1051,28 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           outcome.status,
           JSON.stringify(materialization),
           outcome.status === 'failed' ? null : outcome.resource.expires_at,
+          input.minimum_resource_retention_days ?? 0,
         ]
       );
+      // A settle refused purely because the database considers the resource
+      // under-retained must not leave the row pending forever: nothing else
+      // ever revisits it, the planner cannot see it, and the attempt cap
+      // never engages. Terminalize it under the same fence so the attempt is
+      // spent and the revision can be replanned.
+      if (updated.rowCount === 0 && outcome.status !== 'failed') {
+        await client.query(
+          `UPDATE adcp_reporting_materializations SET status = 'failed',
+              data = data || jsonb_build_object(
+                'status', 'failed',
+                'failed_at', ${rfc3339Micro('clock_timestamp()')},
+                'failure_code', 'RESOURCE_RETENTION_INSUFFICIENT'
+              ),
+              changed_at = clock_timestamp(), lease_owner = NULL, lease_expires_at = NULL
+            WHERE materialization_id = $1 AND lease_owner = $2 AND lease_generation = $3
+              AND lease_expires_at > clock_timestamp() AND status = 'pending'`,
+          [lease.materialization.reporting_materialization_id, lease.owner, lease.generation]
+        );
+      }
       return updated.rowCount === 1 && authorized.rowCount === 1 && outcome.status !== 'failed';
     });
   }
@@ -1149,10 +1194,20 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     return result.rowCount === 1;
   }
 
-  async releaseRevocation(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean> {
+  async releaseRevocation(input: {
+    lease: ReportingDestinationRevocationLeaseV1;
+    backoff_milliseconds?: number;
+  }): Promise<boolean> {
     const result = await this.query(
       `UPDATE adcp_reporting_destination_authorizations
-          SET cleanup_lease_owner = NULL, cleanup_lease_expires_at = NULL, cleanup_lease_issued_at = NULL
+          -- Release enables a later recovery, not an immediate one. Clearing
+          -- the lease outright let the very next iteration of the same worker
+          -- tick reclaim the same grant, so one broken provider consumed
+          -- every iteration and nothing else was ever cleaned up. Holding a
+          -- short backoff keeps the grant reclaimable soon without that
+          -- tight loop; the generation bump still fences the failed holder.
+          SET cleanup_lease_owner = NULL, cleanup_lease_issued_at = NULL,
+              cleanup_lease_expires_at = clock_timestamp() + ($6::bigint * INTERVAL '1 millisecond')
         WHERE account_id = $1 AND destination_ref = $2 AND generation = $3
           AND cleanup_lease_owner = $4 AND cleanup_lease_generation = $5
           AND cleanup_completed_at IS NULL`,
@@ -1162,6 +1217,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         input.lease.authorization.generation,
         input.lease.owner,
         input.lease.generation,
+        input.backoff_milliseconds ?? REVOCATION_RETRY_BACKOFF_MS,
       ]
     );
     return result.rowCount === 1;

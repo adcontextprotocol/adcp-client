@@ -136,6 +136,13 @@ export interface ReportingManagedDeliveryStore {
   settleMaterialization(input: {
     lease: ReportingManagedDeliveryLeaseV1;
     now: string;
+    /**
+     * Retention the store must see satisfied on its own clock.
+     *
+     * The worker checks it too, but a worker running behind would otherwise
+     * accept a resource the database already considers under-retained.
+     */
+    minimum_resource_retention_days?: number;
     outcome:
       | { status: 'available' | 'delivered'; resource: ReportingResource; verification: ReportingVerification }
       | { status: 'failed'; failure_code: string };
@@ -159,7 +166,11 @@ export interface ReportingManagedDeliveryStore {
    * `cleanup_lease_generation`, and a failed attempt has already incremented
    * it, so releasing cannot let one broken grant starve the queue.
    */
-  releaseRevocation(input: { lease: ReportingDestinationRevocationLeaseV1 }): Promise<boolean>;
+  releaseRevocation(input: {
+    lease: ReportingDestinationRevocationLeaseV1;
+    /** Holds the grant out of selection briefly so a retry is not a tight loop. */
+    backoff_milliseconds?: number;
+  }): Promise<boolean>;
   getReadableResource(input: {
     account_id: string;
     resource_ref: string;
@@ -492,6 +503,25 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
     if (!/^[A-Za-z0-9_.:-]{16,255}$/.test(request.idempotency_key)) {
       return receiptBatchFailure(entries, 'VALIDATION_ERROR', 'sync_reporting_receipts idempotency_key is invalid');
     }
+    // Duplicate identity is a property of the submitted batch, not of the
+    // subset that happens to be well formed. Checking it after filtering let
+    // one valid and one malformed entry share a receipt id and still mutate
+    // state, which is exactly the collision the rule exists to stop.
+    const submittedIds = entries.map(entry =>
+      isRecord(entry.receipt) && typeof entry.receipt.reporting_receipt_id === 'string'
+        ? entry.receipt.reporting_receipt_id
+        : ''
+    );
+    const duplicateSubmittedIds = new Set(
+      submittedIds.filter((value, index) => value !== '' && submittedIds.indexOf(value) !== index)
+    );
+    if (duplicateSubmittedIds.size) {
+      return receiptBatchFailure(
+        entries,
+        'VALIDATION_ERROR',
+        'sync_reporting_receipts receipt IDs must be unique across the batch'
+      );
+    }
     const valid = entries.map(
       entry =>
         (entry.kind === 'revision'
@@ -673,6 +703,10 @@ export async function runManagedDeliveryWorker(
       // instead — `claimRevocation` sorts by `cleanup_lease_generation`, which
       // this failed attempt already incremented, so a repeatedly failing grant
       // is deprioritised behind every healthy one.
+      // Backed off, not merely released: clearing the lease outright let the
+      // next iteration of this same tick reclaim the same grant, so one
+      // broken provider could consume every iteration and nothing else was
+      // ever cleaned up.
       await store.releaseRevocation({ lease: revocation });
     }
   }
@@ -705,7 +739,18 @@ export async function runManagedDeliveryWorker(
         options.signal
       );
       assertMaterializationOutcome(lease, outcome, now().toISOString(), minimumResourceRetentionDays);
-      if (await store.settleMaterialization({ lease, now: now().toISOString(), outcome })) counts.delivered += 1;
+      if (
+        await store.settleMaterialization({
+          lease,
+          now: now().toISOString(),
+          outcome,
+          minimum_resource_retention_days: Math.max(
+            lease.binding.resource_retention_days,
+            minimumResourceRetentionDays
+          ),
+        })
+      )
+        counts.delivered += 1;
       else counts.failed += 1;
     } catch {
       await store.settleMaterialization({

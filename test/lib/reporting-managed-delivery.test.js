@@ -1100,6 +1100,61 @@ describe('seller managed reporting runtime', () => {
     }
   });
 
+  test('rejects duplicate receipt IDs over the submitted batch, before filtering', async () => {
+    let stored;
+    const handler = ledger.createSyncReportingReceiptsHandler(
+      {
+        syncReceiptBatch: async input => {
+          stored = input.entries;
+          return input.entries.map(entry => ({ result: 'recorded', receipt: entry.receipt }));
+        },
+      },
+      () => 'buyer-1'
+    );
+    const context = { account: { id: 'account-1' } };
+    const valid = {
+      reporting_receipt_id: 'receipt-duplicate-pair-0001',
+      reporting_obligation_id: 'obligation-1',
+      reporting_revision_id: 'revision-1',
+      reporting_materialization_id: 'materialization-1',
+      status: 'accepted',
+      verification_profile: 'canonical_digest',
+      observed_row_count: 2,
+      observed_control_totals: [],
+      observed_canonical_content_digest: lease().revision.wireRevision.canonical_content_digest,
+      observed_at: '2026-08-27T04:00:01.000Z',
+    };
+    // The malformed sibling is dropped by evidence validation, so checking
+    // uniqueness afterwards saw only one id and let the pair through — the
+    // valid half then mutated state under an id the batch had reused.
+    const malformedTwin = { ...valid, observed_canonical_content_digest: undefined };
+    const response = await handler(
+      { idempotency_key: 'receipt-duplicate-pair-0001', receipts: [valid, malformedTwin] },
+      context
+    );
+    assert.equal(stored, undefined, 'nothing reaches the store');
+    assert.deepEqual(
+      response.results.map(value => value.result),
+      ['failed', 'failed']
+    );
+    assert.equal(response.results[0].errors[0].code, 'VALIDATION_ERROR');
+    assert.match(response.results[0].errors[0].message, /unique across the batch/);
+
+    // A batch whose IDs really are unique still goes through.
+    const distinct = await handler(
+      {
+        idempotency_key: 'receipt-duplicate-pair-0002',
+        receipts: [valid, { ...valid, reporting_receipt_id: 'receipt-duplicate-pair-0002' }],
+      },
+      context
+    );
+    assert.equal(stored.length, 2);
+    assert.deepEqual(
+      distinct.results.map(value => value.result),
+      ['recorded', 'recorded']
+    );
+  });
+
   test('never reflects an unusable receipt id into the patterned response field', async () => {
     const handler = ledger.createSyncReportingReceiptsHandler({ syncReceiptBatch: async () => [] }, () => 'buyer-1');
     const response = await handler(

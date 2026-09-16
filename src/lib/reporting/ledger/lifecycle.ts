@@ -65,8 +65,12 @@ async function reconcileEachIsolated(
         subscribers: input.subscribers,
       });
     } catch {
-      // Intentionally swallowed per obligation. Surfacing it would abort the
-      // sweep, and the obligation stays a candidate for the next pass.
+      // Contained per obligation, then backed off. Swallowing alone was not
+      // enough: an oldest-first page of failing tenants re-selected the same
+      // obligations on every sweep and no healthy work behind them ever ran.
+      // The backoff never advances the watermark, so the work stays visible
+      // as unresolved rather than being quietly dropped.
+      await input.store.recordLifecycleFailure?.({ reporting_obligation_id }).catch(() => undefined);
     }
   }
   return obligationIds.length;
@@ -263,10 +267,17 @@ async function composeManagedLifecycleProjection(
   // receipt row, so aggregating observed consumers alone let it disappear as
   // soon as another consumer accepted — the transition and its webhook went
   // reconciled while that consumer's own read still said `action_required`.
-  const byConsumer = new Map(managed.consumers.map(value => [value.consumer_id, value]));
+  // A complete roster is authoritative here too. Seeding from observed
+  // principals first and only then layering the roster on top meant the
+  // lifecycle folded in principals the roster excludes — the same widening
+  // the live projection and the digest already refuse, so the three would
+  // disagree about who owes a receipt.
+  const observed = managed.obligatedConsumerRosterComplete === true ? [] : managed.consumers;
+  const byConsumer = new Map(observed.map(value => [value.consumer_id, value]));
   for (const consumerId of managed.obligatedConsumerIds ?? []) {
     if (!byConsumer.has(consumerId)) {
-      byConsumer.set(consumerId, { consumer_id: consumerId, receipts: [], adjustmentReceipts: [] });
+      const submitted = managed.consumers.find(value => value.consumer_id === consumerId);
+      byConsumer.set(consumerId, submitted ?? { consumer_id: consumerId, receipts: [], adjustmentReceipts: [] });
     }
   }
   const consumers: Array<{ receipts: ReportingReceipt[]; adjustmentReceipts: ReportingAdjustmentReceipt[] }> = [
@@ -297,7 +308,9 @@ async function composeManagedLifecycleProjection(
       consumer.receipts,
       consumer.adjustmentReceipts,
       coreProjection,
-      input.ledgerAsOf
+      input.ledgerAsOf,
+      managed.tombstonedAcceptedSubjects ?? [],
+      managed.tombstonedDeliveredRevisionIds ?? []
     );
     if (!projected) continue;
     health = moreSevereReportingHealthV1(health, projected.projection.health);

@@ -267,7 +267,8 @@ export function createReportingStatusHandler<TContext = unknown>(
           page.snapshot.adjustmentReceiptProjection ?? page.snapshot.adjustmentReceipts ?? [],
           baseProjection,
           page.snapshot.ledgerAsOf,
-          page.snapshot.tombstonedAcceptedSubjects ?? []
+          page.snapshot.tombstonedAcceptedSubjects ?? [],
+          page.snapshot.tombstonedDeliveredRevisionIds ?? []
         );
         return {
           obligation,
@@ -657,7 +658,15 @@ export function projectManagedDelivery(
    * body is gone — otherwise letting evidence expire silently reopens a
    * settled subject and the obligation degrades on its own.
    */
-  tombstonedAcceptedSubjects: ReadonlyArray<{ kind: 'revision' | 'adjustment'; subjectId: string }> = []
+  tombstonedAcceptedSubjects: ReadonlyArray<{ kind: 'revision' | 'adjustment'; subjectId: string }> = [],
+  /**
+   * Revisions whose successful materialization row has been pruned.
+   *
+   * `deliveredEver` is read from history, and pruning removes that history,
+   * so without this a delivered revision reads as never delivered and an
+   * accepted subject is dragged back to `pending`.
+   */
+  tombstonedDeliveredRevisionIds: readonly string[] = []
 ) {
   if (!binding) return undefined;
   const supersededRevisionIds = new Set(
@@ -735,13 +744,15 @@ export function projectManagedDelivery(
     // a `RECEIPT_REQUIRED`/`ADJUSTMENT_RECEIPT_REQUIRED` issue, so the first
     // shape was schema-invalid on the wire. Settle the receipt verdict first,
     // and only then fall back to "no delivery has been verified yet".
-    const deliveredEver = materializationHistory.some(
-      value =>
-        value.reporting_revision_id === requiredRevision.reporting_revision_id &&
-        (value.status === 'available' || value.status === 'delivered') &&
-        value.resource !== undefined &&
-        value.verification !== undefined
-    );
+    const deliveredEver =
+      tombstonedDeliveredRevisionIds.includes(requiredRevision.reporting_revision_id) ||
+      materializationHistory.some(
+        value =>
+          value.reporting_revision_id === requiredRevision.reporting_revision_id &&
+          (value.status === 'available' || value.status === 'delivered') &&
+          value.resource !== undefined &&
+          value.verification !== undefined
+      );
     const revisionAcceptedByTombstone = tombstonedAcceptedSubjects.some(
       value => value.kind === 'revision' && value.subjectId === requiredRevision.reporting_revision_id
     );

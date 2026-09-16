@@ -481,6 +481,8 @@ export interface ReportingLedgerSnapshotV1 {
    * acceptance and reopens a settled subject.
    */
   tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>;
+  /** Revisions whose successful materialization row has been pruned. */
+  tombstonedDeliveredRevisionIds?: readonly string[];
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   /** Full scoped histories retained across changes_after for complete counts and current-leaf projection. */
   consumerStatusProjection?: ReportingLedgerConsumerStatementV1[];
@@ -584,6 +586,16 @@ export interface ReportingManagedLifecycleProjectionV1 {
    * apply.
    */
   managedStateVersion?: string;
+  /**
+   * Subjects whose accepted receipt body has been pruned, and revisions whose
+   * successful materialization has been pruned.
+   *
+   * Retention removes bodies; it must not remove conclusions. Without these
+   * the lifecycle recomputes an accepted subject as outstanding and a
+   * delivered revision as never delivered.
+   */
+  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>;
+  tombstonedDeliveredRevisionIds?: readonly string[];
   /**
    * The cutoff this projection actually used, at full database precision.
    *
@@ -742,6 +754,12 @@ export interface ReportingLedgerStore {
    * cutoff, and always takes a fresh one before a retry.
    */
   readLedgerInstant?(): Promise<string>;
+  /**
+   * Records a failed reconcile so the obligation backs off rather than
+   * re-occupying the head of every sweep. It must not advance the
+   * reconciliation watermark: the work is still unresolved.
+   */
+  recordLifecycleFailure?(input: { reporting_obligation_id: string }): Promise<void>;
   listTransitions(reporting_obligation_id: string): Promise<ReportingLedgerStatusTransitionV1[]>;
   listPendingTransitions(input?: { account_id?: string; limit?: number }): Promise<ReportingLedgerStatusTransitionV1[]>;
   createSnapshot(query: ReportingLedgerSnapshotQueryV1): Promise<ReportingLedgerSnapshotV1>;

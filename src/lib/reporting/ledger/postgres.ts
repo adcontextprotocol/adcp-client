@@ -255,6 +255,12 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_lifecycle_state (
 );
 CREATE INDEX IF NOT EXISTS adcp_reporting_lifecycle_state_processed
   ON adcp_reporting_lifecycle_state (processed_at, obligation_id);
+ALTER TABLE adcp_reporting_lifecycle_state
+  ADD COLUMN IF NOT EXISTS current_roster_version TEXT;
+ALTER TABLE adcp_reporting_lifecycle_state
+  ADD COLUMN IF NOT EXISTS failure_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE adcp_reporting_lifecycle_state
+  ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_transitions (
   transition_id TEXT PRIMARY KEY,
@@ -586,6 +592,11 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
                   WHERE revision.obligation_id = obligation.obligation_id
                ))
 ${managedDueArm}       )
+         -- A tenant that keeps failing must not monopolise every sweep. Its
+         -- backoff cursor holds it out of selection until it is due again,
+         -- while processed_at ordering still favours whoever has waited
+         -- longest among the eligible.
+         AND (state.next_attempt_at IS NULL OR state.next_attempt_at <= $2)
        ORDER BY watermark.since, LEAST(
          (obligation.data->>'expectedAt')::timestamptz,
          (obligation.data->>'recoveryDeadlineAt')::timestamptz
@@ -1376,12 +1387,20 @@ ${managedDueArm}       )
         {
           await client.query(
             `INSERT INTO adcp_reporting_lifecycle_state
-               (obligation_id, processed_state_version, processed_roster_version, processed_at)
-             VALUES ($1, $2, $3, clock_timestamp())
+               (obligation_id, processed_state_version, processed_roster_version,
+                current_roster_version, processed_at)
+             VALUES ($1, $2, $3, $3, $4::timestamptz)
              ON CONFLICT (obligation_id) DO UPDATE SET
                processed_state_version = EXCLUDED.processed_state_version,
                processed_roster_version = EXCLUDED.processed_roster_version,
-               processed_at = EXCLUDED.processed_at`,
+               -- Reconciling also observes the roster, so the current version
+               -- moves with the processed one. A later external change
+               -- publishes a different current version and re-arms; without
+               -- this the two never matched and the obligation stayed due.
+               current_roster_version = EXCLUDED.processed_roster_version,
+               processed_at = EXCLUDED.processed_at,
+               failure_count = 0,
+               next_attempt_at = NULL`,
             [
               input.reporting_obligation_id,
               input.processedManagedStateVersion ?? null,
@@ -1389,6 +1408,12 @@ ${managedDueArm}       )
               // is a due condition. A deployment with no roster source would
               // otherwise stay due forever.
               input.processedObligatedConsumerRosterVersion ?? '',
+              // The cutoff the projection actually read at, never the commit
+              // instant. Watermarking at commit time swallowed everything
+              // that landed between the two: excluded from the projection,
+              // and then behind the watermark forever, so it never became
+              // due again.
+              input.ledgerAsOf,
             ]
           );
         }
@@ -1607,6 +1632,18 @@ ${managedDueArm}       )
         const tombstonedAcceptedSubjects = managedInstalled
           ? await this.listTombstonedAcceptedSubjects(client, query, obligationIds)
           : [];
+        // Conclusions survive their evidence: a pruned successful
+        // materialization must still read as delivered, or the filtered
+        // health path recomputes a settled revision as never delivered.
+        const tombstonedDeliveredRevisionIds = managedInstalled
+          ? (
+              await client.query<QueryResultRow & { revision_id: string }>(
+                `SELECT revision_id FROM adcp_reporting_materialization_tombstones
+                  WHERE obligation_id = ANY($1::text[]) AND reached_success LIMIT $2`,
+                [obligationIds, MAX_SNAPSHOT_ITEMS + 1]
+              )
+            ).rows.map(row => row.revision_id)
+          : [];
         const materializationProjection = managedInstalled
           ? await this.listSnapshotMaterializationProjection(client, obligationIds, ledgerAsOf)
           : [];
@@ -1696,7 +1733,9 @@ ${managedDueArm}       )
                   receiptProjection,
                   adjustmentReceiptProjection,
                   baseProjection,
-                  ledgerAsOf
+                  ledgerAsOf,
+                  tombstonedAcceptedSubjects,
+                  tombstonedDeliveredRevisionIds
                 );
                 const health = mismatch
                   ? moreSevereReportingHealthV1(managed?.projection.health ?? sellerHealth, mismatch.health)
@@ -1752,6 +1791,7 @@ ${managedDueArm}       )
           ...(managedInstalled
             ? {
                 tombstonedAcceptedSubjects,
+                tombstonedDeliveredRevisionIds,
                 managedBindings,
                 materializations,
                 materializationHistoryProjection,
@@ -2241,6 +2281,23 @@ ${managedDueArm}       )
           throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
         }
         const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
+        // Conclusions that outlived their evidence. Pruning removes bodies
+        // and attempt rows, so without these the lifecycle would recompute an
+        // accepted subject as outstanding and a delivered revision as never
+        // delivered — retention would silently reopen settled work.
+        const tombstonedAcceptedSubjects = await this.listTombstonedAcceptedSubjects(
+          client,
+          { account_id: binding.account_id, consumer_id: undefined, view: 'periods' } as ReportingLedgerSnapshotQueryV1,
+          [input.reporting_obligation_id],
+          true
+        );
+        const tombstonedDeliveredRevisionIds = (
+          await client.query<QueryResultRow & { revision_id: string }>(
+            `SELECT revision_id FROM adcp_reporting_materialization_tombstones
+              WHERE obligation_id = $1 AND reached_success LIMIT $2`,
+            [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1]
+          )
+        ).rows.map(row => row.revision_id);
         // Read last, inside the same transaction as everything above, so the
         // token covers exactly the state this projection was computed from.
         const managedStateVersion = await this.readManagedStateVersion(client, input.reporting_obligation_id);
@@ -2253,6 +2310,8 @@ ${managedDueArm}       )
           obligatedConsumerRosterComplete: false,
           managedStateVersion,
           resolvedLedgerAsOf,
+          tombstonedAcceptedSubjects,
+          tombstonedDeliveredRevisionIds,
         };
         // REPEATABLE READ, not the default. Under READ COMMITTED every statement
         // above takes its own snapshot, so a settle committing between the
@@ -2357,6 +2416,43 @@ ${managedDueArm}       )
    * Current external roster version, read outside any transaction so the
    * reconciler can re-check it immediately before an apply.
    */
+  /**
+   * Publishes the roster version currently observed for an obligation.
+   *
+   * The roster is external, so nothing in this database changes when it does.
+   * Recording what a reader saw is what lets the due query notice drift from
+   * the version last reconciled. Never lowers a watermark; it only reports.
+   */
+  async recordObligatedConsumerRosterVersion(input: {
+    reporting_obligation_id: string;
+    version: string;
+  }): Promise<void> {
+    await this.query(
+      `INSERT INTO adcp_reporting_lifecycle_state (obligation_id, current_roster_version, processed_at)
+       VALUES ($1, $2, clock_timestamp())
+       ON CONFLICT (obligation_id) DO UPDATE SET current_roster_version = EXCLUDED.current_roster_version`,
+      [input.reporting_obligation_id, input.version]
+    );
+  }
+
+  /**
+   * Records a failed reconcile so the obligation backs off instead of
+   * re-occupying the head of every sweep, without ever hiding it: the
+   * watermark is untouched, so it stays unresolved work.
+   */
+  async recordLifecycleFailure(input: { reporting_obligation_id: string }): Promise<void> {
+    await this.query(
+      `INSERT INTO adcp_reporting_lifecycle_state (obligation_id, failure_count, next_attempt_at, processed_at)
+       VALUES ($1, 1, clock_timestamp() + INTERVAL '30 seconds', clock_timestamp())
+       ON CONFLICT (obligation_id) DO UPDATE SET
+         failure_count = adcp_reporting_lifecycle_state.failure_count + 1,
+         next_attempt_at = clock_timestamp() + (LEAST(
+           ${MAX_LIFECYCLE_BACKOFF_SECONDS}, 30 * POWER(2, LEAST(6, adcp_reporting_lifecycle_state.failure_count))
+         ) * INTERVAL '1 second')`,
+      [input.reporting_obligation_id]
+    );
+  }
+
   /** Authoritative instant from the database clock, at microsecond precision. */
   async readLedgerInstant(): Promise<string> {
     const result = await this.query<QueryResultRow & { instant: string }>(
@@ -2381,7 +2477,12 @@ ${managedDueArm}       )
     // Must hash exactly what the projection hashed, or an unversioned roster
     // never matches and every reconcile burns its retry budget and gives up.
     const observed = await this.observedConsumerIds(input.reporting_obligation_id);
-    return obligatedConsumerRosterVersionFor(supplied, obligatedConsumerIdsFor(supplied, observed));
+    const version = obligatedConsumerRosterVersionFor(supplied, obligatedConsumerIdsFor(supplied, observed));
+    await this.recordObligatedConsumerRosterVersion({
+      reporting_obligation_id: input.reporting_obligation_id,
+      version,
+    });
+    return version;
   }
 
   /** Principals that have engaged with this obligation, as the projection sees them. */
@@ -2436,13 +2537,14 @@ ${managedDueArm}       )
   private async listTombstonedAcceptedSubjects(
     client: ReportingPgClient,
     query: ReportingLedgerSnapshotQueryV1,
-    obligationIds: string[]
+    obligationIds: string[],
+    allConsumers = false
   ): Promise<Array<{ kind: 'revision' | 'adjustment'; subjectId: string }>> {
-    if (!obligationIds.length || !query.consumer_id) return [];
+    if (!obligationIds.length || (!query.consumer_id && !allConsumers)) return [];
     const result = await client.query<QueryResultRow & { receipt_kind: string; subject_id: string }>(
       `SELECT tombstone.receipt_kind, tombstone.subject_id
          FROM adcp_reporting_receipt_tombstones tombstone
-        WHERE tombstone.account_id = $1 AND tombstone.consumer_id = $2
+        WHERE tombstone.account_id = $1 AND ($2::text IS NULL OR tombstone.consumer_id = $2)
           AND tombstone.status = 'accepted' AND tombstone.was_current
           AND ((tombstone.receipt_kind = 'revision' AND EXISTS (
                   SELECT 1 FROM adcp_reporting_revisions revision
@@ -2453,7 +2555,7 @@ ${managedDueArm}       )
                    WHERE adjustment.adjustment_id = tombstone.subject_id
                      AND adjustment.obligation_id = ANY($3::text[]))))
         LIMIT $4`,
-      [query.account_id, query.consumer_id, obligationIds, MAX_SNAPSHOT_ITEMS + 1]
+      [query.account_id, allConsumers ? null : query.consumer_id, obligationIds, MAX_SNAPSHOT_ITEMS + 1]
     );
     return result.rows.map(row => ({
       kind: row.receipt_kind === 'adjustment' ? ('adjustment' as const) : ('revision' as const),
@@ -3108,6 +3210,14 @@ const MANAGED_DUE_ARM = `           OR (EXISTS (
                       -- so the only durable trace is the version recorded at
                       -- the last reconcile. A null one means never reconciled.
                       OR state.processed_roster_version IS NULL
+                      -- A roster lives outside this database, so the only way
+                      -- a change can re-arm anything is if someone records
+                      -- it. Every read of the roster publishes the version it
+                      -- saw; a difference from what was last reconciled is a
+                      -- due condition. Without this the first reconcile made
+                      -- processed_roster_version non-null and no later roster
+                      -- change could ever schedule work again.
+                      OR state.current_roster_version IS DISTINCT FROM state.processed_roster_version
                       -- A retained resource expiring is a health change with
                       -- no row written anywhere, so nothing else can notice it.
                       OR EXISTS (
@@ -3143,6 +3253,9 @@ function obligatedConsumerRosterVersionFor(
 ): string {
   return supplied.version ?? digest({ ids, complete: supplied.complete === true });
 }
+
+/** Caps exponential lifecycle backoff so a recovered tenant is retried promptly. */
+const MAX_LIFECYCLE_BACKOFF_SECONDS = 900;
 
 /** Renders a timestamptz as an RFC 3339 UTC instant without losing microseconds. */
 function rfc3339Microseconds(expression: string): string {
