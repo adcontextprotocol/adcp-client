@@ -832,12 +832,16 @@ test('terminalizes a stale generation on a recovered attempt but keeps a live on
   );
 });
 
-test('keeps PersistentNotificationRuntime assignable for an implementation without the checkpoint members', () => {
-  // The checkpoint members were published as required under a minor changeset,
-  // which breaks structural assignment for any custom runtime written against
-  // an earlier release. They are optional, and an emission owner treats an
-  // absent flag as unproven rather than assuming support.
-  /** @type {import('../../dist/lib/server/index.js').PersistentNotificationRuntime} */
+test('reports the checkpoint members as absent for a runtime built without one', () => {
+  // The *type* guarantee — that both members are optional, so a custom runtime
+  // written against an earlier release still satisfies the interface — is pinned
+  // by src/type-tests/notification-runtime-optional-members.type-test.ts. This
+  // file is outside every TypeScript config, so a JSDoc annotation here would
+  // compile nothing and prove nothing.
+  //
+  // What this test does cover is the runtime half: an absent member reads as
+  // undefined and a runtime built without the option reports false, so a
+  // consumer that requires the checkpoint fails closed instead of trusting it.
   const legacyShaped = {
     store: memoryNotificationSubscriptionStore(),
     emitter: { emit: async () => {}, emitRecovered: async () => {}, forTenantScope: () => ({}) },
@@ -849,8 +853,6 @@ test('keeps PersistentNotificationRuntime assignable for an implementation witho
   assert.equal(legacyShaped.hasDeliveryAttemptCheckpoint, undefined);
   assert.equal(legacyShaped.deliveryAttemptCheckpoint, undefined);
 
-  // And a runtime built without the option reports the same, so a consumer
-  // that requires the checkpoint fails closed rather than trusting it.
   const runtime = createPersistentNotificationRuntime({
     store: memoryNotificationSubscriptionStore(),
     proofAdapter: { prove: async () => ({ proved: true }) },
