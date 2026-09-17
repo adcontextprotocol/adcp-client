@@ -724,6 +724,7 @@ jobs:
           test/server-decisioning-postgres-task-registry.test.js
           test/server-decisioning-postgres-task-settlement-intents.test.js
           test/lib/postgres-proposal-store.test.js
+          test/examples/durable-buyer-writes.test.js
           test/lib/reporting-ledger-pg.test.js
           test/lib/reporting-ledger-writer-fence-pg.test.js
           test/lib/reporting-notification-activity-pg.test.js

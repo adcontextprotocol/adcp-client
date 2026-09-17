@@ -2,6 +2,10 @@
 
 How a buyer agent recovers when a process crashes mid-retry without creating duplicate media buys.
 
+For the complete multi-process path—including durable callback registration,
+polling, continuations, and once-only host publication—see
+[Durable buyer writes across processes](./DURABLE-BUYER-WRITES.md).
+
 ## The failure mode
 
 A buyer process sends `create_media_buy` to a seller, the seller accepts it, but the process crashes before it can persist the response. On restart, the buyer does not know whether the call landed. Three things can happen on the next attempt:

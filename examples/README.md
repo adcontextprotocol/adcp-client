@@ -18,6 +18,12 @@ Adding one task to an application that already owns auth and storage? Start
 with [`existing-platform-thin.ts`](./existing-platform-thin.ts) and the
 [existing-platform guide](../docs/guides/EXISTING-PLATFORM.md).
 
+Running buyer writes from request-scoped processes? The
+[`durable-buyer-writes`](./durable-buyer-writes/) example connects the caller,
+fresh callback/poll worker, PostgreSQL receiver stores, and host publication
+outbox described in the
+[durable buyer writes guide](../docs/guides/DURABLE-BUYER-WRITES.md).
+
 Migrating a seller adapter to AdCP 3.2 targeting? The focused
 [`targeting-input-existing-platform.ts`](./targeting-input-existing-platform.ts)
 example carries nullable omit/clear/set commands through provider translation,

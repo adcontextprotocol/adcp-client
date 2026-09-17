@@ -5,6 +5,9 @@ For product possibility, accepted change rights, and current execution routes, u
 Requires Node.js `^20.19.0 || >=22.12.0`. Install the SDK 14 prerelease
 and create one client:
 
+For request-scoped callers whose callback or poll may run on another process,
+use the [durable buyer writes recipe](./DURABLE-BUYER-WRITES.md).
+
 ```bash
 npm install '@adcp/sdk@^14.0.0-0'
 ```

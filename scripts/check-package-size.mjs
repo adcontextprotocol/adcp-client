@@ -57,7 +57,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // Transactional reporting notification activity adds one module set (CJS + ESM
 // + both declaration flavours), for 6,124 published files. Byte budgets stay
 // fixed.
-const MAX_PACKED_FILE_COUNT = 6_124;
+// The durable buyer-writes adoption example adds two TypeScript files and one
+// packaged guide, bringing the clean package to 6,127 published files.
+const MAX_PACKED_FILE_COUNT = 6_127;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;
