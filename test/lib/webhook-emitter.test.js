@@ -28,22 +28,18 @@ const { signerKeyToProvider } = require('../../dist/lib/signing/testing.js');
 // Retry-delay normalization
 // ────────────────────────────────────────────────────────────
 
-test('releases a retryable suppression even when the configured backoff is fractional', async () => {
-  // The recovery contract requires an integer retryAfterMs, but the configured
-  // delays were only clamped for sign, never coerced. A fractional
-  // initialDelayMs therefore produced a fractional backoff, and releasing a
-  // retryable suppression threw instead of releasing — leaving the delivery
-  // leased until its lease expired.
-  const signerKey = makeSignerKey();
+/**
+ * A recovery claim that enforces exactly what every bundled durable backend
+ * enforces, so a delay this emitter would have rejected surfaces here.
+ */
+function recordingRecoveryClaim(released) {
   const { assertRetryAfterMs } = require('../../dist/lib/server/webhook-delivery/common.js');
-  const released = [];
-  const claim = {
+  return {
     leaseExpiresAtMs: Date.now() + 60_000,
     async renew() {
       return true;
     },
     async release(retryAfterMs) {
-      // Exactly what every bundled durable backend enforces.
       assertRetryAfterMs(retryAfterMs);
       released.push(retryAfterMs);
       return true;
@@ -52,14 +48,18 @@ test('releases a retryable suppression even when the configured backoff is fract
       return true;
     },
   };
-  const emitter = createWebhookEmitter({
+}
+
+function suppressingEmitter({ retries, released }) {
+  const { signerKey } = makeSignerKey();
+  const claim = recordingRecoveryClaim(released);
+  return createWebhookEmitter({
     signerKey,
     fetch: async () => {
       throw new Error('no external attempt should be made');
     },
     sleep: async () => {},
-    // Fractional and above the accepted ceiling: both shapes must be normalized.
-    retries: { maxAttempts: 3, initialDelayMs: 250.5, maxDelayMs: 900_000_000.5, jitter: 0 },
+    retries,
     deliveryRecovery: {
       durability: 'durable',
       checkpoint() {
@@ -67,7 +67,25 @@ test('releases a retryable suppression even when the configured backoff is fract
       },
       settle() {},
     },
+    // Retryable suppression is the path that releases the lease with a backoff.
     authorizeAttempt: () => ({ decision: 'suppress', reason: 'authorization_error', retryable: true }),
+  });
+}
+
+test('releases a retryable suppression when the configured backoff is fractional', async () => {
+  // The recovery contract requires an integer retryAfterMs, but the configured
+  // delays were only clamped for sign, never coerced. A fractional
+  // initialDelayMs therefore produced a fractional backoff, and releasing a
+  // retryable suppression threw instead of releasing — leaving the delivery
+  // leased until its lease expired.
+  //
+  // This is the fractional case only: on attempt 1 with no jitter the backoff is
+  // well under the ceiling, so it does not exercise the output clamp. The
+  // ceiling is covered separately below.
+  const released = [];
+  const emitter = suppressingEmitter({
+    retries: { maxAttempts: 3, initialDelayMs: 250.5, maxDelayMs: 900_000_000.5, jitter: 0 },
+    released,
   });
 
   const result = await emitter.emit({
@@ -84,11 +102,89 @@ test('releases a retryable suppression even when the configured backoff is fract
     [],
     'releasing the lease must not fail: a held lease blocks recovery until it expires'
   );
-  assert.strictEqual(released.length, 1, 'the recovery lease was released');
+  assert.deepStrictEqual(released, [250], 'the fractional delay floors to a whole millisecond');
+});
+
+test('keeps a jittered late-attempt backoff at or under the retry-after ceiling', async () => {
+  // End-to-end ceiling case. maxDelayMs sits at the ceiling, so a late attempt
+  // saturates the exponential base there, and positive jitter can then push
+  // base + offset above it. Only the clamp on backoffDelay's own output keeps
+  // the value inside the range release() accepts.
+  const released = [];
+  const emitter = suppressingEmitter({
+    // maxAttempts > 1 so the suppression is reported on a late attempt.
+    retries: { maxAttempts: 8, initialDelayMs: 604_800_000, maxDelayMs: 604_800_000, jitter: 1 },
+    released,
+  });
+
+  // Repeated because the jitter offset is random: a single draw could land low.
+  for (let round = 0; round < 40; round += 1) {
+    const result = await emitter.emit({
+      url: 'http://x/h',
+      payload: { timestamp: 'stable' },
+      delivery_id: `delivery.ceiling-backoff-${round}`,
+    });
+    assert.deepStrictEqual(result.errors, [], 'the lease is released on every draw');
+  }
+  assert.strictEqual(released.length, 40);
+  for (const value of released) {
+    assert.ok(
+      Number.isSafeInteger(value) && value >= 0 && value <= 604_800_000,
+      `retryAfterMs must stay a whole millisecond within the ceiling, got ${value}`
+    );
+  }
   assert.ok(
-    Number.isSafeInteger(released[0]) && released[0] >= 0 && released[0] <= 604_800_000,
-    `retryAfterMs must satisfy the recovery contract, got ${released[0]}`
+    released.some(value => value > 302_400_000),
+    'the draws really do reach the top of the range, so the clamp is exercised'
   );
+});
+
+test('saturates an infinite configured delay instead of retrying immediately', async () => {
+  // Collapsing every non-finite value to 0 turned "wait as long as possible"
+  // into a zero-delay retry burst. Positive Infinity saturates to the ceiling.
+  for (const [label, retries] of [
+    ['maxDelayMs', { maxAttempts: 3, initialDelayMs: 1_000, maxDelayMs: Number.POSITIVE_INFINITY, jitter: 0 }],
+    [
+      'initialDelayMs',
+      { maxAttempts: 3, initialDelayMs: Number.POSITIVE_INFINITY, maxDelayMs: Number.POSITIVE_INFINITY, jitter: 0 },
+    ],
+  ]) {
+    const released = [];
+    const emitter = suppressingEmitter({ retries, released });
+    const result = await emitter.emit({
+      url: 'http://x/h',
+      payload: { timestamp: 'stable' },
+      delivery_id: `delivery.infinite-${label}`,
+    });
+    assert.deepStrictEqual(result.errors, [], `${label}: the lease is released`);
+    assert.strictEqual(released.length, 1, `${label}: released once`);
+    assert.ok(released[0] > 0, `${label}: an infinite delay must not become an immediate retry`);
+    assert.strictEqual(
+      released[0],
+      label === 'initialDelayMs' ? 604_800_000 : 1_000,
+      `${label}: saturates at the ceiling rather than collapsing to zero`
+    );
+  }
+});
+
+test('floors NaN and negative infinity to zero', async () => {
+  for (const [label, initialDelayMs] of [
+    ['NaN', Number.NaN],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ]) {
+    const released = [];
+    const emitter = suppressingEmitter({
+      retries: { maxAttempts: 3, initialDelayMs, maxDelayMs: 60_000, jitter: 0 },
+      released,
+    });
+    const result = await emitter.emit({
+      url: 'http://x/h',
+      payload: { timestamp: 'stable' },
+      delivery_id: `delivery.nonfinite-${label}`,
+    });
+    assert.deepStrictEqual(result.errors, [], `${label}: the lease is released`);
+    assert.deepStrictEqual(released, [0], `${label}: carries no backoff intent, so it floors to zero`);
+  }
 });
 
 // ────────────────────────────────────────────────────────────

@@ -231,9 +231,16 @@ function maybeWarnHmacDeprecation(suppressLegacyWarnings?: boolean): void {
 export interface WebhookRetryOptions {
   /** Max delivery attempts (≥1). Default 5. */
   maxAttempts?: number;
-  /** Initial backoff in ms. Default 1000. */
+  /**
+   * Initial backoff in ms. Default 1000.
+   *
+   * Normalized to a whole millisecond from 0 through 604800000 (seven days),
+   * the range every durable recovery backend accepts for a retry-after. A
+   * fractional value floors, a value above the ceiling saturates to it, and
+   * `Infinity` saturates rather than collapsing to an immediate retry.
+   */
   initialDelayMs?: number;
-  /** Cap per-attempt backoff. Default 60000. */
+  /** Cap per-attempt backoff. Default 60000. Normalized like `initialDelayMs`. */
   maxDelayMs?: number;
   /** Jitter factor ∈ [0,1]: 0 = none, 0.5 = ±50%. Default 0.25. */
   jitter?: number;
@@ -1192,9 +1199,19 @@ function backoffDelay(attempt: number, retries: Required<WebhookRetryOptions>): 
   return clampRetryAfterMs(jittered);
 }
 
-/** Whole milliseconds within the recovery contract's accepted range. */
+/**
+ * Whole milliseconds within the recovery contract's accepted range.
+ *
+ * Non-finite input is deliberately split rather than collapsed. `Infinity`
+ * means "wait as long as possible", so it saturates to the ceiling; mapping it
+ * to 0 would turn a request for the longest possible backoff into an immediate
+ * retry burst. `NaN` and `-Infinity` carry no such intent and floor to 0, which
+ * is the same value an explicit negative delay already produced.
+ */
 function clampRetryAfterMs(value: number): number {
-  if (!Number.isFinite(value)) return 0;
+  if (Number.isNaN(value)) return 0;
+  if (value === Number.POSITIVE_INFINITY) return MAX_RETRY_AFTER_MS;
+  if (value === Number.NEGATIVE_INFINITY) return 0;
   return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, Math.floor(value)));
 }
 
@@ -1203,7 +1220,8 @@ const MAX_RETRY_AFTER_MS = 604_800_000;
 function resolveRetries(opts?: WebhookRetryOptions): Required<WebhookRetryOptions> {
   // Delays are normalized to whole milliseconds on the way in as well, so the
   // durable snapshot a recovered attempt replays carries the same integers this
-  // process used rather than whatever was configured.
+  // process used rather than whatever was configured. An infinite delay
+  // saturates to the ceiling here, so it cannot become a zero-delay burst.
   return {
     maxAttempts: Math.max(1, Math.floor(opts?.maxAttempts ?? 5)),
     initialDelayMs: clampRetryAfterMs(opts?.initialDelayMs ?? 1000),
