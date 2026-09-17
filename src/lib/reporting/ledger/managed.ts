@@ -109,8 +109,14 @@ export interface ReportingManagedDeliveryStore {
    * either condition is false; return true only after an operational probe.
    */
   probe(coreStore: ReportingLedgerStore): Promise<boolean>;
-  /** Recovery windows of the Core configurations that have installed managed bindings. */
-  listInstalledRecoveryWindowSeconds(): Promise<number[]>;
+  /**
+   * Direct-store introspection of installed Core recovery windows.
+   *
+   * This is optional and non-authoritative for capability publication. Runtime
+   * factories use `adoptAdvertisedPolicies`, whose store-side transaction must
+   * validate binding compatibility while holding the policy fence.
+   */
+  listInstalledRecoveryWindowSeconds?(): Promise<number[]>;
   /**
    * Records the agent-wide advertised recovery window so the store can hold
    * later binding installs to it.

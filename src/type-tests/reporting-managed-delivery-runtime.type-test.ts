@@ -4,6 +4,12 @@ import type {
 } from '../lib/reporting/ledger/managed';
 
 type RuntimeStore = CreateReportingManagedDeliveryRuntimeOptionsV1['store'];
+type RuntimeStoreRequiresRecoveryWindowIntrospection = RuntimeStore extends {
+  listInstalledRecoveryWindowSeconds: (...args: never[]) => unknown;
+}
+  ? true
+  : false;
+const recoveryWindowIntrospectionIsOptional: RuntimeStoreRequiresRecoveryWindowIntrospection = false;
 
 declare const directStore: ReportingManagedDeliveryStore;
 // @ts-expect-error Capability publication requires atomic durable policy adoption.
@@ -35,3 +41,4 @@ publishingStore.adoptAdvertisedPolicies({
 void runtimeStoreMissingAtomicPolicyHook;
 void runtimeStoreWithOnlySeparatePolicyHooks;
 void runtimeStoreWithAtomicPolicyHook;
+void recoveryWindowIntrospectionIsOptional;

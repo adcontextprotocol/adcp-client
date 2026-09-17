@@ -1477,7 +1477,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       const poisonManaged = new ledger.PostgresReportingManagedDeliveryStore(poisonPool);
       assert.equal(await poisonManaged.probe(poisonCore), true);
       // A tenant on a 900 second recovery window.
-      await seedSkewLedgerInto(poisonCore, poisonManaged, 'poison', 'delivery_only', {
+      const poisoned = await seedSkewLedgerInto(poisonCore, poisonManaged, 'poison', 'delivery_only', {
         recoveryWindowMilliseconds: 900_000,
       });
       // A runtime that would advertise 60s must be refused...
@@ -1491,8 +1491,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
           }),
         error => /at least the widest installed managed Core recovery window \(900s\)/.test(String(error.cause))
       );
-      // ...and must leave neither policy behind. Persisting either value first
-      // meant the correct restart could be refused by a partial durable policy.
+      // ...and must leave every value on the migration-created sentinel empty.
+      // Persisting any value first meant the correct restart could be refused
+      // by a partial durable policy.
       const registry = await poisonPool.query(
         `SELECT advertised_recovery_window_seconds::text AS recovery,
                 advertised_status_retention_days::text AS status,
@@ -1500,7 +1501,51 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
                 advertised_authorization_revocation_seconds::text AS revocation
            FROM adcp_reporting_managed_policy`
       );
-      assert.equal(registry.rowCount, 0, 'a refused adoption writes nothing');
+      assert.equal(registry.rowCount, 1, 'the migration creates exactly one lockable sentinel');
+      assert.deepEqual(
+        registry.rows[0],
+        { recovery: null, status: null, resource: null, revocation: null },
+        'a refused adoption writes no policy values'
+      );
+
+      // Legacy JSON predates the typed write boundary. A malformed recovery
+      // window must fail closed inside the authoritative adoption transaction,
+      // with the sentinel still unchanged.
+      await poisonPool.query(
+        `UPDATE adcp_reporting_configurations
+            SET data = jsonb_set(data, '{schedule,recoveryWindowMilliseconds}', to_jsonb('legacy-bad'::text))
+          WHERE configuration_id = $1`,
+        [poisoned.configuration.configurationId]
+      );
+      await assert.rejects(
+        () =>
+          poisonManaged.adoptAdvertisedPolicies({
+            automatedRecoveryWindowSeconds: 900,
+            statusRetentionDays: 90,
+            resourceRetentionDays: 120,
+            authorizationRevocationSeconds: 10,
+          }),
+        error => /usable non-negative recovery window/.test(String(error.cause))
+      );
+      const malformedRegistry = await poisonPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS recovery,
+                advertised_status_retention_days::text AS status,
+                advertised_resource_retention_days::text AS resource,
+                advertised_authorization_revocation_seconds::text AS revocation
+           FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+      );
+      assert.deepEqual(malformedRegistry.rows[0], {
+        recovery: null,
+        status: null,
+        resource: null,
+        revocation: null,
+      });
+      await poisonPool.query(
+        `UPDATE adcp_reporting_configurations
+            SET data = jsonb_set(data, '{schedule,recoveryWindowMilliseconds}', '900000'::jsonb)
+          WHERE configuration_id = $1`,
+        [poisoned.configuration.configurationId]
+      );
       await poisonManaged.adoptAdvertisedPolicies({
         automatedRecoveryWindowSeconds: 900,
         statusRetentionDays: 90,
@@ -3815,7 +3860,114 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     }
   });
 
-  test('uses one lock order so pruning and binding install cannot deadlock', async () => {
+  test('keeps hot-path policy readers concurrent while adoption remains fenced', async () => {
+    const { Pool } = require('pg');
+    const fenceSchema = `${schema}_row_policy_fence`;
+    const pruneApplication = `managed-prune-${process.pid}`;
+    const claimApplication = `managed-claim-${process.pid}`;
+    const adoptionApplication = `managed-adopt-${process.pid}`;
+    await bootstrap.query(`CREATE SCHEMA "${fenceSchema}"`);
+    const connection = application_name => ({
+      connectionString: DATABASE_URL,
+      options: `-c search_path="${fenceSchema}"`,
+      application_name,
+      max: 1,
+    });
+    const fencePool = new Pool(connection(`managed-fence-${process.pid}`));
+    const prunePool = new Pool(connection(pruneApplication));
+    const claimPool = new Pool(connection(claimApplication));
+    const adoptionPool = new Pool(connection(adoptionApplication));
+    let blocker;
+    let locked = false;
+    let pruning;
+    let claiming;
+    let adopting;
+    try {
+      await fencePool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await fencePool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const pruningStore = new ledger.PostgresReportingManagedDeliveryStore(prunePool, {
+        evidenceRetentionDays: 30,
+      });
+      const claimingStore = new ledger.PostgresReportingManagedDeliveryStore(claimPool);
+      const adoptingStore = new ledger.PostgresReportingManagedDeliveryStore(adoptionPool);
+      blocker = await fencePool.connect();
+      await blocker.query('BEGIN');
+      await blocker.query('LOCK TABLE adcp_reporting_materializations IN ACCESS EXCLUSIVE MODE');
+      locked = true;
+
+      // Prune obtains the shared policy-row fence before reaching this table.
+      // Holding the table lock keeps that real hot-path transaction open long
+      // enough to test another tenant's claim deterministically.
+      pruning = pruningStore.pruneExpiredEvidence({ account_id: 'account-policy-prune' });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await bootstrap.query(
+          `SELECT 1 FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [pruneApplication]
+        );
+        if (waiting.rowCount) break;
+        if (attempt === 99) assert.fail('prune never reached the held downstream table lock');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+
+      let claimSettled = false;
+      claiming = claimingStore
+        .claimRevocation({
+          owner: 'unrelated-revoker',
+          now: new Date().toISOString(),
+          lease_milliseconds: 30_000,
+          account_id: 'account-policy-claim',
+          authorization_revocation_seconds: 60,
+        })
+        .then(value => {
+          claimSettled = true;
+          return value;
+        });
+      for (let attempt = 0; attempt < 50 && !claimSettled; attempt += 1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      const claimWasConcurrent = claimSettled;
+
+      let adoptionSettled = false;
+      adopting = adoptingStore
+        .adoptAdvertisedPolicies({
+          automatedRecoveryWindowSeconds: 60,
+          statusRetentionDays: 30,
+          resourceRetentionDays: 30,
+          authorizationRevocationSeconds: 60,
+        })
+        .then(value => {
+          adoptionSettled = true;
+          return value;
+        });
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await bootstrap.query(
+          `SELECT 1 FROM pg_stat_activity
+            WHERE application_name = $1 AND wait_event_type = 'Lock'`,
+          [adoptionApplication]
+        );
+        if (waiting.rowCount) break;
+        if (attempt === 99) assert.fail('adoption did not wait on the shared policy-row fence');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      const adoptionWasFenced = !adoptionSettled;
+
+      await blocker.query('COMMIT');
+      locked = false;
+      assert.equal(await claiming, null);
+      await pruning;
+      await adopting;
+      assert.equal(claimWasConcurrent, true, 'unrelated shared hot-path readers do not serialize globally');
+      assert.equal(adoptionWasFenced, true, 'exclusive policy adoption waits for an active hot-path reader');
+    } finally {
+      if (locked) await blocker.query('ROLLBACK');
+      if (blocker) blocker.release();
+      await Promise.allSettled([pruning, claiming, adopting].filter(Boolean));
+      await Promise.all([fencePool.end(), prunePool.end(), claimPool.end(), adoptionPool.end()]);
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${fenceSchema}" CASCADE`);
+    }
+
+    // Retain the cross-path lock-order stress regression as well.
     const racer = await seedSkewLedger('lockorder', 'delivery_only', { install: false, stopAfterBinding: true });
     const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
     // Pruning took policy then account while install took account then

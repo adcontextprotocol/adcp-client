@@ -179,6 +179,11 @@ ALTER TABLE adcp_reporting_managed_policy
   ADD COLUMN IF NOT EXISTS advertised_resource_retention_days BIGINT;
 ALTER TABLE adcp_reporting_managed_policy
   ADD COLUMN IF NOT EXISTS advertised_authorization_revocation_seconds BIGINT;
+-- Every policy read or adoption locks this durable row. Creating it in the
+-- migration avoids a missing-row predicate gap on a fresh registry.
+INSERT INTO adcp_reporting_managed_policy (policy_key)
+VALUES ('agent')
+ON CONFLICT (policy_key) DO NOTHING;
 
 -- Permanent, compact identity for a receipt whose body has aged out.
 -- Bodies are retained only through the advertised horizon, but identity is
@@ -472,10 +477,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     validate?: (client: PgClient, effective: ManagedPolicyRow) => Promise<void>
   ): Promise<ManagedPolicyRow> {
     return this.transaction(async client => {
-      // Serialize adopters so two racing runtimes cannot both read "absent"
-      // and each install their own value.
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
-      const current = await this.readPolicyRow(client);
+      // Adoption and binding installation exclusively lock the migration-
+      // created sentinel. Hot paths take a shared lock on the same row, so
+      // their checked read and write stay fenced without serializing tenants.
+      const current = await this.readPolicyRow(client, 'update');
       const effective = { ...current };
       for (const policy of policies) {
         const existing = current[policy.column];
@@ -488,10 +493,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       await validate?.(client, effective);
       for (const policy of policies) {
         await client.query(
-          `INSERT INTO adcp_reporting_managed_policy (policy_key, ${policy.column})
-           VALUES ('agent', $1)
-           ON CONFLICT (policy_key) DO UPDATE SET ${policy.column} = EXCLUDED.${policy.column},
-             changed_at = clock_timestamp()`,
+          `UPDATE adcp_reporting_managed_policy SET ${policy.column} = $1,
+             changed_at = clock_timestamp() WHERE policy_key = 'agent'`,
           [effective[policy.column]]
         );
       }
@@ -518,7 +521,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       throw new Error('Every installed managed Core configuration must have a usable non-negative recovery window');
     }
     const widestInstalled = Number(row?.widest ?? 0);
-    if (!Number.isSafeInteger(widestInstalled) || widestInstalled < 0) {
+    if (!Number.isSafeInteger(widestInstalled)) {
       throw new Error('Installed managed Core recovery windows exceed the supported safe-integer range');
     }
     if (seconds < widestInstalled) {
@@ -530,7 +533,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
   }
 
-  private async readPolicyRow(client: PgClient): Promise<ManagedPolicyRow> {
+  private async readPolicyRow(client: PgClient, lock?: 'share' | 'update'): Promise<ManagedPolicyRow> {
+    const lockClause = lock === 'share' ? ' FOR SHARE' : lock === 'update' ? ' FOR UPDATE' : '';
     const result = await client.query<
       QueryRow & { recovery: string | null; status: string | null; resource: string | null; revocation: string | null }
     >(
@@ -538,9 +542,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               advertised_status_retention_days::text AS status,
               advertised_resource_retention_days::text AS resource,
               advertised_authorization_revocation_seconds::text AS revocation
-         FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+         FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'${lockClause}`
     );
     const row = result.rows[0];
+    if (!row) {
+      throw new Error(
+        'Managed reporting policy sentinel is missing; apply REPORTING_MANAGED_DELIVERY_MIGRATION before use'
+      );
+    }
     return {
       advertised_recovery_window_seconds: policyNumber(row?.recovery),
       advertised_status_retention_days: policyNumber(row?.status),
@@ -549,13 +558,16 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     };
   }
 
-  private async readPolicy(client: PgClient): Promise<{
+  private async readPolicy(
+    client: PgClient,
+    lock?: 'share' | 'update'
+  ): Promise<{
     recoveryWindowSeconds: number | null;
     statusRetentionDays: number | null;
     resourceRetentionDays: number | null;
     authorizationRevocationSeconds: number | null;
   }> {
-    const policy = await this.readPolicyRow(client);
+    const policy = await this.readPolicyRow(client, lock);
     return {
       recoveryWindowSeconds: policy.advertised_recovery_window_seconds,
       statusRetentionDays: policy.advertised_status_retention_days,
@@ -630,13 +642,11 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // process never made but the deployment did.
     const days = this.evidenceRetentionDays;
     return this.transaction(async client => {
-      // The registry lock is taken inside the deleting transaction and held
-      // to commit. Reading the policy in its own transaction released the
-      // lock at that commit, so a 365-day adoption could land between the
-      // check and the delete and this prune would cut inside a horizon that
-      // had just been advertised.
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
-      const registered = await this.readPolicy(client);
+      // Hold a shared lock on the durable policy sentinel to commit. Other
+      // settlement, claim and prune readers can proceed concurrently, while
+      // an exclusive adoption cannot widen the promise between this check and
+      // the delete.
+      const registered = await this.readPolicy(client, 'share');
       const retentionFloor = Math.max(registered.statusRetentionDays ?? 0, registered.resourceRetentionDays ?? 0);
       if (days < retentionFloor) {
         throw new Error(
@@ -1044,11 +1054,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
     await this.ensurePolicyRegistered();
     return this.transaction(async client => {
-      // One lock order everywhere in this store: policy, then account, then
-      // binding. Pruning took policy then account while this took account
-      // then policy, which is a textbook ABBA deadlock — PostgreSQL resolves
-      // it by aborting one side with 40P01.
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
+      // One lock order everywhere in this store: the exclusive policy
+      // sentinel, then account, then binding. This serializes installation
+      // with adoption while shared hot-path readers can coexist.
+      const registeredPolicy = await this.readPolicy(client, 'update');
       await advisoryLock(client, accountLock(binding.account_id));
       await advisoryLock(client, `adcp-reporting-binding:${binding.account_id}:${binding.delivery_config_id}`);
       const existing = await client.query<QueryRow & { semantic_fingerprint: string }>(
@@ -1097,7 +1106,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       // another install — cannot widen the deployment past what is published.
       // Both installs serialize on the per-configuration advisory lock taken
       // above, so neither can observe the other half-applied.
-      const advertisedRecoveryWindowSeconds = (await this.readPolicy(client)).recoveryWindowSeconds;
+      const advertisedRecoveryWindowSeconds = registeredPolicy.recoveryWindowSeconds;
       if (advertisedRecoveryWindowSeconds !== null) {
         const windowMilliseconds = Number(configuration.schedule?.recoveryWindowMilliseconds);
         if (!Number.isFinite(windowMilliseconds) || windowMilliseconds < 0) {
@@ -1457,12 +1466,11 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
     return this.transaction(async client => {
       const { lease } = input;
-      // Policy first is the store-wide lock order. Holding it until commit
-      // prevents a stronger resource promise from being adopted between this
-      // read and persistence under a weaker horizon.
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
+      // A shared sentinel lock prevents a stronger resource promise from
+      // being adopted between this read and persistence under a weaker
+      // horizon, without serializing unrelated settlements.
+      const registeredPolicy = await this.readPolicy(client, 'share');
       await advisoryLock(client, accountLock(lease.binding.account_id));
-      const registeredPolicy = await this.readPolicy(client);
       // The binding, caller and every replica's durable capability promise are
       // floors. A caller may tighten them, never waive any of them.
       const minimumRetentionDays = Math.max(
@@ -1555,10 +1563,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       nonnegativeSafeInteger(input.authorization_revocation_seconds, 'authorization_revocation_seconds');
     }
     return this.transaction(async client => {
-      // Serialize with adoption and use the strongest maximum-delay promise
-      // registered by any replica. A direct caller cannot widen or omit it.
-      await advisoryLock(client, 'adcp-reporting-managed-policy');
-      const registeredPolicy = await this.readPolicy(client);
+      // Share-lock the sentinel through the claim so adoption cannot tighten
+      // the maximum-delay promise between this read and the leased write.
+      // Other claims, settlements and prunes remain concurrent.
+      const registeredPolicy = await this.readPolicy(client, 'share');
       const revocationSeconds =
         registeredPolicy.authorizationRevocationSeconds === null
           ? input.authorization_revocation_seconds
