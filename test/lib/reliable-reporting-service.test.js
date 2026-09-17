@@ -3880,6 +3880,140 @@ describe('ReliableReportingService', () => {
     assert.match(warnings[0], /the configured onError also threw: pager webhook rejected the alert/);
   });
 
+  test('survives an observer error no string can be built from', async t => {
+    // The diagnostic is assembled before the try that guards the logger call,
+    // so a throw while describing the error escaped reportSchedulerError,
+    // rejected the scheduler loop and surfaced as an unhandled rejection --
+    // killing a durable background loop, or the host, over an error object's
+    // shape. Every value here is hostile to coercion and property access.
+    const rejections = [];
+    const onRejection = reason => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    t.after(() => process.off('unhandledRejection', onRejection));
+
+    const throwingCoercion = {
+      get message() {
+        throw new Error('message getter refuses');
+      },
+      [Symbol.toPrimitive]() {
+        throw new Error('toPrimitive refuses');
+      },
+      toString() {
+        throw new Error('toString refuses');
+      },
+    };
+    const hostile = [
+      // `String(...)` on this throws: no prototype, so no toString at all.
+      Object.create(null),
+      throwingCoercion,
+      // Traps the prototype walk `instanceof` performs.
+      new Proxy(new Error('proxied'), {
+        getPrototypeOf() {
+          throw new Error('getPrototypeOf refuses');
+        },
+        get() {
+          throw new Error('get refuses');
+        },
+      }),
+    ];
+
+    for (const [index, observerError] of hostile.entries()) {
+      const warnings = [];
+      const service = serviceFixture().service;
+      let attempted = 0;
+      service.producer.planObligations = async () => {
+        attempted += 1;
+        throw new Error('upstream is down');
+      };
+      service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+      t.after(() => service.stop());
+      service.start({
+        intervalMilliseconds: 60_000,
+        accountIds: ['account-a', 'account-b'],
+        onError: () => {
+          throw observerError;
+        },
+        logger: { warn: message => warnings.push(message) },
+      });
+      const deadline = Date.now() + 5_000;
+      while (warnings.length < 2 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+      await service.stop();
+
+      // The loop survived: both tenants ran and each produced exactly one
+      // warning, with the original failure still named.
+      assert.equal(attempted, 2, `case ${index}: later tenants must still run`);
+      assert.equal(warnings.length, 2, `case ${index}: exactly one warning per failing tenant`);
+      for (const warning of warnings) {
+        assert.match(warning, /^\[adcp\/reporting\] scheduler cycle failed for account account-[ab]/);
+        assert.match(warning, /upstream is down/, `case ${index}: the original failure stays observable`);
+        // Either bounded placeholder is correct: a null-prototype object is
+        // described rather than coerced, while a throwing getter or trap is
+        // caught outright. Neither ever runs the hostile code's output.
+        assert.match(warning, /the configured onError also threw: (<unreportable error>|non-Error scheduler failure)/);
+        assert.equal(warning.includes('refuses'), false, `case ${index}: hostile text must not reach the log`);
+      }
+    }
+
+    // Nothing escaped as an unhandled rejection.
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(rejections, [], 'describing an error must never reject the scheduler loop');
+  });
+
+  test('calls a class-based logger on its own receiver', async t => {
+    // `const warn = options.logger.warn` drops the receiver, so a pino,
+    // winston or class-style logger threw inside `warn` and the warning was
+    // swallowed by the guard that exists for a logger's own failures.
+    class SchedulerLogger {
+      constructor() {
+        this.lines = [];
+      }
+      warn(message) {
+        // Reads `this`: an unbound call throws here.
+        this.lines.push(message);
+      }
+    }
+    const logger = new SchedulerLogger();
+    assert.equal(Object.hasOwn(logger, 'warn'), false, 'warn must live on the prototype');
+
+    const service = serviceFixture().service;
+    service.producer.planObligations = async () => {
+      throw new Error('account-a upstream is down');
+    };
+    service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => service.stop());
+    service.start({ intervalMilliseconds: 60_000, accountIds: ['account-a'], logger });
+    const deadline = Date.now() + 5_000;
+    while (logger.lines.length < 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+    await service.stop();
+
+    assert.equal(logger.lines.length, 1, 'a prototype-method logger must receive the warning');
+    assert.match(logger.lines[0], /account-a upstream is down/);
+  });
+
+  test('bounds a scheduler warning however long the failure message is', async t => {
+    const warnings = [];
+    const service = serviceFixture().service;
+    service.producer.planObligations = async () => {
+      // Short words, so credential redaction has nothing to collapse and the
+      // length that reaches the log is the bound's alone.
+      throw new Error('upstream said '.concat('nope '.repeat(50_000)));
+    };
+    service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => service.stop());
+    service.start({
+      intervalMilliseconds: 60_000,
+      accountIds: ['account-a'],
+      logger: { warn: message => warnings.push(message) },
+    });
+    const deadline = Date.now() + 5_000;
+    while (warnings.length < 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+    await service.stop();
+
+    assert.equal(warnings.length, 1);
+    assert.ok(warnings[0].length < 1_024, `the warning must stay bounded, saw ${warnings[0].length} chars`);
+    assert.match(warnings[0], /scheduler cycle failed for account account-a/);
+  });
+
   test('keeps a scheduler warning free of credentials and stacks', async t => {
     const warnings = [];
     const service = serviceFixture().service;

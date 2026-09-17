@@ -685,7 +685,6 @@ function warnSchedulerFailure(
   error: unknown,
   observerError?: unknown
 ): void {
-  const warn = options.logger?.warn ?? DEFAULT_SCHEDULER_WARN;
   const where =
     site.phase === 'roster'
       ? 'could not resolve its account roster, so this pass ran no tenants'
@@ -694,34 +693,82 @@ function warnSchedulerFailure(
         : `cycle failed for account ${site.accountId}; later tenants continue`;
   const observed =
     observerError === undefined ? '' : ` (the configured onError also threw: ${safeMessage(observerError)})`;
+  const message = `[adcp/reporting] scheduler ${where}: ${safeMessage(error)}${observed}`;
+  const logger = options.logger;
   try {
-    warn(`[adcp/reporting] scheduler ${where}: ${safeMessage(error)}${observed}`);
+    // Called on its owner, not through an extracted reference: a pino, winston
+    // or class-based logger reads `this` inside `warn`, and a bare `warn(...)`
+    // threw `Cannot read properties of undefined` into the catch below —
+    // losing exactly the diagnostic this path exists to emit.
+    if (logger !== undefined) logger.warn(message);
+    else defaultSchedulerWarn(message);
   } catch {
     // A logger that throws must not terminate the reporting lifecycle either.
   }
 }
 
-const DEFAULT_SCHEDULER_WARN = (message: string): void => {
+function defaultSchedulerWarn(message: string): void {
   console.warn(message);
-};
+}
+
+/** Bound on the diagnostic, so no error message can flood the log sink. */
+const MAX_SCHEDULER_MESSAGE_CHARS = 512;
+/** Bound on what redaction is asked to scan, so it stays cheap on huge inputs. */
+const MAX_SCHEDULER_SCAN_CHARS = 8_192;
+const UNREPORTABLE_SCHEDULER_ERROR = '<unreportable error>';
 
 /**
- * The error's own message only, credential-redacted. Stacks and error objects
- * can carry request payloads and upstream credentials into a log sink the
- * adopter did not choose.
+ * The error's own message only, credential-redacted, bounded, and total.
+ *
+ * Stacks and error objects can carry request payloads and upstream credentials
+ * into a log sink the adopter did not choose, so only `message` is read. Every
+ * step is guarded because the value is arbitrary: `String(Object.create(null))`
+ * throws, a `Symbol.toPrimitive` or `message` getter can throw or run adopter
+ * code, and a Proxy can trap the prototype walk `instanceof` performs. This
+ * function runs while building the diagnostic, outside the catch that guards
+ * the logger call, so a throw here escaped `reportSchedulerError`, rejected the
+ * scheduler loop, and surfaced as an unhandled rejection — killing the
+ * background loop, or the host, over an error object's shape.
  */
 function safeMessage(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const redacted = redactCredentialPatterns(raw);
-  return typeof redacted === 'string' && redacted.length > 0 ? redacted : 'unknown error';
+  try {
+    const raw = rawMessage(error);
+    // Redact before truncating, so no fragment of a credential can survive
+    // being cut; scan a bounded prefix so a pathological message stays cheap.
+    const redacted = redactCredentialPatterns(raw.slice(0, MAX_SCHEDULER_SCAN_CHARS));
+    const text = typeof redacted === 'string' && redacted.length > 0 ? redacted : UNREPORTABLE_SCHEDULER_ERROR;
+    return text.length > MAX_SCHEDULER_MESSAGE_CHARS ? `${text.slice(0, MAX_SCHEDULER_MESSAGE_CHARS)}…` : text;
+  } catch {
+    // The failure stays observable: the phase, the account, and the fact that
+    // something threw are all still in the warning.
+    return UNREPORTABLE_SCHEDULER_ERROR;
+  }
 }
 
 /**
- * `setTimeout` silently clamps a delay above 2^31-1 ms to 1 ms, so a scheduler
- * configured with, say, a 30-day interval would spin through ledger scans
- * instead of sleeping. Sleep in chunks below that ceiling so the whole
- * advertised interval range is honored.
+ * Never coerces. Only a primitive, or a `message` that is already a string, is
+ * trusted; anything else is described rather than stringified.
  */
+function rawMessage(error: unknown): string {
+  switch (typeof error) {
+    case 'string':
+      return error;
+    case 'number':
+    case 'boolean':
+    case 'bigint':
+      return String(error);
+    case 'undefined':
+      return 'undefined';
+    case 'symbol':
+      return error.description ?? 'symbol';
+    default:
+      break;
+  }
+  if (error === null) return 'null';
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' ? message : 'non-Error scheduler failure';
+}
+
 const MAX_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
 
 async function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
