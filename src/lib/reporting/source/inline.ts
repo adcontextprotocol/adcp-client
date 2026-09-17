@@ -1988,8 +1988,21 @@ function plainDecimalNumberEvidence(value: number): string {
   return `${sign}${digits.slice(0, pointIndex)}.${digits.slice(pointIndex)}`;
 }
 
+/**
+ * Whether a claim states the quantity zero, under the same exact-decimal normalization
+ * duplicate reconciliation uses: a value is zero exactly when its canonical form is `0`.
+ *
+ * Recognizing only a single leading zero put the two at odds -- `"00"` and `"0"` were the
+ * same quantity when a duplicate claim was reconciled, yet only `"0"` satisfied an
+ * `explicit_zero` cell, so a zero spelled with a redundant digit was refused. The
+ * predicate is written out rather than delegating to `canonicalDecimalEvidence` so the
+ * cost stays what the scan budget charges for measuring: one anchored linear pass for a
+ * string, and a constant comparison for a number, with no decimal expansion. `0+` before
+ * the point and after it admits every spelling of zero and no other quantity, since any
+ * nonzero digit anywhere fails the match.
+ */
 function isZeroEvidenceValue(value: string | number): boolean {
-  return typeof value === 'number' ? value === 0 : /^-?0(?:\.0+)?$/.test(value);
+  return typeof value === 'number' ? value === 0 : /^-?0+(?:\.0+)?$/.test(value);
 }
 
 function isRows(value: InlineReportingDeliveryResultV1): value is readonly unknown[] {

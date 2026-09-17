@@ -2157,6 +2157,95 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
   });
 
+  test('treats every spelling of zero as zero, and nothing else', async () => {
+    // Duplicate reconciliation compares claims as exact decimals, so `"00"` and `"0"` are
+    // one quantity. Explicit-zero detection recognized only a single leading zero, so the
+    // two rules disagreed: `"00"` sealed as a duplicate of `"0"` under a `present` cell
+    // yet was refused under an `explicit_zero` one.
+    const zeroCell = (input, status) => ({
+      version: '1.0',
+      cells: input.requested_metrics.map(metric => ({
+        constituent_id: input.constituents[0].constituent_id,
+        metric,
+        status: metric === 'impressions' ? status : 'present',
+        data_through: input.end_date,
+      })),
+    });
+    const evidenced = (impressions, nested, status) =>
+      createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [
+            {
+              media_buy_id: 'fixture-media-buy',
+              impressions,
+              spend: '1.25',
+              ...(nested === undefined ? {} : { totals: { impressions: nested } }),
+            },
+          ],
+          availability_evidence: zeroCell(input, status),
+        }),
+        redactedReportingSourceOfferingV1
+      );
+
+    // Every spelling of zero satisfies an explicit-zero cell, alone or as a duplicate.
+    for (const [index, item] of [
+      { impressions: '0', nested: undefined },
+      { impressions: '00', nested: undefined },
+      { impressions: '000', nested: undefined },
+      { impressions: '0.0', nested: undefined },
+      { impressions: '000.000', nested: undefined },
+      { impressions: '-00', nested: undefined },
+      { impressions: 0, nested: undefined },
+      { impressions: '00', nested: '0' },
+      { impressions: '0', nested: '00.00' },
+      { impressions: 0, nested: '000' },
+    ].entries()) {
+      const result = await evidenced(item.impressions, item.nested, 'explicit_zero').execute(
+        request(`fixture-inline-zero-spelling-${index}`),
+        context()
+      );
+      assert.equal(
+        result.ok,
+        true,
+        `explicit_zero accepts ${JSON.stringify(item.impressions)}${item.nested === undefined ? '' : ` with totals ${JSON.stringify(item.nested)}`}`
+      );
+      const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+      assert.equal(manifest.metricAvailability.find(cell => cell.metric === 'impressions').status, 'explicit_zero');
+    }
+
+    // Nothing that is not zero is admitted, however it is spelled.
+    for (const [index, item] of [
+      { impressions: '0.1' },
+      { impressions: '01' },
+      { impressions: '00.1' },
+      { impressions: '10' },
+      { impressions: '-0.01' },
+      { impressions: 1e-7 },
+    ].entries()) {
+      assert.equal(
+        validateReportingSourceFailureV1(
+          await evidenced(item.impressions, undefined, 'explicit_zero').execute(
+            request(`fixture-inline-zero-nonzero-${index}`),
+            context()
+          ),
+          'INTEGRITY_FAILED'
+        ).code,
+        'INTEGRITY_FAILED',
+        `explicit_zero refuses ${JSON.stringify(item.impressions)}`
+      );
+    }
+
+    // The same spellings still reconcile as one quantity under a present cell, so the two
+    // rules now agree in both directions.
+    const present = await evidenced('00', '0', 'present').execute(
+      request('fixture-inline-zero-present-duplicate'),
+      context()
+    );
+    assert.equal(present.ok, true, 'a zero duplicate still reconciles under a present cell');
+  });
+
   test('rejects an invalid duplicate claim on an auxiliary row', async () => {
     // A claim that is present must be usable, whichever half of the duplicate it is.
     // Checking only the governing claim let an invalid `totals` value ride along on a
