@@ -13,6 +13,7 @@ import {
 } from './postgres-store';
 import type {
   NotificationCredentialBindingAdapter,
+  NotificationDeliveryAttemptCheckpoint,
   NotificationDestinationValidator,
   NotificationDeliveryAuthorizer,
   NotificationProofAdapter,
@@ -27,6 +28,8 @@ export interface CreatePostgresPersistentNotificationRuntimeOptions {
   webhooks: Omit<CreatePostgresWebhookRuntimeOptions, 'db' | 'publisherScope' | 'authorizeAttempt'>;
   proofAdapter: NotificationProofAdapter;
   credentialAdapter?: NotificationCredentialBindingAdapter;
+  /** Durable pre-POST attempt checkpoint; see `PersistentNotificationRuntimeOptions`. */
+  checkpointDeliveryAttempt?: NotificationDeliveryAttemptCheckpoint;
   authorizeDelivery: NotificationDeliveryAuthorizer;
   validateDestination?: NotificationDestinationValidator;
   supportedCallerEventTypes?: readonly string[];
@@ -69,6 +72,9 @@ export function createPostgresPersistentNotificationRuntime(
     store,
     proofAdapter: options.proofAdapter,
     ...(options.credentialAdapter === undefined ? {} : { credentialAdapter: options.credentialAdapter }),
+    ...(options.checkpointDeliveryAttempt === undefined
+      ? {}
+      : { checkpointDeliveryAttempt: options.checkpointDeliveryAttempt }),
     authorizeDelivery: options.authorizeDelivery,
     ...(options.validateDestination === undefined ? {} : { validateDestination: options.validateDestination }),
     ...(options.supportedCallerEventTypes === undefined

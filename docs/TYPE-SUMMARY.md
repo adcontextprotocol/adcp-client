@@ -2831,11 +2831,41 @@ interface InlineReportingAvailabilityEvidenceV1 {
 
 ## Seller Reporting Ledger
 
-Import from `@adcp/sdk/reporting/ledger`.
+Ledger symbols import from `@adcp/sdk/reporting/ledger`; `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
 
 ```typescript
-const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
+// Build the notification path first: the store must be constructed with the
+// activity port, or lifecycle transitions record no activity and notify nobody.
+const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
+  db: pool,
+  namespace: 'seller-production',
+});
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: attemptCheckpoint,
+  subscriptions: { acknowledgeIsolatedDatabase: true },
+  ...notificationOptions,
+});
+const reportingActivity = createPostgresReportingNotificationActivityRuntime({
+  db: pool,
+  notifications,
+  namespace: 'seller-production',
+  attemptCheckpoint,
+  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),
+});
+
+// One store, wired to the activity port, used by every participant below.
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  notificationActivityPort: reportingActivity.port,
+});
+
+// Every migration this wiring needs, before probing.
 await pool.query(REPORTING_LEDGER_MIGRATION);
+for (const sql of notifications.migrations.all) await pool.query(sql);
+for (const sql of reportingActivity.migrations.all) await pool.query(sql);
+
 const producer = createReportingProducer({ store, source, offerings, contact });
 await producer.planObligations();
 await producer.runWorker();
@@ -2846,9 +2876,20 @@ const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact repo
 const syncReportingStatus = createSyncReportingStatusHandler(store, {
   resolveConsumerId: context => context.agent.agent_url,
 });
+
+await reportingActivity.probe();
+// Run repeatedly from a durable scheduler; this call is bounded.
+await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });
+const activityPage = await reportingActivity.listActivity({
+  tenantId: trustedTenant,
+  accountId: resolvedAccountId,
+  limit: 100,
+});
 ```
 
 The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. `projectReportingObligationHealthV1` implements waiting, healthy, delayed, action_required, and complete without I/O.
+
+`ReportingLedgerNotificationActivityPortV1<TTransaction>` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through `PersistentNotificationRuntime`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. `listActivity()` is adopter-facing only because no public AdCP account-activity read task exists.
 
 ## Reliable Reporting Service
 

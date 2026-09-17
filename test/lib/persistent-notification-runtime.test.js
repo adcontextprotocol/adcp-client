@@ -724,7 +724,152 @@ test('adopter callbacks time out fail closed and receive an aborted signal', asy
   });
   assert.equal(fetch.calls.length, 0);
   assert.equal(authorizationSignal.aborted, true);
-  assert.deepEqual(result.deliveries[0].result.suppression, { reason: 'authorization_error' });
+  // A timed-out adopter callback could not establish authority and nothing was
+  // sent, so the suppression is retryable and the delivery stays pending.
+  assert.deepEqual(result.deliveries[0].result.suppression, { reason: 'authorization_error', retryable: true });
+  assert.equal(result.deliveries[0].result.terminal, false);
+});
+
+test('terminalizes a stale generation on a recovered attempt but keeps a live one retryable', async () => {
+  // An outbox snapshot is pinned to the generation it was taken from. Once that
+  // generation is replaced the recovered attempt can never become valid, so
+  // reclaiming it until the retry horizon only burns recovery capacity. A live
+  // emission, by contrast, can re-resolve and must stay retryable.
+  const attempts = [];
+  const runtime = createPersistentNotificationRuntime({
+    store: memoryNotificationSubscriptionStore(),
+    proofAdapter: { prove: async () => ({ proved: true }) },
+    validateDestination: async () => ({ allowed: true }),
+    authorizeDelivery: async () => ({ authorized: true }),
+    createEmitter: authorizeAttempt => ({
+      forTenantScope() {
+        return this;
+      },
+      async emit(params) {
+        const decision = await authorizeAttempt({
+          delivery_id: params.delivery_id,
+          idempotency_key: 'evt_test',
+          attempt: 1,
+          url: params.url,
+          attemptAuthorizationContext: params.attemptAuthorizationContext,
+          ...(params.__recovered ? { recovered: true } : {}),
+        });
+        attempts.push(decision);
+        return {
+          delivery_id: params.delivery_id,
+          idempotency_key: 'evt_test',
+          attempts: 0,
+          delivered: false,
+          terminal: decision.decision === 'suppress' ? decision.retryable !== true : false,
+          errors: [],
+          ...(decision.decision === 'suppress' ? { suppression: { reason: decision.reason } } : {}),
+        };
+      },
+      async emitRecovered() {
+        throw new Error('unused');
+      },
+    }),
+  });
+  const scope = {
+    kind: 'account',
+    tenantId: 'tenant-stale',
+    principalId: 'principal-stale',
+    accountId: 'account-stale',
+  };
+  await runtime.replace(scope, [
+    {
+      subscriber_id: 'stale-subscriber',
+      url: 'https://buyer.example/stale-g1',
+      event_types: ['reporting.status_changed'],
+    },
+  ]);
+  const beforeReplacement = await runtime.read(scope);
+  const pinnedGeneration = beforeReplacement.notificationConfigs[0].destination_generation;
+  await runtime.replace(
+    scope,
+    [
+      {
+        subscriber_id: 'stale-subscriber',
+        url: 'https://buyer.example/stale-g2',
+        event_types: ['reporting.status_changed'],
+      },
+    ],
+    { expectedGeneration: beforeReplacement.generation }
+  );
+
+  const staleContext = {
+    kind: 'adcp_notification_subscription',
+    version: 1,
+    scope,
+    eventAnchor: 'account',
+    accountId: scope.accountId,
+    subscriberId: 'stale-subscriber',
+    destinationGeneration: pinnedGeneration,
+    eventType: 'reporting.status_changed',
+    notificationId: 'notification-stale',
+  };
+  const live = await runtime.authorizeWebhookAttempt({
+    delivery_id: 'delivery-live',
+    idempotency_key: 'evt_live',
+    attempt: 1,
+    url: 'https://buyer.example/stale-g1',
+    attemptAuthorizationContext: staleContext,
+  });
+  assert.deepEqual(live, { decision: 'suppress', reason: 'subscription_stale', retryable: true });
+
+  const recovered = await runtime.authorizeWebhookAttempt({
+    delivery_id: 'delivery-recovered',
+    idempotency_key: 'evt_recovered',
+    attempt: 1,
+    url: 'https://buyer.example/stale-g1',
+    attemptAuthorizationContext: staleContext,
+    recovered: true,
+  });
+  assert.deepEqual(
+    recovered,
+    { decision: 'suppress', reason: 'subscription_stale' },
+    'a generation-pinned recovered attempt is terminal, so the outbox retires it'
+  );
+});
+
+test('reports the checkpoint members as absent for a runtime built without one', () => {
+  // The *type* guarantee — that both members are optional, so a custom runtime
+  // written against an earlier release still satisfies the interface — is pinned
+  // by src/type-tests/notification-runtime-optional-members.type-test.ts. This
+  // file is outside every TypeScript config, so a JSDoc annotation here would
+  // compile nothing and prove nothing.
+  //
+  // What this test does cover is the runtime half: an absent member reads as
+  // undefined and a runtime built without the option reports false, so a
+  // consumer that requires the checkpoint fails closed instead of trusting it.
+  const legacyShaped = {
+    store: memoryNotificationSubscriptionStore(),
+    emitter: { emit: async () => {}, emitRecovered: async () => {}, forTenantScope: () => ({}) },
+    authorizeWebhookAttempt: async () => ({ decision: 'allow' }),
+    replace: async () => ({ outcome: 'unchanged', notificationConfigs: [] }),
+    read: async () => ({ notificationConfigs: [] }),
+    emit: async () => ({ notificationId: 'n', emissionId: 'e', matched: 0, deliveries: [] }),
+  };
+  assert.equal(legacyShaped.hasDeliveryAttemptCheckpoint, undefined);
+  assert.equal(legacyShaped.deliveryAttemptCheckpoint, undefined);
+
+  const runtime = createPersistentNotificationRuntime({
+    store: memoryNotificationSubscriptionStore(),
+    proofAdapter: { prove: async () => ({ proved: true }) },
+    validateDestination: async () => ({ allowed: true }),
+    authorizeDelivery: async () => ({ authorized: true }),
+    createEmitter: () => ({
+      forTenantScope() {
+        return this;
+      },
+      emit: async () => ({ delivery_id: 'd', idempotency_key: 'k', attempts: 0, delivered: false, errors: [] }),
+      emitRecovered: async () => {
+        throw new Error('unused');
+      },
+    }),
+  });
+  assert.equal(runtime.hasDeliveryAttemptCheckpoint, false);
+  assert.equal(runtime.deliveryAttemptCheckpoint, undefined);
 });
 
 test('fanout runs subscriber retry cycles with bounded concurrency and stable ordering', async () => {

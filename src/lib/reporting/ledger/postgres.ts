@@ -37,6 +37,9 @@ import type {
   ReportingLedgerSnapshotQueryV1,
   ReportingLedgerSnapshotV1,
   ReportingLedgerStatusTransitionV1,
+  ReportingLedgerNotificationActivityPortV1,
+  ReportingLedgerTransactionV1,
+  ReportingObservedFinalityV1,
   ReportingLedgerStore,
   ReportingConsumerStatusBatchInputV1,
   ReportingConsumerStatusBatchResultV1,
@@ -276,6 +279,45 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_checkpoints_expiry
   ON adcp_reporting_checkpoints (expires_at);
 `.trim();
 
+/** Constraint installed by {@link REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION}. */
+export const REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT = 'adcp_reporting_transitions_finality_recorded';
+
+/**
+ * Cutover migration that fences pre-SDK-14 writers out of the transition log.
+ *
+ * A pre-SDK-14 writer appends transitions with no `finality`. Each one becomes
+ * the latest row, gets its baseline committed as `none`, and can therefore
+ * produce another redundant finality-only transition — so "at most one per
+ * obligation at upgrade" only holds once no such writer remains. Wall clocks
+ * and deploy ordering cannot establish that; a database constraint can.
+ *
+ * The constraint is added `NOT VALID`, which enforces it for every INSERT and
+ * UPDATE while leaving historical rows untouched and unvalidated. Existing
+ * finality-less rows keep working — the baseline resolver and
+ * `markTransitionNotified` both write `finality` as part of their update, so the
+ * new row version satisfies the check.
+ *
+ * Run it as part of the cutover, **after** legacy writers are drained. A legacy
+ * writer that is still running will fail closed on append rather than silently
+ * multiply finality-only events, which is the intended trade: loud rejection
+ * beats a quietly broken invariant. Idempotent and re-runnable; it takes no lock
+ * once installed.
+ */
+export const REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION = `
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'adcp_reporting_transitions'::regclass
+       AND conname = '${REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT}'
+  ) THEN
+    ALTER TABLE adcp_reporting_transitions
+      ADD CONSTRAINT ${REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT}
+      CHECK (data ? 'finality') NOT VALID;
+  END IF;
+END $$;
+`.trim();
+
 const MAX_SNAPSHOT_ITEMS = 10_000;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
@@ -310,6 +352,11 @@ export interface PostgresReportingLedgerStoreOptions {
    * the unfiltered read shows.
    */
   consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  /**
+   * Durable notification/activity port invoked inside the authoritative
+   * lifecycle transaction. Its tables must be migrated before transitions run.
+   */
+  notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
 }
 
 export class ReportingLedgerLeaseLostError extends Error {
@@ -371,6 +418,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
    * contradict the summary.
    */
   readonly consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1;
+  readonly transactionalNotificationActivity: boolean;
+  private readonly notificationActivityPort?: ReportingLedgerNotificationActivityPortV1<ReportingLedgerTransactionV1>;
 
   constructor(
     private readonly pool: ReportingPgPool,
@@ -383,6 +432,8 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
       );
     }
     this.consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(options.consumerMismatchEscalation);
+    this.notificationActivityPort = options.notificationActivityPort;
+    this.transactionalNotificationActivity = options.notificationActivityPort !== undefined;
   }
 
   async putConfiguration(configuration: ReportingLedgerConfigurationV1) {
@@ -1201,27 +1252,69 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     return result.rows.map(row => clone(row.data));
   }
 
+  /**
+   * Resolves — and for pre-SDK-14 rows persists — the observed finality baseline
+   * of the obligation's latest transition, so the lifecycle decision and this
+   * store's compare-and-set read one committed value.
+   */
+  async resolveTransitionFinalityBaseline(obligationId: string): Promise<ReportingObservedFinalityV1> {
+    const lock = await this.accountLockForObligation(obligationId);
+    return this.transaction(client => resolveStoredFinalityBaseline(client, obligationId), {
+      preBeginAdvisoryLock: lock,
+    });
+  }
+
   async appendTransition(transition: ReportingLedgerStatusTransitionV1): Promise<{ inserted: boolean }> {
     const lock = await this.accountLockForObligation(transition.reporting_obligation_id);
+    return assertFinalityWriterFence(() => this.appendTransitionWithinLock(transition, lock));
+  }
+
+  private async appendTransitionWithinLock(
+    transition: ReportingLedgerStatusTransitionV1,
+    lock: string
+  ): Promise<{ inserted: boolean }> {
     return this.transaction(
       async client => {
+        if (this.notificationActivityPort) {
+          await assertNoLegacyPendingTransitions(client, transition.reporting_obligation_id);
+        }
+        const previousFinality = await resolveStoredFinalityBaseline(client, transition.reporting_obligation_id);
+        const latest = await client.query<QueryResultRow & { health: string }>(
+          `SELECT data->>'health' AS health FROM adcp_reporting_transitions
+            WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1`,
+          [transition.reporting_obligation_id]
+        );
+        if (
+          (latest.rows[0]?.health ?? 'waiting') !== transition.previousHealth ||
+          (transition.previousFinality !== undefined && previousFinality !== transition.previousFinality)
+        ) {
+          return { inserted: false };
+        }
+        const storedTransition = this.notificationActivityPort
+          ? { ...transition, notifiedAt: transition.occurredAt }
+          : transition;
         const result = await client.query(
           `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
-       SELECT $1, $2, $3::jsonb, $4
-        WHERE COALESCE((
-          SELECT previous.data->>'health' FROM adcp_reporting_transitions previous
-           WHERE previous.obligation_id = $2
-           ORDER BY previous.transition_sequence DESC LIMIT 1
-        ), 'waiting') = $5
-       ON CONFLICT DO NOTHING RETURNING transition_id`,
+           VALUES ($1, $2, $3::jsonb, $4)
+           ON CONFLICT DO NOTHING RETURNING transition_id`,
           [
             transition.transitionId,
             transition.reporting_obligation_id,
-            JSON.stringify(transition),
+            JSON.stringify(storedTransition),
             transition.occurredAt,
-            transition.previousHealth,
           ]
         );
+        if (result.rowCount === 1 && this.notificationActivityPort) {
+          const obligation = await client.query<JsonRow<ReportingLedgerObligationV1>>(
+            'SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1',
+            [transition.reporting_obligation_id]
+          );
+          if (!obligation.rows[0]) throw new Error('Reporting obligation is unavailable');
+          await this.notificationActivityPort.recordTransition(
+            { transition, obligation: obligation.rows[0].data },
+            client
+          );
+        }
         return { inserted: result.rowCount === 1 };
       },
       { preBeginAdvisoryLock: lock }
@@ -1232,6 +1325,7 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     reporting_obligation_id: string;
     expectedRevisionIds: string[];
     expectedPreviousHealth: import('./types').ReportingHealthV1;
+    expectedPreviousFinality?: ReportingObservedFinalityV1;
     expectedObligationState: ReportingLedgerObligationV1['state'];
     expectedAttemptCount: number;
     projectedIssues: ReportingLedgerIssueV1[];
@@ -1239,12 +1333,33 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     transition?: ReportingLedgerStatusTransitionV1;
   }): Promise<{ applied: boolean; transitionInserted: boolean }> {
     const lock = await this.accountLockForObligation(input.reporting_obligation_id);
+    return assertFinalityWriterFence(() => this.applyLifecycleProjectionWithinLock(input, lock));
+  }
+
+  private async applyLifecycleProjectionWithinLock(
+    input: {
+      reporting_obligation_id: string;
+      expectedRevisionIds: string[];
+      expectedPreviousHealth: import('./types').ReportingHealthV1;
+      expectedPreviousFinality?: ReportingObservedFinalityV1;
+      expectedObligationState: ReportingLedgerObligationV1['state'];
+      expectedAttemptCount: number;
+      projectedIssues: ReportingLedgerIssueV1[];
+      ledgerAsOf: string;
+      transition?: ReportingLedgerStatusTransitionV1;
+    },
+    lock: string
+  ): Promise<{ applied: boolean; transitionInserted: boolean }> {
     return this.transaction(
       async client => {
         const obligations = await client.query<JsonRow<ReportingLedgerObligationV1>>(
           `SELECT data FROM adcp_reporting_obligations WHERE obligation_id = $1 FOR UPDATE`,
           [input.reporting_obligation_id]
         );
+        if (this.notificationActivityPort) {
+          await assertNoLegacyPendingTransitions(client, input.reporting_obligation_id);
+        }
+        const previousFinality = await resolveStoredFinalityBaseline(client, input.reporting_obligation_id);
         const revisions = await client.query<QueryResultRow & { revision_id: string }>(
           `SELECT revision_id FROM adcp_reporting_revisions
             WHERE obligation_id = $1 ORDER BY revision_number, revision_id`,
@@ -1263,12 +1378,16 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
           obligation.state !== input.expectedObligationState ||
           obligation.attemptCount !== input.expectedAttemptCount ||
           canonicalJsonV1(revisionIds) !== canonicalJsonV1(input.expectedRevisionIds) ||
-          previousHealth !== input.expectedPreviousHealth
+          previousHealth !== input.expectedPreviousHealth ||
+          (input.expectedPreviousFinality !== undefined && previousFinality !== input.expectedPreviousFinality)
         ) {
           return { applied: false, transitionInserted: false };
         }
         let transitionInserted = false;
         if (input.transition) {
+          const storedTransition = this.notificationActivityPort
+            ? { ...input.transition, notifiedAt: input.ledgerAsOf }
+            : input.transition;
           const inserted = await client.query(
             `INSERT INTO adcp_reporting_transitions (transition_id, obligation_id, data, occurred_at)
              VALUES ($1, $2, $3::jsonb, $4)
@@ -1276,12 +1395,15 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
             [
               input.transition.transitionId,
               input.reporting_obligation_id,
-              JSON.stringify(input.transition),
+              JSON.stringify(storedTransition),
               input.transition.occurredAt,
             ]
           );
           if (inserted.rowCount !== 1) return { applied: false, transitionInserted: false };
           transitionInserted = true;
+          if (this.notificationActivityPort) {
+            await this.notificationActivityPort.recordTransition({ transition: input.transition, obligation }, client);
+          }
         }
         const projectedIds = input.projectedIssues.map(issue => issue.issueId);
         for (const issue of input.projectedIssues) {
@@ -1319,9 +1441,13 @@ export class PostgresReportingLedgerStore implements ReportingLedgerStore {
     if (!lock) return;
     await this.transaction(
       async client => {
+        // Also commit the `none` baseline when the row predates SDK 14: the
+        // writer fence rejects any new row version without a recorded finality,
+        // and `none` is the same value the baseline resolver would commit.
         await client.query(
           `UPDATE adcp_reporting_transitions
           SET data = data || jsonb_build_object('notifiedAt', $2::text)
+              || CASE WHEN data ? 'finality' THEN '{}'::jsonb ELSE jsonb_build_object('finality', 'none') END
         WHERE transition_id = $1 AND NOT (data ? 'notifiedAt')`,
           [transitionId, notifiedAt]
         );
@@ -2146,6 +2272,100 @@ function adjustmentIdentityFingerprint(value: ReportingLedgerAdjustmentV1): stri
 
 function accountLock(accountId: string): string {
   return `adcp-reporting-account:${accountId}`;
+}
+
+/**
+ * Resolves the committed observed-finality baseline of the latest transition.
+ *
+ * Transitions written from SDK 14 onward carry `finality` in their own row, so
+ * the baseline is read straight back. Pre-SDK-14 rows carry none, and their
+ * baseline is deliberately **not** reconstructed: nothing already stored proves
+ * which revisions had committed when such a row was recorded. The revision
+ * payload's `createdAt` ranks creation instants, not commits, so a revision
+ * created early and committed late would count as already observed. And
+ * `recorded_at` is a `clock_timestamp()` wall clock — it can repeat within a
+ * microsecond and it can step backward — so a revision that committed after the
+ * transition can still compare equal or earlier. Either rule can conclude
+ * `official`, which makes `previousFinality` equal `finality` and silently
+ * suppresses the real snapshot→official transition forever.
+ *
+ * So the baseline is persisted as `'none'` under the caller's account advisory
+ * lock and every later read returns that committed value. The cost is at most
+ * one redundant finality-only transition per obligation at upgrade, which stays
+ * internal activity because the AdCP status webhook is health-only. The benefit
+ * is that no real finality change is ever dropped.
+ */
+async function resolveStoredFinalityBaseline(
+  transaction: ReportingPgClient,
+  obligationId: string
+): Promise<ReportingObservedFinalityV1> {
+  const latest = await transaction.query<
+    QueryResultRow & { transition_id: string; finality: ReportingObservedFinalityV1 | null }
+  >(
+    `SELECT transition_id, data->>'finality' AS finality
+       FROM adcp_reporting_transitions
+      WHERE obligation_id = $1 ORDER BY transition_sequence DESC LIMIT 1
+      FOR UPDATE`,
+    [obligationId]
+  );
+  const previous = latest.rows[0];
+  if (!previous) return 'none';
+  if (previous.finality) return previous.finality;
+  await transaction.query(
+    `UPDATE adcp_reporting_transitions
+        SET data = data || jsonb_build_object('finality', 'none')
+      WHERE transition_id = $1 AND NOT (data ? 'finality')`,
+    [previous.transition_id]
+  );
+  return 'none';
+}
+
+async function assertNoLegacyPendingTransitions(
+  transaction: ReportingLedgerTransactionV1,
+  obligationId: string
+): Promise<void> {
+  const pending = await transaction.query(
+    `SELECT transition_id FROM adcp_reporting_transitions
+      WHERE obligation_id = $1 AND data->>'notifiedAt' IS NULL
+      LIMIT 1`,
+    [obligationId]
+  );
+  if (pending.rowCount !== 0) {
+    throw new Error(
+      'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
+    );
+  }
+}
+
+/**
+ * Translates a writer-fence rejection into actionable guidance.
+ *
+ * The fence is the only thing that makes "at most one redundant finality-only
+ * transition per obligation" enforceable, so a caller that trips it needs to
+ * know it wrote a pre-SDK-14 shaped row, not just that a CHECK failed.
+ */
+async function assertFinalityWriterFence<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (isFinalityWriterFenceViolation(error)) {
+      throw new Error(
+        'Reporting transition rejected by the finality writer fence: every transition written after ' +
+          'REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION must record an observed finality. Drain pre-SDK-14 ' +
+          'writers before installing the fence.',
+        { cause: error }
+      );
+    }
+    throw error;
+  }
+}
+
+function isFinalityWriterFenceViolation(error: unknown): boolean {
+  for (let current = error; current instanceof Error; current = current.cause) {
+    const candidate = current as Error & { code?: unknown; constraint?: unknown };
+    if (candidate.code === '23514' && candidate.constraint === REPORTING_LEDGER_FINALITY_FENCE_CONSTRAINT) return true;
+  }
+  return false;
 }
 
 function consumerStatusChainKeyForObligation(obligation: ReportingLedgerObligationV1): string {
