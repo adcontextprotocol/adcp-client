@@ -379,7 +379,12 @@ describe('seller managed reporting runtime', () => {
       () => ledger.assertMaterializationOutcome(lease(), presigned, '2026-08-27T04:00:00.000Z'),
       /must not contain credentials/
     );
-    for (const location of ['report.csv#token=abc', 'user:secret@bucket/report.csv']) {
+    for (const location of [
+      'report.csv#token=abc',
+      'user:secret@host/report.csv',
+      'https://user@files.example/report.csv',
+      'http://user:secret@host/report.csv',
+    ]) {
       const carrying = outcome();
       carrying.resource.location = location;
       assert.throws(
@@ -388,6 +393,14 @@ describe('seller managed reporting runtime', () => {
         location
       );
     }
+    // The former userinfo regex had overlapping repetitions around `:` and
+    // became polynomial when an authority-like input contained many colons
+    // but no terminating `@`. This is valid under the credential-only policy
+    // and must complete through the linear scanner without being refused.
+    assert.doesNotThrow(
+      () => ledger.assertCredentialFreeReportingResourceLocationV1(`//${':'.repeat(100_000)}/manifest.json`),
+      'an adversarial colon run without userinfo remains credential-free'
+    );
     // A URL fragment is refused on a parseable URL too.
     const fragment = outcome();
     fragment.resource.location = 'https://files.example/reports/manifest.json#sig=abc';

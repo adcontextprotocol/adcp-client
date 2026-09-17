@@ -1075,7 +1075,7 @@ export function assertCredentialFreeReportingResourceLocationV1(location: string
   // one, so refusing every `@` rejected credential-free identifiers and
   // exhausted their delivery attempts. A colon-separated pair before the `@`
   // is what distinguishes a secret from a namespace.
-  if (/(?:^|\/\/)[^/?#\s@]*:[^/?#\s@]*@/.test(location)) refuse();
+  if (hasColonSeparatedUserinfo(location)) refuse();
   try {
     const parsed = new URL(location);
     // `http(s)` userinfo is basic-auth credentials by definition, whatever it
@@ -1087,6 +1087,60 @@ export function assertCredentialFreeReportingResourceLocationV1(location: string
     if (error instanceof Error && error.message.includes('must not contain credentials')) throw error;
     // Provider-native object/relation identifiers are intentionally not URLs.
   }
+}
+
+/**
+ * Finds `name:secret@` at the start of a location or after an authority `//`.
+ *
+ * This is deliberately a single pass. The equivalent regular expression had
+ * overlapping repetitions on either side of `:` and took polynomial time on
+ * a `//` followed by many colons when no `@` completed the match.
+ */
+function hasColonSeparatedUserinfo(location: string): boolean {
+  let scanningCandidate = true;
+  let sawColon = false;
+  let previousWasSlash = false;
+
+  for (let index = 0; index < location.length; index += 1) {
+    const code = location.charCodeAt(index);
+
+    if (scanningCandidate) {
+      if (code === 0x40) {
+        if (sawColon) return true;
+        scanningCandidate = false;
+      } else if (code === 0x3a) {
+        sawColon = true;
+      } else if (code === 0x2f || code === 0x3f || code === 0x23 || isLocationWhitespace(code)) {
+        scanningCandidate = false;
+      }
+    }
+
+    const startsAuthorityCandidate = code === 0x2f && previousWasSlash;
+    previousWasSlash = code === 0x2f;
+    if (startsAuthorityCandidate) {
+      scanningCandidate = true;
+      sawColon = false;
+    }
+  }
+
+  return false;
+}
+
+/** ECMAScript `\s`, expressed without a regular expression for the scanner. */
+function isLocationWhitespace(code: number): boolean {
+  return (
+    (code >= 0x09 && code <= 0x0d) ||
+    code === 0x20 ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
 }
 
 async function withinDeadline<T>(
