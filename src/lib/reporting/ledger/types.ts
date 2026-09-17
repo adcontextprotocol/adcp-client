@@ -545,9 +545,18 @@ export interface ReportingLedgerStore {
    * transition per obligation at upgrade, which stays internal activity because
    * the AdCP status webhook is health-only.
    *
-   * Optional for stores compiled against the pre-finality lifecycle port; such
-   * stores must also ignore `expectedPreviousFinality`, and the lifecycle then
-   * treats a pre-SDK-14 baseline as `'none'`.
+   * Optional for stores compiled against the pre-finality lifecycle port. Such
+   * stores must also ignore `expectedPreviousFinality`, and omitting the port
+   * is **not** equivalent to returning `'none'`: the lifecycle cannot persist a
+   * baseline on their behalf, so it uses the currently observed finality
+   * instead, making the comparison a no-op. Finality is simply unobservable
+   * there — health transitions still fire, finality-only ones never do, exactly
+   * as before finality existed. Returning `'none'` for such a store would
+   * instead make every reconciliation tick observe `'none' -> official` and
+   * append another finality-only transition, forever.
+   *
+   * So a store that wants finality-only activity at all must implement this
+   * port, and commit what it returns.
    */
   resolveTransitionFinalityBaseline?(reporting_obligation_id: string): Promise<ReportingObservedFinalityV1>;
   putConfiguration(

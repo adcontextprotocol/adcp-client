@@ -391,8 +391,17 @@ carry none, and their baseline is **not** reconstructed — it resolves to `none
 which the store persists via
 `resolveTransitionFinalityBaseline(reporting_obligation_id)` under its account
 lock. `reconcileReportingStatusLifecycleV1` calls that port before deciding the
-transition, and stores that omit it must also ignore `expectedPreviousFinality`,
-in which case the lifecycle assumes `none` itself.
+transition.
+
+Stores that omit the port must also ignore `expectedPreviousFinality`, and
+omitting it is **not** the same as returning `none`. The lifecycle cannot
+persist a baseline on such a store's behalf, so it uses the currently observed
+finality instead and the comparison becomes a no-op: finality is unobservable
+there, health transitions still fire, and finality-only ones never do — exactly
+the behaviour from before finality existed. Assuming `none` instead would make
+every reconciliation tick observe `none -> official` and append another
+finality-only transition, forever. Implement the port if you want finality-only
+activity at all.
 
 Do not try to reconstruct a historical baseline. Nothing already stored proves
 which revisions had committed when a pre-v14 transition was recorded:
