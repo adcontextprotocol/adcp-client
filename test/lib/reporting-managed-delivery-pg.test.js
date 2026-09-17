@@ -5196,6 +5196,30 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       'a receipt whose successor was pruned is not a leaf'
     );
     assert.equal(projection.tombstonedAcceptedSubjects.length, 1, 'the acceptance still settles the subject');
+
+    // The public read has to say the same thing. It builds its verdict from
+    // the live receipt set, where the rejection is now the only row, so
+    // reading the leaf before the conclusion reported `rejected` against a
+    // subject the lifecycle considers accepted — a disagreement no later
+    // write could resolve, because the write path refuses to repair a
+    // terminally accepted subject.
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    const status = await getStatus(
+      { account: { account_id: revived.accountId }, view: 'periods', period: revived.period },
+      context
+    );
+    assert.equal(
+      status.periods[0].reconciliation_status,
+      'accepted',
+      'the pruned acceptance outranks the rejection it superseded'
+    );
+    assert.equal(
+      validateResponse('get_reporting_status', status, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('get_reporting_status', status, '3.2.0-rc.3').issues)
+    );
   });
 
   test('omits managed evidence for revisions a finality filter excludes', async () => {
@@ -5431,6 +5455,145 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       await planPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${planSchema}" CASCADE`);
     }
+  });
+
+  test('folds a correction the database holds even when its author clock ran ahead', async () => {
+    const fast = await deliverOnce(await seedSkewLedger('fastauthor', 'consumer_receipt'));
+    const consumerId = 'https://fastauthor-buyer.example';
+    const context = { account: { id: fast.accountId }, agent: { agent_url: consumerId } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const accepted = await sync(
+      {
+        idempotency_key: 'receipt-fastauthor-batch-0001',
+        receipts: [receipt(fast, { reporting_receipt_id: 'receipt-fastauthor-0001' })],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+
+    // A producer host an hour ahead of the database. The row commits now; the
+    // body it carries is dated an hour from now.
+    const ahead = new Date(Date.now() + 3_600_000).toISOString();
+    const rows = [{ media_buy_id: 'buy-3', impressions: 15 }];
+    const bytes = Buffer.from(canonicalize(rows), 'utf8');
+    const wireAdjustmentWithoutDigest = {
+      reporting_adjustment_id: 'adjustment-fastauthor-0001',
+      adjusts_reporting_revision_id: fast.revision.reporting_revision_id,
+      reason_code: 'source_correction',
+      accounting_period: { start: fast.period.start, end: fast.period.end },
+      control_total_deltas: [{ name: 'row_count', value: '0', value_type: 'integer' }],
+      correction_observed_at: ahead,
+      created_at: ahead,
+    };
+    await core.commitAdjustment(
+      {
+        reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+        reporting_obligation_id: fast.obligation.reporting_obligation_id,
+        adjusts_reporting_revision_id: fast.revision.reporting_revision_id,
+        adjustmentNumber: 1,
+        manifest: { level: 'basic', objectRef: 'fastauthor-manifest', sha256: 'b'.repeat(64), byteCount: 1 },
+        sourcePublicationId: 'adjustment-publication-fastauthor',
+        binding: {
+          algorithm: 'rfc8785_jcs_v1',
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          byteCount: bytes.byteLength,
+          rowCount: rows.length,
+        },
+        rows,
+        observedAt: ahead,
+        dataThrough: fast.period.end,
+        sourceReadCutoffAt: ahead,
+        createdAt: ahead,
+        wireAdjustment: {
+          ...wireAdjustmentWithoutDigest,
+          canonical_adjustment_sha256: createHash('sha256')
+            .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+            .digest('hex'),
+        },
+      },
+      fast.coreLease
+    );
+
+    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'f1' }),
+    });
+    const transition = await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: fast.obligation.reporting_obligation_id,
+    });
+    const persisted = transition ?? (await core.listTransitions(fast.obligation.reporting_obligation_id)).at(-1);
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    const status = await getStatus(
+      { account: { account_id: fast.accountId }, view: 'periods', period: fast.period },
+      context
+    );
+    // The public read orders by the database column, so it always saw the
+    // correction. Judging the fold by the author's clock hid it from the
+    // lifecycle while the watermark advanced past the row's own recorded_at,
+    // so the obligation never became due again and the two never converged.
+    assert.equal(status.periods[0].health, 'action_required', 'the public read demands a receipt for it');
+    assert.equal(persisted.health, status.periods[0].health, 'and the lifecycle agrees with the public read');
+  });
+
+  test('settles a delivery whose retention the database accepts and a fast worker would not', async () => {
+    const skewed = await seedSkewLedger('workerahead');
+    assert.equal(await managed.planMaterializations({ account_id: skewed.accountId }), 1);
+    // Exactly the binding's 30-day promise plus half an hour, measured from
+    // the database clock that judges it.
+    const expiresAt = (
+      await pool.query(
+        `SELECT to_char((clock_timestamp() + INTERVAL '30 days' + INTERVAL '30 minutes') AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value`
+      )
+    ).rows[0].value;
+    const outcome = materializationOutcome(skewed);
+    outcome.resource.expires_at = expiresAt;
+    const adapter = {
+      verificationProfiles: ['canonical_digest'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => outcome,
+      read: async () => Buffer.from(''),
+      revoke: async () => {},
+    };
+    // A worker two hours ahead of the database. Judging retention on its own
+    // clock rejected a resource the database considers well inside the
+    // window, and the refusal surfaced as DELIVERY_FAILED.
+    const counts = await ledger.runManagedDeliveryWorker(managed, adapter, {
+      now: () => new Date(Date.now() + 7_200_000),
+      maxIterations: 2,
+      account_id: skewed.accountId,
+    });
+    assert.equal(counts.failed ?? 0, 0, 'host skew is not a delivery failure');
+    const row = await pool.query(
+      `SELECT status, data ->> 'failure_code' AS failure_code FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [skewed.accountId]
+    );
+    assert.equal(row.rows[0].status, 'available');
+    assert.equal(row.rows[0].failure_code, null);
+
+    // The database is still the authority that refuses a genuinely
+    // under-retained resource.
+    const short = await seedSkewLedger('workershort');
+    await managed.planMaterializations({ account_id: short.accountId });
+    const shortOutcome = materializationOutcome(short);
+    shortOutcome.resource.expires_at = new Date(Date.now() + 86_400_000).toISOString();
+    await ledger.runManagedDeliveryWorker(
+      managed,
+      { ...adapter, deliver: async () => shortOutcome },
+      { maxIterations: 2, account_id: short.accountId }
+    );
+    const refused = await pool.query(
+      `SELECT status, data ->> 'failure_code' AS failure_code FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [short.accountId]
+    );
+    assert.equal(refused.rows[0].status, 'failed');
+    assert.equal(refused.rows[0].failure_code, 'RESOURCE_RETENTION_INSUFFICIENT');
   });
 
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {

@@ -585,6 +585,17 @@ export interface ReportingManagedLifecycleProjectionV1 {
    */
   receiptEvidenceComplete?: boolean;
   /**
+   * Adjustments this obligation had at the projection's cutoff.
+   *
+   * Adjustment bodies carry a producer-authored `createdAt`, which is a host
+   * clock; the cutoff is compared against the store's own ordering column. A
+   * store that can tell the two apart reports the cutoff-visible set here, and
+   * the reconciler folds only those — otherwise a fast producer clock hid a
+   * correction from the lifecycle while the public status still demanded a
+   * receipt for it.
+   */
+  visibleAdjustmentIds?: readonly string[];
+  /**
    * Opaque token over the managed state this projection was computed from.
    *
    * The lifecycle CAS fences Core evidence — revision set, obligation state,

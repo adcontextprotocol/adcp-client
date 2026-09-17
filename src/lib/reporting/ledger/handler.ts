@@ -802,7 +802,17 @@ export function projectManagedDelivery(
   let reconciliationStatus: 'not_required' | 'pending' | 'accepted' | 'rejected' = 'not_required';
   if (binding.reconciliation_mode === 'consumer_receipt' && requiredRevision) {
     const missingAdjustment = adjustmentLeaves.some(value => value === undefined);
-    const rejectedAdjustment = adjustmentLeaves.some(value => value?.status === 'rejected');
+    // A tombstoned acceptance is the later, terminal word on its subject. A
+    // rejection it superseded can become the live leaf again once the
+    // acceptance body is pruned — nothing live supersedes it any more — and
+    // reading that as the verdict reopened a settled subject, which the write
+    // path then refused to repair because the tombstone says terminal. The
+    // conclusion outranks the predecessor it replaced.
+    const rejectedAdjustment = adjustments.some(
+      (adjustment, index) =>
+        adjustmentLeaves[index]?.status === 'rejected' &&
+        !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
+    );
     // A receipt is durable consumer evidence about a materialization that was
     // once verified, so the delivery that made it possible must be read from
     // the full history rather than the authorization-filtered projection.
@@ -828,13 +838,13 @@ export function projectManagedDelivery(
         adjustmentLeaves[index] === undefined && !tombstonedAdjustmentIds.has(adjustment.reporting_adjustment_id)
     );
     const revisionAccepted = revisionLeaf?.status === 'accepted' || revisionAcceptedByTombstone;
-    if (revisionLeaf?.status === 'rejected' || rejectedAdjustment) reconciliationStatus = 'rejected';
+    const revisionRejectedNow = revisionLeaf?.status === 'rejected' && !revisionAcceptedByTombstone;
+    if (revisionRejectedNow || rejectedAdjustment) reconciliationStatus = 'rejected';
     else if (!deliveredEver) reconciliationStatus = 'pending';
     else if (!revisionAccepted || missingAdjustmentAfterTombstones) reconciliationStatus = 'pending';
     else reconciliationStatus = 'accepted';
     if (reconciliationStatus !== 'accepted') {
-      const revisionRejected = revisionLeaf?.status === 'rejected';
-      const code = revisionRejected
+      const code = revisionRejectedNow
         ? 'RECEIPT_REJECTED'
         : rejectedAdjustment
           ? 'ADJUSTMENT_RECEIPT_REJECTED'

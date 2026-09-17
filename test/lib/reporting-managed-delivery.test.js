@@ -369,6 +369,80 @@ describe('seller managed reporting runtime', () => {
     );
   });
 
+  test('refuses a receipt that carries the server-assigned received_at', async () => {
+    const handler = ledger.createSyncReportingReceiptsHandler(
+      { syncReceiptBatch: async () => assert.fail('a request the schema forbids must never reach the store') },
+      () => 'buyer-1'
+    );
+    const valid = {
+      reporting_receipt_id: 'receipt-received-at-0001',
+      reporting_obligation_id: 'obligation-1',
+      reporting_revision_id: 'revision-1',
+      reporting_materialization_id: 'materialization-1',
+      status: 'accepted',
+      verification_profile: 'canonical_digest',
+      observed_row_count: 2,
+      observed_control_totals: { impressions: 2 },
+      observed_canonical_content_digest: 'a'.repeat(64),
+      observed_manifest_sha256: 'b'.repeat(64),
+      observed_at: '2026-08-27T05:00:00.000Z',
+    };
+    // The request schema has no `received_at`: the server assigns it from the
+    // database clock. Stripping a caller-supplied one before validating meant
+    // this payload was silently repaired and stored.
+    await assert.rejects(
+      () =>
+        handler(
+          {
+            account: { account_id: 'account-1' },
+            idempotency_key: 'receipt-received-at-batch-0001',
+            receipts: [{ ...valid, received_at: 'invalid' }],
+          },
+          { account: { id: 'account-1' } }
+        ),
+      error => {
+        assert.equal(error.code, 'VALIDATION_ERROR');
+        assert.match(error.message, /must not carry received_at/);
+        return true;
+      }
+    );
+    // Even a well-formed instant is refused: the field is not the caller's to
+    // set, and accepting it would make the stored order disagree with the
+    // clock that stores it.
+    await assert.rejects(
+      () =>
+        handler(
+          {
+            account: { account_id: 'account-1' },
+            idempotency_key: 'receipt-received-at-batch-0002',
+            receipts: [{ ...valid, received_at: '2026-08-27T05:00:00.000Z' }],
+          },
+          { account: { id: 'account-1' } }
+        ),
+      error => {
+        assert.equal(error.code, 'VALIDATION_ERROR');
+        return true;
+      }
+    );
+    // Positive control: the identical payload without the field is answered
+    // per entry rather than refused as a malformed request, so the refusal
+    // above is about `received_at` and not about the rest of the receipt.
+    const accepting = ledger.createSyncReportingReceiptsHandler(
+      { syncReceiptBatch: async input => input.entries.map(entry => ({ result: 'recorded', receipt: entry.receipt })) },
+      () => 'buyer-1'
+    );
+    const response = await accepting(
+      {
+        account: { account_id: 'account-1' },
+        idempotency_key: 'receipt-received-at-batch-0003',
+        receipts: [valid],
+      },
+      { account: { id: 'account-1' } }
+    );
+    assert.equal(response.results.length, 1);
+    assert.equal(response.results[0].reporting_receipt_id, 'receipt-received-at-0001');
+  });
+
   test('refuses an empty batch before it can answer with an empty results array', async () => {
     const handler = ledger.createSyncReportingReceiptsHandler(
       { syncReceiptBatch: async () => assert.fail('an empty batch must never reach the store') },

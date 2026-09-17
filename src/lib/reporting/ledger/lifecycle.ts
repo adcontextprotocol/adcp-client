@@ -333,14 +333,20 @@ async function composeManagedLifecycleProjection(
     ledgerAsOf: input.ledgerAsOf,
   });
   if (!managed) return { projection: coreProjection };
-  // Scoped to the cutoff, exactly as the receipts are. An adjustment created
-  // after it is not part of the ledger this reconcile describes, and folding
-  // it in demanded a receipt whose own row the cutoff then filtered out — so
-  // a historical reconcile persisted ADJUSTMENT_RECEIPT_REQUIRED for a
-  // correction that did not exist yet at the instant it claims to describe.
-  const adjustments = (await input.store.listAdjustments(obligation.reporting_obligation_id)).filter(
-    value => compareReportingInstants(value.createdAt, input.ledgerAsOf) <= 0
-  );
+  // Scoped to the cutoff, exactly as the receipts are: an adjustment the
+  // ledger did not hold yet is not part of the moment this reconcile
+  // describes, and folding it in demanded a receipt whose own row the same
+  // cutoff filtered out. The store decides membership when it can, because
+  // only it knows the column the cutoff is measured against — an adjustment
+  // body's `createdAt` is the producer's host clock, and trusting it hid
+  // committed corrections from a fast producer. `createdAt` remains the
+  // fallback for a store that reports no visible set, where it is the only
+  // instant available.
+  const stored = await input.store.listAdjustments(obligation.reporting_obligation_id);
+  const visibleAdjustmentIds = managed.visibleAdjustmentIds;
+  const adjustments = visibleAdjustmentIds
+    ? stored.filter(value => visibleAdjustmentIds.includes(value.reporting_adjustment_id))
+    : stored.filter(value => compareReportingInstants(value.createdAt, input.ledgerAsOf) <= 0);
   // Aggregate over the obligated roster, not merely over whoever has already
   // submitted. A consumer that owes a receipt and has sent nothing has no
   // receipt row, so aggregating observed consumers alone let it disappear as

@@ -2400,6 +2400,22 @@ ${managedDueArm}       )
           resolvedLedgerAsOf
         );
         if (!tombstoned.complete) receiptEvidenceComplete = false;
+        // Which corrections this obligation had by the cutoff, judged by the
+        // column the cutoff itself is compared against. The caller-authored
+        // `createdAt` on an adjustment body is a producer host clock: one
+        // running fast wrote a body dated after a cutoff its own committed row
+        // was already inside, so the fold dropped the correction while the
+        // watermark advanced past its `recorded_at` — never due again, while
+        // the public status, which reads by `recorded_at`, kept reporting
+        // ADJUSTMENT_RECEIPT_REQUIRED.
+        const visible = await client.query<QueryResultRow & { adjustment_id: string }>(
+          `SELECT adjustment_id FROM adcp_reporting_adjustments
+            WHERE obligation_id = $1 AND recorded_at <= $2::timestamptz
+            ORDER BY adjustment_number, adjustment_id LIMIT $3`,
+          [input.reporting_obligation_id, resolvedLedgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+        );
+        if (visible.rows.length > MAX_SNAPSHOT_ITEMS) receiptEvidenceComplete = false;
+        const visibleAdjustmentIds = visible.rows.slice(0, MAX_SNAPSHOT_ITEMS).map(row => row.adjustment_id);
         const tombstonedAcceptedSubjects = tombstoned.subjects;
         const delivered = await client.query<QueryResultRow & { revision_id: string }>(
           `SELECT revision_id FROM adcp_reporting_materialization_tombstones
@@ -2420,6 +2436,7 @@ ${managedDueArm}       )
           obligatedConsumerIds: observed,
           obligatedConsumerRosterComplete: false,
           receiptEvidenceComplete,
+          visibleAdjustmentIds,
           managedStateVersion,
           resolvedLedgerAsOf,
           tombstonedAcceptedSubjects,

@@ -473,14 +473,23 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
           `${MAX_RECEIPTS_PER_ARRAY} adjustment receipts per request`,
       });
     }
+    // `received_at` is server-authoritative: the request schema does not
+    // allow it, and this handler stamps it from the database clock. Stripping
+    // a caller-supplied one before validating meant a payload the schema
+    // forbids — `received_at: 'invalid'` beside an otherwise valid receipt —
+    // was silently repaired and stored. Refuse the request instead; sanitising
+    // input the contract rejects hides the caller's bug and makes the two
+    // validation paths disagree about what a valid request is.
+    if ([...revisionReceipts, ...adjustmentReceipts].some(receipt => 'received_at' in receipt)) {
+      throw new AdcpError('VALIDATION_ERROR', {
+        message: 'sync_reporting_receipts receipts must not carry received_at; it is assigned by the server',
+      });
+    }
     const entries: ReportingReceiptBatchEntryV1[] = [
-      ...revisionReceipts.map(receipt => ({
-        kind: 'revision' as const,
-        receipt: withoutReceivedAt(receipt) as ReportingReceipt,
-      })),
+      ...revisionReceipts.map(receipt => ({ kind: 'revision' as const, receipt: receipt as ReportingReceipt })),
       ...adjustmentReceipts.map(receipt => ({
         kind: 'adjustment' as const,
-        receipt: withoutReceivedAt(receipt) as ReportingAdjustmentReceipt,
+        receipt: receipt as ReportingAdjustmentReceipt,
       })),
     ];
     // RC3 bounds the batch as a whole too, in the request's
@@ -919,12 +928,14 @@ export function assertMaterializationOutcome(
       throw new Error('Native commit evidence does not match the retained resource and verification path');
     }
   }
-  if (
-    Date.parse(outcome.resource.expires_at) <
-    Date.parse(now) + Math.max(lease.binding.resource_retention_days, minimumResourceRetentionDays) * 86_400_000
-  ) {
-    throw new Error('Materialization resource expires before the installed retention window');
-  }
+  // Retention is deliberately NOT judged here. `now` is the worker's clock,
+  // and `settleMaterialization` already enforces the window in SQL against
+  // the clock that stores the row — terminalizing the attempt when it fails.
+  // Checking it twice against two clocks meant a worker running ahead of the
+  // database refused an outcome the database would have accepted, turning a
+  // good delivery into DELIVERY_FAILED for no reason but skew. The parameter
+  // is kept so the exported signature is stable for adopters.
+  void minimumResourceRetentionDays;
   if (outcome.verification.canonical_content_digest !== undefined) {
     const expected = lease.revision.wireRevision.canonical_content_digest;
     if (!expected || canonicalJson(outcome.verification.canonical_content_digest) !== canonicalJson(expected)) {
@@ -970,11 +981,6 @@ function resolvedAccountId(account: unknown): string {
   const id = typeof value.id === 'string' ? value.id : typeof value.account_id === 'string' ? value.account_id : '';
   if (!id) throw new Error('Reporting receipts require a resolved account');
   return id;
-}
-
-function withoutReceivedAt<T extends { received_at?: string }>(value: T): T {
-  const { received_at: _receivedAt, ...rest } = value;
-  return rest as T;
 }
 
 function sha256(value: unknown): string {
