@@ -399,7 +399,7 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
         throw new TypeError('Trusted reporting timezone conflicts with the configuration timezone assertion');
       }
       assertSupportedScheduleSemantics(frozenInput.schedule, deliveryOffering, normalizedTimezone);
-      const { constituents, mediaBuyIds } = trustedCoverage(coverage);
+      const { constituents, mediaBuyIds } = trustedCoverage(coverage, frozenInput.requestedMetrics);
       if (
         configuration.expectedMediaBuyIds !== undefined &&
         !sameIdMembers(configuration.expectedMediaBuyIds, mediaBuyIds)
@@ -854,11 +854,27 @@ function validateDeliveryOffering(source: ReportingSourceOfferingV1, delivery: R
     // one offset all the way from 1970 — not merely today. Asia/Singapore
     // (+07:30 to +08:00) and Asia/Kathmandu (+05:30 to +05:45) are rock stable
     // now, yet their 1970 grid is half an hour off local midnight, so no P1D
-    // anchor is installable and the offering must not be advertised. Faithful
-    // civil-time boundary arithmetic would lift this; until it exists, refuse.
+    // anchor is installable and the offering must not be advertised.
+    //
+    // That is a comparison of two instants, not a scan of the whole span:
+    // Asia/Shanghai and Asia/Seoul each ran DST in the 1980s and returned to
+    // the offset they had in 1970, so their grid still lands on local midnight
+    // and a recent generation installs fine. Scanning from the origin refused
+    // them for history no obligation will ever be generated in. Stability is
+    // then checked over the same operational horizon installation uses.
+    const originMs = reportingScheduleOriginV1(
+      delivery.schedule.alignment === 'utc' ? 'utc' : 'source_timezone',
+      pinnedTimezone
+    );
+    if (reportingUtcOffsetMinutesV1(pinnedTimezone, originMs) !== reportingUtcOffsetMinutesV1(pinnedTimezone, now)) {
+      throw new TypeError(
+        'Reporting source timezone no longer observes its schedule-origin offset; no anchor derived from the ' +
+          'protocol origin can land on source-local midnight'
+      );
+    }
     assertConstantUtcOffset(
       pinnedTimezone,
-      reportingScheduleOriginV1(delivery.schedule.alignment === 'utc' ? 'utc' : 'source_timezone', pinnedTimezone),
+      now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS,
       now + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS
     );
   }
@@ -952,7 +968,10 @@ function validateConfigurationAgainstDeliveryOffering(
  * construction, so no buyer-named ID can ride along beside an authorized
  * constituent and reach `fetchSlice`.
  */
-function trustedCoverage(coverage: ReliableReportingCoverageV1): {
+function trustedCoverage(
+  coverage: ReliableReportingCoverageV1,
+  requestedMetrics: readonly string[]
+): {
   constituents: ReportingLedgerConfigurationV1['constituents'];
   mediaBuyIds: string[];
 } {
@@ -963,6 +982,15 @@ function trustedCoverage(coverage: ReliableReportingCoverageV1): {
     .min(1)
     .max(SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1)
     .parse(structuredClone(coverage.constituents)) as ReportingLedgerConfigurationV1['constituents'];
+  // Every slice carries one metric-availability cell per constituent-metric
+  // pair, and the source contract bounds that product — not the constituent
+  // count alone. 501 constituents against two metrics installed cleanly and
+  // then failed every execution.
+  if (constituents.length * requestedMetrics.length > SOURCE_BATCH_MANIFEST_MAX_METRIC_AVAILABILITY_V1) {
+    throw new TypeError(
+      'Reporting coverage exceeds the per-slice metric availability bound; reduce constituents or metrics'
+    );
+  }
   const constituentIds = new Set(constituents.map(value => value.constituentId));
   if (constituentIds.size !== constituents.length) {
     throw new TypeError('resolveCoverage must return unique constituent identities');

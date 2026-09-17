@@ -249,6 +249,11 @@ export function createInlineReportingSourceExecutor(
         if (existing.requestFingerprint !== requestFingerprint) {
           return failure('INTEGRITY_FAILED', 'terminal', 'sourceExecutionKey was reused with a different request');
         }
+        // Serving this entry revokes any admission's claim on it. A reservation
+        // keeps the entry replayable on purpose, so once a replay has been
+        // handed its evidence that evidence must survive — the admission that
+        // reserved it commits everything else and simply leaves this one.
+        existing.reserved = false;
         return awaitInlineExecution(existing, context.signal, request.deadline.deadlineAt);
       }
 
@@ -556,19 +561,29 @@ async function executeAndSeal(
   // the global budget. Reclaiming inside the requesting scope when the global
   // budget is what binds would find no victims at all for a fresh scope whose
   // siblings hold the 256 MiB total.
-  let plannedGlobalCredit = 0;
-  let plannedScopeCredit = 0;
+  // Seeded from what the count ceilings already reserved: those victims will be
+  // deleted by the same commit, so their bytes are available to this slice.
+  // Discarding them refused a slice that fits precisely in the space its own
+  // count victim was about to release.
+  const reservedBytes = reclaimer?.plannedBytes(scopeKey) ?? { global: 0, scope: 0 };
+  let plannedGlobalCredit = reservedBytes.global;
+  let plannedScopeCredit = reservedBytes.scope;
   const globalRoom = (): number => INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes + plannedGlobalCredit;
   const scopeRoom = (): number =>
     INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedScopeCredit;
   const capacity = (): number => Math.min(INLINE_MAX_OBJECT_BYTES_V1, globalRoom(), scopeRoom());
   const planMoreCapacity = (): boolean => {
-    // Reclaim where the pressure actually is.
-    const freed = reclaimer?.plan(scopeKey, scopeRoom() <= globalRoom());
-    if (freed === undefined || freed.bytes <= 0) return false;
-    plannedGlobalCredit += freed.bytes;
-    if (freed.sameScope) plannedScopeCredit += freed.bytes;
-    return true;
+    // Reclaim where the pressure actually is. A zero-byte victim — an empty
+    // NDJSON slice — still reclaims its count and state, but frees nothing, so
+    // keep advancing to a byte-producing victim rather than reporting failure.
+    for (;;) {
+      const freed = reclaimer?.plan(scopeKey, scopeRoom() <= globalRoom());
+      if (freed === undefined) return false;
+      if (freed.bytes <= 0) continue;
+      plannedGlobalCredit += freed.bytes;
+      if (freed.sameScope) plannedScopeCredit += freed.bytes;
+      return true;
+    }
   };
   let remainingCapacity = capacity();
   let projected: readonly Record<string, unknown>[] | undefined;
@@ -1014,6 +1029,8 @@ export interface InlineAdmissionReclaimerV1 {
   plan(scopeKey: string, scopeOnly: boolean): { bytes: number; sameScope: boolean } | undefined;
   /** Victims planned so far that belong to `scopeKey`. */
   plannedInScope(scopeKey: string): number;
+  /** Bytes already reserved, split by whether they relieve `scopeKey` too. */
+  plannedBytes(scopeKey: string): { global: number; scope: number };
   commit(): void;
   release(): void;
 }
@@ -1042,10 +1059,31 @@ function createAdmissionReclaimer(
     plannedInScope(scopeKey) {
       return planned.filter(key => executions.get(key)?.scopeKey === scopeKey).length;
     },
+    plannedBytes(scopeKey) {
+      let global = 0;
+      let scope = 0;
+      for (const key of planned) {
+        const bytes = storage.objects.get(stagedObjectRef(key))?.bytes.byteLength ?? 0;
+        global += bytes;
+        if (executions.get(key)?.scopeKey === scopeKey) scope += bytes;
+      }
+      return { global, scope };
+    },
     commit() {
       if (settled) return;
       settled = true;
-      for (const victim of planned) commitReclaim(executions, storage, victim);
+      for (const victim of planned) {
+        const entry = executions.get(victim);
+        // Commit only victims whose claim still stands. A replay served between
+        // planning and here revoked it, and a joiner still in flight holds it
+        // open; either way the evidence stays. Its bytes stay accounted, so the
+        // next admission sees the real usage and reclaims again.
+        if (entry && (entry.reserved !== true || entry.pending || entry.waiters > 0)) {
+          entry.reserved = false;
+          continue;
+        }
+        commitReclaim(executions, storage, victim);
+      }
       planned.length = 0;
     },
     release() {

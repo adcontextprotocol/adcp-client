@@ -862,7 +862,7 @@ describe('ReliableReportingService', () => {
 
     assert.throws(
       () => zonedFixture('America/New_York'),
-      /UTC offset/,
+      /UTC offset|schedule-origin offset/,
       'a pinned DST zone cannot hold local midnight and must not be advertised'
     );
 
@@ -1872,7 +1872,7 @@ describe('ReliableReportingService', () => {
     for (const timezone of ['Asia/Singapore', 'Asia/Kathmandu']) {
       assert.throws(
         () => zonedFixture(timezone),
-        /changes its UTC offset/,
+        /no longer observes its schedule-origin offset/,
         `${timezone} has no installable protocol anchor and must not be advertised`
       );
     }
@@ -1880,6 +1880,36 @@ describe('ReliableReportingService', () => {
     // A zone that has held one offset since the origin is still advertisable.
     const kolkata = zonedFixture('Asia/Kolkata');
     assert.equal(kolkata.service.capabilities.offerings[0].schedule.period_timezone, 'Asia/Kolkata');
+
+    // Asia/Shanghai and Asia/Seoul each ran DST in the 1980s and returned to
+    // their 1970 offset. Their grid still lands on local midnight and they are
+    // stable across the operational horizon, so a recent generation installs —
+    // scanning back to the origin refused them for history no obligation is
+    // ever generated in.
+    for (const timezone of ['Asia/Shanghai', 'Asia/Seoul']) {
+      const stable = zonedFixture(timezone);
+      assert.equal(
+        stable.service.capabilities.offerings[0].schedule.period_timezone,
+        timezone,
+        `${timezone} is stable today and must remain advertisable`
+      );
+      const origin = reportingScheduleOriginV1('source_timezone', timezone);
+      const target = Date.now();
+      const anchorMs = origin + Math.ceil((target - origin) / 86_400_000) * 86_400_000;
+      const installed = await stable.service.installConfiguration(
+        configuration({
+          expectedSourceTimezone: timezone,
+          schedule: {
+            anchor: new Date(anchorMs).toISOString(),
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 86_400_000,
+          },
+        }),
+        { account: { id: 'account-a', ctx_metadata: {} } }
+      );
+      assert.equal(installed.sourceTimezone, timezone, `${timezone} must also install`);
+    }
   });
 
   test('binds each route to its own adapter executor, not a shared offering ID', async () => {
@@ -2493,6 +2523,190 @@ describe('ReliableReportingService', () => {
     // A fresh scope must still be able to stage, by reclaiming globally.
     const fresh = await retained.execute(scoped(99, 0), ctx());
     assert.equal(fresh.ok, true, `a fresh scope must reclaim globally, got ${fresh.ok ? '' : fresh.error.code}`);
+  });
+
+  test('advances past a zero-byte victim when reclaiming for capacity', async () => {
+    // An empty slice reclaims its count and state but frees no bytes. Treating
+    // that as "nothing left to reclaim" stranded the scope in STAGING_FAILED
+    // with byte-producing victims still available behind it.
+    const bulk = Array.from({ length: 10_000 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    let emptySlice = true;
+    const retained = createInlineReportingSourceExecutor(
+      () => (emptySlice ? [] : bulk),
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `zero-byte-${String(index).padStart(4, '0')}`;
+
+    // Oldest entry stages nothing, so it is the first victim and frees 0 bytes.
+    assert.equal(
+      (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(0) }), ctx())).ok,
+      true
+    );
+    emptySlice = false;
+    for (let index = 1; index <= 47; index += 1) {
+      assert.equal(
+        (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }), ctx())).ok,
+        true,
+        `slice ${index}`
+      );
+    }
+
+    // Under byte pressure the zero-byte victim must not stop the search.
+    const next = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(48) }), ctx());
+    assert.equal(next.ok, true, `slice 48 must reclaim past the empty victim, got ${next.ok ? '' : next.error.code}`);
+  });
+
+  test('credits the bytes its count victim is about to release', async () => {
+    // The count ceiling reserves a victim the same commit will delete, so its
+    // bytes belong to this slice. Discarding them does not fail outright —
+    // byte pressure just reclaims more victims instead — so what is asserted
+    // is that a single admission consumes only the one victim it needed.
+    const rowsOf = count =>
+      Array.from({ length: count }, (_, index) => ({
+        media_buy_id: 'fixture-media-buy',
+        impressions: index,
+        spend: '0.10',
+      }));
+    const large = rowsOf(50_000);
+    const filler = rowsOf(4_000);
+    let issued = 0;
+    const retained = createInlineReportingSourceExecutor(
+      () => {
+        const index = issued;
+        issued += 1;
+        // Oldest and the admitting slice are large; the scope in between sits
+        // just under its byte ceiling.
+        return index === 0 || index === 100 ? large : filler;
+      },
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `credit-slice-${String(index).padStart(4, '0')}`;
+
+    const staged = [];
+    for (let index = 0; index < 100; index += 1) {
+      const request = redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) });
+      const sealed = await retained.execute(request, ctx());
+      assert.equal(sealed.ok, true, `slice ${index}`);
+      const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+      staged.push({
+        objectRef: object.objectRef,
+        objectGeneration: object.objectGeneration,
+        sourceScope: request.sourceScope,
+        account: request.account,
+        delivery_config_id: request.delivery_config_id,
+        delivery_config_version: request.delivery_config_version,
+        report_definition_id: request.report_definition_id,
+        reporting_obligation_id: request.reporting_obligation_id,
+        maxBytes: 8 * 1024 * 1024,
+      });
+    }
+    const readable = async () => {
+      let count = 0;
+      for (const input of staged) {
+        try {
+          await retained.read({ ...input, signal: new AbortController().signal });
+          count += 1;
+        } catch {
+          /* reclaimed */
+        }
+      }
+      return count;
+    };
+    const before = await readable();
+
+    // The 101st hits the count ceiling and needs roughly what its count victim
+    // is about to release.
+    const next = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(100) }), ctx());
+    assert.equal(next.ok, true, `slice 100 must stage, got ${next.ok ? '' : next.error.code}`);
+
+    assert.equal(
+      before - (await readable()),
+      1,
+      'crediting the count victim must make further byte reclamation unnecessary'
+    );
+  });
+
+  test('never deletes evidence a concurrent replay joined after reservation', async () => {
+    // A replay can join a reserved victim between planning and commit.
+    // Reservation keeps the entry replayable on purpose, so the joiner must
+    // not have its evidence deleted underneath it.
+    let gate;
+    const gated = new Promise(resolve => {
+      gate = resolve;
+    });
+    let slow = false;
+    const retained = createInlineReportingSourceExecutor(
+      async () => {
+        if (slow) await gated;
+        return [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }];
+      },
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `join-slice-${String(index).padStart(4, '0')}`;
+
+    const oldest = redactedReportingSourceRequestV1({ sourceExecutionKey: key(0) });
+    const sealed = await retained.execute(oldest, ctx());
+    assert.equal(sealed.ok, true);
+    const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+    for (let index = 1; index < 100; index += 1) {
+      assert.equal(
+        (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }), ctx())).ok,
+        true,
+        `slice ${index}`
+      );
+    }
+
+    // Hold the 101st inside its fetch, with the oldest entry reserved.
+    slow = true;
+    const admitting = retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(100) }), ctx());
+    await new Promise(resolve => setImmediate(resolve));
+    // A replay joins the reserved victim while that admission is in flight.
+    const replay = await retained.execute(oldest, ctx());
+    assert.equal(replay.ok, true, 'a reserved entry stays replayable');
+    gate();
+    assert.equal((await admitting).ok, true);
+
+    // The joiner's evidence must still be readable.
+    const bytes = await retained.read({
+      objectRef: object.objectRef,
+      objectGeneration: object.objectGeneration,
+      sourceScope: oldest.sourceScope,
+      account: oldest.account,
+      delivery_config_id: oldest.delivery_config_id,
+      delivery_config_version: oldest.delivery_config_version,
+      report_definition_id: oldest.report_definition_id,
+      reporting_obligation_id: oldest.reporting_obligation_id,
+      maxBytes: 1024 * 1024,
+      signal: new AbortController().signal,
+    });
+    assert.ok(bytes.byteLength > 0, 'a successful concurrent replay must not be invalidated');
+  });
+
+  test('refuses coverage whose constituent-metric product exceeds the slice bound', async () => {
+    // Every slice carries one availability cell per constituent-metric pair,
+    // and the source contract bounds that product. 501 constituents against
+    // two metrics installed cleanly and then failed every execution.
+    const many = Array.from({ length: 501 }, (_, index) => {
+      const constituent = authorizedConstituent('account-a');
+      constituent.constituentId = `constituent-${index}`;
+      return constituent;
+    });
+    const { service } = serviceFixture({ resolveCoverage: () => ({ constituents: many }) });
+    await assert.rejects(
+      service.installConfiguration(configuration(), { account: { id: 'account-a', ctx_metadata: {} } }),
+      /per-slice metric availability bound/,
+      '501 constituents x 2 metrics exceeds the bound and must not install'
+    );
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
