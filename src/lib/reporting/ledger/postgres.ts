@@ -2711,14 +2711,23 @@ ${managedDueArm}       )
   private async observedConsumerIds(obligationId: string): Promise<string[]> {
     const result = await this.query<QueryResultRow & { consumer_id: string }>(
       `SELECT DISTINCT consumer_id FROM (
+         -- Driven from this obligation's subjects into the receipt subject
+         -- index, like every other obligation-scoped receipt read. Asking the
+         -- global receipt table which of its rows belong to an obligation
+         -- supplies neither account nor consumer, so the roster read scanned
+         -- the whole receipt history once per reconcile and once per
+         -- pre-apply re-check.
          SELECT receipt.consumer_id
-           FROM adcp_reporting_receipts receipt
-          WHERE (receipt.receipt_kind = 'revision' AND EXISTS (
-                   SELECT 1 FROM adcp_reporting_revisions revision
-                    WHERE revision.revision_id = receipt.subject_id AND revision.obligation_id = $1))
-             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
-                   SELECT 1 FROM adcp_reporting_adjustments adjustment
-                    WHERE adjustment.adjustment_id = receipt.subject_id AND adjustment.obligation_id = $1))
+           FROM adcp_reporting_revisions revision
+           JOIN adcp_reporting_receipts receipt
+             ON receipt.receipt_kind = 'revision' AND receipt.subject_id = revision.revision_id
+          WHERE revision.obligation_id = $1
+         UNION
+         SELECT receipt.consumer_id
+           FROM adcp_reporting_adjustments adjustment
+           JOIN adcp_reporting_receipts receipt
+             ON receipt.receipt_kind = 'adjustment' AND receipt.subject_id = adjustment.adjustment_id
+          WHERE adjustment.obligation_id = $1
          UNION
          SELECT status.consumer_id FROM adcp_reporting_consumer_statuses status
           WHERE status.obligation_id = $1 AND status.consumer_id <> '__legacy_unscoped_consumer__'

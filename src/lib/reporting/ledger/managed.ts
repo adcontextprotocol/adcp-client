@@ -945,7 +945,7 @@ export function assertMaterializationOutcome(
   if (outcome.resource.immutability === 'native_version' && !outcome.resource.native_version_ref) {
     throw new Error('Native-version materializations require an exact native_version_ref');
   }
-  assertCredentialFreeResourceLocation(outcome.resource.location);
+  assertCredentialFreeReportingResourceLocationV1(outcome.resource.location);
 }
 
 export function receiptEvidenceMatches(receipt: ReportingReceipt, materialization: ReportingMaterialization): boolean {
@@ -1050,26 +1050,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function assertCredentialFreeResourceLocation(location: string): void {
-  if (/\r|\n|-----BEGIN|\bbearer\s|(?:token|password|secret|signature)=/i.test(location)) {
+/**
+ * Refuses a retained resource location that carries credential syntax.
+ *
+ * Exported because the worker is not the only way a resource reaches
+ * storage: a caller driving `settleMaterialization` directly must be held to
+ * the same rule, or a presigned location is persisted and then published in
+ * `get_reporting_status`.
+ */
+export function assertCredentialFreeReportingResourceLocationV1(location: string): void {
+  const refuse = () => {
     throw new Error('Managed reporting resource locations must not contain credentials');
-  }
-  // URL query, fragment and userinfo syntax, refused on the raw string rather
-  // than on a parse. A location that did not parse as a URL used to be waved
-  // through entirely, so a relative path carrying a presigning query —
-  // `report.csv?sig=...`, which the keyword test above does not match — was
-  // stored and handed to buyers; and `user:secret@bucket/report.csv` does
-  // parse, as an opaque `user:` scheme whose userinfo the parser never
-  // exposes. A provider-native identifier has no use for any of these
-  // delimiters, and a retained resource URL must not carry them either.
-  if (/[?#@]/.test(location)) {
-    throw new Error('Managed reporting resource locations must not contain credentials');
-  }
+  };
+  if (/\r|\n|-----BEGIN|\bbearer\s|(?:token|password|secret|signature)=/i.test(location)) refuse();
+  // Query and fragment, refused on the raw string rather than on a parse: a
+  // relative path carrying a presigning query — `report.csv?sig=...`, which
+  // the keyword test above does not match — never parsed as a URL at all and
+  // so was waved through. A retained location is an immutable object
+  // reference; neither delimiter has a legitimate place in one.
+  if (/[?#]/.test(location)) refuse();
+  // `user:password@host` userinfo, which is the actual credential shape. A
+  // blanket `@` rule is wrong: `abfss://container@account.dfs.core.windows.net/...`
+  // puts a container name there, and a Snowflake stage reference begins with
+  // one, so refusing every `@` rejected credential-free identifiers and
+  // exhausted their delivery attempts. A colon-separated pair before the `@`
+  // is what distinguishes a secret from a namespace.
+  if (/(?:^|\/\/)[^/?#\s@]*:[^/?#\s@]*@/.test(location)) refuse();
   try {
     const parsed = new URL(location);
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-      throw new Error('Managed reporting resource locations must not contain credentials');
-    }
+    // `http(s)` userinfo is basic-auth credentials by definition, whatever it
+    // contains. Other schemes use that position for an account or container
+    // namespace, and the pair test above already caught a secret in it.
+    if (parsed.password || parsed.search || parsed.hash) refuse();
+    if (parsed.username && (parsed.protocol === 'http:' || parsed.protocol === 'https:')) refuse();
   } catch (error) {
     if (error instanceof Error && error.message.includes('must not contain credentials')) throw error;
     // Provider-native object/relation identifiers are intentionally not URLs.

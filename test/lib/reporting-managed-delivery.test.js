@@ -395,12 +395,18 @@ describe('seller managed reporting runtime', () => {
       () => ledger.assertMaterializationOutcome(lease(), fragment, '2026-08-27T04:00:00.000Z'),
       /must not contain credentials/
     );
-    // Provider-native identifiers are still accepted: the rule refuses URL
-    // credential syntax, not non-URL locations.
+    // Provider-native identifiers are still accepted: the rule refuses
+    // credential syntax, not every location that is unusual. A blanket `@`
+    // ban rejected an ADLS container and a Snowflake stage, whose deliveries
+    // then exhausted their attempts on evidence that carried no secret at
+    // all.
     for (const location of [
       'reports/revision-1/manifest.json',
       's3://bucket/reports/revision-1/manifest.json',
       'warehouse.schema.table$20260827',
+      'abfss://container@account.dfs.core.windows.net/reports/revision-1/manifest.json',
+      '@analytics.public.report_stage/revision-1/manifest.json',
+      'gs://bucket/reports/revision-1/manifest.json',
     ]) {
       const plain = outcome();
       plain.resource.location = location;

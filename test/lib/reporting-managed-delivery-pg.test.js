@@ -5391,13 +5391,23 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
                 NULL, NULL, 'chain-plan-noise-' || i, false, 'noise', '{}'::jsonb, clock_timestamp()
            FROM generate_series(1, 40000) AS i`
       );
+      await planPool.query(
+        `INSERT INTO adcp_reporting_materialization_tombstones
+          (configuration_id, revision_id, account_id, obligation_id, highest_attempt, reached_success)
+         SELECT 'configuration-plan-noise-' || i, 'revision-plan-noise-' || i, 'account-plan-noise',
+                'obligation-plan-noise-' || i, 1, false
+           FROM generate_series(1, 40000) AS i`
+      );
       await planPool.query('ANALYZE adcp_reporting_receipts');
       await planPool.query('ANALYZE adcp_reporting_consumer_statuses');
+      await planPool.query('ANALYZE adcp_reporting_materialization_tombstones');
 
       // Capture the statement the store actually issues and explain that,
       // rather than a hand-written approximation of it.
       let captured;
       let capturedDigest;
+      let capturedTombstones;
+      let capturedRoster;
       const capturingPool = {
         connect: async () => {
           const client = await planPool.connect();
@@ -5406,6 +5416,9 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
             if (typeof sql === 'string' && sql.includes('WITH subject AS')) captured = { sql, values };
             if (typeof sql === 'string' && sql.includes('md5(COALESCE(string_agg(marker')) {
               capturedDigest = { sql, values };
+            }
+            if (typeof sql === 'string' && sql.includes('adcp_reporting_materialization_tombstones')) {
+              capturedTombstones = { sql, values };
             }
             return query(sql, values);
           };
@@ -5417,12 +5430,20 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
           };
           return client;
         },
-        query: (sql, values) => planPool.query(sql, values),
+        query: (sql, values) => {
+          // `observedConsumerIds` runs on the pool, not on a transaction
+          // client, so it has to be captured here too.
+          if (typeof sql === 'string' && sql.includes(') engaged ORDER BY consumer_id')) {
+            capturedRoster = { sql, values };
+          }
+          return planPool.query(sql, values);
+        },
         end: async () => {},
       };
       const capturing = new ledger.PostgresReportingLedgerStore(capturingPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
+        obligatedConsumers: async () => ({ ids: ['https://plan-roster.example'], complete: true, version: 'p1' }),
       });
       await capturing.getManagedLifecycleProjection({
         reporting_obligation_id: planned.obligation.reporting_obligation_id,
@@ -5497,6 +5518,55 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         JSON.stringify(previousDigest.rows[0]['QUERY PLAN']),
         /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_receipts"/,
         'sanity: the digest shape this replaced scanned the whole receipt table too'
+      );
+
+      // Permanent rows, read by obligation and success on every projection.
+      // The primary key leads with configuration, which that question does
+      // not supply, so the scan grew for the life of the deployment.
+      assert.ok(capturedTombstones, 'the projection read its delivery tombstones');
+      const tombstonePlan = JSON.stringify(
+        (await planPool.query(`EXPLAIN (FORMAT JSON) ${capturedTombstones.sql}`, capturedTombstones.values)).rows[0][
+          'QUERY PLAN'
+        ]
+      );
+      assert.equal(
+        /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_materialization_tombstones"/.test(tombstonePlan),
+        false,
+        `the delivery tombstones are not scanned whole: ${tombstonePlan}`
+      );
+
+      // The obligated-consumer roster is read on every reconcile and again
+      // immediately before every apply.
+      await capturing.readObligatedConsumerRosterVersion({
+        reporting_obligation_id: planned.obligation.reporting_obligation_id,
+      });
+      assert.ok(capturedRoster, 'the roster read issued its engaged-consumer query');
+      const rosterPlan = JSON.stringify(
+        (await planPool.query(`EXPLAIN (FORMAT JSON) ${capturedRoster.sql}`, capturedRoster.values)).rows[0][
+          'QUERY PLAN'
+        ]
+      );
+      assert.equal(
+        /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_receipts"/.test(rosterPlan),
+        false,
+        `the roster read does not scan the receipt table: ${rosterPlan}`
+      );
+      const previousRoster = await planPool.query(
+        `EXPLAIN (FORMAT JSON)
+         SELECT DISTINCT receipt.consumer_id
+           FROM adcp_reporting_receipts receipt
+          WHERE (receipt.receipt_kind = 'revision' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_revisions revision
+                    WHERE revision.revision_id = receipt.subject_id AND revision.obligation_id = $1))
+             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_adjustments adjustment
+                    WHERE adjustment.adjustment_id = receipt.subject_id AND adjustment.obligation_id = $1))`,
+        [planned.obligation.reporting_obligation_id]
+      );
+      assert.match(
+        JSON.stringify(previousRoster.rows[0]['QUERY PLAN']),
+        /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_receipts"/,
+        'sanity: the roster shape this replaced scanned the whole receipt table too'
       );
     } finally {
       await planPool.end();
@@ -5764,6 +5834,154 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       true,
       JSON.stringify(validateResponse('sync_reporting_receipts', again, '3.2.0-rc.3').issues)
     );
+
+    // Retrying the very key that was just answered `unchanged`. The replay
+    // path rehydrates bodies from live receipts, and the body it needs was
+    // pruned before the answer was given — so the second call turned a
+    // committed answer into `failed` for a request that had already
+    // succeeded.
+    const retried = await sync({ idempotency_key: 'receipt-norecreate-batch-0002', receipts: [body] }, context);
+    assert.deepEqual(retried, again, 'an exact same-key replay reproduces the answer it already gave');
+    const stillGone = await pool.query(
+      `SELECT COUNT(*)::int AS live FROM adcp_reporting_receipts WHERE account_id = $1`,
+      [gone.accountId]
+    );
+    assert.equal(stillGone.rows[0].live, 0);
+  });
+
+  test('re-presents a pruned rejection whose accepted successor was pruned too', async () => {
+    const both = await deliverOnce(await seedSkewLedger('bothpruned', 'consumer_receipt'));
+    const context = { account: { id: both.accountId }, agent: { agent_url: 'https://bothpruned-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const rejection = receipt(both, {
+      reporting_receipt_id: 'receipt-bothpruned-0001',
+      status: 'rejected',
+      rejection_codes: ['ROW_COUNT_MISMATCH'],
+    });
+    assert.equal(
+      (await sync({ idempotency_key: 'receipt-bothpruned-batch-0001', receipts: [rejection] }, context)).results[0]
+        .result,
+      'recorded'
+    );
+    assert.equal(
+      (
+        await sync(
+          {
+            idempotency_key: 'receipt-bothpruned-batch-0002',
+            receipts: [
+              receipt(both, {
+                reporting_receipt_id: 'receipt-bothpruned-0002',
+                supersedes_reporting_receipt_id: 'receipt-bothpruned-0001',
+              }),
+            ],
+          },
+          context
+        )
+      ).results[0].result,
+      'recorded'
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [both.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [both.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [both.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: both.accountId })).receipts, 2);
+
+    // Both leaves are tombstoned now, and the accepted one is the subject's
+    // terminal answer. Reading the subject rule before this entry's own
+    // tombstone refused an exact re-presentation of the rejection as if it
+    // were new content for a settled subject — but it is precisely the
+    // receipt the tombstone already records.
+    const again = await sync({ idempotency_key: 'receipt-bothpruned-batch-0003', receipts: [rejection] }, context);
+    assert.equal(again.results[0].result, 'unchanged');
+    // New content for that settled subject is still refused.
+    const reopen = await sync(
+      {
+        idempotency_key: 'receipt-bothpruned-batch-0004',
+        receipts: [
+          receipt(both, {
+            reporting_receipt_id: 'receipt-bothpruned-0003',
+            status: 'rejected',
+            rejection_codes: ['CONTROL_TOTAL_MISMATCH'],
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(reopen.results[0].result, 'failed', 'a terminal subject still cannot reopen');
+  });
+
+  test('admits a correction beside the pruned rejection it supersedes', async () => {
+    const paired = await deliverOnce(await seedSkewLedger('prunedpair', 'consumer_receipt'));
+    const context = { account: { id: paired.accountId }, agent: { agent_url: 'https://prunedpair-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const rejection = receipt(paired, {
+      reporting_receipt_id: 'receipt-prunedpair-0001',
+      status: 'rejected',
+      rejection_codes: ['ROW_COUNT_MISMATCH'],
+    });
+    assert.equal(
+      (await sync({ idempotency_key: 'receipt-prunedpair-batch-0001', receipts: [rejection] }, context)).results[0]
+        .result,
+      'recorded'
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [paired.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [paired.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [paired.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: paired.accountId })).receipts, 1);
+
+    // The shape a consumer resubmitting its own state produces, after the
+    // first receipt's body aged out. A tombstoned match writes nothing, so
+    // it is no more a claimant on the subject than a live one — counting
+    // only live rows failed both entries on the duplicate-subject rule.
+    const together = await sync(
+      {
+        idempotency_key: 'receipt-prunedpair-batch-0002',
+        receipts: [
+          rejection,
+          receipt(paired, {
+            reporting_receipt_id: 'receipt-prunedpair-0002',
+            supersedes_reporting_receipt_id: 'receipt-prunedpair-0001',
+          }),
+        ],
+      },
+      context
+    );
+    assert.deepEqual(
+      together.results.map(value => value.result),
+      ['unchanged', 'recorded']
+    );
+    assert.equal(
+      validateResponse('sync_reporting_receipts', together, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('sync_reporting_receipts', together, '3.2.0-rc.3').issues)
+    );
   });
 
   test('refuses a successful settlement that retains nothing at all', async () => {
@@ -5795,6 +6013,41 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     assert.equal(row.rows[0].status, 'failed');
     assert.equal(row.rows[0].failure_code, 'RESOURCE_RETENTION_INSUFFICIENT');
+  });
+
+  test('refuses a presigned resource location at the store, not only in the worker', async () => {
+    const leaked = await seedSkewLedger('presigned');
+    assert.equal(await managed.planMaterializations({ account_id: leaked.accountId }), 1);
+    const claimed = await managed.claimMaterialization({
+      owner: 'presigned-worker',
+      now: new Date().toISOString(),
+      lease_milliseconds: 120_000,
+      account_id: leaked.accountId,
+    });
+    assert.ok(claimed);
+    const outcome = materializationOutcome(leaked);
+    // A direct store caller, which never runs the worker's pre-flight. The
+    // location was persisted and then published through
+    // `get_reporting_status`, handing the signature to every reader.
+    outcome.resource.location = 'https://files.example/reports/manifest.json?X-Amz-Signature=deadbeef';
+    await assert.rejects(
+      () => managed.settleMaterialization({ lease: claimed, now: new Date().toISOString(), outcome }),
+      /must not contain credentials/
+    );
+    const row = await pool.query(
+      `SELECT status, data -> 'resource' ->> 'location' AS location FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [leaked.accountId]
+    );
+    assert.equal(row.rows[0].status, 'pending', 'nothing was persisted');
+    assert.equal(row.rows[0].location, null);
+    // And a credential-free provider identifier still settles.
+    const clean = materializationOutcome(leaked);
+    clean.resource.location = 'abfss://container@account.dfs.core.windows.net/reports/manifest.json';
+    assert.equal(
+      await managed.settleMaterialization({ lease: claimed, now: new Date().toISOString(), outcome: clean }),
+      true
+    );
   });
 
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {

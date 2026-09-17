@@ -19,6 +19,7 @@ import type {
 import { REPORTING_LEDGER_AUTHORITY } from './types';
 import {
   adjustmentReceiptEvidenceMatches,
+  assertCredentialFreeReportingResourceLocationV1,
   receiptEvidenceMatches,
   type ReportingDestinationAuthorizationV1,
   type ReportingDestinationRevocationLeaseV1,
@@ -221,6 +222,12 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_materialization_tombstones (
   reached_success_at TIMESTAMPTZ,
   PRIMARY KEY (configuration_id, revision_id)
 );
+-- These rows are permanent and every lifecycle projection reads them by
+-- obligation and success. The primary key leads with configuration, which
+-- that question does not supply, so the scan grew without bound for the life
+-- of the deployment.
+CREATE INDEX IF NOT EXISTS adcp_reporting_materialization_tombstones_obligation
+  ON adcp_reporting_materialization_tombstones (obligation_id, reached_success, reached_success_at);
 
 
 ALTER TABLE adcp_reporting_destination_authorizations
@@ -1321,6 +1328,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // already published. A larger value is a caller tightening its own
     // requirement, which is always allowed.
     const minimumRetentionDays = Math.max(requested ?? 0, input.lease.binding.resource_retention_days);
+    // Enforced at the seam that persists, not only in the worker's own
+    // pre-flight. A caller driving the store directly skipped
+    // `assertMaterializationOutcome` entirely, so a presigned location was
+    // stored and then published to buyers through `get_reporting_status`.
+    if (input.outcome.status !== 'failed') {
+      assertCredentialFreeReportingResourceLocationV1(input.outcome.resource.location);
+    }
     return this.transaction(async client => {
       const { lease } = input;
       await advisoryLock(client, accountLock(lease.binding.account_id));
@@ -1670,6 +1684,17 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       const storedFingerprints = new Map(
         alreadyStored.rows.map(row => [row.reporting_receipt_id, row.semantic_fingerprint])
       );
+      // A tombstoned match resolves exactly as a live one does — it answers
+      // `unchanged` and writes nothing — so it is no more a claimant on the
+      // subject than a stored receipt is. Leaving it out failed a batch
+      // carrying a pruned rejection together with its own correction, which
+      // is the shape a consumer resubmitting its state produces.
+      const buried = await client.query<QueryRow & { reporting_receipt_id: string; semantic_fingerprint: string }>(
+        `SELECT reporting_receipt_id, semantic_fingerprint FROM adcp_reporting_receipt_tombstones
+          WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = ANY($3::text[])`,
+        [input.account_id, input.consumer_id, input.entries.map(entry => entry.receipt.reporting_receipt_id)]
+      );
+      for (const row of buried.rows) storedFingerprints.set(row.reporting_receipt_id, row.semantic_fingerprint);
       const resolvesToStored = input.entries.map(
         entry => storedFingerprints.get(entry.receipt.reporting_receipt_id) === digest(entry.receipt)
       );
@@ -1755,9 +1780,32 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = $3`,
         [input.account_id, input.consumer_id, result.id]
       );
-      const data = row.rows[0]?.data;
-      // The receipt table is append-only, so a recorded id is always still
-      // there. Fail this entry closed rather than invent a body if it is not.
+      let data = row.rows[0]?.data;
+      if (!data) {
+        // Retention removes bodies; it must not change an answer already
+        // given. The verdict was `unchanged` against a receipt that has
+        // since been pruned, and rehydrating from live rows alone turned a
+        // committed answer into `failed` on the next retry of the very same
+        // idempotency key. The tombstone fixes the identity and the instant,
+        // and the caller re-sent the body under a fingerprint the batch
+        // already matched, so the reply is reconstructable exactly.
+        const tombstone = await client.query<QueryRow & { recorded_at: string; semantic_fingerprint: string }>(
+          `SELECT ${rfc3339Micro('COALESCE(subject_recorded_at, pruned_at)')} AS recorded_at, semantic_fingerprint
+             FROM adcp_reporting_receipt_tombstones
+            WHERE account_id = $1 AND consumer_id = $2 AND reporting_receipt_id = $3`,
+          [input.account_id, input.consumer_id, result.id]
+        );
+        const buried = tombstone.rows[0];
+        if (
+          buried &&
+          result.id === entry.receipt.reporting_receipt_id &&
+          buried.semantic_fingerprint === digest(entry.receipt)
+        ) {
+          data = { ...entry.receipt, received_at: buried.recorded_at } as ReportingReceipt;
+        }
+      }
+      // Fail this entry closed rather than invent a body when neither a live
+      // row nor a matching tombstone can supply one.
       if (!data) {
         replay.push(failed(entry.receipt.reporting_receipt_id));
         continue;
@@ -1816,17 +1864,26 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         ORDER BY was_current DESC, pruned_at DESC, reporting_receipt_id DESC`,
       [batch.account_id, batch.consumer_id, entry.receipt.reporting_receipt_id, entry.kind, subjectIdFor(entry)]
     );
+    // This entry's own tombstone first, before any rule about the subject.
+    // Ordering put the subject's current leaf ahead of it, so once both a
+    // rejection and the acceptance that replaced it had been pruned, an exact
+    // re-presentation of the rejection hit the terminal-subject rule and was
+    // refused as if it were new content — when it is the very receipt the
+    // tombstone already records.
+    const ownTombstone = tombstones.rows.find(
+      tombstone => tombstone.reporting_receipt_id === entry.receipt.reporting_receipt_id
+    );
+    if (ownTombstone) {
+      if (ownTombstone.semantic_fingerprint !== fingerprint) return failed(entry.receipt.reporting_receipt_id);
+      // Byte-identical to a receipt whose body was deliberately aged out.
+      // Falling through re-created the row with a fresh instant: the
+      // retention clock restarted, the storage the prune reclaimed came
+      // back, and the receipt's published `received_at` moved to a moment
+      // the consumer never filed anything at. Nothing changed, so answer
+      // `unchanged` with the instant the tombstone kept.
+      return unchanged(entry.kind, { ...entry.receipt, received_at: ownTombstone.recorded_at } as never);
+    }
     for (const tombstone of tombstones.rows) {
-      if (tombstone.reporting_receipt_id === entry.receipt.reporting_receipt_id) {
-        if (tombstone.semantic_fingerprint !== fingerprint) return failed(entry.receipt.reporting_receipt_id);
-        // Byte-identical to a receipt whose body was deliberately aged out.
-        // Falling through re-created the row with a fresh instant: the
-        // retention clock restarted, the storage the prune reclaimed came
-        // back, and the receipt's published `received_at` moved to a moment
-        // the consumer never filed anything at. Nothing changed, so answer
-        // `unchanged` with the instant the tombstone kept.
-        return unchanged(entry.kind, { ...entry.receipt, received_at: tombstone.recorded_at } as never);
-      }
       if (tombstone.status === 'accepted' && tombstone.was_current) {
         return failed(entry.receipt.reporting_receipt_id);
       }
