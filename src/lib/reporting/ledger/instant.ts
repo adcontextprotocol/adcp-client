@@ -40,6 +40,14 @@ export function compareReportingInstants(left: string, right: string): number {
   return value < 0n ? -1 : value > 0n ? 1 : 0;
 }
 
+/** Internal marker for deployment-wide lifecycle configuration violations. */
+export class ReportingLifecycleInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReportingLifecycleInvariantError';
+  }
+}
+
 export function canonicalReportingInstant(value: string): string {
   const parsed = parseReportingInstant(value);
   let fractionEnd = parsed.fraction.length;

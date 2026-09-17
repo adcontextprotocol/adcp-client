@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { canonicalJsonV1 } from '../source';
 import { moreSevereReportingHealthV1, projectManagedDelivery } from './handler';
-import { compareReportingInstants } from './instant';
+import { compareReportingInstants, ReportingLifecycleInvariantError } from './instant';
 import { projectReportingObligationHealthV1 } from './health';
 import type { ReportingAdjustmentReceipt, ReportingReceipt } from '../../types';
 import type {
@@ -102,7 +102,11 @@ async function reconcileEachIsolated(
         now: () => new Date(input.ledgerAsOf),
         subscribers: input.subscribers,
       });
-    } catch {
+    } catch (error) {
+      // Deployment-wide notification invariants are not tenant-local poison.
+      // Continuing would report the full attempted count while every
+      // obligation is guaranteed to fail under the same invalid cutover.
+      if (isReportingLifecycleInvariantError(error)) throw error;
       // Contained per obligation, then backed off. Swallowing alone was not
       // enough: an oldest-first page of failing tenants re-selected the same
       // obligations on every sweep and no healthy work behind them ever ran.
@@ -116,6 +120,14 @@ async function reconcileEachIsolated(
 
 /** Bounded so a contended obligation falls back to the sweep instead of spinning. */
 const MAX_LIFECYCLE_CAS_ATTEMPTS = 3;
+
+/** PostgreSQL transaction wrappers retain the originating invariant as a cause. */
+function isReportingLifecycleInvariantError(error: unknown): boolean {
+  for (let current = error; current instanceof Error; current = current.cause) {
+    if (current instanceof ReportingLifecycleInvariantError) return true;
+  }
+  return false;
+}
 
 /**
  * Re-runs a reconcile whose compare-and-set was refused.
@@ -168,7 +180,9 @@ export async function reconcileReportingStatusLifecycleV1(
   if (!obligation) throw new Error('Reporting obligation is unavailable');
   const transactionalNotifications = input.store.transactionalNotificationActivity === true;
   if (transactionalNotifications && (input.subscribers?.length ?? 0) > 0) {
-    throw new Error('Transactional reporting notification activity and legacy subscribers are mutually exclusive');
+    throw new ReportingLifecycleInvariantError(
+      'Transactional reporting notification activity and legacy subscribers are mutually exclusive'
+    );
   }
   // Resolve the cutoff before anything reads against it. A retry always takes
   // a fresh one: the previous attempt lost a race, so re-evaluating at the
@@ -238,7 +252,7 @@ export async function reconcileReportingStatusLifecycleV1(
   const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
   const pendingTransitions = transitions.filter(value => !value.notifiedAt);
   if (transactionalNotifications && pendingTransitions.length > 0) {
-    throw new Error(
+    throw new ReportingLifecycleInvariantError(
       'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
     );
   }

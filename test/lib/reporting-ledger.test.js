@@ -577,6 +577,53 @@ describe('seller reporting ledger', () => {
     );
   });
 
+  test('deadline sweeps fail loud when transactional notification activity has legacy pending work', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.transitions.set('legacy-pending-transition', {
+      transitionId: 'legacy-pending-transition',
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      issueIds: [],
+      occurredAt: '2026-09-02T01:15:00.000Z',
+    });
+    store.transactionalNotificationActivity = true;
+    const failures = [];
+    store.recordLifecycleFailure = async input => void failures.push(input.reporting_obligation_id);
+
+    await assert.rejects(
+      () =>
+        reconcileReportingStatusDeadlinesV1({
+          store,
+          ledgerAsOf: '2026-09-02T02:30:00.000Z',
+        }),
+      /Drain or explicitly resolve legacy pending reporting transitions/
+    );
+    assert.deepEqual(failures, [], 'a deployment invariant is not recorded as an isolated tenant failure');
+  });
+
+  test('deadline sweeps fail loud when transactional notification activity conflicts with legacy subscribers', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.transactionalNotificationActivity = true;
+    const failures = [];
+    store.recordLifecycleFailure = async input => void failures.push(input.reporting_obligation_id);
+
+    await assert.rejects(
+      () =>
+        reconcileReportingStatusDeadlinesV1({
+          store,
+          ledgerAsOf: '2026-09-02T01:30:00.000Z',
+          subscribers: [{ account_id: obligation.account.account_id, notify: async () => {} }],
+        }),
+      /mutually exclusive/
+    );
+    assert.deepEqual(failures, [], 'a deployment invariant is not recorded as an isolated tenant failure');
+  });
+
   test('does not freeze a superseded generation until its straddling period closes', async () => {
     const store = new MemoryLedgerStore();
     const request = redactedReportingSourceRequestV1();
