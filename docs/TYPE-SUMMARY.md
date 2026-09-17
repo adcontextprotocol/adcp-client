@@ -2813,6 +2813,14 @@ interface ReportingSourceStagedObjectReaderV1 {
 type ReportingSourceExecutorResultV1 =
   | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }
   | { ok: false; error: ReportingSourceErrorV1 };
+type InlineReportingMetricEvidenceV1 =
+  | { constituent_id: string; metric: string; status: 'present' | 'explicit_zero'; data_through: string }
+  | { constituent_id: string; metric: string; status: 'unsupported' | 'delayed' | 'partial' | 'stale' | 'missing'; reason: string; data_through?: string };
+interface InlineReportingAvailabilityEvidenceV1 {
+  version: '1.0';
+  cells: readonly InlineReportingMetricEvidenceV1[];
+}
+// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.
 // validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })
 // runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })
 // validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })
