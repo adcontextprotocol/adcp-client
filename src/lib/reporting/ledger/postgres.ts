@@ -2638,7 +2638,10 @@ ${managedDueArm}       )
       obligatedConsumerIds: ids,
       obligatedConsumerRosterComplete: rosterComplete,
       ...(all.length === ids.length ? {} : { receiptEvidenceComplete: false }),
-      obligatedConsumerRosterVersion: obligatedConsumerRosterVersionFor(supplied, ids),
+      // Projection storage is bounded, but roster identity is not the stored
+      // projection. Hash the full deterministic roster so the immediate CAS
+      // recheck computes the same version for an oversized unversioned roster.
+      obligatedConsumerRosterVersion: obligatedConsumerRosterVersionFor(supplied, all),
     };
   }
 

@@ -5283,7 +5283,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       const guardCore = new ledger.PostgresReportingLedgerStore(guardPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
-        obligatedConsumers: async () => ({ ids: wideRoster, complete: true, version: 'g1' }),
+        obligatedConsumers: async () => ({ ids: wideRoster, complete: true }),
       });
       const guardManaged = new ledger.PostgresReportingManagedDeliveryStore(guardPool);
       const guarded = await seedSkewLedgerInto(guardCore, guardManaged, 'guards', 'consumer_receipt');
@@ -5348,10 +5348,14 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         reporting_obligation_id: guarded.obligation.reporting_obligation_id,
       });
       const watermark = await guardPool.query(
-        `SELECT processed_at FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
+        `SELECT processed_roster_version, current_roster_version, failure_count
+           FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
         [guarded.obligation.reporting_obligation_id]
       );
       assert.equal(watermark.rowCount, 1);
+      assert.ok(watermark.rows[0].processed_roster_version, 'the oversized unversioned roster reconciled');
+      assert.equal(watermark.rows[0].processed_roster_version, watermark.rows[0].current_roster_version);
+      assert.equal(watermark.rows[0].failure_count, 0);
     } finally {
       await guardPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${guardSchema}" CASCADE`);
@@ -5808,12 +5812,15 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     await pool.query(
       `UPDATE adcp_reporting_materializations
-          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+          SET recorded_at = clock_timestamp() - INTERVAL '200 days',
+              data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
         WHERE account_id = $1`,
       [gone.accountId]
     );
     const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
-    assert.equal((await retaining.pruneExpiredEvidence({ account_id: gone.accountId })).receipts, 1);
+    const pruned = await retaining.pruneExpiredEvidence({ account_id: gone.accountId });
+    assert.equal(pruned.receipts, 1);
+    assert.equal(pruned.materializations, 1, 'the live evidence authorization source is gone too');
     const tombstone = await pool.query(
       `SELECT to_char(COALESCE(subject_recorded_at, pruned_at) AT TIME ZONE 'UTC',
                       'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at
@@ -6053,6 +6060,64 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       await managed.settleMaterialization({ lease: claimed, now: new Date().toISOString(), outcome: clean }),
       true
     );
+  });
+
+  test('validates every successful materialization invariant at the direct settlement boundary', async () => {
+    const cases = [
+      {
+        suffix: 'settleprofile',
+        mutate: value => (value.verification.verification_profile = 'native_commit'),
+        error: /verification profile differs/,
+      },
+      {
+        suffix: 'settledigest',
+        mutate: value => (value.verification.canonical_content_digest.value = '0'.repeat(64)),
+        error: /Canonical materialization evidence does not match/,
+      },
+      {
+        suffix: 'settlerows',
+        mutate: value => (value.verification.row_count += 1),
+        error: /row count differs/,
+      },
+      {
+        suffix: 'settletotals',
+        mutate: value =>
+          (value.verification.control_totals = [{ name: 'impressions', value: '999', value_type: 'integer' }]),
+        error: /control totals differ/,
+      },
+      {
+        suffix: 'settlemethod',
+        mutate: value => {
+          value.resource.kind = 'dataset';
+          delete value.resource.manifest_version;
+          delete value.resource.manifest_sha256;
+        },
+        error: /delivery method/,
+      },
+    ];
+    for (const entry of cases) {
+      const fixture = await seedSkewLedger(entry.suffix);
+      await managed.planMaterializations({ account_id: fixture.accountId });
+      const claimed = await managed.claimMaterialization({
+        owner: `${entry.suffix}-worker`,
+        now: new Date().toISOString(),
+        lease_milliseconds: 120_000,
+        account_id: fixture.accountId,
+      });
+      assert.ok(claimed);
+      const invalid = materializationOutcome(fixture);
+      entry.mutate(invalid);
+      await assert.rejects(
+        () => managed.settleMaterialization({ lease: claimed, now: new Date().toISOString(), outcome: invalid }),
+        entry.error
+      );
+      const row = await pool.query(
+        `SELECT status, data -> 'resource' AS resource FROM adcp_reporting_materializations WHERE account_id = $1`,
+        [fixture.accountId]
+      );
+      assert.equal(row.rows[0].status, 'pending', `${entry.suffix} persisted no successful state`);
+      assert.equal(row.rows[0].resource, null);
+    }
   });
 
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {

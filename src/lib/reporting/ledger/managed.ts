@@ -105,9 +105,10 @@ export interface ReportingManagedDeliveryStore {
    * Records the agent-wide advertised recovery window so the store can hold
    * later binding installs to it.
    *
-   * Optional for compatibility. A store without it is validated only against
-   * the bindings present at startup, which leaves a binding installed later
-   * free to exceed the published bound until the next restart.
+   * Optional on the structural interface for source compatibility, but a
+   * runtime cannot publish Managed Delivery capabilities without it: checking
+   * only bindings present at startup leaves later installs free to exceed the
+   * published bound.
    */
   adoptAdvertisedRecoveryWindowSeconds?(seconds: number): Promise<void>;
   /**
@@ -298,6 +299,14 @@ export async function createReportingManagedDeliveryRuntime<
   if (!(await options.store.probe(options.coreStore))) {
     throw new Error('Managed reporting store is not operational for the configured Core authority');
   }
+  if (
+    typeof options.store.adoptAdvertisedRecoveryWindowSeconds !== 'function' ||
+    typeof options.store.adoptAdvertisedStatusRetentionDays !== 'function'
+  ) {
+    throw new Error(
+      'Managed Delivery capability publication requires durable recovery-window and status-retention policy adoption'
+    );
+  }
   nonnegativeInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
   // `automated_recovery_window_seconds` is published once per agent, in one
   // capability document, while Core recovery windows are per configuration.
@@ -322,7 +331,7 @@ export async function createReportingManagedDeliveryRuntime<
   // replica registering a different window over the same database is refused
   // — and firing them without awaiting let a runtime publish a capability
   // document whose promise the registry had already rejected.
-  await options.store.adoptAdvertisedRecoveryWindowSeconds?.(options.automatedRecoveryWindowSeconds);
+  await options.store.adoptAdvertisedRecoveryWindowSeconds(options.automatedRecoveryWindowSeconds);
   const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
   const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
   if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
@@ -336,7 +345,7 @@ export async function createReportingManagedDeliveryRuntime<
   // Register the retention horizon too. Advertising 90 days while the durable
   // policy stayed null let a store built with 45 days of evidence retention
   // prune inside the horizon this runtime publishes.
-  await options.store.adoptAdvertisedStatusRetentionDays?.(options.statusRetentionDays);
+  await options.store.adoptAdvertisedStatusRetentionDays(options.statusRetentionDays);
   positiveInteger(options.resourceRetentionDays, 'resourceRetentionDays');
   nonnegativeInteger(options.authorizationRevocationSeconds, 'authorizationRevocationSeconds');
   if (

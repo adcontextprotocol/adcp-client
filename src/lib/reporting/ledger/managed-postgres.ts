@@ -19,7 +19,7 @@ import type {
 import { REPORTING_LEDGER_AUTHORITY } from './types';
 import {
   adjustmentReceiptEvidenceMatches,
-  assertCredentialFreeReportingResourceLocationV1,
+  assertMaterializationOutcome,
   receiptEvidenceMatches,
   type ReportingDestinationAuthorizationV1,
   type ReportingDestinationRevocationLeaseV1,
@@ -1329,11 +1329,16 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // requirement, which is always allowed.
     const minimumRetentionDays = Math.max(requested ?? 0, input.lease.binding.resource_retention_days);
     // Enforced at the seam that persists, not only in the worker's own
-    // pre-flight. A caller driving the store directly skipped
-    // `assertMaterializationOutcome` entirely, so a presigned location was
-    // stored and then published to buyers through `get_reporting_status`.
-    if (input.outcome.status !== 'failed') {
-      assertCredentialFreeReportingResourceLocationV1(input.outcome.resource.location);
+    // pre-flight. A caller driving the store directly must not be able to
+    // persist evidence whose profile, revision binding or delivery method is
+    // inconsistent with the lease.
+    // A missing expiry is already rejected and terminalized by the fenced SQL
+    // below. Preserve that durable failure path: it spends the bad attempt
+    // instead of throwing before the row can leave pending. Every outcome
+    // eligible to persist successfully must pass the complete evidence
+    // assertion here.
+    if (input.outcome.status !== 'failed' && input.outcome.resource.expires_at !== undefined) {
+      assertMaterializationOutcome(input.lease, input.outcome, input.now, minimumRetentionDays);
     }
     return this.transaction(async client => {
       const { lease } = input;
@@ -1628,9 +1633,6 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       const receivedAt = (
         await client.query<QueryRow & { now: string }>(`SELECT ${rfc3339Micro('clock_timestamp()')} AS now`)
       ).rows[0]!.now;
-      const authorization = await Promise.all(
-        input.entries.map(entry => this.loadReceiptEvidence(client, input.account_id, entry).then(Boolean))
-      );
       const prior = await client.query<QueryRow & StoredBatch>(
         `SELECT request_fingerprint, results FROM adcp_reporting_receipt_batches
           WHERE account_id = $1 AND consumer_id = $2 AND idempotency_key = $3`,
@@ -1704,7 +1706,6 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       const results: SyncReportingReceiptsResponse['results'] = [];
       for (const [index, entry] of input.entries.entries()) {
         if (
-          !authorization[index] ||
           duplicateIds.has(entry.receipt.reporting_receipt_id) ||
           (!resolvesToStored[index] && duplicateSubjects.has(subjectKey(entry)))
         ) {

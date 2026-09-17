@@ -144,7 +144,12 @@ describe('seller managed reporting runtime', () => {
       () =>
         ledger.createReportingManagedDeliveryRuntime({
           ...base,
-          store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [60] },
+          store: {
+            probe: async () => true,
+            listInstalledRecoveryWindowSeconds: async () => [60],
+            adoptAdvertisedRecoveryWindowSeconds: async () => {},
+            adoptAdvertisedStatusRetentionDays: async () => {},
+          },
           offerings: [offering('consumer_receipt')],
         }),
       /authenticated receipt handler and canonical-digest verifier/
@@ -152,9 +157,17 @@ describe('seller managed reporting runtime', () => {
   });
 
   test('derives optional tier claims from the installed handler and verifier set', async () => {
+    const durablePolicyHooks = {
+      adoptAdvertisedRecoveryWindowSeconds: async () => {},
+      adoptAdvertisedStatusRetentionDays: async () => {},
+    };
     const common = {
       coreStore: {},
-      store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [0] },
+      store: {
+        probe: async () => true,
+        listInstalledRecoveryWindowSeconds: async () => [0],
+        ...durablePolicyHooks,
+      },
       adapter: {
         verificationProfiles: ['native_commit'],
         revocationFencesDeliveryGenerations: true,
@@ -185,21 +198,33 @@ describe('seller managed reporting runtime', () => {
       () =>
         ledger.createReportingManagedDeliveryRuntime({
           ...common,
-          store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [60, 900] },
+          store: {
+            probe: async () => true,
+            listInstalledRecoveryWindowSeconds: async () => [60, 900],
+            ...durablePolicyHooks,
+          },
           automatedRecoveryWindowSeconds: 300,
         }),
       /at least the widest installed managed Core recovery window \(900s\)/
     );
     const heterogeneous = await ledger.createReportingManagedDeliveryRuntime({
       ...common,
-      store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [60, 900] },
+      store: {
+        probe: async () => true,
+        listInstalledRecoveryWindowSeconds: async () => [60, 900],
+        ...durablePolicyHooks,
+      },
       automatedRecoveryWindowSeconds: 900,
     });
     assert.equal(heterogeneous.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
     // No managed tenant yet, or the last one just offboarded: still startable.
     const unbound = await ledger.createReportingManagedDeliveryRuntime({
       ...common,
-      store: { probe: async () => true, listInstalledRecoveryWindowSeconds: async () => [] },
+      store: {
+        probe: async () => true,
+        listInstalledRecoveryWindowSeconds: async () => [],
+        ...durablePolicyHooks,
+      },
       automatedRecoveryWindowSeconds: 120,
     });
     assert.equal(unbound.reportingDeliveryCapabilities.automated_recovery_window_seconds, 120);
@@ -238,6 +263,45 @@ describe('seller managed reporting runtime', () => {
     assert.equal(reconciled.reportingDeliveryCapabilities.reconciled_billing, true);
     assert.equal(reconciled.reportingDeliveryCapabilities.receipt_task, 'sync_reporting_receipts');
     assert.equal(typeof reconciled.syncReportingReceipts, 'function');
+  });
+
+  test('refuses capability publication without both durable policy adoption hooks', async () => {
+    const options = {
+      coreStore: {},
+      store: {
+        probe: async () => true,
+        listInstalledRecoveryWindowSeconds: async () => [0],
+        adoptAdvertisedRecoveryWindowSeconds: async () => {},
+      },
+      adapter: {
+        verificationProfiles: ['native_commit'],
+        revocationFencesDeliveryGenerations: true,
+        deliver: async () => {},
+        read: async () => new Uint8Array(),
+        revoke: async () => {},
+      },
+      offerings: [offering()],
+      automatedRecoveryWindowSeconds: 0,
+      statusRetentionDays: 30,
+      resourceRetentionDays: 30,
+      authorizationRevocationSeconds: 0,
+    };
+    await assert.rejects(
+      () => ledger.createReportingManagedDeliveryRuntime(options),
+      /requires durable recovery-window and status-retention policy adoption/
+    );
+    await assert.rejects(
+      () =>
+        ledger.createReportingManagedDeliveryRuntime({
+          ...options,
+          store: {
+            probe: async () => true,
+            listInstalledRecoveryWindowSeconds: async () => [0],
+            adoptAdvertisedStatusRetentionDays: async () => {},
+          },
+        }),
+      /requires durable recovery-window and status-retention policy adoption/
+    );
   });
 
   test('does not publish a delivery when authorization is revoked during adapter I/O', async () => {
