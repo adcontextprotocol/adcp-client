@@ -806,13 +806,17 @@ describe('createAdcpServer', () => {
         statuses: [{ reporting_status_id: 'reporting-status-invalid-0001', extra }],
       });
 
-      const first = await callToolRaw(server, 'sync_reporting_status', request('\ud800'));
+      // The tool refuses a caller with no canonical identity before the
+      // idempotency lookup, so this payload-hashing case authenticates.
+      const consumer = { authInfo: { clientId: 'reporting-consumer-1' } };
+
+      const first = await callToolRaw(server, 'sync_reporting_status', request('\ud800'), consumer);
       assert.notEqual(first.isError, true);
 
-      const replayed = await callToolRaw(server, 'sync_reporting_status', request('\ud800'));
+      const replayed = await callToolRaw(server, 'sync_reporting_status', request('\ud800'), consumer);
       assert.equal(replayed.structuredContent.replayed, true);
 
-      const conflict = await callToolRaw(server, 'sync_reporting_status', request('\ud801'));
+      const conflict = await callToolRaw(server, 'sync_reporting_status', request('\ud801'), consumer);
       assert.equal(conflict.isError, true);
       assert.equal(conflict.structuredContent.adcp_error.code, 'IDEMPOTENCY_CONFLICT');
       assert.equal(calls, 1);
@@ -1073,6 +1077,358 @@ describe('createAdcpServer', () => {
         assert.strictEqual(unauthenticated.structuredContent.adcp_error.code, 'AUTH_MISSING');
       }
       assert.strictEqual(calls, 0);
+    });
+  });
+
+  describe('caller-scoped reporting receipts', () => {
+    it("does not replay one caller's reporting receipt for another on the same account", async () => {
+      // An agent registry resolves several callers onto one account. Scoping
+      // replay by account alone let caller B's identical request return A's
+      // cached response before B's consumer was resolved, so B's receipt was
+      // never deposited.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        // An agent registry that resolves every caller on this account to the
+        // same principal — the shape that made the replay namespace collide.
+        resolveSessionKey: () => 'principal-account-shared',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            callers.push(ctx.authInfo?.credential?.key_id ?? ctx.authInfo?.credential?.client_id);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-shared' },
+        idempotency_key: 'reporting-status-shared-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-shared-0001' }],
+      };
+
+      for (const key_id of ['consumer-a', 'consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'api_key', key_id } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(callers, ['consumer-a', 'consumer-b'], 'each caller must reach the handler');
+
+      // OAuth callers carry their identity on credential.client_id, not
+      // key_id or a top-level clientId, so that is the field the replay
+      // namespace has to read.
+      for (const client_id of ['oauth-a', 'oauth-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'oauth', client_id, scopes: [], expires_at: null } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.strictEqual(callers.length, 4, 'two OAuth callers differing only by client_id must not collide');
+
+      // A caller whose principal cannot be derived at all must be refused
+      // before the idempotency lookup: collapsing such callers into one null
+      // namespace would serve the first caller's cached response to the next
+      // and never record its receipt.
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(callers.length, 4, 'an underivable principal must not reach the handler');
+
+      // The same caller repeating its own key still replays, so the namespace
+      // is narrowed by caller rather than simply disabled.
+      const replay = await callToolRaw(server, 'sync_reporting_status', params, {
+        authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } },
+      });
+      assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
+      assert.strictEqual(callers.length, 4, 'a caller replaying its own key must not re-run');
+    });
+
+    it('requires a consumer identity however the idempotency principal is resolved', async () => {
+      // `createAdcpServerFromPlatform` always installs a default
+      // `resolveIdempotencyPrincipal`, so gating the identity requirement on
+      // the resolver being absent disabled it for every platform-built server.
+      // That default falls back to sessionKey and then account.id -- shared by
+      // every consumer on the account -- and is `undefined` for an anonymous
+      // caller, whose request would then be answered from another consumer's
+      // cache entry without depositing a receipt.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      let handled = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveIdempotencyPrincipal: () => 'shared-platform-principal',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async params => {
+            handled += 1;
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-resolver' },
+        idempotency_key: 'reporting-status-resolver-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-resolver-0001' }],
+      };
+
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(handled, 0, 'an underivable consumer must not reach the handler');
+
+      // A real consumer still works, and its own repeat still replays, so the
+      // gate narrows rather than disables.
+      const caller = { authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } } };
+      assert.notStrictEqual(
+        (await callToolRaw(server, 'sync_reporting_status', params, caller)).isError,
+        true,
+        'an identified consumer is admitted'
+      );
+      await callToolRaw(server, 'sync_reporting_status', params, caller);
+      assert.strictEqual(handled, 1, 'the same consumer repeating its own key replays');
+    });
+
+    it('scopes replay by the resolved reporting consumer, not the credential', async () => {
+      // Two operator seats inside one buyer agent present the same OAuth
+      // client_id and resolve to the same account, but the deployment maps
+      // them to different reporting consumers. Keying replay by
+      // `oauth:<client_id>` put both in one cache entry, so the second seat
+      // was served the first's response and its receipt was never deposited.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const consumers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        // The identity the receipt handler records under.
+        resolveReportingConsumerId: ctx => `consumer-${ctx.authInfo.operator}`,
+        // Shared across both seats, exactly as the credential is: only the
+        // resolved consumer separates them.
+        resolveSessionKey: () => 'shared-oauth-client',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            consumers.push(ctx.authInfo?.operator);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-operator-shared' },
+        idempotency_key: 'reporting-status-operator-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-operator-0001' }],
+      };
+      const seat = operator => ({
+        authInfo: {
+          operator,
+          credential: { kind: 'oauth', client_id: 'shared-oauth-client', scopes: [], expires_at: null },
+        },
+      });
+
+      for (const operator of ['seat-a', 'seat-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, seat(operator));
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(
+        consumers,
+        ['seat-a', 'seat-b'],
+        'one OAuth client_id mapped to two reporting consumers must not share a receipt namespace'
+      );
+
+      // The same consumer repeating its own key still replays, so the
+      // namespace is narrowed by consumer rather than simply disabled.
+      const replay = await callToolRaw(server, 'sync_reporting_status', params, seat('seat-a'));
+      assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
+      assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
+    });
+
+    it('lets a custom authenticator name the consumer without a canonical credential', async () => {
+      // A custom `authenticate` callback may identify its consumer entirely
+      // through `authInfo.operator` or `authInfo.extra`, carrying no credential
+      // kind, no clientId and no registered agent. Requiring the canonical
+      // credential identity before the resolver ran rejected exactly the
+      // deployments that had told the framework how to name the consumer --
+      // AUTH_MISSING for an authenticated caller. The resolver is the
+      // authoritative mapping, so an authenticated caller is enough; an
+      // anonymous one is still refused.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const consumers = [];
+      const resolved = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveReportingConsumerId: ctx => {
+          const id = `consumer-${ctx.authInfo.operator}-${ctx.authInfo.extra.tenant}`;
+          resolved.push(id);
+          return id;
+        },
+        resolveSessionKey: () => 'custom-auth-session',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            consumers.push(`${ctx.authInfo.operator}/${ctx.authInfo.extra.tenant}`);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-custom-auth' },
+        idempotency_key: 'reporting-status-custom-auth-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-custom-0001' }],
+      };
+      // No credential, no clientId, no agent: nothing the canonical identity
+      // reads, and yet unambiguously authenticated.
+      const caller = (operator, tenant) => ({ authInfo: { operator, extra: { tenant } } });
+
+      const first = await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-1'));
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      assert.deepStrictEqual(resolved, ['consumer-seat-a-tenant-1'], 'the resolver must run for a custom identity');
+      assert.deepStrictEqual(consumers, ['seat-a/tenant-1'], 'the receipt must reach the handler');
+
+      // A second custom identity is a distinct consumer, not a cache hit.
+      const second = await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-2'));
+      assert.notStrictEqual(second.isError, true, JSON.stringify(second.structuredContent));
+      assert.deepStrictEqual(
+        consumers,
+        ['seat-a/tenant-1', 'seat-a/tenant-2'],
+        'two custom identities must not share a receipt namespace'
+      );
+
+      // The same custom identity repeating its own key still replays.
+      await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-1'));
+      assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
+
+      // Anonymous is still refused before the resolver is consulted.
+      const asked = resolved.length;
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(resolved.length, asked, 'an anonymous caller must not reach the resolver');
+      assert.strictEqual(consumers.length, 2, 'an anonymous caller must not reach the handler');
+    });
+
+    it('refuses the tool when the reporting consumer cannot be resolved', async () => {
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      let handled = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveReportingConsumerId: () => {
+          throw new Error('consumer directory is unreachable');
+        },
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async () => {
+            handled += 1;
+            return { status: 'completed', results: [] };
+          },
+        },
+      });
+
+      const response = await callToolRaw(
+        server,
+        'sync_reporting_status',
+        {
+          account: { account_id: 'account-unresolvable' },
+          idempotency_key: 'reporting-status-unresolvable-0001',
+          statuses: [{ reporting_status_id: 'reporting-status-unresolvable-0001' }],
+        },
+        { authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } } }
+      );
+      assert.strictEqual(response.isError, true);
+      assert.strictEqual(response.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+      assert.strictEqual(handled, 0, 'an unresolvable consumer must not reach the handler');
+    });
+
+    it('does not collapse two consumers behind one registered buyer agent', async () => {
+      // A registry resolves every caller on this deployment to the same
+      // buyer agent, and the canonical principal preferred `agent:<url>` over
+      // the presented credential. Two consumers then shared one replay
+      // namespace, and the second was served the first's cached response
+      // without depositing its own receipt.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const callers = [];
+      const agent = {
+        agent_url: 'https://buyer.example/agent',
+        display_name: 'Shared Buyer Agent',
+        status: 'active',
+        billing_capabilities: new Set(['operator']),
+      };
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        agentRegistry: { resolve: async () => agent },
+        // One session key for the whole deployment: the outer principal is
+        // shared, so only the caller-scoped namespace separates consumers.
+        resolveSessionKey: () => 'shared-agent-session',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            callers.push(ctx.authInfo?.credential?.key_id);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-agent-shared' },
+        idempotency_key: 'reporting-status-agent-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-agent-0001' }],
+      };
+
+      for (const key_id of ['agent-consumer-a', 'agent-consumer-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, {
+          authInfo: { credential: { kind: 'api_key', key_id } },
+        });
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(
+        callers,
+        ['agent-consumer-a', 'agent-consumer-b'],
+        'one registered agent must not merge two consumers into one receipt namespace'
+      );
     });
   });
 

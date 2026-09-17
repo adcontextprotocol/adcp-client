@@ -33,6 +33,7 @@ import type { CampaignGovernancePlatform } from './specialisms/campaign-governan
 import type { ContentStandardsPlatform } from './specialisms/content-standards';
 import type { BrandRightsPlatform } from './specialisms/brand-rights';
 import type { PropertyListsPlatform, CollectionListsPlatform } from './specialisms/lists';
+import type { ReliableReportingPlatform } from './specialisms/reporting';
 import type { AdCPSpecialism } from '../../types/tools.generated';
 
 /**
@@ -236,6 +237,8 @@ export interface DecisioningPlatform<TConfig = unknown, TCtxMeta = Record<string
   creative?: CreativeBuilderPlatform<TCtxMeta> | CreativeAdServerPlatform<TCtxMeta>;
   audiences?: AudiencePlatform<TCtxMeta>;
   signals?: SignalsPlatform<TCtxMeta>;
+  /** Reliable Reporting Core lifecycle, normally installed by `createReliableReportingService`. */
+  reporting?: ReliableReportingPlatform<TCtxMeta>;
   /**
    * Sponsored Intelligence implementation. In AdCP 3.1 this field is required
    * when the agent claims the `sponsored-intelligence` specialism. The

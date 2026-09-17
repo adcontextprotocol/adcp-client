@@ -2139,6 +2139,51 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   );
   ln();
 
+  // --- Reliable reporting service ---
+  ln(`## Reliable Reporting Service`);
+  ln();
+  ln(
+    `Import from \`@adcp/sdk/reporting/service\`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`interface ReliableReportingAdapterV1 {`);
+  ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
+  ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
+  ln(`  // Exactly one of fetchSlice or executor.`);
+  ln(`  readonly fetchSlice?: InlineReportingDeliveryFetchV1;`);
+  ln(`  readonly executor?: ReportingSourceWithReaderV1;`);
+  ln(`  // Opt-in bounded replay window for the inline executor; never applied`);
+  ln(`  // silently. A feed that outlives its replay ceiling needs this or a`);
+  ln(`  // durable executor.`);
+  ln(`  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;`);
+  ln(`}`);
+  ln();
+  ln(`const reporting = createReliableReportingService({`);
+  ln(`  store,`);
+  ln(`  adapters,`);
+  ln(`  contact,`);
+  ln(`  automatedRecoveryWindowSeconds,`);
+  ln(`  statusRetentionDays, // enforce this commitment in the ledger database`);
+  ln(`  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),`);
+  ln(`  resolveCurrency: account => currency,`);
+  ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
+  ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
+  ln(`});`);
+  ln();
+  ln(`await pool.query(reporting.setup.migrations[0]);`);
+  ln(`const installedPlatform = reporting.install(platform);`);
+  ln(`await reporting.installConfiguration(configuration, { account: ctx.account });`);
+  ln(`await reporting.runCycle({ accountId }); // tenant-partitioned`);
+  ln(`reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan`);
+  ln(`await reporting.stop();`);
+  ln('```');
+  ln();
+  ln(
+    `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply \`account\`, \`sourceScope\`, \`sourceTimezone\`, \`contract\`, \`currency\`, \`constituents\`, or \`mediaBuyIds\`; \`mediaBuyIds\` is derived from \`resolveCoverage\`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
+  );
+  ln();
+
   // --- Enums ---
   ln(`## Key Enums`);
   ln();

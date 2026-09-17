@@ -359,6 +359,16 @@
         "default": "./dist/lib/reporting/ledger/index.js"
       }
     },
+    "./reporting/service": {
+      "import": {
+        "types": "./dist/lib/reporting/service/index.d.mts",
+        "default": "./dist/lib/reporting/service/index.mjs"
+      },
+      "require": {
+        "types": "./dist/lib/reporting/service/index.d.ts",
+        "default": "./dist/lib/reporting/service/index.js"
+      }
+    },
     "./negotiation/verification": {
       "import": {
         "types": "./dist/lib/negotiation/verification.d.mts",
@@ -470,6 +480,9 @@
       "reporting/ledger": [
         "dist/lib/reporting/ledger/index.d.ts"
       ],
+      "reporting/service": [
+        "dist/lib/reporting/service/index.d.ts"
+      ],
       "enums": [
         "dist/lib/enums.d.ts"
       ],
@@ -523,6 +536,7 @@
     "examples/README.md",
     "examples/CONTRIBUTING.md",
     "examples/adcp.config.json",
+    "examples/reliable-reporting-service/README.md",
     "examples/seller-3.2-starter.ts",
     "examples/comply-controller-seller.ts",
     "examples/seller-test-controller.ts",
