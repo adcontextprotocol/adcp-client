@@ -161,15 +161,6 @@ const INLINE_MAX_TOTAL_OBJECT_BYTES_V1 = 256 * 1_024 * 1_024;
 const INLINE_MAX_SCOPE_OBJECT_BYTES_V1 = 32 * 1_024 * 1_024;
 const INLINE_MAX_ROWS_V1 = 100_000;
 
-// Internal staging-capacity seam. Resolved from the global symbol registry rather
-// than exported, so it is absent from the package's public surface, from the
-// generated adapter interface, and from anything JSON-shaped that could arrive off
-// the wire. Every override is clamped with `Math.min` against the shipped constant,
-// so the seam can only ever *tighten* a budget -- no value passed through it can
-// raise a staging limit. Tests use it to drive the byte-pressure and reclamation
-// paths at kilobyte scale instead of staging hundreds of megabytes per assertion.
-const INLINE_CAPACITY_SEAM_V1 = Symbol.for('adcp.reporting.inline.capacity-seam.v1');
-
 interface InlineStagingCapacitiesV1 {
   /** Ceiling for a single staged object. */
   readonly object: number;
@@ -183,6 +174,17 @@ interface InlineStagingCapacitiesV1 {
   readonly scopeExecutions: number;
 }
 
+/**
+ * Test-only instrumentation. Counts how often a slice asks for more capacity,
+ * which is the only externally invisible effect of a reclamation loop that
+ * cannot make progress.
+ *
+ * @internal
+ */
+export interface InlineCapacityObserverV1 {
+  onCapacityRequest?(): void;
+}
+
 const INLINE_SHIPPED_CAPACITIES_V1: InlineStagingCapacitiesV1 = {
   object: INLINE_MAX_OBJECT_BYTES_V1,
   total: INLINE_MAX_TOTAL_OBJECT_BYTES_V1,
@@ -191,21 +193,30 @@ const INLINE_SHIPPED_CAPACITIES_V1: InlineStagingCapacitiesV1 = {
   scopeExecutions: INLINE_MAX_EXECUTIONS_PER_SCOPE_V1,
 };
 
-function resolveInlineStagingCapacities(executorOptions: object): InlineStagingCapacitiesV1 {
-  const override = (executorOptions as Record<symbol, unknown>)[INLINE_CAPACITY_SEAM_V1];
-  if (typeof override !== 'object' || override === null) return INLINE_SHIPPED_CAPACITIES_V1;
-  const candidate = override as Record<string, unknown>;
-  // Tighten only: an absent, malformed, or larger value keeps the shipped ceiling.
+/**
+ * Tighten the shipped ceilings. Every field is clamped with `Math.min` against
+ * the shipped constant and a malformed value keeps the shipped one, so no input
+ * here can widen a staging or count limit.
+ *
+ * Only reachable through {@link createInlineReportingSourceExecutorForTestsV1},
+ * which is deliberately absent from every barrel and from the package's public
+ * type surface. Nothing is read off an adopter-supplied options object -- an
+ * earlier revision looked up a `Symbol.for` key there, which was both globally
+ * discoverable and an inherited-property read, so `Object.prototype` could carry
+ * a poisoned value or an accessor into ordinary calls.
+ */
+function tightenInlineStagingCapacities(override: Partial<InlineStagingCapacitiesV1>): InlineStagingCapacitiesV1 {
   const tighten = (shipped: number, value: unknown): number =>
     typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? Math.min(shipped, value) : shipped;
   return {
-    object: tighten(INLINE_MAX_OBJECT_BYTES_V1, candidate.object),
-    total: tighten(INLINE_MAX_TOTAL_OBJECT_BYTES_V1, candidate.total),
-    scope: tighten(INLINE_MAX_SCOPE_OBJECT_BYTES_V1, candidate.scope),
-    executions: tighten(INLINE_MAX_EXECUTIONS_V1, candidate.executions),
-    scopeExecutions: tighten(INLINE_MAX_EXECUTIONS_PER_SCOPE_V1, candidate.scopeExecutions),
+    object: tighten(INLINE_MAX_OBJECT_BYTES_V1, override.object),
+    total: tighten(INLINE_MAX_TOTAL_OBJECT_BYTES_V1, override.total),
+    scope: tighten(INLINE_MAX_SCOPE_OBJECT_BYTES_V1, override.scope),
+    executions: tighten(INLINE_MAX_EXECUTIONS_V1, override.executions),
+    scopeExecutions: tighten(INLINE_MAX_EXECUTIONS_PER_SCOPE_V1, override.scopeExecutions),
   };
 }
+
 // One comprehensive budget for every per-row check availability verification performs:
 // each requested metric and each requested dimension, once per row, once per constituent
 // that names the row's media buy. Metrics alone left dimensions and constituent fanout
@@ -314,8 +325,62 @@ export function createInlineReportingSourceExecutor(
   offeringInput: ReportingSourceOfferingV1,
   executorOptions: CreateInlineReportingSourceExecutorOptionsV1 = {}
 ): InlineReportingSourceExecutorV1 {
+  return createInlineExecutorWithCapacities(
+    deliveryFetch,
+    offeringInput,
+    executorOptions,
+    INLINE_SHIPPED_CAPACITIES_V1
+  );
+}
+
+/**
+ * Test harness entry. Builds the same executor against tightened ceilings so the
+ * byte-pressure and reclamation paths can be exercised at kilobyte scale instead
+ * of staging hundreds of megabytes per assertion.
+ *
+ * Not re-exported by `./index`, by `src/lib/index.ts`, or by any package entry
+ * point, so it is absent from the public type surface and from the generated
+ * adapter interface. `tightenInlineStagingCapacities` clamps every field against
+ * the shipped constant regardless, so even a deep import cannot widen a limit.
+ *
+ * @internal
+ */
+export function createInlineReportingSourceExecutorForTestsV1(
+  deliveryFetch: InlineReportingDeliveryFetchV1,
+  offeringInput: ReportingSourceOfferingV1,
+  executorOptions: CreateInlineReportingSourceExecutorOptionsV1,
+  capacities: Partial<InlineStagingCapacitiesV1>,
+  observer?: InlineCapacityObserverV1
+): InlineReportingSourceExecutorV1 {
+  return createInlineExecutorWithCapacities(
+    deliveryFetch,
+    offeringInput,
+    executorOptions,
+    tightenInlineStagingCapacities(capacities),
+    observer
+  );
+}
+
+/**
+ * Resolve tightened ceilings without building an executor, so the clamp itself
+ * can be asserted field by field.
+ *
+ * @internal
+ */
+export function inlineStagingCapacitiesForTestsV1(
+  capacities: Partial<InlineStagingCapacitiesV1>
+): InlineStagingCapacitiesV1 {
+  return tightenInlineStagingCapacities(capacities);
+}
+
+function createInlineExecutorWithCapacities(
+  deliveryFetch: InlineReportingDeliveryFetchV1,
+  offeringInput: ReportingSourceOfferingV1,
+  executorOptions: CreateInlineReportingSourceExecutorOptionsV1,
+  capacities: InlineStagingCapacitiesV1,
+  observer?: InlineCapacityObserverV1
+): InlineReportingSourceExecutorV1 {
   const evictSettled = executorOptions.replayRetention?.evictSettled === true;
-  const capacities = resolveInlineStagingCapacities(executorOptions);
   const parsedOffering = ReportingSourceOfferingV1Schema.parse(offeringInput);
   if (!parsedOffering.sourceExecution.manifestLevels.includes('basic')) {
     throw new TypeError('Inline reporting requires a basic manifest offering');
@@ -487,7 +552,8 @@ export function createInlineReportingSourceExecutor(
             key,
             scopeKey,
             capacities,
-            reclaimer
+            reclaimer,
+            observer
           )
         )
         .then(result => ({ requestFingerprint, result }))
@@ -557,7 +623,8 @@ async function executeAndSeal(
   executionNamespace: string,
   scopeKey: string,
   capacities: InlineStagingCapacitiesV1,
-  reclaimer?: InlineAdmissionReclaimerV1
+  reclaimer?: InlineAdmissionReclaimerV1,
+  observer?: InlineCapacityObserverV1
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
   try {
@@ -1050,7 +1117,7 @@ async function executeAndSeal(
   // space were already free. Credits are split because an out-of-scope victim
   // relieves only the global budget. Seeded from what the count ceilings
   // already reserved: those victims are deleted by the same commit.
-  const reservedBytes = reclaimer?.plannedBytes(scopeKey) ?? { global: 0, scope: 0 };
+  const reservedBytes = reclaimer?.grantReservedBytes(scopeKey) ?? { global: 0, scope: 0 };
   let plannedGlobalCredit = reservedBytes.global;
   let plannedScopeCredit = reservedBytes.scope;
   const globalRoom = (): number => capacities.total - storage.totalBytes + plannedGlobalCredit;
@@ -1060,13 +1127,23 @@ async function executeAndSeal(
     // Reclaim where the pressure is. A zero-byte victim still reclaims its
     // count and state but frees nothing, so keep advancing past it.
     for (;;) {
-      const freed = reclaimer?.plan(scopeKey, scopeRoom() <= globalRoom());
+      const freed = reclaimer?.plan(scopeKey, scopeRoom() <= globalRoom(), true);
       if (freed === undefined) return false;
       if (freed.bytes <= 0) continue;
       plannedGlobalCredit += freed.bytes;
       if (freed.sameScope) plannedScopeCredit += freed.bytes;
       return true;
     }
+  };
+  // Reclaim only while it buys capacity. Once the binding ceiling is the
+  // per-object bound, freeing victims moves nothing: the loop would evict every
+  // tenant's settled evidence and re-project once per victim, holding the
+  // executor the whole time, and still refuse. Require strict growth.
+  const growCapacity = (available: number): number | undefined => {
+    observer?.onCapacityRequest?.();
+    if (!planMoreCapacity()) return undefined;
+    const grown = capacity();
+    return grown > available ? grown : undefined;
   };
   let remainingCapacity = capacity();
   let projectionBudget = remainingCapacity;
@@ -1099,21 +1176,29 @@ async function executeAndSeal(
         return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
       }
       // Capacity, not an oversized object: free settled evidence and retry.
-      if (!planMoreCapacity()) {
+      const grown = growCapacity(remainingCapacity);
+      if (grown === undefined) {
         return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
       }
-      remainingCapacity = capacity();
+      remainingCapacity = grown;
     }
   }
   let encoded: Uint8Array | undefined;
   while (encoded === undefined) {
     try {
       encoded = encodeRows(rows, format.mediaType, remainingCapacity);
-    } catch {
-      if (!planMoreCapacity()) {
+    } catch (error) {
+      // Only a capacity exhaustion is worth reclaiming for. An unserializable
+      // row throws a TypeError and will throw again after every eviction, so
+      // retrying it emptied the executor to reach the same terminal answer.
+      if (!(error instanceof RangeError)) {
+        return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+      }
+      const grown = growCapacity(remainingCapacity);
+      if (grown === undefined) {
         return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
       }
-      remainingCapacity = capacity();
+      remainingCapacity = grown;
     }
   }
   const bytes = encoded;
@@ -2410,12 +2495,19 @@ function inlineDeliveryDates(request: ReportingSourceSliceRequestV1): { start: s
  * commit that cannot make itself whole deletes nothing at all.
  */
 export interface InlineAdmissionReclaimerV1 {
-  /** Plan one victim. `scopeOnly` keeps it inside the requesting scope. */
-  plan(scopeKey: string, scopeOnly: boolean): { bytes: number; sameScope: boolean } | undefined;
+  /**
+   * Plan one victim. `scopeOnly` keeps it inside the requesting scope. Pass
+   * `credit` when the caller will spend the returned bytes as capacity: only
+   * credit actually granted is ever owed back if the claim is later revoked.
+   */
+  plan(scopeKey: string, scopeOnly: boolean, credit?: boolean): { bytes: number; sameScope: boolean } | undefined;
   /** Claims still owned by this transaction that belong to `scopeKey`. */
   plannedInScope(scopeKey: string): number;
-  /** Bytes reserved by still-owned claims, split by scope relief. */
-  plannedBytes(scopeKey: string): { global: number; scope: number };
+  /**
+   * Grant, and return, the bytes the count ceilings already reserved. Claims
+   * revoked before this call grant nothing, so they are never owed back.
+   */
+  grantReservedBytes(scopeKey: string): { global: number; scope: number };
   /**
    * Delete every still-owned claim, having first proven that any claim revoked
    * while the slice was fetching can be replaced with equivalent count and
@@ -2484,13 +2576,17 @@ function createAdmissionReclaimer(
   executions: Map<string, ExecutionEntry>,
   storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> }
 ): InlineAdmissionReclaimerV1 {
-  type PlannedVictim = { key: string; sameScope: boolean };
+  // `grantedGlobal`/`grantedScope` are the bytes this transaction actually spent
+  // as capacity on the victim's behalf. A claim reserved for its count alone --
+  // or revoked before its bytes were ever granted -- carries zero, so a commit
+  // never has to repay capacity it never received.
+  type PlannedVictim = { key: string; sameScope: boolean; grantedGlobal: number; grantedScope: number };
   const planned: PlannedVictim[] = [];
   const token: object = {};
   const owns = (key: string): boolean => executions.get(key)?.reservation === token;
   let settled = false;
   return {
-    plan(scopeKey, scopeOnly) {
+    plan(scopeKey, scopeOnly, credit = false) {
       // A scope-bound victim relieves both budgets; an out-of-scope one relieves
       // only the global budget, which is what a fresh scope needs when its
       // siblings hold the total.
@@ -2503,21 +2599,37 @@ function createAdmissionReclaimer(
       const entry = executions.get(victim);
       if (entry) entry.reservation = token;
       const sameScope = entry?.scopeKey === scopeKey;
-      planned.push({ key: victim, sameScope });
-      return { bytes: stagedBytesOf(storage, victim), sameScope };
+      const bytes = stagedBytesOf(storage, victim);
+      planned.push({
+        key: victim,
+        sameScope,
+        grantedGlobal: credit ? bytes : 0,
+        grantedScope: credit && sameScope ? bytes : 0,
+      });
+      return { bytes, sameScope };
     },
     plannedInScope(scopeKey) {
       // Only still-owned claims count: a revoked one relieves nothing.
       return planned.filter(entry => owns(entry.key) && executions.get(entry.key)?.scopeKey === scopeKey).length;
     },
-    plannedBytes(scopeKey) {
+    grantReservedBytes(scopeKey) {
       let global = 0;
       let scope = 0;
-      for (const entry of planned) {
-        if (!owns(entry.key)) continue;
-        const bytes = stagedBytesOf(storage, entry.key);
+      for (const victim of planned) {
+        // A revoked claim relieves nothing, so it grants nothing. Charging its
+        // bytes at commit invented debt the slice never spent, which evicted
+        // other scopes' evidence or refused staging outright.
+        if (!owns(victim.key)) {
+          victim.grantedGlobal = 0;
+          victim.grantedScope = 0;
+          continue;
+        }
+        const bytes = stagedBytesOf(storage, victim.key);
+        const sameScope = executions.get(victim.key)?.scopeKey === scopeKey;
+        victim.grantedGlobal = bytes;
+        victim.grantedScope = sameScope ? bytes : 0;
         global += bytes;
-        if (executions.get(entry.key)?.scopeKey === scopeKey) scope += bytes;
+        if (sameScope) scope += bytes;
       }
       return { global, scope };
     },
@@ -2539,21 +2651,23 @@ function createAdmissionReclaimer(
         else owned.push(victim.key);
       }
 
-      // Debts the revoked claims were credited for, measured against the
-      // budgets they relieved. Scoped count is tracked independently: replacing
-      // a revoked zero-byte victim from another scope satisfies no scope slot,
-      // and the requesting scope would sit over its execution ceiling.
+      // Debts the revoked claims were credited for. Bytes are owed only to the
+      // extent this transaction actually spent them -- charging a victim's full
+      // staged size invented debt for claims whose bytes were never granted,
+      // needlessly evicting other scopes or refusing staging. Count is owed
+      // independently of bytes, and scoped count independently of global count:
+      // replacing a revoked zero-byte victim from another scope satisfies no
+      // scope slot, and the requesting scope would sit over its ceiling.
       let owedCount = 0;
       let owedScopeCount = 0;
       let owedGlobalBytes = 0;
       let owedScopeBytes = 0;
       for (const victim of spared) {
-        const bytes = stagedBytesOf(storage, victim.key);
         owedCount += 1;
-        owedGlobalBytes += bytes;
+        owedGlobalBytes += victim.grantedGlobal;
         if (victim.sameScope) {
           owedScopeCount += 1;
-          owedScopeBytes += bytes;
+          owedScopeBytes += victim.grantedScope;
         }
       }
 

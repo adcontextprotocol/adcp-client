@@ -18,18 +18,27 @@ const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.
 const { canonicalize } = require('../../dist/lib/utils/jcs.js');
 const { createHash } = require('node:crypto');
 
-// Internal staging-capacity seam (see src/lib/reporting/source/inline.ts). Every
-// value it carries is clamped with Math.min against the shipped constant, so it can
-// only ever tighten a budget -- production limits are untouched and unreachable from
-// here. These regressions drive the same capacity arithmetic at kilobyte scale
-// instead of staging hundreds of megabytes per assertion, which is what put this
-// file over the 60s CI file limit. The byte ceilings keep the shipped
-// object:scope:total ratio of 2:1:8, divided by 1024.
-const INLINE_CAPACITY_SEAM = Symbol.for('adcp.reporting.inline.capacity-seam.v1');
+// Internal test harness (see src/lib/reporting/source/inline.ts). It is reached
+// by deep-importing the module: it is deliberately absent from the source
+// barrel, from src/lib/index.ts and from every package entry point, and every
+// value it carries is clamped with Math.min against the shipped constant, so it
+// can only tighten a budget. These regressions drive the same capacity
+// arithmetic at kilobyte scale instead of staging hundreds of megabytes per
+// assertion, which is what put this file over the 60s CI file limit. The byte
+// ceilings keep the shipped object:scope:total ratio of 2:1:8, divided by 1024.
+const {
+  createInlineReportingSourceExecutorForTestsV1,
+  inlineStagingCapacitiesForTestsV1,
+} = require('../../dist/lib/reporting/source/inline.js');
 const SMALL_STAGING_BYTES = { object: 64 * 1024, total: 256 * 1024, scope: 32 * 1024 };
-const tightCapacities = (overrides = {}) => ({
-  [INLINE_CAPACITY_SEAM]: { ...SMALL_STAGING_BYTES, ...overrides },
-});
+const tightExecutor = (fetchSlice, offering, options = {}, capacities = {}, observer = undefined) =>
+  createInlineReportingSourceExecutorForTestsV1(
+    fetchSlice,
+    offering,
+    options,
+    { ...SMALL_STAGING_BYTES, ...capacities },
+    observer
+  );
 
 function deliveryOffering() {
   const source = redactedReportingSourceOfferingV1;
@@ -1622,10 +1631,7 @@ describe('ReliableReportingService', () => {
 
   test('accepts an injectable durable executor in place of the inline one', async () => {
     const inlineAdapter = adapter();
-    const durable = createInlineReportingSourceExecutor(
-      inlineAdapter.fetchSlice,
-      structuredClone(inlineAdapter.sourceOffering)
-    );
+    const durable = tightExecutor(inlineAdapter.fetchSlice, structuredClone(inlineAdapter.sourceOffering));
     const injected = {
       sourceOffering: inlineAdapter.sourceOffering,
       deliveryOffering: inlineAdapter.deliveryOffering,
@@ -1767,52 +1773,130 @@ describe('ReliableReportingService', () => {
     assert.equal(installed.account.account_id, 'account-a');
   });
 
-  test('the capacity seam only tightens: it can never raise or corrupt a shipped ceiling', async () => {
-    // The seam exists so these regressions can drive byte pressure at kilobyte
-    // scale. It is reachable from the global symbol registry, so what has to
-    // hold is that nothing passed through it can widen a production limit: an
-    // over-large value and a malformed one both leave the shipped ceiling in
-    // place. Observed through the default 100-execution scope ceiling, which
-    // terminalizes with QUOTA_EXHAUSTED when no retention policy is opted into.
-    const ctx = () => ({ signal: new AbortController().signal });
-    const key = index => `seam-slice-${String(index).padStart(4, '0')}`;
-    const firstRefusal = async seam => {
+  test('the capacity harness is absent from every public entry point', async () => {
+    // The harness is a deep import on purpose. An earlier revision read a
+    // `Symbol.for` key off the adopter-supplied options object instead, which
+    // was globally discoverable and -- being an inherited property read --
+    // let a poisoned `Object.prototype` entry, or an accessor on it, reach
+    // production calls that never opted in.
+    const barrel = require('../../dist/lib/reporting/source/index.js');
+    const root = require('../../dist/lib/index.js');
+    for (const name of ['createInlineReportingSourceExecutorForTestsV1', 'inlineStagingCapacitiesForTestsV1']) {
+      assert.equal(name in barrel, false, `${name} must not reach the source barrel`);
+      assert.equal(name in root, false, `${name} must not reach the package root`);
+    }
+    assert.equal(typeof barrel.createInlineReportingSourceExecutor, 'function', 'the public factory is still exported');
+    const compiled = require('node:fs').readFileSync('dist/lib/reporting/source/inline.js', 'utf8');
+    assert.equal(compiled.includes('Symbol.for('), false, 'no registered symbol may gate a shipped code path');
+
+    // A poisoned prototype cannot reach the shipped ceilings, because nothing
+    // is read off the options object at all.
+    const poisoned = Symbol.for('adcp.reporting.inline.capacity-seam.v1');
+    Object.defineProperty(Object.prototype, poisoned, {
+      configurable: true,
+      get() {
+        throw new Error('the executor must not read an inherited capacity key');
+      },
+    });
+    try {
       const executor = createInlineReportingSourceExecutor(
         () => [],
-        structuredClone(redactedReportingSourceOfferingV1),
-        { [INLINE_CAPACITY_SEAM]: seam }
+        structuredClone(redactedReportingSourceOfferingV1)
       );
-      for (let index = 0; index <= 100; index += 1) {
-        const result = await executor.execute(
-          redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }),
-          ctx()
-        );
+      const result = await executor.execute(
+        redactedReportingSourceRequestV1({ sourceExecutionKey: 'prototype-poison-0001' }),
+        { signal: new AbortController().signal }
+      );
+      assert.equal(result.ok, true, 'an ordinary call is unaffected by a poisoned prototype');
+    } finally {
+      delete Object.prototype[poisoned];
+    }
+  });
+
+  test('the test harness only tightens: every ceiling clamps and none can be raised', async () => {
+    // The harness exists so these regressions can drive byte pressure at
+    // kilobyte scale. What has to hold is that nothing passed through it can
+    // widen a production limit. All five ceilings are asserted directly against
+    // the shipped constants -- a smaller value applies, a larger one does not,
+    // and a malformed one falls back to the shipped value rather than to zero
+    // -- and then the two count ceilings are observed taking effect for real.
+    const SHIPPED = {
+      object: 64 * 1024 * 1024,
+      total: 256 * 1024 * 1024,
+      scope: 32 * 1024 * 1024,
+      executions: 1_000,
+      scopeExecutions: 100,
+    };
+
+    assert.deepEqual(
+      inlineStagingCapacitiesForTestsV1({}),
+      SHIPPED,
+      'an empty override is exactly the shipped configuration'
+    );
+    const tightened = { object: 4_096, total: 16_384, scope: 8_192, executions: 12, scopeExecutions: 5 };
+    assert.deepEqual(inlineStagingCapacitiesForTestsV1(tightened), tightened, 'every smaller ceiling applies');
+    assert.deepEqual(
+      inlineStagingCapacitiesForTestsV1({
+        object: SHIPPED.object + 1,
+        total: SHIPPED.total * 2,
+        scope: 2 ** 40,
+        executions: 10_000,
+        scopeExecutions: 101,
+      }),
+      SHIPPED,
+      'no larger value may raise any ceiling'
+    );
+    for (const poison of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 1.5, '64', null, undefined, {}, []]) {
+      const override = {
+        object: poison,
+        total: poison,
+        scope: poison,
+        executions: poison,
+        scopeExecutions: poison,
+      };
+      assert.deepEqual(
+        inlineStagingCapacitiesForTestsV1(override),
+        SHIPPED,
+        `a ${String(poison)} override must fall back to the shipped ceiling, not to zero`
+      );
+    }
+    // One field at a time, so a clamp that silently ignores its own argument
+    // cannot hide behind the others.
+    for (const [field, value] of Object.entries(tightened)) {
+      const resolved = inlineStagingCapacitiesForTestsV1({ [field]: value });
+      assert.deepEqual(resolved, { ...SHIPPED, [field]: value }, `${field} clamps independently`);
+    }
+
+    // And the resolved numbers are the ones the executor actually enforces.
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `harness-slice-${String(index).padStart(4, '0')}`;
+    const firstRefusal = async (capacities, scopeOf) => {
+      const executor = tightExecutor(
+        () => [],
+        structuredClone(redactedReportingSourceOfferingV1),
+        {},
+        { ...SHIPPED, ...capacities }
+      );
+      for (let index = 0; index <= 12; index += 1) {
+        const request = redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) });
+        if (scopeOf) request.sourceScope = scopeOf(index);
+        const result = await executor.execute(request, ctx());
         if (!result.ok) return { index, code: result.error.code };
       }
       return undefined;
     };
-
     assert.deepEqual(
-      await firstRefusal({
-        object: 2 ** 40,
-        total: 2 ** 40,
-        scope: 2 ** 40,
-        executions: 10_000,
-        scopeExecutions: 10_000,
-      }),
-      { index: 100, code: 'QUOTA_EXHAUSTED' },
-      'an over-large override must leave every shipped ceiling exactly where it is'
+      await firstRefusal({ scopeExecutions: 5 }),
+      { index: 5, code: 'QUOTA_EXHAUSTED' },
+      'the tightened per-scope execution ceiling is the one enforced'
     );
     assert.deepEqual(
-      await firstRefusal({
-        object: Number.NaN,
-        total: '64',
-        scope: null,
-        executions: -1,
-        scopeExecutions: 0,
-      }),
-      { index: 100, code: 'QUOTA_EXHAUSTED' },
-      'a malformed override must fall back to the shipped ceiling, not to zero'
+      await firstRefusal({ executions: 6, scopeExecutions: 100 }, index => ({
+        connection: `fixture-harness-${index}`,
+        region: 'test',
+      })),
+      { index: 6, code: 'QUOTA_EXHAUSTED' },
+      'the tightened global execution ceiling is the one enforced'
     );
   });
 
@@ -2101,13 +2185,11 @@ describe('ReliableReportingService', () => {
     // admission, destroying replay evidence that was still owed.
     // Ten per scope against a hundred overall: the shipped 100/1000 pair, tightened
     // by ten so the same two ceilings meet on the same admission.
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
       structuredClone(redactedReportingSourceOfferingV1),
-      {
-        ...tightCapacities({ executions: 100, scopeExecutions: 10 }),
-        replayRetention: { evictSettled: true },
-      }
+      { replayRetention: { evictSettled: true } },
+      { executions: 100, scopeExecutions: 10 }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = (scope, index) => {
@@ -2220,10 +2302,7 @@ describe('ReliableReportingService', () => {
       spend: '0.10',
     }));
     const executor = options =>
-      createInlineReportingSourceExecutor(() => rows, structuredClone(redactedReportingSourceOfferingV1), {
-        ...tightCapacities(),
-        ...options,
-      });
+      tightExecutor(() => rows, structuredClone(redactedReportingSourceOfferingV1), options ?? {});
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `bytes-slice-${String(index).padStart(4, '0')}`;
 
@@ -2259,10 +2338,11 @@ describe('ReliableReportingService', () => {
     // ceiling, which is the behavior that bounded accounting has to sustain.
     // Tightened to a 50-execution global ceiling, crossed at the same 1.1x the
     // shipped 1000/1100 pair exercised.
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
       structuredClone(redactedReportingSourceOfferingV1),
-      { ...tightCapacities({ executions: 50 }), replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } },
+      { executions: 50 }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = scope => {
@@ -2430,13 +2510,20 @@ describe('ReliableReportingService', () => {
     // Reclamation used to commit during projection/encoding, so a slice that
     // was later refused — invalid temporal evidence here — had already deleted
     // a valid replay to make room for work that never staged.
-    const rows = Array.from({ length: 10 }, (_, index) => ({
+    //
+    // The fill has to reach real pressure for that to mean anything: against
+    // the shipped 32 MiB scope ceiling these 47 slices were four orders of
+    // magnitude short, nothing was ever reclaimed, and the assertion held
+    // vacuously. Tightened ceilings put the scope over its byte budget during
+    // the fill and at its execution ceiling by the end, so the refused slice
+    // has a byte-bearing victim reserved at the moment it fails.
+    const rows = Array.from({ length: 20 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
     }));
     let invalidTemporal = false;
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       request =>
         invalidTemporal
           ? {
@@ -2450,7 +2537,11 @@ describe('ReliableReportingService', () => {
             }
           : rows,
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } },
+      // Twenty executions is below what the tightened byte ceiling alone would
+      // allow, so the count ceiling is what binds once the scope is full and
+      // every later admission reserves a byte-bearing victim before it runs.
+      { scopeExecutions: 20 }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `pressure-slice-${String(index).padStart(4, '0')}`;
@@ -2489,8 +2580,9 @@ describe('ReliableReportingService', () => {
     };
     const before = await readable();
     assert.ok(before > 0, 'the scope must hold retained replays to risk');
+    assert.ok(before < 47, `the fill must actually reclaim under pressure, ${before} of 47 still readable`);
 
-    // A slice that reaches capacity handling and is then refused.
+    // A slice that reserves a byte-bearing count victim and is then refused.
     invalidTemporal = true;
     const refused = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(900) }), ctx());
     assert.equal(refused.ok, false);
@@ -2603,7 +2695,7 @@ describe('ReliableReportingService', () => {
     const retained = createInlineReportingSourceExecutor(
       () => rows,
       structuredClone(redactedReportingSourceOfferingV1),
-      { ...tightCapacities(), replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = (scope, index) => {
@@ -2646,7 +2738,7 @@ describe('ReliableReportingService', () => {
     const wide = rowsOf(120);
     const FILLERS = 40;
     let issued = 0;
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       () => {
         const index = issued;
         issued += 1;
@@ -2654,7 +2746,7 @@ describe('ReliableReportingService', () => {
         return index <= FILLERS ? filler : wide;
       },
       structuredClone(redactedReportingSourceOfferingV1),
-      { ...tightCapacities(), replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `zero-byte-${String(index).padStart(4, '0')}`;
@@ -2696,7 +2788,7 @@ describe('ReliableReportingService', () => {
     const large = rowsOf(50);
     const filler = rowsOf(4);
     let issued = 0;
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       () => {
         const index = issued;
         issued += 1;
@@ -2705,7 +2797,7 @@ describe('ReliableReportingService', () => {
         return index === 0 || index === 100 ? large : filler;
       },
       structuredClone(redactedReportingSourceOfferingV1),
-      { ...tightCapacities(), replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `credit-slice-${String(index).padStart(4, '0')}`;
@@ -2763,7 +2855,7 @@ describe('ReliableReportingService', () => {
       gate = resolve;
     });
     let slow = false;
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       async () => {
         if (slow) await gated;
         return [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }];
@@ -2972,13 +3064,13 @@ describe('ReliableReportingService', () => {
    * every held fetch is drained, so a build without the fix fails on an
    * assertion rather than stranding the runner.
    */
-  function abaRace(t, rowsFor) {
+  function abaRace(t, rowsFor, capacities = {}) {
     const gates = [];
     const inFlight = [];
     let entered = 0;
     let stall = false;
     let issued = 0;
-    const retained = createInlineReportingSourceExecutor(
+    const retained = tightExecutor(
       async () => {
         const index = issued;
         issued += 1;
@@ -2989,7 +3081,8 @@ describe('ReliableReportingService', () => {
         return rowsFor(index);
       },
       structuredClone(redactedReportingSourceOfferingV1),
-      { ...tightCapacities(), replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } },
+      capacities
     );
     t.after(async () => {
       stall = false;
@@ -3095,87 +3188,197 @@ describe('ReliableReportingService', () => {
     await race.budget(admissionB, 'admission B').catch(() => undefined);
   });
 
-  test('refuses to stage when a revoked claim cannot be replaced byte for byte', async t => {
-    // entry0 is the only entry in the scope holding bytes; the rest are empty.
-    // Replacing a revoked claim by count alone let the slice stage past the
-    // scope cap on stale credit, so it must fail cleanly instead.
+  test('repays only the credit a revoked claim actually granted', async t => {
+    // entry0 is the only entry in the scope holding bytes. A reserves it for
+    // the count ceiling and a replay revokes that claim while A is still
+    // inside its fetch -- before any of entry0's bytes had been granted to A
+    // as capacity. Charging A for entry0's full staged size at commit invented
+    // debt it never spent: the empty fillers could not repay it, so a slice
+    // that comfortably fits was refused. Only the count is owed, and it is
+    // owed in full.
     const big = Array.from({ length: 60 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
     }));
-    const race = abaRace(t, index => (index === 0 || index >= 100 ? big : []));
-    const key = index => `aba-bytes-${String(index).padStart(4, '0')}`;
+    const race = abaRace(t, index => (index === 0 || index >= 10 ? big : []), { scopeExecutions: 10 });
+    const key = index => `aba-credit-${String(index).padStart(4, '0')}`;
 
     const oldest = race.request(key(0));
-    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true);
-    for (let index = 1; index < 100; index += 1) {
-      assert.equal((await race.retained.execute(race.request(key(index)), race.ctx())).ok, true, `filler ${index}`);
+    const sealedOldest = await race.retained.execute(oldest, race.ctx());
+    assert.equal(sealedOldest.ok, true);
+    const oldestRead = race.readInputFor(oldest, sealedOldest);
+    const fillerReads = [];
+    for (let index = 1; index < 10; index += 1) {
+      const request = race.request(key(index));
+      const sealed = await race.retained.execute(request, race.ctx());
+      assert.equal(sealed.ok, true, `filler ${index}`);
+      fillerReads.push(race.readInputFor(request, sealed));
     }
 
     race.beginStalling();
-    const admissionA = race.track(race.retained.execute(race.request(key(100)), race.ctx()));
+    const admissionA = race.track(race.retained.execute(race.request(key(10)), race.ctx()));
     await race.waitUntil(() => race.entered() === 1, 'admission A to enter its fetch');
-    // A replay revokes A's claim on the only byte-holding victim.
+    // A replay revokes A's claim on the only byte-holding victim, before any of
+    // its bytes were ever granted.
     assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true);
-    const admissionB = race.track(race.retained.execute(race.request(key(101)), race.ctx()));
+    const admissionB = race.track(race.retained.execute(race.request(key(11)), race.ctx()));
     await race.waitUntil(() => race.entered() === 2, 'admission B to enter its fetch');
 
     race.openGate();
     const outcome = await race.budget(admissionA, 'admission A');
-    assert.equal(outcome.ok, false, 'staging on stale credit would exceed the scope cap');
-    assert.equal(outcome.error.code, 'STAGING_FAILED');
+    assert.equal(outcome.ok, true, `no bytes were granted, so none are owed: ${outcome.ok ? '' : outcome.error.code}`);
+
+    assert.ok(
+      (await race.budget(race.read(oldestRead), 'oldest')).byteLength > 0,
+      'the revoked victim keeps every byte it holds'
+    );
+    let survivors = 0;
+    for (const input of fillerReads) {
+      try {
+        await race.read(input);
+        survivors += 1;
+      } catch {
+        /* reclaimed */
+      }
+    }
+    assert.equal(survivors, fillerReads.length - 1, 'exactly one empty filler repaid the count debt');
 
     race.openGate();
     await race.budget(admissionB, 'admission B').catch(() => undefined);
   });
 
   test('a failed commit deletes nothing across every tenant', async t => {
-    // The revoked victim is the only byte-holder in its scope, so the debt it
-    // was credited for cannot be repaid. Deleting owned victims before proving
-    // replacement capacity erased retained evidence — including other tenants'
-    // — and then failed staging anyway.
-    const big = Array.from({ length: 60 }, (_, index) => ({
+    // A is admitted past both ceilings, so it reserves a neighbouring tenant's
+    // entry for the global count and its own scope's only entry for the
+    // scope count. A replay revokes the scoped claim while A is fetching, and the
+    // scope has nothing settled left to replace it with -- the only other
+    // entries there are two admissions still in flight. Deleting the owned
+    // victims before proving that replacement erased the neighbouring tenant's
+    // evidence and then failed staging anyway.
+    const rows = Array.from({ length: 40 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
     }));
-    const race = abaRace(t, index => (index === 0 || index >= 100 ? big : []));
-    const key = index => `commit-atomic-${String(index).padStart(4, '0')}`;
+    const race = abaRace(t, () => rows, { executions: 3, scopeExecutions: 1 });
+    const neighbour = index => {
+      const value = race.request(`commit-atomic-neighbour-${index}`);
+      value.sourceScope = { connection: `fixture-neighbour-${index}`, region: 'test' };
+      return value;
+    };
 
-    const oldest = race.request(key(0));
+    // Two neighbouring tenants, one retained execution each, staged first so
+    // the global ceiling reaches for their entries before this scope's.
+    const neighbourReads = [];
+    for (let index = 0; index < 2; index += 1) {
+      const request = neighbour(index);
+      const sealed = await race.retained.execute(request, race.ctx());
+      assert.equal(sealed.ok, true, `neighbour ${index}`);
+      neighbourReads.push(race.readInputFor(request, sealed));
+    }
+    const oldest = race.request('commit-atomic-0000');
     const sealedOldest = await race.retained.execute(oldest, race.ctx());
     assert.equal(sealedOldest.ok, true);
     const oldestRead = race.readInputFor(oldest, sealedOldest);
-    for (let index = 1; index < 100; index += 1) {
-      assert.equal((await race.retained.execute(race.request(key(index)), race.ctx())).ok, true, `filler ${index}`);
-    }
-    // A second tenant with retained evidence of its own.
-    const neighbour = race.request('commit-atomic-neighbour');
-    neighbour.sourceScope = { connection: 'fixture-neighbour', region: 'test' };
-    const sealedNeighbour = await race.retained.execute(neighbour, race.ctx());
-    assert.equal(sealedNeighbour.ok, true);
-    const neighbourRead = race.readInputFor(neighbour, sealedNeighbour);
 
     race.beginStalling();
-    const admissionA = race.track(race.retained.execute(race.request(key(100)), race.ctx()));
+    const admissionA = race.track(race.retained.execute(race.request('commit-atomic-0001'), race.ctx()));
     await race.waitUntil(() => race.entered() === 1, 'admission A to enter its fetch');
-    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true, 'the claim is revoked by a replay');
-    const admissionB = race.track(race.retained.execute(race.request(key(101)), race.ctx()));
+    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true, 'the scoped claim is revoked');
+    const admissionB = race.track(race.retained.execute(race.request('commit-atomic-0002'), race.ctx()));
     await race.waitUntil(() => race.entered() === 2, 'admission B to enter its fetch');
 
     race.openGate();
     const outcome = await race.budget(admissionA, 'admission A');
-    assert.equal(outcome.ok, false, 'the debt cannot be repaid, so staging must be refused');
+    assert.equal(outcome.ok, false, 'the scoped count debt cannot be repaid, so staging must be refused');
     assert.equal(outcome.error.code, 'STAGING_FAILED');
 
-    // Nothing was deleted: not the revoked victim, not this scope's fillers,
-    // and not the neighbouring tenant's evidence.
+    // Nothing was deleted: not the revoked victim, and not either of the
+    // neighbouring tenant's staged objects.
     assert.ok((await race.budget(race.read(oldestRead), 'oldest')).byteLength > 0, 'revoked victim survives');
-    assert.ok((await race.budget(race.read(neighbourRead), 'neighbour')).byteLength > 0, 'other tenants survive');
+    for (const [index, input] of neighbourReads.entries()) {
+      assert.ok(
+        (await race.budget(race.read(input), `neighbour ${index}`)).byteLength > 0,
+        `a failed commit must not evict tenant evidence (neighbour ${index})`
+      );
+    }
 
     race.openGate();
     await race.budget(admissionB, 'admission B').catch(() => undefined);
+  });
+
+  test('stops reclaiming once capacity cannot grow', async () => {
+    // When the binding ceiling is the per-object bound, freeing settled
+    // evidence moves nothing. Retrying anyway re-projected the response once
+    // per reclaimable victim -- synchronously, holding the executor the whole
+    // time -- and reached the same terminal answer. Exactly one request for
+    // more capacity is made, and it is the one that proves no more is coming.
+    const filler = Array.from({ length: 10 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    // Projects to well over the 4 KiB per-object ceiling below.
+    const oversized = Array.from({ length: 400 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    let requests = 0;
+    let issued = 0;
+    const VICTIMS = 20;
+    const retained = tightExecutor(
+      () => {
+        const index = issued;
+        issued += 1;
+        return index < VICTIMS ? filler : oversized;
+      },
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } },
+      { object: 4 * 1024 },
+      {
+        onCapacityRequest: () => {
+          requests += 1;
+        },
+      }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `object-bound-${String(index).padStart(4, '0')}`;
+
+    const staged = [];
+    for (let index = 0; index < VICTIMS; index += 1) {
+      const request = redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) });
+      const sealed = await retained.execute(request, ctx());
+      assert.equal(sealed.ok, true, `victim ${index}`);
+      const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+      staged.push({
+        objectRef: object.objectRef,
+        objectGeneration: object.objectGeneration,
+        sourceScope: request.sourceScope,
+        account: request.account,
+        delivery_config_id: request.delivery_config_id,
+        delivery_config_version: request.delivery_config_version,
+        report_definition_id: request.report_definition_id,
+        reporting_obligation_id: request.reporting_obligation_id,
+        maxBytes: 8 * 1024 * 1024,
+      });
+    }
+    assert.equal(requests, 0, 'the fillers fit without asking for capacity');
+
+    const refused = await retained.execute(
+      redactedReportingSourceRequestV1({ sourceExecutionKey: key(VICTIMS) }),
+      ctx()
+    );
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, 'STAGING_FAILED');
+    assert.equal(requests, 1, `an object-bound slice must ask once, asked ${requests} times`);
+
+    // And it reclaimed nothing on the way out.
+    for (const [index, input] of staged.entries()) {
+      const bytes = await retained.read({ ...input, signal: new AbortController().signal });
+      assert.ok(bytes.byteLength > 0, `victim ${index} must survive an object-bound refusal`);
+    }
   });
 
   test('a cross-scope replacement does not satisfy scoped count debt', async t => {

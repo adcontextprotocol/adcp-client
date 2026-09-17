@@ -6,11 +6,24 @@ The existing buyer-side `reconcileReporting` API is unchanged.
 
 For the common bounded, non-paginated provider API, prefer
 `createReliableReportingService` from `@adcp/sdk/reporting/service`. Its
-`ReliableReportingAdapterV1` is the narrow inline boundary described below and
-adds trusted account/source/currency routing, the existing ledger lifecycle,
-server handlers, scheduler, and truthful Core capabilities. Use the raw
-executor interfaces in this guide for paginated, asynchronous, or externally
-staged sources that need more control.
+`ReliableReportingAdapterV1` adds trusted account/source/currency routing, the
+existing ledger lifecycle, server handlers, scheduler, and truthful Core
+capabilities.
+
+The adapter takes exactly one of two runtime shapes, and the choice does not
+decide whether you get the service:
+
+- `fetchSlice` — the narrow inline boundary described below. The service builds
+  and owns the executor, including bounded staging and replay. Opt into a
+  bounded replay window with `inlineReplayRetention`.
+- `executor` — any `ReportingSourceWithReaderV1` you build with the raw
+  interfaces in this guide, including a paginated, asynchronous, or externally
+  staged one. The service routes to it unchanged, so those sources get the
+  ledger lifecycle and scheduler too; `inlineReplayRetention` does not apply
+  and is ignored.
+
+Use the raw interfaces here directly, without the service, only when you also
+want to own the ledger lifecycle and scheduling.
 
 ## Day 1: register an executor
 

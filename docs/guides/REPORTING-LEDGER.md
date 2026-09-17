@@ -161,9 +161,13 @@ generations carry the reserved key. With one installed adapter, pre-service
 obligations without the reserved adapter route continue through that sole
 adapter. A
 multi-adapter migration must create a new immutable configuration generation
-with an explicit route. Existing custom source executors that need pagination
-or durable staged objects should stay on the advanced primitives until a
-future service adapter extension explicitly supports them.
+with an explicit route. An adapter supplies exactly one of `fetchSlice` or
+`executor`: `fetchSlice` is the inline boundary, and `executor` accepts any
+`ReportingSourceWithReaderV1` — including a paginated, asynchronous, or
+externally staged one — so a custom executor that needs those capabilities
+runs under the service today rather than waiting for a future extension. The
+inline-only knob `inlineReplayRetention` applies to `fetchSlice` adapters and
+is ignored by an adapter that brings its own executor.
 
 `reporting.install(platform)` mutates that platform object in place and
 requires it to be extensible; this preserves class instances and private-field

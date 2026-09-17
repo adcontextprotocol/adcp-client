@@ -2889,6 +2889,30 @@ function authenticatedPrincipalForContext(
   return undefined;
 }
 
+/**
+ * Canonical identity of the consumer depositing a reporting receipt.
+ *
+ * The presented credential comes first, unlike
+ * {@link authenticatedPrincipalForContext}. Several consumers can arrive
+ * through one registered buyer agent — a registry resolves them all to the same
+ * `agent_url` — so preferring the agent put distinct credentials in a single
+ * replay namespace, and the second consumer was served the first's cached
+ * response without ever recording its own receipt. The agent remains the last
+ * resort for a signed caller the registry resolved without a credential kind.
+ */
+function reportingConsumerPrincipalForContext(
+  authInfo: ResolvedAuthInfo | undefined,
+  agent: BuyerAgent | undefined
+): string | undefined {
+  const credential = authInfo?.credential;
+  if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
+  if (credential?.kind === 'oauth') return `oauth:${credential.client_id}`;
+  if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
+  if (typeof authInfo?.clientId === 'string' && authInfo.clientId.length > 0) return `client:${authInfo.clientId}`;
+  if (agent?.agent_url) return `agent:${agent.agent_url}`;
+  return undefined;
+}
+
 function taskOwnerScopeForContext(
   authInfo: ResolvedAuthInfo | undefined,
   sessionKey: string | undefined,
@@ -6697,19 +6721,24 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         }
 
         // `sync_reporting_status` deposits a receipt for the calling consumer and
-        // is namespaced by that identity. Without a derivable canonical
-        // principal every such caller would collapse into one null namespace,
-        // so a second caller's identical request would be served the first's
-        // cached response and never record its own receipt. Refuse before the
-        // idempotency lookup rather than scope on nothing. Only a live replay
-        // store can serve one caller's response to another, so a deployment
-        // with idempotency disabled keeps its existing dispatch, as does one
-        // that resolves the principal itself through resolveIdempotencyPrincipal.
+        // is namespaced by that identity in `resolveExtraScope`. Without a
+        // derivable canonical principal every such caller would collapse into
+        // one namespace, so a second caller's identical request would be served
+        // the first's cached response and never record its own receipt. Refuse
+        // before the idempotency lookup rather than scope on nothing.
+        //
+        // The requirement holds whatever resolves the principal. An earlier
+        // revision skipped the gate when a `resolveIdempotencyPrincipal` was
+        // configured, which disabled it everywhere: `createAdcpServerFromPlatform`
+        // always installs a default resolver, and that default falls back to
+        // `sessionKey` and then `account.id` -- values several consumers on one
+        // account share, and which are absent entirely for an anonymous caller.
+        // Only a live replay store can serve one caller's response to another,
+        // so a deployment with idempotency disabled keeps its existing dispatch.
         if (
           toolName === 'sync_reporting_status' &&
           idempotency !== undefined &&
-          resolveIdempotencyPrincipal === undefined &&
-          authenticatedPrincipalForContext(ctx.authInfo, ctx.agent) === undefined
+          reportingConsumerPrincipalForContext(ctx.authInfo, ctx.agent) === undefined
         ) {
           return finalize(
             adcpError('AUTH_MISSING', {
@@ -6879,9 +6908,10 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             ctx.sessionKey,
             ctx.proposalRefinementScope,
             ctx.callerMutationScope,
-            // The canonical authenticated identity, so OAuth callers differing
-            // only by client_id do not share a replay namespace.
-            authenticatedPrincipalForContext(ctx.authInfo, ctx.agent)
+            // The canonical consumer identity, so callers differing only by
+            // credential -- including two behind one registered buyer agent --
+            // do not share a replay namespace.
+            reportingConsumerPrincipalForContext(ctx.authInfo, ctx.agent)
           );
           const idempotencyPayload = buildIdempotencyPayload(toolName, params, ctx.account, ctx.sessionKey);
 
