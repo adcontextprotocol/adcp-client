@@ -229,7 +229,15 @@ function maybeWarnHmacDeprecation(suppressLegacyWarnings?: boolean): void {
 }
 
 export interface WebhookRetryOptions {
-  /** Max delivery attempts (≥1). Default 5. */
+  /**
+   * Max delivery attempts (≥1). Default 5.
+   *
+   * A finite value floors to a whole attempt and clamps up to 1. A non-finite
+   * value falls back to the default, because an attempt bound has nothing to
+   * saturate to the way a delay does: `NaN` would make the delivery loop run
+   * zero attempts and re-queue itself forever without ever posting, and
+   * `Infinity` would leave it unbounded.
+   */
   maxAttempts?: number;
   /**
    * Initial backoff in ms. Default 1000.
@@ -1216,14 +1224,24 @@ function clampRetryAfterMs(value: number): number {
 }
 
 const MAX_RETRY_AFTER_MS = 604_800_000;
+const DEFAULT_MAX_ATTEMPTS = 5;
 
 function resolveRetries(opts?: WebhookRetryOptions): Required<WebhookRetryOptions> {
   // Delays are normalized to whole milliseconds on the way in as well, so the
   // durable snapshot a recovered attempt replays carries the same integers this
   // process used rather than whatever was configured. An infinite delay
   // saturates to the ceiling here, so it cannot become a zero-delay burst.
+  //
+  // An attempt bound cannot saturate the same way, so a non-finite one falls
+  // back to the default instead. `NaN` is the dangerous case: `attempt <= NaN`
+  // is false on the first comparison, so the delivery loop runs zero attempts,
+  // reports no terminal outcome, and releases its recovery lease with a zero
+  // backoff — an immediately re-eligible entry that never posts anything.
+  const configuredMaxAttempts = opts?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   return {
-    maxAttempts: Math.max(1, Math.floor(opts?.maxAttempts ?? 5)),
+    maxAttempts: Number.isFinite(configuredMaxAttempts)
+      ? Math.max(1, Math.floor(configuredMaxAttempts))
+      : DEFAULT_MAX_ATTEMPTS,
     initialDelayMs: clampRetryAfterMs(opts?.initialDelayMs ?? 1000),
     maxDelayMs: clampRetryAfterMs(opts?.maxDelayMs ?? 60_000),
     jitter: Math.max(0, Math.min(1, opts?.jitter ?? 0.25)),

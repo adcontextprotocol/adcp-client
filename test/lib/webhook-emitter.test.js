@@ -105,15 +105,16 @@ test('releases a retryable suppression when the configured backoff is fractional
   assert.deepStrictEqual(released, [250], 'the fractional delay floors to a whole millisecond');
 });
 
-test('keeps a jittered late-attempt backoff at or under the retry-after ceiling', async () => {
-  // End-to-end ceiling case. maxDelayMs sits at the ceiling, so a late attempt
-  // saturates the exponential base there, and positive jitter can then push
-  // base + offset above it. Only the clamp on backoffDelay's own output keeps
-  // the value inside the range release() accepts.
+test('keeps a jittered ceiling-height backoff at or under the retry-after ceiling', async () => {
+  // End-to-end ceiling case. The suppression is reported on attempt 1, so the
+  // exponential term contributes nothing and no attempt bound is in play —
+  // what exercises the clamp is initialDelayMs already sitting at the ceiling,
+  // which positive jitter then pushes base + offset above. Only the clamp on
+  // backoffDelay's own output keeps the value inside the range release()
+  // accepts.
   const released = [];
   const emitter = suppressingEmitter({
-    // maxAttempts > 1 so the suppression is reported on a late attempt.
-    retries: { maxAttempts: 8, initialDelayMs: 604_800_000, maxDelayMs: 604_800_000, jitter: 1 },
+    retries: { initialDelayMs: 604_800_000, maxDelayMs: 604_800_000, jitter: 1 },
     released,
   });
 
@@ -184,6 +185,110 @@ test('floors NaN and negative infinity to zero', async () => {
     });
     assert.deepStrictEqual(result.errors, [], `${label}: the lease is released`);
     assert.deepStrictEqual(released, [0], `${label}: carries no backoff intent, so it floors to zero`);
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// Attempt-bound normalization
+// ────────────────────────────────────────────────────────────
+
+/**
+ * An emitter whose every external attempt fails retryably, so the number of
+ * POSTs it makes is exactly the normalized `maxAttempts`.
+ *
+ * After `RETRYABLE_ATTEMPT_BUDGET` calls the stub turns terminal. That is not
+ * part of the contract under test — it is there so an unbounded `maxAttempts`
+ * fails this test with a wrong attempt count instead of spinning forever.
+ */
+const RETRYABLE_ATTEMPT_BUDGET = 50;
+
+function alwaysFailingEmitter({ retries, released }) {
+  const { signerKey } = makeSignerKey();
+  const claim = recordingRecoveryClaim(released);
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url, body: init?.body });
+    return {
+      status: calls.length > RETRYABLE_ATTEMPT_BUDGET ? 400 : 500,
+      headers: { get: () => undefined },
+    };
+  };
+  const emitter = createWebhookEmitter({
+    signerKey,
+    fetch,
+    sleep: async () => {},
+    retries,
+    deliveryRecovery: {
+      durability: 'durable',
+      checkpoint() {
+        return claim;
+      },
+      settle() {},
+    },
+  });
+  return { emitter, calls };
+}
+
+test('falls back to the default attempt bound when maxAttempts is not finite', async () => {
+  // `maxAttempts` bounds a loop rather than a wait, so it cannot saturate the
+  // way a delay does; a non-finite value falls back to the default 5.
+  //
+  // NaN was the live defect. `Math.max(1, Math.floor(NaN))` is NaN, so
+  // `attempt <= maxAttempts` was false on the first comparison: the loop ran
+  // zero attempts, recorded no terminal outcome, and fell through to
+  // `release(0)`. That re-queued the delivery immediately with nothing sent,
+  // and the recovery worker would reclaim it on the same terms forever — an
+  // unbounded reclaim loop that never posts. Infinity was the other half: it
+  // left the bound unbounded rather than merely wrong.
+  for (const [label, maxAttempts] of [
+    ['NaN', Number.NaN],
+    ['+Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ]) {
+    const released = [];
+    const { emitter, calls } = alwaysFailingEmitter({
+      retries: { maxAttempts, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+      released,
+    });
+
+    const result = await emitter.emit({
+      url: 'http://x/h',
+      payload: { timestamp: 'stable' },
+      delivery_id: `delivery.attempt-bound-${label}`,
+    });
+
+    assert.strictEqual(calls.length, 5, `${label}: posts the default number of attempts`);
+    assert.strictEqual(result.attempts, 5, `${label}: reports the attempts it actually made`);
+    assert.strictEqual(result.final_status, 500, `${label}: exhausted the bound while still retryable`);
+    assert.strictEqual(result.terminal, false, `${label}: a 5xx run stays retryable`);
+    assert.deepStrictEqual(released, [0], `${label}: released once for the recovery worker to retry`);
+    assert.ok(
+      result.attempts > 0,
+      `${label}: the lease must never be released from a zero-attempt run — that reclaims forever without posting`
+    );
+  }
+});
+
+test('floors and clamps a finite attempt bound up to one', async () => {
+  for (const [label, maxAttempts, expected] of [
+    ['fractional', 2.9, 2],
+    ['zero', 0, 1],
+    ['negative', -3, 1],
+  ]) {
+    const released = [];
+    const { emitter, calls } = alwaysFailingEmitter({
+      retries: { maxAttempts, initialDelayMs: 1, maxDelayMs: 1, jitter: 0 },
+      released,
+    });
+
+    const result = await emitter.emit({
+      url: 'http://x/h',
+      payload: { timestamp: 'stable' },
+      delivery_id: `delivery.attempt-bound-${label}`,
+    });
+
+    assert.strictEqual(calls.length, expected, `${label}: posts the normalized number of attempts`);
+    assert.strictEqual(result.attempts, expected, `${label}: reports the attempts it actually made`);
   }
 });
 
