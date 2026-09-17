@@ -1968,6 +1968,112 @@ describe('createInlineReportingSourceExecutor', () => {
     }
   });
 
+  test('reconciles a contradictory duplicate claim before projecting', async () => {
+    // The contradiction was detected at capture but only acted on during projection, so
+    // an unrelated row exhausting the staging budget first reported STAGING_FAILED and
+    // the contradiction went unreported.
+    const wide = 'x'.repeat(60);
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          ...Array.from({ length: 50_000 }, () => ({
+            media_buy_id: 'fixture-media-buy',
+            impressions: wide,
+            spend: wide,
+          })),
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: 1, totals: { spend: 2 } },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-contradiction-before-projection'), context());
+    assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
+  });
+
+  test('settles strict coverage before spending the staging budget', async () => {
+    // A `delayed` cell means the requested coverage is not proven, which is a retryable
+    // partial result. Projecting first turned the identical verdict terminal as soon as
+    // the rows were wide enough to exhaust the budget.
+    const evidencedSource = impressions =>
+      createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: Array.from({ length: 4 }, () => ({
+            media_buy_id: 'fixture-media-buy',
+            impressions,
+          })),
+          availability_evidence: {
+            version: '1.0',
+            cells: [
+              {
+                constituent_id: input.constituents[0].constituent_id,
+                metric: 'impressions',
+                status: 'present',
+                data_through: input.end_date,
+              },
+              {
+                constituent_id: input.constituents[0].constituent_id,
+                metric: 'spend',
+                status: 'delayed',
+                reason: 'Provider processing is not closed',
+              },
+            ],
+          },
+        }),
+        redactedReportingSourceOfferingV1
+      );
+    // The small response earns PARTIAL_RESULT from its own evidence.
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await evidencedSource('10').execute(request('fixture-inline-strict-coverage-small'), context()),
+        'PARTIAL_RESULT'
+      ).code,
+      'PARTIAL_RESULT'
+    );
+    // The equivalent response with rows wide enough to exhaust projection earns the same.
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await evidencedSource('x'.repeat(1_500_000)).execute(request('fixture-inline-strict-coverage-wide'), context()),
+        'PARTIAL_RESULT'
+      ).code,
+      'PARTIAL_RESULT'
+    );
+  });
+
+  test('never projects the auxiliary collection it does not stage', async () => {
+    // The auxiliary collection is validated from its captured claims and never staged, so
+    // projecting it charged a budget against values nothing reads: 20,000 valid auxiliary
+    // rows failed a response whose staged object is under a hundred bytes.
+    const auxiliaryValue = 'y'.repeat(280);
+    const source = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        media_buy_deliveries: Array.from({ length: 20_000 }, () => ({
+          media_buy_id: 'fixture-media-buy',
+          impressions: auxiliaryValue,
+          spend: auxiliaryValue,
+        })),
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const result = await source.execute(request('fixture-inline-auxiliary-not-projected'), context());
+    assert.equal(result.ok, true, 'auxiliary rows are validated without being projected');
+    const manifest = parseVerifiedReportingSourceManifestV1(result.response.manifest, result.manifestBytes, 'basic');
+    assert.equal(manifest.objects[0].rowCount, 1);
+    assert.ok(
+      manifest.objects[0].byteCount < 1_024,
+      `staged ${manifest.objects[0].byteCount} bytes, so the auxiliary rows were never staged`
+    );
+    assert.equal(manifest.coverage.status, 'full');
+  });
+
   test('settles semantic verdicts before spending the staging budget', async () => {
     // Projecting first spent the staging budget proving nothing: an incomplete response
     // came back terminal STAGING_FAILED instead of the retryable PARTIAL_RESULT its

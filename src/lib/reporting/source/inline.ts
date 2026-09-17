@@ -836,62 +836,6 @@ async function executeAndSeal(
   // first spent the staging budget proving nothing: a response missing a requested metric
   // came back terminal STAGING_FAILED instead of the retryable PARTIAL_RESULT its
   // incompleteness earns, and an out-of-scope row was masked the same way.
-  const remainingCapacity = Math.min(
-    INLINE_MAX_OBJECT_BYTES_V1,
-    INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
-    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
-  );
-  let projectionBudget = remainingCapacity;
-  let auxiliaryProjectionBudget = INLINE_MAX_OBJECT_BYTES_V1;
-  let rows: readonly Record<string, unknown>[];
-  let auxiliaryRows: readonly Record<string, unknown>[];
-  try {
-    rows = sourceSnapshots.map(snapshot =>
-      projectSnapshotRow(
-        snapshot,
-        request,
-        upperBound => {
-          if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
-          projectionBudget -= upperBound;
-        },
-        {
-          allowMissingMetrics: true,
-          allowMissingDimensions: true,
-          strictMetricClaims: availabilityEvidence !== undefined,
-          includeDimensions: true,
-        }
-      )
-    );
-    // Only availability verification consults the auxiliary collection. Projecting it on
-    // the legacy path would spend capacity on values nothing reads, and could fail an
-    // otherwise valid response with STAGING_FAILED.
-    auxiliaryRows =
-      availabilityEvidence === undefined
-        ? []
-        : auxiliarySnapshots.map(snapshot =>
-            projectSnapshotRow(
-              snapshot,
-              request,
-              upperBound => {
-                if (upperBound > auxiliaryProjectionBudget) {
-                  throw new RangeError('Inline projection capacity exhausted');
-                }
-                auxiliaryProjectionBudget -= upperBound;
-              },
-              {
-                allowMissingMetrics: true,
-                allowMissingDimensions: true,
-                strictMetricClaims: true,
-                includeDimensions: false,
-              }
-            )
-          );
-  } catch (error) {
-    if (error instanceof RangeError) {
-      return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
-    }
-    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
-  }
   const readsPartialPeriod = Date.parse(request.period.sourceReadCutoffAt) < Date.parse(request.period.end);
   if (
     readsPartialPeriod &&
@@ -938,9 +882,83 @@ async function executeAndSeal(
     dataThroughMs > cutoffMs ||
     dataThroughMs > observedMs ||
     observedMs > acquiredMs ||
-    (rows.length > 0 && dataThroughMs <= startMs)
+    (sourceSnapshots.length > 0 && dataThroughMs <= startMs)
   ) {
     return failure('SOURCE_PERMANENT', 'terminal', 'Inline delivery fetch returned invalid temporal evidence');
+  }
+  const declaredMetrics = new Map(offering.metrics.map(metric => [metric.name, metric]));
+  const constituentIdsWithRows = new Set(
+    request.coverage.constituents
+      .filter(constituent => constituent.mediaBuyId && sourceSnapshotsByMediaBuyId.has(constituent.mediaBuyId))
+      .map(constituent => constituent.constituentId)
+  );
+  let projectedAvailability: InlineAvailabilityProjection;
+  if (availabilityEvidence) {
+    try {
+      projectedAvailability = projectInlineAvailabilityEvidence(
+        availabilityEvidence.cells,
+        request,
+        declaredMetrics,
+        deliveryDates,
+        dataThrough,
+        sourceSnapshots.length,
+        constituentIdsWithRows
+      );
+    } catch {
+      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is contradictory');
+    }
+  } else {
+    projectedAvailability = projectLegacyAvailability(request, declaredMetrics, dataThrough, sourceSnapshots.length);
+  }
+  if (request.coverage.expected === 'full' && projectedAvailability.coverageStatus !== 'full') {
+    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery evidence does not satisfy full requested coverage');
+  }
+  if (
+    request.publicationClass === 'AUTHORITATIVE' &&
+    projectedAvailability.metricAvailability.some(
+      cell => !['present', 'explicit_zero'].includes(cell.status) || Date.parse(cell.dataThrough ?? '') !== endMs
+    )
+  ) {
+    return failure('PARTIAL_RESULT', 'retryable', 'Authoritative inline reporting has incomplete metric evidence');
+  }
+  // Only once every semantic verdict is settled -- scope, completeness, evidence
+  // reconciliation, temporal evidence and coverage -- is the response projected.
+  // Projecting earlier spent the staging budget proving nothing, so a response whose
+  // own evidence already decided the outcome came back terminal STAGING_FAILED
+  // instead of the verdict it earned.
+  const remainingCapacity = Math.min(
+    INLINE_MAX_OBJECT_BYTES_V1,
+    INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
+    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
+  );
+  let projectionBudget = remainingCapacity;
+  let rows: readonly Record<string, unknown>[];
+  try {
+    // Only the source collection is projected. The auxiliary collection is validated
+    // from its captured claims and never staged, so projecting it charged a budget
+    // against values nothing would read -- 20,000 valid auxiliary rows were enough to
+    // fail a response whose staged object is sixty-eight bytes.
+    rows = sourceSnapshots.map(snapshot =>
+      projectSnapshotRow(
+        snapshot,
+        request,
+        upperBound => {
+          if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
+          projectionBudget -= upperBound;
+        },
+        {
+          allowMissingMetrics: true,
+          allowMissingDimensions: true,
+          strictMetricClaims: availabilityEvidence !== undefined,
+          includeDimensions: true,
+        }
+      )
+    );
+  } catch (error) {
+    if (error instanceof RangeError) {
+      return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+    }
+    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
   }
   let bytes: Uint8Array;
   try {
@@ -961,41 +979,6 @@ async function executeAndSeal(
     byteCount: bytes.byteLength,
     rowCount: rows.length,
   } as const;
-  const declaredMetrics = new Map(offering.metrics.map(metric => [metric.name, metric]));
-  const constituentIdsWithRows = new Set(
-    request.coverage.constituents
-      .filter(constituent => constituent.mediaBuyId && sourceSnapshotsByMediaBuyId.has(constituent.mediaBuyId))
-      .map(constituent => constituent.constituentId)
-  );
-  let projectedAvailability: InlineAvailabilityProjection;
-  if (availabilityEvidence) {
-    try {
-      projectedAvailability = projectInlineAvailabilityEvidence(
-        availabilityEvidence.cells,
-        request,
-        declaredMetrics,
-        deliveryDates,
-        dataThrough,
-        rows.length,
-        constituentIdsWithRows
-      );
-    } catch {
-      return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery availability evidence is contradictory');
-    }
-  } else {
-    projectedAvailability = projectLegacyAvailability(request, declaredMetrics, dataThrough, rows.length);
-  }
-  if (request.coverage.expected === 'full' && projectedAvailability.coverageStatus !== 'full') {
-    return failure('PARTIAL_RESULT', 'retryable', 'Inline delivery evidence does not satisfy full requested coverage');
-  }
-  if (
-    request.publicationClass === 'AUTHORITATIVE' &&
-    projectedAvailability.metricAvailability.some(
-      cell => !['present', 'explicit_zero'].includes(cell.status) || Date.parse(cell.dataThrough ?? '') !== endMs
-    )
-  ) {
-    return failure('PARTIAL_RESULT', 'retryable', 'Authoritative inline reporting has incomplete metric evidence');
-  }
   let built;
   try {
     built = buildReportingSourceManifestV1({
@@ -1636,6 +1619,11 @@ function cellVerdictForSnapshot(
   const claimClaimed = directClaimed || (flags & CLAIM_NESTED_CLAIMED_V1) !== 0;
   const claimValid = (directClaimed ? flags & CLAIM_DIRECT_VALID_V1 : flags & CLAIM_NESTED_VALID_V1) !== 0;
   if (claimClaimed && !claimValid) return 'integrity';
+  // A row claiming the same metric twice with different quantities is a contradiction,
+  // and that verdict belongs here rather than waiting for projection: deferred, an
+  // unrelated row exhausting the staging budget first reported STAGING_FAILED and the
+  // contradiction went unreported.
+  if ((flags & CLAIM_DISAGREE_V1) !== 0) return 'integrity';
   if (!claimValid) return undefined;
   if (cell.status === 'explicit_zero' && (flags & CLAIM_CLAIM_IS_ZERO_V1) === 0) return 'integrity';
   return INLINE_UNAVAILABLE_CELL_STATUSES_V1.includes(cell.status) ? 'integrity' : undefined;
