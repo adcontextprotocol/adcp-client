@@ -1131,6 +1131,15 @@ describe('createAdcpServer', () => {
       }
       assert.strictEqual(callers.length, 4, 'two OAuth callers differing only by client_id must not collide');
 
+      // A caller whose principal cannot be derived at all must be refused
+      // before the idempotency lookup: collapsing such callers into one null
+      // namespace would serve the first caller's cached response to the next
+      // and never record its receipt.
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(callers.length, 4, 'an underivable principal must not reach the handler');
+
       // The same caller repeating its own key still replays, so the namespace
       // is narrowed by caller rather than simply disabled.
       const replay = await callToolRaw(server, 'sync_reporting_status', params, {

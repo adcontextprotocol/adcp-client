@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-16
+> Generated at: 2026-09-17
 > @adcp/sdk v14.0.0-rc.38
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -2813,6 +2813,14 @@ interface ReportingSourceStagedObjectReaderV1 {
 type ReportingSourceExecutorResultV1 =
   | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }
   | { ok: false; error: ReportingSourceErrorV1 };
+type InlineReportingMetricEvidenceV1 =
+  | { constituent_id: string; metric: string; status: 'present' | 'explicit_zero'; data_through: string }
+  | { constituent_id: string; metric: string; status: 'unsupported' | 'delayed' | 'partial' | 'stale' | 'missing'; reason: string; data_through?: string };
+interface InlineReportingAvailabilityEvidenceV1 {
+  version: '1.0';
+  cells: readonly InlineReportingMetricEvidenceV1[];
+}
+// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.
 // validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })
 // runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })
 // validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })
@@ -2850,7 +2858,13 @@ Import from `@adcp/sdk/reporting/service`. This is the adapter-first lifecycle o
 interface ReliableReportingAdapterV1 {
   readonly sourceOffering: ReportingSourceOfferingV1;
   readonly deliveryOffering: ReportingDeliveryOffering;
-  readonly fetchSlice: InlineReportingDeliveryFetchV1;
+  // Exactly one of fetchSlice or executor.
+  readonly fetchSlice?: InlineReportingDeliveryFetchV1;
+  readonly executor?: ReportingSourceWithReaderV1;
+  // Opt-in bounded replay window for the inline executor; never applied
+  // silently. A feed that outlives its replay ceiling needs this or a
+  // durable executor.
+  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;
 }
 
 const reporting = createReliableReportingService({

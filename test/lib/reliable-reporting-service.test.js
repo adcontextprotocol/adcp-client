@@ -3041,6 +3041,114 @@ describe('ReliableReportingService', () => {
     await race.budget(admissionB, 'admission B').catch(() => undefined);
   });
 
+  test('a failed commit deletes nothing across every tenant', async t => {
+    // The revoked victim is the only byte-holder in its scope, so the debt it
+    // was credited for cannot be repaid. Deleting owned victims before proving
+    // replacement capacity erased retained evidence — including other tenants'
+    // — and then failed staging anyway.
+    const big = Array.from({ length: 60_000 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    const race = abaRace(t, index => (index === 0 || index >= 100 ? big : []));
+    const key = index => `commit-atomic-${String(index).padStart(4, '0')}`;
+
+    const oldest = race.request(key(0));
+    const sealedOldest = await race.retained.execute(oldest, race.ctx());
+    assert.equal(sealedOldest.ok, true);
+    const oldestRead = race.readInputFor(oldest, sealedOldest);
+    for (let index = 1; index < 100; index += 1) {
+      assert.equal((await race.retained.execute(race.request(key(index)), race.ctx())).ok, true, `filler ${index}`);
+    }
+    // A second tenant with retained evidence of its own.
+    const neighbour = race.request('commit-atomic-neighbour');
+    neighbour.sourceScope = { connection: 'fixture-neighbour', region: 'test' };
+    const sealedNeighbour = await race.retained.execute(neighbour, race.ctx());
+    assert.equal(sealedNeighbour.ok, true);
+    const neighbourRead = race.readInputFor(neighbour, sealedNeighbour);
+
+    race.beginStalling();
+    const admissionA = race.track(race.retained.execute(race.request(key(100)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 1, 'admission A to enter its fetch');
+    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true, 'the claim is revoked by a replay');
+    const admissionB = race.track(race.retained.execute(race.request(key(101)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 2, 'admission B to enter its fetch');
+
+    race.openGate();
+    const outcome = await race.budget(admissionA, 'admission A');
+    assert.equal(outcome.ok, false, 'the debt cannot be repaid, so staging must be refused');
+    assert.equal(outcome.error.code, 'STAGING_FAILED');
+
+    // Nothing was deleted: not the revoked victim, not this scope's fillers,
+    // and not the neighbouring tenant's evidence.
+    assert.ok((await race.budget(race.read(oldestRead), 'oldest')).byteLength > 0, 'revoked victim survives');
+    assert.ok((await race.budget(race.read(neighbourRead), 'neighbour')).byteLength > 0, 'other tenants survive');
+
+    race.openGate();
+    await race.budget(admissionB, 'admission B').catch(() => undefined);
+  });
+
+  test('a cross-scope replacement does not satisfy scoped count debt', async t => {
+    // Every entry is an empty NDJSON slice, so the revoked victim holds no
+    // bytes at all and only its count is owed. Repaying that from the
+    // neighbouring scope -- which planReclaim reaches first, having been
+    // staged first -- leaves the requesting scope holding 101 executions
+    // against a ceiling of 100, so scoped count is owed independently of the
+    // global count and independently of bytes.
+    const race = abaRace(t, () => []);
+    const key = index => `scoped-count-${String(index).padStart(4, '0')}`;
+
+    // A neighbouring scope whose settled entries a count-only repair would take.
+    const otherReads = [];
+    for (let index = 0; index < 5; index += 1) {
+      const other = race.request(`scoped-count-other-${index}`);
+      other.sourceScope = { connection: 'fixture-other-scope', region: 'test' };
+      const sealed = await race.retained.execute(other, race.ctx());
+      assert.equal(sealed.ok, true, `other ${index}`);
+      otherReads.push(race.readInputFor(other, sealed));
+    }
+
+    const scopeReads = [];
+    for (let index = 0; index < 100; index += 1) {
+      const request = race.request(key(index));
+      const sealed = await race.retained.execute(request, race.ctx());
+      assert.equal(sealed.ok, true, `slice ${index}`);
+      scopeReads.push(race.readInputFor(request, sealed));
+    }
+    const oldest = race.request(key(0));
+
+    race.beginStalling();
+    const admissionA = race.track(race.retained.execute(race.request(key(100)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 1, 'admission A to enter its fetch');
+    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true, 'the claim is revoked by a replay');
+    const admissionB = race.track(race.retained.execute(race.request(key(101)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 2, 'admission B to enter its fetch');
+
+    race.openGate();
+    assert.equal((await race.budget(admissionA, 'admission A')).ok, true);
+
+    const survivors = async inputs => {
+      let count = 0;
+      for (const input of inputs) {
+        try {
+          await race.read(input);
+          count += 1;
+        } catch {
+          /* reclaimed */
+        }
+      }
+      return count;
+    };
+    // Admission A added one execution to this scope, so exactly one of its
+    // originals must have been reclaimed to stay at the ceiling.
+    assert.equal(await survivors(scopeReads), 99, 'the scoped count debt must be repaid inside the scope');
+    assert.equal(await survivors(otherReads), 5, "a neighbouring scope must not pay this scope's count debt");
+
+    race.openGate();
+    await race.budget(admissionB, 'admission B').catch(() => undefined);
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];

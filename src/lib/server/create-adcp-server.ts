@@ -2666,7 +2666,10 @@ function resolveExtraScope(
   // joining CALLER_SCOPED_MUTATION_TOOLS, whose resolution path is specific to
   // the two tools that declare one.
   if (toolName === 'sync_reporting_status') {
-    return JSON.stringify([tenantId ?? null, accountId ?? null, callerPrincipal ?? null]);
+    // Dispatch refuses the call before this point when no canonical principal
+    // is derivable, so the namespace can never collapse to a shared null.
+    if (callerPrincipal === undefined) return undefined;
+    return JSON.stringify([tenantId ?? null, accountId ?? null, callerPrincipal]);
   }
   if (toolName === 'si_send_message') {
     const sessionId = params.session_id;
@@ -6693,6 +6696,27 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // `sync_reporting_status` deposits a receipt for the calling consumer and
+        // is namespaced by that identity. Without a derivable canonical
+        // principal every such caller would collapse into one null namespace,
+        // so a second caller's identical request would be served the first's
+        // cached response and never record its own receipt. Refuse before the
+        // idempotency lookup rather than scope on nothing. Only a live replay
+        // store can serve one caller's response to another, so a deployment
+        // with idempotency disabled keeps its existing dispatch, as does one
+        // that resolves the principal itself through resolveIdempotencyPrincipal.
+        if (
+          toolName === 'sync_reporting_status' &&
+          idempotency !== undefined &&
+          resolveIdempotencyPrincipal === undefined &&
+          authenticatedPrincipalForContext(ctx.authInfo, ctx.agent) === undefined
+        ) {
+          return finalize(
+            adcpError('AUTH_MISSING', {
+              message: 'sync_reporting_status requires an authenticated caller principal',
+            })
+          );
+        }
         if (CALLER_SCOPED_MUTATION_TOOLS.has(toolName)) {
           if (ctx.authInfo === undefined && ctx.agent === undefined) {
             return finalize(

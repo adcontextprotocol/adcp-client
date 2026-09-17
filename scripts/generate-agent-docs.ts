@@ -2091,6 +2091,18 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`type ReportingSourceExecutorResultV1 =`);
   ln(`  | { ok: true; response: ReportingSourceExecutionResponseV1; manifestBytes: Uint8Array }`);
   ln(`  | { ok: false; error: ReportingSourceErrorV1 };`);
+  ln(`type InlineReportingMetricEvidenceV1 =`);
+  ln(`  | { constituent_id: string; metric: string; status: 'present' | 'explicit_zero'; data_through: string }`);
+  ln(
+    `  | { constituent_id: string; metric: string; status: 'unsupported' | 'delayed' | 'partial' | 'stale' | 'missing'; reason: string; data_through?: string };`
+  );
+  ln(`interface InlineReportingAvailabilityEvidenceV1 {`);
+  ln(`  version: '1.0';`);
+  ln(`  cells: readonly InlineReportingMetricEvidenceV1[];`);
+  ln(`}`);
+  ln(
+    `// Inline callback requests include constituents: { constituent_id, media_buy_id }[]; evidence-bearing responses add availability_evidence.`
+  );
   ln(`// validateReportingSourceExecutionV1({ level, capabilities, request, result, objectReader })`);
   ln(`// runReportingSourceReplayConformanceV1({ level, executor, request, objectReader })`);
   ln(`// validateReportingRevisionSequenceV1(manifests, { crossFinalityBridge })`);
@@ -2138,7 +2150,13 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`interface ReliableReportingAdapterV1 {`);
   ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
   ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
-  ln(`  readonly fetchSlice: InlineReportingDeliveryFetchV1;`);
+  ln(`  // Exactly one of fetchSlice or executor.`);
+  ln(`  readonly fetchSlice?: InlineReportingDeliveryFetchV1;`);
+  ln(`  readonly executor?: ReportingSourceWithReaderV1;`);
+  ln(`  // Opt-in bounded replay window for the inline executor; never applied`);
+  ln(`  // silently. A feed that outlives its replay ceiling needs this or a`);
+  ln(`  // durable executor.`);
+  ln(`  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;`);
   ln(`}`);
   ln();
   ln(`const reporting = createReliableReportingService({`);
