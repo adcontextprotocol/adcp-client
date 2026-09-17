@@ -160,6 +160,52 @@ const INLINE_MAX_OBJECT_BYTES_V1 = 64 * 1_024 * 1_024;
 const INLINE_MAX_TOTAL_OBJECT_BYTES_V1 = 256 * 1_024 * 1_024;
 const INLINE_MAX_SCOPE_OBJECT_BYTES_V1 = 32 * 1_024 * 1_024;
 const INLINE_MAX_ROWS_V1 = 100_000;
+
+// Internal staging-capacity seam. Resolved from the global symbol registry rather
+// than exported, so it is absent from the package's public surface, from the
+// generated adapter interface, and from anything JSON-shaped that could arrive off
+// the wire. Every override is clamped with `Math.min` against the shipped constant,
+// so the seam can only ever *tighten* a budget -- no value passed through it can
+// raise a staging limit. Tests use it to drive the byte-pressure and reclamation
+// paths at kilobyte scale instead of staging hundreds of megabytes per assertion.
+const INLINE_CAPACITY_SEAM_V1 = Symbol.for('adcp.reporting.inline.capacity-seam.v1');
+
+interface InlineStagingCapacitiesV1 {
+  /** Ceiling for a single staged object. */
+  readonly object: number;
+  /** Ceiling for every staged object this executor holds. */
+  readonly total: number;
+  /** Ceiling for the staged objects of one source scope. */
+  readonly scope: number;
+  /** Ceiling for retained executions across every scope. */
+  readonly executions: number;
+  /** Ceiling for retained executions in one source scope. */
+  readonly scopeExecutions: number;
+}
+
+const INLINE_SHIPPED_CAPACITIES_V1: InlineStagingCapacitiesV1 = {
+  object: INLINE_MAX_OBJECT_BYTES_V1,
+  total: INLINE_MAX_TOTAL_OBJECT_BYTES_V1,
+  scope: INLINE_MAX_SCOPE_OBJECT_BYTES_V1,
+  executions: INLINE_MAX_EXECUTIONS_V1,
+  scopeExecutions: INLINE_MAX_EXECUTIONS_PER_SCOPE_V1,
+};
+
+function resolveInlineStagingCapacities(executorOptions: object): InlineStagingCapacitiesV1 {
+  const override = (executorOptions as Record<symbol, unknown>)[INLINE_CAPACITY_SEAM_V1];
+  if (typeof override !== 'object' || override === null) return INLINE_SHIPPED_CAPACITIES_V1;
+  const candidate = override as Record<string, unknown>;
+  // Tighten only: an absent, malformed, or larger value keeps the shipped ceiling.
+  const tighten = (shipped: number, value: unknown): number =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? Math.min(shipped, value) : shipped;
+  return {
+    object: tighten(INLINE_MAX_OBJECT_BYTES_V1, candidate.object),
+    total: tighten(INLINE_MAX_TOTAL_OBJECT_BYTES_V1, candidate.total),
+    scope: tighten(INLINE_MAX_SCOPE_OBJECT_BYTES_V1, candidate.scope),
+    executions: tighten(INLINE_MAX_EXECUTIONS_V1, candidate.executions),
+    scopeExecutions: tighten(INLINE_MAX_EXECUTIONS_PER_SCOPE_V1, candidate.scopeExecutions),
+  };
+}
 // One comprehensive budget for every per-row check availability verification performs:
 // each requested metric and each requested dimension, once per row, once per constituent
 // that names the row's media buy. Metrics alone left dimensions and constituent fanout
@@ -269,6 +315,7 @@ export function createInlineReportingSourceExecutor(
   executorOptions: CreateInlineReportingSourceExecutorOptionsV1 = {}
 ): InlineReportingSourceExecutorV1 {
   const evictSettled = executorOptions.replayRetention?.evictSettled === true;
+  const capacities = resolveInlineStagingCapacities(executorOptions);
   const parsedOffering = ReportingSourceOfferingV1Schema.parse(offeringInput);
   if (!parsedOffering.sourceExecution.manifestLevels.includes('basic')) {
     throw new TypeError('Inline reporting requires a basic manifest offering');
@@ -382,8 +429,8 @@ export function createInlineReportingSourceExecutor(
       }
 
       const scopeCount = [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length;
-      const exhaustedGlobally = executions.size >= INLINE_MAX_EXECUTIONS_V1;
-      const exhaustedForScope = scopeCount >= INLINE_MAX_EXECUTIONS_PER_SCOPE_V1;
+      const exhaustedGlobally = executions.size >= capacities.executions;
+      const exhaustedForScope = scopeCount >= capacities.scopeExecutions;
       if ((exhaustedGlobally || exhaustedForScope) && !evictSettled) {
         return failure(
           'QUOTA_EXHAUSTED',
@@ -411,7 +458,7 @@ export function createInlineReportingSourceExecutor(
         );
       }
       if (
-        scopeCount - (reclaimer?.plannedInScope(scopeKey) ?? 0) >= INLINE_MAX_EXECUTIONS_PER_SCOPE_V1 &&
+        scopeCount - (reclaimer?.plannedInScope(scopeKey) ?? 0) >= capacities.scopeExecutions &&
         reclaimer?.plan(scopeKey, true) === undefined
       ) {
         reclaimer?.release();
@@ -439,6 +486,7 @@ export function createInlineReportingSourceExecutor(
             storage,
             key,
             scopeKey,
+            capacities,
             reclaimer
           )
         )
@@ -508,6 +556,7 @@ async function executeAndSeal(
   },
   executionNamespace: string,
   scopeKey: string,
+  capacities: InlineStagingCapacitiesV1,
   reclaimer?: InlineAdmissionReclaimerV1
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
@@ -1004,10 +1053,9 @@ async function executeAndSeal(
   const reservedBytes = reclaimer?.plannedBytes(scopeKey) ?? { global: 0, scope: 0 };
   let plannedGlobalCredit = reservedBytes.global;
   let plannedScopeCredit = reservedBytes.scope;
-  const globalRoom = (): number => INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes + plannedGlobalCredit;
-  const scopeRoom = (): number =>
-    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedScopeCredit;
-  const capacity = (): number => Math.min(INLINE_MAX_OBJECT_BYTES_V1, globalRoom(), scopeRoom());
+  const globalRoom = (): number => capacities.total - storage.totalBytes + plannedGlobalCredit;
+  const scopeRoom = (): number => capacities.scope - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedScopeCredit;
+  const capacity = (): number => Math.min(capacities.object, globalRoom(), scopeRoom());
   const planMoreCapacity = (): boolean => {
     // Reclaim where the pressure is. A zero-byte victim still reclaims its
     // count and state but frees nothing, so keep advancing past it.

@@ -18,6 +18,19 @@ const { MemoryLedgerStore } = require('../helpers/memory-reporting-ledger-store.
 const { canonicalize } = require('../../dist/lib/utils/jcs.js');
 const { createHash } = require('node:crypto');
 
+// Internal staging-capacity seam (see src/lib/reporting/source/inline.ts). Every
+// value it carries is clamped with Math.min against the shipped constant, so it can
+// only ever tighten a budget -- production limits are untouched and unreachable from
+// here. These regressions drive the same capacity arithmetic at kilobyte scale
+// instead of staging hundreds of megabytes per assertion, which is what put this
+// file over the 60s CI file limit. The byte ceilings keep the shipped
+// object:scope:total ratio of 2:1:8, divided by 1024.
+const INLINE_CAPACITY_SEAM = Symbol.for('adcp.reporting.inline.capacity-seam.v1');
+const SMALL_STAGING_BYTES = { object: 64 * 1024, total: 256 * 1024, scope: 32 * 1024 };
+const tightCapacities = (overrides = {}) => ({
+  [INLINE_CAPACITY_SEAM]: { ...SMALL_STAGING_BYTES, ...overrides },
+});
+
 function deliveryOffering() {
   const source = redactedReportingSourceOfferingV1;
   return {
@@ -1754,6 +1767,55 @@ describe('ReliableReportingService', () => {
     assert.equal(installed.account.account_id, 'account-a');
   });
 
+  test('the capacity seam only tightens: it can never raise or corrupt a shipped ceiling', async () => {
+    // The seam exists so these regressions can drive byte pressure at kilobyte
+    // scale. It is reachable from the global symbol registry, so what has to
+    // hold is that nothing passed through it can widen a production limit: an
+    // over-large value and a malformed one both leave the shipped ceiling in
+    // place. Observed through the default 100-execution scope ceiling, which
+    // terminalizes with QUOTA_EXHAUSTED when no retention policy is opted into.
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `seam-slice-${String(index).padStart(4, '0')}`;
+    const firstRefusal = async seam => {
+      const executor = createInlineReportingSourceExecutor(
+        () => [],
+        structuredClone(redactedReportingSourceOfferingV1),
+        { [INLINE_CAPACITY_SEAM]: seam }
+      );
+      for (let index = 0; index <= 100; index += 1) {
+        const result = await executor.execute(
+          redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }),
+          ctx()
+        );
+        if (!result.ok) return { index, code: result.error.code };
+      }
+      return undefined;
+    };
+
+    assert.deepEqual(
+      await firstRefusal({
+        object: 2 ** 40,
+        total: 2 ** 40,
+        scope: 2 ** 40,
+        executions: 10_000,
+        scopeExecutions: 10_000,
+      }),
+      { index: 100, code: 'QUOTA_EXHAUSTED' },
+      'an over-large override must leave every shipped ceiling exactly where it is'
+    );
+    assert.deepEqual(
+      await firstRefusal({
+        object: Number.NaN,
+        total: '64',
+        scope: null,
+        executions: -1,
+        scopeExecutions: 0,
+      }),
+      { index: 100, code: 'QUOTA_EXHAUSTED' },
+      'a malformed override must fall back to the shipped ceiling, not to zero'
+    );
+  });
+
   test('keeps a legacy generation projecting the identity it was installed with', async () => {
     const { service, store } = serviceFixture();
     const now = new Date();
@@ -2037,10 +2099,15 @@ describe('ReliableReportingService', () => {
     // reclamation picks a victim from that very scope. Recomputing the scope
     // against a stale count then charges a second victim for the same
     // admission, destroying replay evidence that was still owed.
+    // Ten per scope against a hundred overall: the shipped 100/1000 pair, tightened
+    // by ten so the same two ceilings meet on the same admission.
     const retained = createInlineReportingSourceExecutor(
       () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      {
+        ...tightCapacities({ executions: 100, scopeExecutions: 10 }),
+        replayRetention: { evictSettled: true },
+      }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = (scope, index) => {
@@ -2065,23 +2132,23 @@ describe('ReliableReportingService', () => {
     const stagedOf = sealed =>
       (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
 
-    // Target scope first (100 = its ceiling), so its entries are the oldest.
+    // Target scope first (10 = its ceiling), so its entries are the oldest.
     const targetReads = [];
-    for (let index = 0; index < 100; index += 1) {
+    for (let index = 0; index < 10; index += 1) {
       const request = scoped(0, index);
       const sealed = await retained.execute(request, ctx());
       assert.equal(sealed.ok, true, `target ${index}`);
       targetReads.push(readInputFor(request, stagedOf(sealed)));
     }
-    // Other scopes bring the executor to its global ceiling of 1000.
+    // Other scopes bring the executor to its global ceiling.
     for (let scope = 1; scope <= 9; scope += 1) {
-      for (let index = 0; index < 100; index += 1) {
+      for (let index = 0; index < 10; index += 1) {
         assert.equal((await retained.execute(scoped(scope, index), ctx())).ok, true, `scope ${scope}/${index}`);
       }
     }
 
     // One more request for the target scope: globally and scope exhausted.
-    assert.equal((await retained.execute(scoped(0, 100), ctx())).ok, true);
+    assert.equal((await retained.execute(scoped(0, 10), ctx())).ok, true);
 
     // Exactly one of the target scope's staged objects may be gone.
     let reclaimed = 0;
@@ -2147,13 +2214,16 @@ describe('ReliableReportingService', () => {
     // A scope can exhaust its byte budget long before its 100th slice. Without
     // byte-pressure reclamation every later slice terminalizes STAGING_FAILED
     // while the execution count is still well under the ceiling.
-    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+    const rows = Array.from({ length: 10 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
     }));
     const executor = options =>
-      createInlineReportingSourceExecutor(() => rows, structuredClone(redactedReportingSourceOfferingV1), options);
+      createInlineReportingSourceExecutor(() => rows, structuredClone(redactedReportingSourceOfferingV1), {
+        ...tightCapacities(),
+        ...options,
+      });
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `bytes-slice-${String(index).padStart(4, '0')}`;
 
@@ -2187,10 +2257,12 @@ describe('ReliableReportingService', () => {
     // row and a zero row identically — so what is asserted here is that the
     // executor keeps admitting and staging correctly well past the global
     // ceiling, which is the behavior that bounded accounting has to sustain.
+    // Tightened to a 50-execution global ceiling, crossed at the same 1.1x the
+    // shipped 1000/1100 pair exercised.
     const retained = createInlineReportingSourceExecutor(
       () => [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }],
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { ...tightCapacities({ executions: 50 }), replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = scope => {
@@ -2201,7 +2273,7 @@ describe('ReliableReportingService', () => {
       return value;
     };
 
-    for (let scope = 0; scope < 1_100; scope += 1) {
+    for (let scope = 0; scope < 55; scope += 1) {
       assert.equal((await retained.execute(scoped(scope), ctx())).ok, true, `scope ${scope}`);
     }
   });
@@ -2358,7 +2430,7 @@ describe('ReliableReportingService', () => {
     // Reclamation used to commit during projection/encoding, so a slice that
     // was later refused — invalid temporal evidence here — had already deleted
     // a valid replay to make room for work that never staged.
-    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+    const rows = Array.from({ length: 10 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
@@ -2521,7 +2593,9 @@ describe('ReliableReportingService', () => {
   test('reclaims global byte pressure from whichever scope holds it', async () => {
     // A fresh scope has no victims of its own, so searching only its own scope
     // left it STAGING_FAILED while other scopes held the global budget.
-    const rows = Array.from({ length: 10_000 }, (_, index) => ({
+    // Each slice is roughly a quarter of the tightened per-scope ceiling, so four
+    // fill a scope and twelve scopes overrun the global one.
+    const rows = Array.from({ length: 100 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
@@ -2529,7 +2603,7 @@ describe('ReliableReportingService', () => {
     const retained = createInlineReportingSourceExecutor(
       () => rows,
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { ...tightCapacities(), replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = (scope, index) => {
@@ -2544,7 +2618,7 @@ describe('ReliableReportingService', () => {
     // own per-scope ceiling.
     let staged = 0;
     for (let scope = 0; scope < 12; scope += 1) {
-      for (let index = 0; index < 46; index += 1) {
+      for (let index = 0; index < 4; index += 1) {
         const result = await retained.execute(scoped(scope, index), ctx());
         if (result.ok) staged += 1;
       }
@@ -2560,16 +2634,27 @@ describe('ReliableReportingService', () => {
     // An empty slice reclaims its count and state but frees no bytes. Treating
     // that as "nothing left to reclaim" stranded the scope in STAGING_FAILED
     // with byte-producing victims still available behind it.
-    const bulk = Array.from({ length: 10_000 }, (_, index) => ({
-      media_buy_id: 'fixture-media-buy',
-      impressions: index,
-      spend: '0.10',
-    }));
-    let emptySlice = true;
+    const rowsOf = count =>
+      Array.from({ length: count }, (_, index) => ({
+        media_buy_id: 'fixture-media-buy',
+        impressions: index,
+        spend: '0.10',
+      }));
+    const filler = rowsOf(10);
+    // Larger than the headroom the fillers leave, so the last slice is the
+    // first to face byte pressure and the empty slice is still the oldest.
+    const wide = rowsOf(120);
+    const FILLERS = 40;
+    let issued = 0;
     const retained = createInlineReportingSourceExecutor(
-      () => (emptySlice ? [] : bulk),
+      () => {
+        const index = issued;
+        issued += 1;
+        if (index === 0) return [];
+        return index <= FILLERS ? filler : wide;
+      },
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { ...tightCapacities(), replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `zero-byte-${String(index).padStart(4, '0')}`;
@@ -2579,8 +2664,7 @@ describe('ReliableReportingService', () => {
       (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(0) }), ctx())).ok,
       true
     );
-    emptySlice = false;
-    for (let index = 1; index <= 47; index += 1) {
+    for (let index = 1; index <= FILLERS; index += 1) {
       assert.equal(
         (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }), ctx())).ok,
         true,
@@ -2589,8 +2673,13 @@ describe('ReliableReportingService', () => {
     }
 
     // Under byte pressure the zero-byte victim must not stop the search.
-    const next = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(48) }), ctx());
-    assert.equal(next.ok, true, `slice 48 must reclaim past the empty victim, got ${next.ok ? '' : next.error.code}`);
+    const last = FILLERS + 1;
+    const next = await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(last) }), ctx());
+    assert.equal(
+      next.ok,
+      true,
+      `slice ${last} must reclaim past the empty victim, got ${next.ok ? '' : next.error.code}`
+    );
   });
 
   test('credits the bytes its count victim is about to release', async () => {
@@ -2604,8 +2693,8 @@ describe('ReliableReportingService', () => {
         impressions: index,
         spend: '0.10',
       }));
-    const large = rowsOf(50_000);
-    const filler = rowsOf(4_000);
+    const large = rowsOf(50);
+    const filler = rowsOf(4);
     let issued = 0;
     const retained = createInlineReportingSourceExecutor(
       () => {
@@ -2616,7 +2705,7 @@ describe('ReliableReportingService', () => {
         return index === 0 || index === 100 ? large : filler;
       },
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { ...tightCapacities(), replayRetention: { evictSettled: true } }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const key = index => `credit-slice-${String(index).padStart(4, '0')}`;
@@ -2900,7 +2989,7 @@ describe('ReliableReportingService', () => {
         return rowsFor(index);
       },
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { ...tightCapacities(), replayRetention: { evictSettled: true } }
     );
     t.after(async () => {
       stall = false;
@@ -3010,7 +3099,7 @@ describe('ReliableReportingService', () => {
     // entry0 is the only entry in the scope holding bytes; the rest are empty.
     // Replacing a revoked claim by count alone let the slice stage past the
     // scope cap on stale credit, so it must fail cleanly instead.
-    const big = Array.from({ length: 60_000 }, (_, index) => ({
+    const big = Array.from({ length: 60 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
@@ -3046,7 +3135,7 @@ describe('ReliableReportingService', () => {
     // was credited for cannot be repaid. Deleting owned victims before proving
     // replacement capacity erased retained evidence — including other tenants'
     // — and then failed staging anyway.
-    const big = Array.from({ length: 60_000 }, (_, index) => ({
+    const big = Array.from({ length: 60 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
