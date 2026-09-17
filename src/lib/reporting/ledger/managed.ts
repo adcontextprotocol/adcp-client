@@ -105,20 +105,33 @@ export interface ReportingManagedDeliveryStore {
    * Records the agent-wide advertised recovery window so the store can hold
    * later binding installs to it.
    *
-   * Optional on the structural interface for source compatibility, but a
-   * runtime cannot publish Managed Delivery capabilities without it: checking
-   * only bindings present at startup leaves later installs free to exceed the
-   * published bound.
+   * Optional on the structural interface for source compatibility with
+   * direct-store integrations. The runtime factory uses the combined atomic
+   * hook below; this separate hook remains useful when bindings are installed
+   * without a runtime.
    */
   adoptAdvertisedRecoveryWindowSeconds?(seconds: number): Promise<void>;
   /**
    * Durably registers the advertised `status_retention_days`.
    *
-   * Every advertised retention promise must be registered before it is
-   * published, or a store configured with shorter evidence retention will
-   * happily prune inside a horizon this runtime is advertising.
+   * Direct-store integrations can use this separate hook when no runtime is
+   * publishing both policies. The runtime factory uses the combined atomic
+   * hook below so a failed startup cannot register only one promise.
    */
   adoptAdvertisedStatusRetentionDays?(days: number): Promise<void>;
+  /**
+   * Atomically registers every policy advertised by a Managed Delivery
+   * runtime. A rejected value must leave both durable policies unchanged.
+   *
+   * Optional on the base interface so direct-store integrations that use the
+   * separate hooks remain source-compatible. Capability publication requires
+   * this combined hook because two independent writes cannot prevent a failed
+   * startup from leaving only one promise registered.
+   */
+  adoptAdvertisedPolicies?(policy: {
+    automatedRecoveryWindowSeconds: number;
+    statusRetentionDays: number;
+  }): Promise<void>;
   authorizeDestination(
     input: Omit<ReportingDestinationAuthorizationV1, 'revoked_at' | 'cleanup_completed_at'>
   ): Promise<void>;
@@ -248,10 +261,7 @@ export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
   TContext extends { account?: unknown } = { account?: unknown },
 > {
   coreStore: ReportingLedgerStore;
-  store: ReportingManagedDeliveryStore &
-    Required<
-      Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedRecoveryWindowSeconds' | 'adoptAdvertisedStatusRetentionDays'>
-    >;
+  store: ReportingManagedDeliveryStore & Required<Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedPolicies'>>;
   adapter: ReportingManagedDeliveryAdapterV1;
   offerings: ReportingDeliveryCapabilities['offerings'];
   automatedRecoveryWindowSeconds: number;
@@ -302,12 +312,9 @@ export async function createReportingManagedDeliveryRuntime<
   if (!(await options.store.probe(options.coreStore))) {
     throw new Error('Managed reporting store is not operational for the configured Core authority');
   }
-  if (
-    typeof options.store.adoptAdvertisedRecoveryWindowSeconds !== 'function' ||
-    typeof options.store.adoptAdvertisedStatusRetentionDays !== 'function'
-  ) {
+  if (typeof options.store.adoptAdvertisedPolicies !== 'function') {
     throw new Error(
-      'Managed Delivery capability publication requires durable recovery-window and status-retention policy adoption'
+      'Managed Delivery capability publication requires atomic durable recovery-window and status-retention policy adoption'
     );
   }
   nonnegativeInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
@@ -406,17 +413,20 @@ export async function createReportingManagedDeliveryRuntime<
     );
   }
   // Every side-effect-free validation and construction above completes before
-  // either durable write. Otherwise a malformed adapter or offering could
+  // the durable write. Otherwise a malformed adapter or offering could
   // register policy that no runtime ever published, then reject a corrected
   // restart using different values. The store validates the recovery bound
   // again inside its adoption transaction, closing the binding-install race
   // between the read above and this write.
-  await options.store.adoptAdvertisedRecoveryWindowSeconds(options.automatedRecoveryWindowSeconds);
-  // Register the retention horizon too. Advertising 90 days while the durable
-  // policy stayed null let a store built with 45 days of evidence retention
-  // prune inside the horizon this runtime publishes. Both writes are awaited
-  // before returning the capability document.
-  await options.store.adoptAdvertisedStatusRetentionDays(options.statusRetentionDays);
+  // Register both promises atomically. Advertising 90 days while the durable
+  // retention policy stayed null lets a shorter-lived store prune inside the
+  // published horizon; retaining only the recovery write after a retention
+  // conflict also poisons a corrected restart. The store therefore commits
+  // both values together or leaves both unchanged.
+  await options.store.adoptAdvertisedPolicies({
+    automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
+    statusRetentionDays: options.statusRetentionDays,
+  });
 
   return {
     reportingDeliveryCapabilities,

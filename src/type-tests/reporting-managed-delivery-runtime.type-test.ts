@@ -6,26 +6,20 @@ import type {
 type RuntimeStore = CreateReportingManagedDeliveryRuntimeOptionsV1['store'];
 
 declare const directStore: ReportingManagedDeliveryStore;
-// @ts-expect-error Capability publication requires both durable policy hooks.
-const runtimeStoreMissingPolicyHooks: RuntimeStore = directStore;
+// @ts-expect-error Capability publication requires atomic durable policy adoption.
+const runtimeStoreMissingAtomicPolicyHook: RuntimeStore = directStore;
 
-declare const recoveryOnlyStore: ReportingManagedDeliveryStore &
-  Required<Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedRecoveryWindowSeconds'>>;
-// @ts-expect-error Recovery-window adoption alone cannot publish retention capabilities.
-const runtimeStoreMissingRetentionHook: RuntimeStore = recoveryOnlyStore;
-
-declare const retentionOnlyStore: ReportingManagedDeliveryStore &
-  Required<Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedStatusRetentionDays'>>;
-// @ts-expect-error Status-retention adoption alone cannot publish recovery capabilities.
-const runtimeStoreMissingRecoveryHook: RuntimeStore = retentionOnlyStore;
-
-declare const publishingStore: ReportingManagedDeliveryStore &
+declare const separatePolicyStore: ReportingManagedDeliveryStore &
   Required<
     Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedRecoveryWindowSeconds' | 'adoptAdvertisedStatusRetentionDays'>
   >;
-const runtimeStoreWithPolicyHooks: RuntimeStore = publishingStore;
+// @ts-expect-error Separate hooks cannot make capability publication atomic.
+const runtimeStoreWithOnlySeparatePolicyHooks: RuntimeStore = separatePolicyStore;
 
-void runtimeStoreMissingPolicyHooks;
-void runtimeStoreMissingRetentionHook;
-void runtimeStoreMissingRecoveryHook;
-void runtimeStoreWithPolicyHooks;
+declare const publishingStore: ReportingManagedDeliveryStore &
+  Required<Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedPolicies'>>;
+const runtimeStoreWithAtomicPolicyHook: RuntimeStore = publishingStore;
+
+void runtimeStoreMissingAtomicPolicyHook;
+void runtimeStoreWithOnlySeparatePolicyHooks;
+void runtimeStoreWithAtomicPolicyHook;

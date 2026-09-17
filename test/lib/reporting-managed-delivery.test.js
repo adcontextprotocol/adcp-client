@@ -147,8 +147,7 @@ describe('seller managed reporting runtime', () => {
           store: {
             probe: async () => true,
             listInstalledRecoveryWindowSeconds: async () => [60],
-            adoptAdvertisedRecoveryWindowSeconds: async () => {},
-            adoptAdvertisedStatusRetentionDays: async () => {},
+            adoptAdvertisedPolicies: async () => {},
           },
           offerings: [offering('consumer_receipt')],
         }),
@@ -158,8 +157,7 @@ describe('seller managed reporting runtime', () => {
 
   test('derives optional tier claims from the installed handler and verifier set', async () => {
     const durablePolicyHooks = {
-      adoptAdvertisedRecoveryWindowSeconds: async () => {},
-      adoptAdvertisedStatusRetentionDays: async () => {},
+      adoptAdvertisedPolicies: async () => {},
     };
     const common = {
       coreStore: {},
@@ -265,13 +263,14 @@ describe('seller managed reporting runtime', () => {
     assert.equal(typeof reconciled.syncReportingReceipts, 'function');
   });
 
-  test('refuses capability publication without both durable policy adoption hooks', async () => {
+  test('refuses capability publication without atomic durable policy adoption', async () => {
     const options = {
       coreStore: {},
       store: {
         probe: async () => true,
         listInstalledRecoveryWindowSeconds: async () => [0],
         adoptAdvertisedRecoveryWindowSeconds: async () => {},
+        adoptAdvertisedStatusRetentionDays: async () => {},
       },
       adapter: {
         verificationProfiles: ['native_commit'],
@@ -288,42 +287,22 @@ describe('seller managed reporting runtime', () => {
     };
     await assert.rejects(
       () => ledger.createReportingManagedDeliveryRuntime(options),
-      /requires durable recovery-window and status-retention policy adoption/
-    );
-    await assert.rejects(
-      () =>
-        ledger.createReportingManagedDeliveryRuntime({
-          ...options,
-          store: {
-            probe: async () => true,
-            listInstalledRecoveryWindowSeconds: async () => [0],
-            adoptAdvertisedStatusRetentionDays: async () => {},
-          },
-        }),
-      /requires durable recovery-window and status-retention policy adoption/
+      /requires atomic durable recovery-window and status-retention policy adoption/
     );
   });
 
   test('validates the complete runtime before adopting durable policy', async () => {
-    let adoptedRecoveryWindow;
-    let adoptedStatusRetention;
+    let adoptedPolicy;
     const adoptionCalls = [];
     const store = {
       probe: async () => true,
       listInstalledRecoveryWindowSeconds: async () => [0],
-      adoptAdvertisedRecoveryWindowSeconds: async value => {
-        adoptionCalls.push(['recovery', value]);
-        if (adoptedRecoveryWindow !== undefined && adoptedRecoveryWindow !== value) {
-          throw new Error('durable recovery policy conflict');
+      adoptAdvertisedPolicies: async policy => {
+        adoptionCalls.push(structuredClone(policy));
+        if (adoptedPolicy !== undefined && JSON.stringify(adoptedPolicy) !== JSON.stringify(policy)) {
+          throw new Error('durable managed policy conflict');
         }
-        adoptedRecoveryWindow = value;
-      },
-      adoptAdvertisedStatusRetentionDays: async value => {
-        adoptionCalls.push(['status', value]);
-        if (adoptedStatusRetention !== undefined && adoptedStatusRetention !== value) {
-          throw new Error('durable status policy conflict');
-        }
-        adoptedStatusRetention = value;
+        adoptedPolicy = structuredClone(policy);
       },
     };
     const validAdapter = {
@@ -349,8 +328,7 @@ describe('seller managed reporting runtime', () => {
       /does not satisfy the complete installed RC3 schema/
     );
     assert.deepEqual(adoptionCalls, [], 'failed validation performs no durable adoption');
-    assert.equal(adoptedRecoveryWindow, undefined);
-    assert.equal(adoptedStatusRetention, undefined);
+    assert.equal(adoptedPolicy, undefined);
 
     const corrected = await ledger.createReportingManagedDeliveryRuntime({
       ...initial,
@@ -360,10 +338,51 @@ describe('seller managed reporting runtime', () => {
     });
     assert.equal(corrected.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
     assert.equal(corrected.reportingDeliveryCapabilities.status_retention_days, 90);
-    assert.deepEqual(adoptionCalls, [
-      ['recovery', 900],
-      ['status', 90],
-    ]);
+    assert.deepEqual(adoptionCalls, [{ automatedRecoveryWindowSeconds: 900, statusRetentionDays: 90 }]);
+  });
+
+  test('uses one atomic adoption so a policy conflict cannot partially poison restart', async () => {
+    let adoptedPolicy;
+    const separateCalls = [];
+    const store = {
+      probe: async () => true,
+      listInstalledRecoveryWindowSeconds: async () => [0],
+      adoptAdvertisedRecoveryWindowSeconds: async value => separateCalls.push(['recovery', value]),
+      adoptAdvertisedStatusRetentionDays: async value => separateCalls.push(['status', value]),
+      adoptAdvertisedPolicies: async policy => {
+        if (policy.statusRetentionDays === 90) {
+          throw new Error('durable status policy conflict');
+        }
+        adoptedPolicy = structuredClone(policy);
+      },
+    };
+    const options = {
+      coreStore: {},
+      store,
+      adapter: {
+        verificationProfiles: ['native_commit'],
+        revocationFencesDeliveryGenerations: true,
+        deliver: async () => {},
+        read: async () => new Uint8Array(),
+        revoke: async () => {},
+      },
+      offerings: [offering()],
+      automatedRecoveryWindowSeconds: 60,
+      statusRetentionDays: 90,
+      resourceRetentionDays: 30,
+      authorizationRevocationSeconds: 60,
+    };
+    await assert.rejects(() => ledger.createReportingManagedDeliveryRuntime(options), /durable status policy conflict/);
+    assert.equal(adoptedPolicy, undefined, 'the failed atomic adoption left neither policy registered');
+    assert.deepEqual(separateCalls, [], 'the factory never falls back to partial hooks');
+
+    const corrected = await ledger.createReportingManagedDeliveryRuntime({
+      ...options,
+      automatedRecoveryWindowSeconds: 900,
+      statusRetentionDays: 30,
+    });
+    assert.deepEqual(adoptedPolicy, { automatedRecoveryWindowSeconds: 900, statusRetentionDays: 30 });
+    assert.equal(corrected.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
   });
 
   test('does not publish a delivery when authorization is revoked during adapter I/O', async () => {

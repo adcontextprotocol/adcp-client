@@ -1482,23 +1482,81 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       });
       // A runtime that would advertise 60s must be refused...
       await assert.rejects(
-        () => poisonManaged.adoptAdvertisedRecoveryWindowSeconds(60),
+        () =>
+          poisonManaged.adoptAdvertisedPolicies({
+            automatedRecoveryWindowSeconds: 60,
+            statusRetentionDays: 90,
+          }),
         error => /at least the widest installed managed Core recovery window \(900s\)/.test(String(error.cause))
       );
-      // ...and must leave nothing behind. Persisting first meant the correct
-      // 900s restart was then refused as conflicting with a durable 60.
+      // ...and must leave neither policy behind. Persisting either value first
+      // meant the correct restart could be refused by a partial durable policy.
       const registry = await poisonPool.query(
-        `SELECT advertised_recovery_window_seconds::text AS value FROM adcp_reporting_managed_policy`
+        `SELECT advertised_recovery_window_seconds::text AS recovery,
+                advertised_status_retention_days::text AS status
+           FROM adcp_reporting_managed_policy`
       );
       assert.equal(registry.rowCount, 0, 'a refused adoption writes nothing');
-      await poisonManaged.adoptAdvertisedRecoveryWindowSeconds(900);
+      await poisonManaged.adoptAdvertisedPolicies({
+        automatedRecoveryWindowSeconds: 900,
+        statusRetentionDays: 90,
+      });
       const settledRegistry = await poisonPool.query(
-        `SELECT advertised_recovery_window_seconds::text AS value FROM adcp_reporting_managed_policy`
+        `SELECT advertised_recovery_window_seconds::text AS recovery,
+                advertised_status_retention_days::text AS status
+           FROM adcp_reporting_managed_policy`
       );
-      assert.equal(settledRegistry.rows[0].value, '900', 'the correct value then registers cleanly');
+      assert.deepEqual(
+        settledRegistry.rows[0],
+        { recovery: '900', status: '90' },
+        'the corrected policy then registers cleanly'
+      );
     } finally {
       await poisonPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${poisonSchema}" CASCADE`);
+    }
+  });
+
+  test('adopts runtime policies atomically and permits a corrected restart after conflict', async () => {
+    const { Pool } = require('pg');
+    const atomicSchema = `${schema}_atomic_policy`;
+    await bootstrap.query(`CREATE SCHEMA "${atomicSchema}"`);
+    const atomicPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${atomicSchema}"` });
+    try {
+      await atomicPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await atomicPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const existing = new ledger.PostgresReportingManagedDeliveryStore(atomicPool);
+      await existing.adoptAdvertisedStatusRetentionDays(30);
+
+      const restarting = new ledger.PostgresReportingManagedDeliveryStore(atomicPool);
+      await assert.rejects(
+        () =>
+          restarting.adoptAdvertisedPolicies({
+            automatedRecoveryWindowSeconds: 60,
+            statusRetentionDays: 90,
+          }),
+        error => /already registered with an advertised status retention of 30 days/.test(String(error.cause))
+      );
+      const afterConflict = await atomicPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS recovery,
+                advertised_status_retention_days::text AS status
+           FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+      );
+      assert.deepEqual(afterConflict.rows[0], { recovery: null, status: '30' });
+
+      await restarting.adoptAdvertisedPolicies({
+        automatedRecoveryWindowSeconds: 900,
+        statusRetentionDays: 30,
+      });
+      const corrected = await atomicPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS recovery,
+                advertised_status_retention_days::text AS status
+           FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+      );
+      assert.deepEqual(corrected.rows[0], { recovery: '900', status: '30' });
+    } finally {
+      await atomicPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${atomicSchema}" CASCADE`);
     }
   });
 

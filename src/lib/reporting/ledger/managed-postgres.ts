@@ -344,24 +344,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       // first and validating afterwards poisoned the registry: a rejected
       // 60s startup against an installed 900s binding still left a durable
       // 60, and the correct 900s restart was then refused as a conflict.
-      validate: async client => {
-        const widest = await client.query<QueryRow & { widest: string | null }>(
-          `SELECT MAX(CEIL(
-                    (configuration.data->'schedule'->>'recoveryWindowMilliseconds')::numeric / 1000
-                  ))::text AS widest
-             FROM adcp_reporting_managed_bindings binding
-             JOIN adcp_reporting_configurations configuration
-               ON configuration.configuration_id = binding.configuration_id`
-        );
-        const widestInstalled = Number(widest.rows[0]?.widest ?? 0);
-        if (Number.isFinite(widestInstalled) && seconds < widestInstalled) {
-          throw new Error(
-            `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
-              `(${widestInstalled}s); advertising ${seconds}s would promise a recovery bound this deployment ` +
-              `does not keep for every tenant`
-          );
-        }
-      },
+      validate: client => this.validateRecoveryWindow(client, seconds),
     });
   }
 
@@ -377,6 +360,32 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     await this.upsertPolicy('advertised_status_retention_days', days, 'advertised status retention', ' days');
   }
 
+  /** Registers the complete capability policy under one lock and transaction. */
+  async adoptAdvertisedPolicies(policy: {
+    automatedRecoveryWindowSeconds: number;
+    statusRetentionDays: number;
+  }): Promise<void> {
+    nonnegativeSafeInteger(policy.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
+    positiveInteger(policy.statusRetentionDays, 'statusRetentionDays');
+    await this.upsertPolicies(
+      [
+        {
+          column: 'advertised_recovery_window_seconds',
+          value: policy.automatedRecoveryWindowSeconds,
+          label: 'advertised recovery window',
+          unit: 's',
+        },
+        {
+          column: 'advertised_status_retention_days',
+          value: policy.statusRetentionDays,
+          label: 'advertised status retention',
+          unit: ' days',
+        },
+      ],
+      client => this.validateRecoveryWindow(client, policy.automatedRecoveryWindowSeconds)
+    );
+  }
+
   /**
    * Flushes constructor-supplied promises into the durable registry.
    *
@@ -385,10 +394,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
    */
   private async ensurePolicyRegistered(): Promise<void> {
     if (this.policyRegistered) return;
-    if (this.pendingRecoveryWindowSeconds !== undefined) {
+    if (this.pendingRecoveryWindowSeconds !== undefined && this.statusRetentionDays !== undefined) {
+      await this.adoptAdvertisedPolicies({
+        automatedRecoveryWindowSeconds: this.pendingRecoveryWindowSeconds,
+        statusRetentionDays: this.statusRetentionDays,
+      });
+    } else if (this.pendingRecoveryWindowSeconds !== undefined) {
       await this.adoptAdvertisedRecoveryWindowSeconds(this.pendingRecoveryWindowSeconds);
-    }
-    if (this.statusRetentionDays !== undefined) {
+    } else if (this.statusRetentionDays !== undefined) {
       await this.adoptAdvertisedStatusRetentionDays(this.statusRetentionDays);
     }
     this.policyRegistered = true;
@@ -401,30 +414,65 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     unit: string,
     options: { validate?: (client: PgClient) => Promise<void> } = {}
   ): Promise<void> {
+    await this.upsertPolicies([{ column, value, label, unit }], options.validate);
+  }
+
+  private async upsertPolicies(
+    policies: Array<{ column: string; value: number; label: string; unit: string }>,
+    validate?: (client: PgClient) => Promise<void>
+  ): Promise<void> {
     await this.transaction(async client => {
       // Serialize adopters so two racing runtimes cannot both read "absent"
       // and each install their own value.
       await advisoryLock(client, 'adcp-reporting-managed-policy');
       // Any precondition runs here, under the same lock and in the same
       // transaction, so a refusal rolls the write back with it.
-      await options.validate?.(client);
-      const existing = await client.query<QueryRow & { value: string | null }>(
-        `SELECT ${column}::text AS value FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
-      );
-      const current = existing.rows[0]?.value;
-      if (current !== null && current !== undefined && Number(current) !== value) {
-        throw new Error(
-          `Managed reporting is already registered with an ${label} of ${current}${unit} and cannot also ` +
-            `register ${value}${unit}; every runtime over one database must publish the same promise`
+      await validate?.(client);
+      // Validate every constraint before issuing either write. The transaction
+      // would roll a later failure back too, but this ordering also guarantees
+      // that an ordinary policy conflict never performs a transient partial
+      // update inside the transaction.
+      for (const policy of policies) {
+        const existing = await client.query<QueryRow & { value: string | null }>(
+          `SELECT ${policy.column}::text AS value FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+        );
+        const current = existing.rows[0]?.value;
+        if (current !== null && current !== undefined && Number(current) !== policy.value) {
+          throw new Error(
+            `Managed reporting is already registered with an ${policy.label} of ${current}${policy.unit} and cannot ` +
+              `also register ${policy.value}${policy.unit}; every runtime over one database must publish the same promise`
+          );
+        }
+      }
+      for (const policy of policies) {
+        await client.query(
+          `INSERT INTO adcp_reporting_managed_policy (policy_key, ${policy.column})
+           VALUES ('agent', $1)
+           ON CONFLICT (policy_key) DO UPDATE SET ${policy.column} = EXCLUDED.${policy.column},
+             changed_at = clock_timestamp()`,
+          [policy.value]
         );
       }
-      await client.query(
-        `INSERT INTO adcp_reporting_managed_policy (policy_key, ${column})
-         VALUES ('agent', $1)
-         ON CONFLICT (policy_key) DO UPDATE SET ${column} = EXCLUDED.${column}, changed_at = clock_timestamp()`,
-        [value]
-      );
     });
+  }
+
+  private async validateRecoveryWindow(client: PgClient, seconds: number): Promise<void> {
+    const widest = await client.query<QueryRow & { widest: string | null }>(
+      `SELECT MAX(CEIL(
+                (configuration.data->'schedule'->>'recoveryWindowMilliseconds')::numeric / 1000
+              ))::text AS widest
+         FROM adcp_reporting_managed_bindings binding
+         JOIN adcp_reporting_configurations configuration
+           ON configuration.configuration_id = binding.configuration_id`
+    );
+    const widestInstalled = Number(widest.rows[0]?.widest ?? 0);
+    if (Number.isFinite(widestInstalled) && seconds < widestInstalled) {
+      throw new Error(
+        `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
+          `(${widestInstalled}s); advertising ${seconds}s would promise a recovery bound this deployment ` +
+          `does not keep for every tenant`
+      );
+    }
   }
 
   private async readPolicy(
