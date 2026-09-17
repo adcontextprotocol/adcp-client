@@ -2979,6 +2979,27 @@ function removeResidualInlineIndexSignatureArms(typeDefinitions: string): string
 }
 
 /**
+ * Strip residual open-object markers, then collapse empty numbered interfaces
+ * that only become identical after that cleanup. Keeping this pass limited to
+ * empty interfaces avoids treating unrelated structural mismatches as aliases.
+ */
+export function stabilizeEmptyNumberedInterfacesAfterOpenObjectCleanup(typeDefinitions: string): string {
+  let result = removeResidualInlineIndexSignatureArms(typeDefinitions);
+  const emptyInterfaces = new Set([...result.matchAll(/^export interface (\w+) \{\s*\}$/gm)].map(match => match[1]));
+  const collapsed = [...emptyInterfaces]
+    .map(numbered => {
+      const match = numbered.match(/^(.+?)\d+$/);
+      return match && emptyInterfaces.has(match[1]) ? { numbered, base: match[1] } : null;
+    })
+    .filter((entry): entry is { numbered: string; base: string } => entry !== null);
+
+  for (const { numbered, base } of collapsed) {
+    result = result.replace(new RegExp(`\\b${numbered}\\b`, 'g'), base);
+  }
+  return collapsed.length > 0 ? filterDuplicateTypeDefinitions(result, new Set<string>()) : result;
+}
+
+/**
  * Fix typed index signatures that are incompatible with optional properties.
  *
  * When a JSON Schema has typed additionalProperties (e.g. { $ref: "ForecastRange" })
@@ -4571,7 +4592,7 @@ async function generateTypes() {
   // occurrences of the same schema within a single compilation unit
   toolTypes = removeNumberedTypeDuplicates(toolTypes);
   toolTypes = removeNumberedCoreTypeDuplicates(toolTypes, CORE_AUTHORED_TOOL_SHARED_TYPES);
-  toolTypes = removeResidualInlineIndexSignatureArms(toolTypes);
+  toolTypes = stabilizeEmptyNumberedInterfacesAfterOpenObjectCleanup(toolTypes);
   toolTypes = namePostalAreaCountryBranch(toolTypes);
   toolTypes = applyKnownJstsAliases(toolTypes);
   toolTypes = fixTypedIndexSignatures(toolTypes);
