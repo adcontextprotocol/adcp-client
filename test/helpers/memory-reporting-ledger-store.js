@@ -32,6 +32,8 @@ class MemoryLedgerStore {
   transitions = new Map();
   snapshots = new Map();
   leases = new Map();
+  /** Counts pre-SDK-14 baseline reconstructions so tests can prove it runs once. */
+  finalityBaselineReconstructions = 0;
 
   async putConfiguration(value) {
     const existing = [...this.configurations.values()].find(
@@ -174,18 +176,46 @@ class MemoryLedgerStore {
     if (inserted) this.transitions.set(value.transitionId, structuredClone(value));
     return { inserted };
   }
+  /**
+   * Returns the committed finality baseline of the latest transition.
+   *
+   * This double keeps no commit log — fixtures are seeded straight into the
+   * maps — so it cannot say which revisions were already committed when a
+   * pre-SDK-14 transition was recorded, and it must not guess from revision
+   * payload timestamps: a revision created before that transition but committed
+   * after it would be counted as already observed and would suppress the real
+   * snapshot→official change. It therefore declares no reconstruction, persists
+   * `'none'` as the baseline, and serves every later read from that value.
+   */
+  async resolveTransitionFinalityBaseline(obligationId) {
+    const latest = (await this.listTransitions(obligationId)).at(-1);
+    if (!latest) return 'none';
+    if (latest.finality) return latest.finality;
+    this.finalityBaselineReconstructions += 1;
+    this.transitions.set(latest.transitionId, { ...this.transitions.get(latest.transitionId), finality: 'none' });
+    return 'none';
+  }
+
   async applyLifecycleProjection(input) {
     const revisionIds = (await this.listRevisions(input.reporting_obligation_id)).map(
       value => value.reporting_revision_id
     );
     const latest = (await this.listTransitions(input.reporting_obligation_id)).at(-1);
     const obligation = await this.getObligation(input.reporting_obligation_id);
+    // A store compiled against the pre-finality port has no resolver and must
+    // ignore expectedPreviousFinality; model that faithfully.
+    const previousFinality = this.resolveTransitionFinalityBaseline
+      ? await this.resolveTransitionFinalityBaseline(input.reporting_obligation_id)
+      : undefined;
     if (
       !obligation ||
       obligation.state !== input.expectedObligationState ||
       obligation.attemptCount !== input.expectedAttemptCount ||
       JSON.stringify(revisionIds) !== JSON.stringify(input.expectedRevisionIds) ||
-      (latest?.health ?? 'waiting') !== input.expectedPreviousHealth
+      (latest?.health ?? 'waiting') !== input.expectedPreviousHealth ||
+      (input.expectedPreviousFinality !== undefined &&
+        previousFinality !== undefined &&
+        previousFinality !== input.expectedPreviousFinality)
     ) {
       return { applied: false, transitionInserted: false };
     }

@@ -17,6 +17,7 @@ import type {
 
 export type ReportingHealthV1 = 'waiting' | 'healthy' | 'delayed' | 'action_required' | 'complete';
 export type ReportingFinalityV1 = 'snapshot' | 'official';
+export type ReportingObservedFinalityV1 = 'none' | ReportingFinalityV1;
 
 export type ReportingLedgerAccountV1 = Readonly<{ account_id: string }>;
 
@@ -421,9 +422,37 @@ export interface ReportingLedgerStatusTransitionV1 {
   reporting_obligation_id: string;
   previousHealth: ReportingHealthV1;
   health: ReportingHealthV1;
+  /** Finality visible immediately before this transition. Added in SDK 14. */
+  previousFinality?: ReportingObservedFinalityV1;
+  /** Finality visible at this transition. Added in SDK 14. */
+  finality?: ReportingObservedFinalityV1;
   issueIds: string[];
   occurredAt: string;
   notifiedAt?: string;
+}
+
+/** Minimum transaction surface used by the bundled PostgreSQL ledger. */
+export interface ReportingLedgerTransactionV1 {
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: unknown[]
+  ): Promise<{ rows: Row[]; rowCount: number | null }>;
+}
+
+/**
+ * Persists the durable consequence of a reporting lifecycle transition.
+ *
+ * The ledger store MUST call this port with its active authoritative
+ * transaction. Implementations must not perform network I/O from this method.
+ */
+export interface ReportingLedgerNotificationActivityPortV1<TTransaction = unknown> {
+  recordTransition(
+    input: {
+      transition: Readonly<ReportingLedgerStatusTransitionV1>;
+      obligation: Readonly<ReportingLedgerObligationV1>;
+    },
+    transaction: TTransaction
+  ): Promise<void>;
 }
 
 export interface ReportingLedgerSubscriberV1 {
@@ -506,6 +535,45 @@ export class ReportingConsumerStatusConflictError extends Error {
 }
 
 export interface ReportingLedgerStore {
+  /**
+   * True when durable notification/activity intent is committed with transitions.
+   * Such stores must atomically stamp `notifiedAt` as the durable handoff marker.
+   */
+  readonly transactionalNotificationActivity?: boolean;
+  /**
+   * Resolves the authoritative observed finality of the obligation's latest
+   * transition.
+   *
+   * Transitions written from SDK 14 onward carry their own `finality`, so the
+   * baseline is read straight back off the committed row. Pre-SDK-14 rows carry
+   * none, and a store MUST NOT reconstruct one: nothing already stored proves
+   * which revisions had committed when such a row was recorded. Payload
+   * timestamps rank creation instants rather than commits, and insert wall
+   * clocks such as `clock_timestamp()` can repeat within a microsecond and step
+   * backward. Either rule can conclude `official`, which makes
+   * `previousFinality` equal `finality` and permanently suppresses the real
+   * snapshot→official change.
+   *
+   * Such rows therefore resolve to `'none'`, which the store persists so
+   * `applyLifecycleProjection` compares against the same committed value the
+   * lifecycle decision used. That records at most one redundant finality-only
+   * transition per obligation at upgrade, which stays internal activity because
+   * the AdCP status webhook is health-only.
+   *
+   * Optional for stores compiled against the pre-finality lifecycle port. Such
+   * stores must also ignore `expectedPreviousFinality`, and omitting the port
+   * is **not** equivalent to returning `'none'`: the lifecycle cannot persist a
+   * baseline on their behalf, so it uses the currently observed finality
+   * instead, making the comparison a no-op. Finality is simply unobservable
+   * there — health transitions still fire, finality-only ones never do, exactly
+   * as before finality existed. Returning `'none'` for such a store would
+   * instead make every reconciliation tick observe `'none' -> official` and
+   * append another finality-only transition, forever.
+   *
+   * So a store that wants finality-only activity at all must implement this
+   * port, and commit what it returns.
+   */
+  resolveTransitionFinalityBaseline?(reporting_obligation_id: string): Promise<ReportingObservedFinalityV1>;
   putConfiguration(
     configuration: ReportingLedgerConfigurationV1
   ): Promise<{ inserted: boolean; value: ReportingLedgerConfigurationV1 }>;
@@ -562,6 +630,13 @@ export interface ReportingLedgerStore {
     reporting_obligation_id: string;
     expectedRevisionIds: string[];
     expectedPreviousHealth: ReportingHealthV1;
+    /**
+     * Baseline observed finality the caller decided against, as returned by
+     * `resolveTransitionFinalityBaseline`. Stores must compare it against that
+     * same committed baseline and never against a freshly reconstructed one.
+     * Optional for callers compiled against the pre-finality lifecycle port.
+     */
+    expectedPreviousFinality?: ReportingObservedFinalityV1;
     expectedObligationState: ReportingLedgerObligationV1['state'];
     expectedAttemptCount: number;
     projectedIssues: ReportingLedgerIssueV1[];

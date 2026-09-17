@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { canonicalJsonSha256 } from '../../utils/jcs';
+import { isWebhookDeliveryTerminalError } from '../webhook-delivery/common';
 import { enforceSsrfPolicy, enforceSsrfPolicyResolved } from '../../substitution/observer/ssrf';
 import { WEBHOOK_SSRF_POLICY } from '../pin-and-bind-fetch';
 import type {
   WebhookAttemptAuthorizationDecision,
+  WebhookAttemptSuppressionReason,
   WebhookEmitAttempt,
   WebhookAuthentication,
 } from '../webhook-emitter';
@@ -12,11 +14,13 @@ import type {
   NotificationAuthenticationMode,
   NotificationEvent,
   NotificationFanoutDelivery,
+  NotificationRecipientRef,
   NotificationReplacementResult,
   NotificationSubscriptionConfigInput,
   NotificationSubscriptionScope,
   NotificationSubscriptionSet,
   NotificationSubscriptionView,
+  NotificationSuppressionDisposition,
   PersistentNotificationRuntime,
   PersistentNotificationRuntimeOptions,
   StoredNotificationAuthentication,
@@ -118,26 +122,68 @@ export function createPersistentNotificationRuntime(
   ]);
   const validateDestination = options.validateDestination ?? validatePersistentNotificationDestination;
 
+  /**
+   * Durably records the imminent POST. Runs after every other authority check so
+   * a suppressed delivery never leaves a checkpoint behind, and before the POST
+   * so a crash afterwards is correctly treated as an ambiguous send. Deliberately
+   * not bounded by `adopterCallbackTimeoutMs`: abandoning a write that may still
+   * commit would be indistinguishable from never having attempted.
+   */
+  const checkpointAttempt = async (context: NotificationAttemptContext): Promise<boolean> => {
+    if (!options.checkpointDeliveryAttempt) return true;
+    const controller = new AbortController();
+    try {
+      await options.checkpointDeliveryAttempt({
+        scope: structuredClone(context.scope),
+        eventAnchor: context.eventAnchor,
+        ...(context.accountId === undefined ? {} : { accountId: context.accountId }),
+        subscriberId: context.subscriberId,
+        destinationGeneration: context.destinationGeneration,
+        eventType: context.eventType,
+        notificationId: context.notificationId,
+        signal: controller.signal,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const suppress = (reason: WebhookAttemptSuppressionReason): WebhookAttemptAuthorizationDecision => ({
+    decision: 'suppress',
+    reason,
+    ...(notificationSuppressionDisposition(reason) === 'retryable' ? { retryable: true } : {}),
+  });
+
   const authorizeWebhookAttempt = async (
     attempt: Readonly<WebhookEmitAttempt>
   ): Promise<WebhookAttemptAuthorizationDecision> => {
     const context = parseAttemptContext(attempt.attemptAuthorizationContext);
+    // A malformed context can never become valid on retry, so it is terminal
+    // regardless of how an unparseable authorization failure is otherwise
+    // classified.
     if (!context) return { decision: 'suppress', reason: 'authorization_error' };
 
     let set: NotificationSubscriptionSet | null;
     try {
       set = await options.store.get(context.scope);
     } catch {
-      return { decision: 'suppress', reason: 'authorization_error' };
+      return suppress('authorization_error');
     }
-    if (!set) return { decision: 'suppress', reason: 'subscription_missing' };
+    if (!set) return suppress('subscription_missing');
     const subscription = set.subscriptions.find(item => item.subscriberId === context.subscriberId);
-    if (!subscription) return { decision: 'suppress', reason: 'subscription_missing' };
+    if (!subscription) return suppress('subscription_missing');
     if (subscription.destinationGeneration !== context.destinationGeneration) {
-      return { decision: 'suppress', reason: 'subscription_stale' };
+      // A fresh emission can re-resolve the new generation, so this is
+      // retryable. A recovered outbox attempt cannot: its snapshot is pinned to
+      // the generation that was replaced, so retrying it only consumes recovery
+      // capacity until the horizon expires.
+      return attempt.recovered === true
+        ? { decision: 'suppress', reason: 'subscription_stale' }
+        : suppress('subscription_stale');
     }
     if (!subscription.active || subscription.proofGeneration !== subscription.destinationGeneration) {
-      return { decision: 'suppress', reason: 'subscription_inactive' };
+      return suppress('subscription_inactive');
     }
     if (
       !subscription.eventTypes.includes(context.eventType) &&
@@ -147,7 +193,7 @@ export function createPersistentNotificationRuntime(
         subscription.includeFutureEventTypes
       )
     ) {
-      return { decision: 'suppress', reason: 'event_not_allowed' };
+      return suppress('event_not_allowed');
     }
     if (
       (context.eventAnchor === 'account' && !context.accountId) ||
@@ -156,7 +202,7 @@ export function createPersistentNotificationRuntime(
         (context.eventAnchor !== 'account' || context.scope.accountId !== context.accountId)) ||
       (context.scope.kind === 'caller' && context.eventAnchor === 'account' && !subscription.allAuthorizedAccounts)
     ) {
-      return { decision: 'suppress', reason: 'event_not_allowed' };
+      return suppress('event_not_allowed');
     }
 
     let decision: { authorized: true } | { authorized: false };
@@ -174,17 +220,18 @@ export function createPersistentNotificationRuntime(
         })
       );
     } catch {
-      return { decision: 'suppress', reason: 'authorization_error' };
+      return suppress('authorization_error');
     }
-    if (decision?.authorized !== true) return { decision: 'suppress', reason: 'authorization_denied' };
+    if (decision?.authorized !== true) return suppress('authorization_denied');
 
     const authenticationMode = subscription.authentication.mode;
     if (authenticationMode === 'rfc9421') {
+      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
       return { decision: 'allow', authentication: null };
     }
     const bindingId = subscription.authentication.bindingId;
     if (!bindingId || !options.credentialAdapter) {
-      return { decision: 'suppress', reason: 'credential_unavailable' };
+      return suppress('credential_unavailable');
     }
     try {
       const authentication = await runAdopterCallback(adopterCallbackTimeoutMs, 'credentialAdapter.resolve', signal =>
@@ -198,11 +245,12 @@ export function createPersistentNotificationRuntime(
         })
       );
       if (!resolvedAuthenticationMatches(authenticationMode, authentication)) {
-        return { decision: 'suppress', reason: 'credential_unavailable' };
+        return suppress('credential_unavailable');
       }
+      if (!(await checkpointAttempt(context))) return suppress('attempt_checkpoint_unavailable');
       return { decision: 'allow', authentication };
     } catch {
-      return { decision: 'suppress', reason: 'credential_unavailable' };
+      return suppress('credential_unavailable');
     }
   };
 
@@ -215,6 +263,10 @@ export function createPersistentNotificationRuntime(
     store: options.store,
     emitter,
     authorizeWebhookAttempt,
+    hasDeliveryAttemptCheckpoint: options.checkpointDeliveryAttempt !== undefined,
+    ...(options.checkpointDeliveryAttempt === undefined
+      ? {}
+      : { deliveryAttemptCheckpoint: options.checkpointDeliveryAttempt }),
     async replace(scope, configs, replaceOptions = {}): Promise<NotificationReplacementResult> {
       assertScope(scope);
       assertUniqueSubscribers(configs);
@@ -366,7 +418,7 @@ export function createPersistentNotificationRuntime(
         throw new Error('Persistent notification fanout exceeded maxFanoutCandidates; no deliveries were attempted');
       }
 
-      const targets = candidateSets.flatMap(set =>
+      const resolved = candidateSets.flatMap(set =>
         set.subscriptions
           .filter(
             subscription =>
@@ -378,9 +430,14 @@ export function createPersistentNotificationRuntime(
           )
           .map(subscription => ({ set, subscription }))
       );
-      if (targets.length > maxFanoutCandidates) {
+      if (resolved.length > maxFanoutCandidates) {
         throw new Error('Persistent notification fanout exceeded maxFanoutCandidates; no deliveries were attempted');
       }
+      // Freeze the recipient set before the first send. Delivering only the
+      // intersection of what is resolvable now and what the emitter durably
+      // committed keeps every delivery_id stable across an ambiguous retry, so
+      // a replacement generation can never be added as a second delivery.
+      const targets = event.freezeRecipients ? await pinResolvedRecipients(resolved, event.freezeRecipients) : resolved;
       const deliveries = await mapConcurrent(targets, fanoutConcurrency, async ({ set, subscription }) => {
         const deliveryId = deliveryIdentity(event.emissionId, set.scope, subscription);
         const payload = notificationPayload(event, subscription.subscriberId);
@@ -410,10 +467,15 @@ export function createPersistentNotificationRuntime(
             attemptAuthorizationContext: context as unknown as Record<string, unknown>,
           });
           return { ...delivery, result } satisfies NotificationFanoutDelivery;
-        } catch {
+        } catch (error) {
+          // A retired binding or an exhausted retry horizon can never succeed:
+          // flattening it into a retryable failure leaves the owner recovering
+          // the same dead delivery until it exhausts its own capacity.
           return {
             ...delivery,
-            failure: { reason: 'delivery_runtime_error' },
+            failure: isWebhookDeliveryTerminalError(error)
+              ? { reason: 'delivery_binding_retired', terminal: true }
+              : { reason: 'delivery_runtime_error' },
           } satisfies NotificationFanoutDelivery;
         }
       });
@@ -737,6 +799,94 @@ function assertPayloadField(payload: Record<string, unknown>, field: string, exp
       `payload.${field}`
     );
   }
+}
+
+async function pinResolvedRecipients<
+  Target extends {
+    set: { scope: NotificationSubscriptionScope };
+    subscription: { subscriberId: string; destinationGeneration: string };
+  },
+>(
+  resolved: readonly Target[],
+  freezeRecipients: NonNullable<NotificationEvent['freezeRecipients']>
+): Promise<Target[]> {
+  const frozen = await freezeRecipients(
+    resolved.map(target => ({
+      scope: structuredClone(target.set.scope),
+      subscriberId: target.subscription.subscriberId,
+      destinationGeneration: target.subscription.destinationGeneration,
+    }))
+  );
+  if (!Array.isArray(frozen)) {
+    throw new TypeError('freezeRecipients must return the durably committed recipient set');
+  }
+  const committed = new Set(
+    frozen.map(recipient => {
+      if (
+        !recipient ||
+        typeof recipient.subscriberId !== 'string' ||
+        typeof recipient.destinationGeneration !== 'string' ||
+        !recipient.scope
+      ) {
+        throw new TypeError('freezeRecipients returned a malformed recipient reference');
+      }
+      return recipientKey(recipient);
+    })
+  );
+  return resolved.filter(target =>
+    committed.has(
+      recipientKey({
+        scope: target.set.scope,
+        subscriberId: target.subscription.subscriberId,
+        destinationGeneration: target.subscription.destinationGeneration,
+      })
+    )
+  );
+}
+
+/**
+ * Classifies a live-authority suppression so an emission owner can tell a
+ * deliberate decision not to deliver from an operational failure.
+ *
+ * Treating every suppression as terminal silently drops notifications whenever
+ * a store read or an authorization/credential callback has a bad minute, and
+ * treating every suppression as retryable poisons the queue for a subscriber
+ * that was legitimately revoked or denied.
+ */
+export function notificationSuppressionDisposition(
+  reason: WebhookAttemptSuppressionReason
+): NotificationSuppressionDisposition {
+  switch (reason) {
+    case 'authorization_error':
+    case 'credential_unavailable':
+      // The runtime could not establish authority. Says nothing about the
+      // subscriber, and nothing was sent.
+      return 'retryable';
+    case 'subscription_stale':
+      // A newer destination generation exists and nothing was sent. The owner
+      // re-resolves rather than re-addressing this generation.
+      return 'retryable';
+    case 'attempt_checkpoint_unavailable':
+      // The durable pre-POST record could not be written, so nothing was sent.
+      return 'retryable';
+    case 'subscription_missing':
+    case 'subscription_inactive':
+    case 'event_not_allowed':
+    case 'authorization_denied':
+      return 'terminal';
+    default:
+      // Unknown reasons fail closed as retryable: dropping a health
+      // notification is worse than re-attempting one.
+      return 'retryable';
+  }
+}
+
+function recipientKey(recipient: Readonly<NotificationRecipientRef>): string {
+  return canonicalJsonSha256({
+    scope: recipient.scope,
+    subscriberId: recipient.subscriberId,
+    destinationGeneration: recipient.destinationGeneration,
+  });
 }
 
 function deliveryIdentity(

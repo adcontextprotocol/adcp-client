@@ -20,10 +20,9 @@ import {
   type WebhookRegistration,
   type WebhookRegistrationStore,
 } from '@adcp/sdk';
-import { getIdempotencyMigration, pgBackend } from '@adcp/sdk/server';
+import { getIdempotencyMigration, pgBackend, type PgQueryable } from '@adcp/sdk/server';
 import { BuyProductsResponseSchema } from '@adcp/sdk/schemas';
 import { getReplayStoreMigration, PostgresReplayStore } from '@adcp/sdk/signing/server';
-import { Pool, type PoolClient } from 'pg';
 
 export const STORE_NAMES = {
   deployment: 'buyer_prod_v1',
@@ -116,6 +115,14 @@ export interface AuthorizedSellerSession {
   authToken: string;
 }
 
+export interface DurableBuyerPgClient extends PgQueryable {
+  release(): void;
+}
+
+export interface DurableBuyerPgPool extends PgQueryable {
+  connect(): Promise<DurableBuyerPgClient>;
+}
+
 export interface StoredOperation {
   logicalOperationId: string;
   naturalKey: string;
@@ -135,7 +142,7 @@ export interface StoredOperation {
 }
 
 export interface DurableBuyerDependencies {
-  pool: Pool;
+  pool: DurableBuyerPgPool;
   /** Host implementation of the SDK's atomic DeferredTaskStorage contract. */
   deferredStorage: DeferredTaskStorage;
   /** Re-derive current credentials and authorization; never load them from the operation row. */
@@ -225,7 +232,7 @@ function rowToOperation(row: Record<string, unknown>): StoredOperation {
 }
 
 export class PostgresOperationLedger {
-  constructor(readonly pool: Pool) {}
+  constructor(readonly pool: DurableBuyerPgPool) {}
 
   async stage(
     logicalOperationId: string,
@@ -327,7 +334,11 @@ export class PostgresOperationLedger {
     );
   }
 
-  async bindRegistration(tx: PoolClient, registration: WebhookRegistration, context: DispatchContext): Promise<void> {
+  async bindRegistration(
+    tx: DurableBuyerPgClient,
+    registration: WebhookRegistration,
+    context: DispatchContext
+  ): Promise<void> {
     if (registration.agentId !== context.session.sellerId)
       throw new Error('Webhook seller binding changed before dispatch.');
     const bound = await tx.query(
@@ -573,7 +584,7 @@ class OperationBoundRegistrationStore implements WebhookRegistrationStore {
   private readonly shared: WebhookRegistrationStore;
 
   constructor(
-    private readonly pool: Pool,
+    private readonly pool: DurableBuyerPgPool,
     private readonly ledger: PostgresOperationLedger
   ) {
     this.shared = pgWebhookRegistrationStore(pool, { tableName: STORE_NAMES.registrations });
@@ -616,14 +627,14 @@ class OperationBoundRegistrationStore implements WebhookRegistrationStore {
   }
 }
 
-export async function migrateDurableBuyer(pool: Pool): Promise<void> {
+export async function migrateDurableBuyer(pool: DurableBuyerPgPool): Promise<void> {
   await pool.query(getWebhookRegistrationMigration({ tableName: STORE_NAMES.registrations }));
   await pool.query(getReplayStoreMigration(STORE_NAMES.webhookReplay));
   await pool.query(getIdempotencyMigration({ tableName: STORE_NAMES.webhookDedup }));
   await pool.query(HOST_OPERATION_MIGRATION);
 }
 
-export async function probeDurableBuyerStores(pool: Pool): Promise<void> {
+export async function probeDurableBuyerStores(pool: DurableBuyerPgPool): Promise<void> {
   const registrations = pgWebhookRegistrationStore(pool, { tableName: STORE_NAMES.registrations });
   const webhookDedup = pgBackend(pool, { tableName: STORE_NAMES.webhookDedup });
   if (!webhookDedup.probe) throw new Error('The selected webhook dedup backend has no readiness probe.');

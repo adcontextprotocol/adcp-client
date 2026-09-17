@@ -200,6 +200,17 @@ export type NotificationDeliveryAuthorizer = (
   input: Readonly<NotificationDeliveryAuthorizationInput>
 ) => MaybePromise<{ authorized: true } | { authorized: false }>;
 
+/**
+ * One resolved delivery target. Together with the event's `emissionId` these
+ * three fields are exactly the inputs to the per-subscriber delivery identity,
+ * so pinning them pins the idempotency key the subscriber sees.
+ */
+export interface NotificationRecipientRef {
+  scope: NotificationSubscriptionScope;
+  subscriberId: string;
+  destinationGeneration: string;
+}
+
 export interface NotificationEvent {
   /** Application-stable identity for this delivery event; reuse on crash retry, rotate on re-emission. */
   emissionId: string;
@@ -213,7 +224,76 @@ export interface NotificationEvent {
   /** Required for account-anchored events. */
   accountId?: string;
   payload: Record<string, unknown>;
+  /**
+   * Durably freezes the recipient set before any external send.
+   *
+   * The runtime resolves its candidates, hands them to this callback, and then
+   * delivers to exactly the intersection of those candidates and what the
+   * callback returns. An emitter that persists the first resolved set and
+   * replays it verbatim therefore keeps every `delivery_id` — and so every
+   * subscriber-visible idempotency key — stable across an ambiguous retry: a
+   * subscription replaced or revoked after the first send is skipped rather
+   * than addressed under a new destination generation, so a replay can never
+   * add a second logical delivery of the same notification.
+   *
+   * Called at most once per `emit`, before the first attempt. It is a
+   * durability barrier owned by the emitting subsystem, not an adopter policy
+   * hook, so it is deliberately not bounded by `adopterCallbackTimeoutMs`: the
+   * runtime cannot safely abandon a write that may still commit. Implementations
+   * must enforce their own transaction-level deadline. Throwing aborts the
+   * emission before anything is sent.
+   */
+  freezeRecipients?: (
+    candidates: readonly NotificationRecipientRef[]
+  ) => MaybePromise<readonly NotificationRecipientRef[]>;
 }
+
+/** Durable record that one recipient is about to receive an external POST. */
+export interface NotificationDeliveryAttemptCheckpointInput {
+  scope: Readonly<NotificationSubscriptionScope>;
+  eventAnchor: NotificationEventAnchor;
+  accountId?: string;
+  subscriberId: string;
+  destinationGeneration: string;
+  eventType: string;
+  notificationId: string;
+  signal: AbortSignal;
+}
+
+/**
+ * Durably records that a delivery is about to be attempted, awaited on the
+ * allow path of live delivery authority immediately before every external POST.
+ *
+ * It is keyed on the durable attempt context rather than on a per-emission
+ * closure precisely so that recovered outbox attempts participate: an emission
+ * snapshot cannot carry a function, so a per-emission barrier would be silently
+ * skipped by the very path — a restarted outbox worker — where an ambiguous send
+ * is most likely.
+ *
+ * This is what makes a frozen recipient set safely revisable. Suppression fails
+ * closed before this point, so a recipient with no checkpoint provably never
+ * received a POST and may be replaced; a recipient with one is pinned forever,
+ * because a crash after it is an ambiguous send. Rejecting suppresses that
+ * delivery as retryable with no external attempt.
+ */
+export type NotificationDeliveryAttemptCheckpoint = (
+  input: Readonly<NotificationDeliveryAttemptCheckpointInput>
+) => MaybePromise<void>;
+
+/**
+ * Whether a live-authority suppression is a deliberate decision not to deliver
+ * or an operational failure that says nothing about the subscriber.
+ *
+ * `terminal` — the subscriber must not receive this event: it is gone, inactive,
+ * not subscribed to the type, or the adopter denied it. Settle the emission.
+ *
+ * `retryable` — the runtime could not establish authority: a store read failed,
+ * an authorization or credential callback threw or timed out, or the
+ * subscription generation moved while the emission was in flight. Nothing was
+ * sent (`attempts: 0`), so the owner must release and retry rather than record
+ * the notification as delivered.
+ */
+export type NotificationSuppressionDisposition = 'terminal' | 'retryable';
 
 export interface NotificationSubscriptionView {
   subscriber_id: string;
@@ -256,7 +336,18 @@ interface NotificationFanoutDeliveryBase {
 }
 
 export type NotificationFanoutDelivery = NotificationFanoutDeliveryBase &
-  ({ result: WebhookEmitResult; failure?: never } | { result?: never; failure: { reason: 'delivery_runtime_error' } });
+  (
+    | { result: WebhookEmitResult; failure?: never }
+    | {
+        result?: never;
+        /**
+         * `delivery_binding_retired` is terminal: the delivery identity is
+         * retired or past its retry horizon and can never succeed. Anything
+         * else is an operational failure worth retrying.
+         */
+        failure: { reason: 'delivery_runtime_error' | 'delivery_binding_retired'; terminal?: boolean };
+      }
+  );
 
 export interface NotificationFanoutResult {
   notificationId: string;
@@ -270,6 +361,14 @@ export interface PersistentNotificationRuntimeOptions {
   proofAdapter: NotificationProofAdapter;
   credentialAdapter?: NotificationCredentialBindingAdapter;
   authorizeDelivery: NotificationDeliveryAuthorizer;
+  /**
+   * Durable pre-POST checkpoint. Required by any emission owner that freezes a
+   * recipient set and needs to know whether a recipient was ever addressed;
+   * `PersistentNotificationRuntime.hasDeliveryAttemptCheckpoint` reports whether
+   * it is wired so such an owner can fail closed at startup instead of silently
+   * losing the guarantee.
+   */
+  checkpointDeliveryAttempt?: NotificationDeliveryAttemptCheckpoint;
   /** Defaults to DNS resolution plus the SDK's strict webhook SSRF policy. */
   validateDestination?: NotificationDestinationValidator;
   /** Build the emitter with the supplied mandatory per-attempt authorizer. */
@@ -309,6 +408,23 @@ export interface PersistentNotificationRuntime {
   readonly store: NotificationSubscriptionStore;
   readonly emitter: RecoverableWebhookEmitter;
   readonly authorizeWebhookAttempt: WebhookAttemptAuthorizer;
+  /**
+   * True when a durable pre-POST attempt checkpoint is wired.
+   *
+   * Optional so a custom implementation written against an earlier release
+   * still satisfies this interface structurally. An emission owner that needs
+   * the checkpoint treats an absent flag as "not proven" and fails closed.
+   */
+  readonly hasDeliveryAttemptCheckpoint?: boolean;
+  /**
+   * The checkpoint this runtime actually invokes, exposed so an emission owner
+   * can verify by identity that its own checkpoint is the one that runs.
+   * Declaring the capability is not the same as wiring the right function:
+   * two correctly-built checkpoints pointing at different stores each look
+   * valid in isolation, and the mismatch only shows up as deliveries that
+   * checkpoint nothing.
+   */
+  readonly deliveryAttemptCheckpoint?: NotificationDeliveryAttemptCheckpoint;
   replace(
     scope: Readonly<NotificationSubscriptionScope>,
     configs: readonly NotificationSubscriptionConfigInput[],
