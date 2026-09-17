@@ -15,7 +15,7 @@ import {
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
 } from './health';
-import { compareReportingInstants, ReportingLifecycleInvariantError } from './instant';
+import { compareReportingInstants } from './instant';
 import {
   REPORTING_CONSUMER_STATUS_BATCH_RESULT_MAX_BYTES,
   REPORTING_CONSUMER_STATUS_ERROR_FIELD_MAX_BYTES,
@@ -3737,7 +3737,7 @@ async function assertNoLegacyPendingTransitions(
     [obligationId]
   );
   if (pending.rowCount !== 0) {
-    throw new ReportingLifecycleInvariantError(
+    throw new Error(
       'Drain or explicitly resolve legacy pending reporting transitions before enabling transactional notification activity'
     );
   }

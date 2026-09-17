@@ -577,13 +577,25 @@ describe('seller reporting ledger', () => {
     );
   });
 
-  test('deadline sweeps fail loud when transactional notification activity has legacy pending work', async () => {
+  test('deadline sweeps back off legacy pending residue without starving a clean sibling account', async () => {
     const store = new MemoryLedgerStore();
-    const obligation = healthObligation();
-    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    const residue = {
+      ...healthObligation(),
+      reporting_obligation_id: 'obligation-a-residue',
+      configurationId: 'configuration-a-residue',
+      account: { account_id: 'account-a-residue' },
+    };
+    const clean = {
+      ...healthObligation(),
+      reporting_obligation_id: 'obligation-b-clean',
+      configurationId: 'configuration-b-clean',
+      account: { account_id: 'account-b-clean' },
+    };
+    store.obligations.set(residue.reporting_obligation_id, residue);
+    store.obligations.set(clean.reporting_obligation_id, clean);
     store.transitions.set('legacy-pending-transition', {
       transitionId: 'legacy-pending-transition',
-      reporting_obligation_id: obligation.reporting_obligation_id,
+      reporting_obligation_id: residue.reporting_obligation_id,
       previousHealth: 'waiting',
       health: 'delayed',
       issueIds: [],
@@ -593,15 +605,16 @@ describe('seller reporting ledger', () => {
     const failures = [];
     store.recordLifecycleFailure = async input => void failures.push(input.reporting_obligation_id);
 
-    await assert.rejects(
-      () =>
-        reconcileReportingStatusDeadlinesV1({
-          store,
-          ledgerAsOf: '2026-09-02T02:30:00.000Z',
-        }),
-      /Drain or explicitly resolve legacy pending reporting transitions/
+    assert.equal(
+      await reconcileReportingStatusDeadlinesV1({
+        store,
+        ledgerAsOf: '2026-09-02T02:30:00.000Z',
+      }),
+      2
     );
-    assert.deepEqual(failures, [], 'a deployment invariant is not recorded as an isolated tenant failure');
+    assert.deepEqual(failures, [residue.reporting_obligation_id], 'only the poisoned obligation is backed off');
+    assert.equal((await store.listTransitions(residue.reporting_obligation_id)).length, 1);
+    assert.equal((await store.listTransitions(clean.reporting_obligation_id)).at(-1).health, 'action_required');
   });
 
   test('deadline sweeps fail loud when transactional notification activity conflicts with legacy subscribers', async () => {
@@ -611,6 +624,12 @@ describe('seller reporting ledger', () => {
     store.transactionalNotificationActivity = true;
     const failures = [];
     store.recordLifecycleFailure = async input => void failures.push(input.reporting_obligation_id);
+    let obligationReads = 0;
+    const getObligation = store.getObligation.bind(store);
+    store.getObligation = async id => {
+      obligationReads += 1;
+      return getObligation(id);
+    };
 
     await assert.rejects(
       () =>
@@ -622,6 +641,7 @@ describe('seller reporting ledger', () => {
       /mutually exclusive/
     );
     assert.deepEqual(failures, [], 'a deployment invariant is not recorded as an isolated tenant failure');
+    assert.equal(obligationReads, 0, 'the deployment-wide conflict fails before obligation work starts');
   });
 
   test('does not freeze a superseded generation until its straddling period closes', async () => {
