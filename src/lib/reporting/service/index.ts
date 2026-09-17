@@ -1060,8 +1060,6 @@ const DAY_MILLISECONDS = 86_400_000;
 const OFFSET_PROBE_STEP_DAYS = 10;
 /** Construction-time window when no anchor exists yet. */
 const OFFSET_BACKWARD_HORIZON_DAYS = 400;
-/** Bounds the install-time scan; ~57 years of 10-day probes is a few ms. */
-const MAX_OFFSET_SPAN_DAYS = 100 * 365;
 /** Periods the planner will generate before this configuration is revisited. */
 const OFFSET_FORWARD_HORIZON_DAYS = 400;
 
