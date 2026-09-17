@@ -263,9 +263,6 @@ CREATE TABLE IF NOT EXISTS ${table} (
     -- Abandoned: bounded out of the pending set without ever being recorded as
     -- delivered, so it stops consuming tenant capacity but stays auditable.
     (state = 'abandoned' AND projected_at IS NULL AND retain_until IS NOT NULL AND abandoned_at IS NOT NULL)
-  ),
-  CONSTRAINT ${raw}_valid_delivery_intent CHECK (
-    state = 'projected' OR delivery_intent_at IS NULL OR delivery_intent_at IS NOT NULL
   )
 );
 

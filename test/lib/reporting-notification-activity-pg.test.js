@@ -64,7 +64,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         bindings.delete(bindingId);
       },
       resolve: input => {
-        if (resolveCredentialHook) return resolveCredentialHook(input);
+        if (resolveCredentialHook) return resolveCredentialHook();
         const token = bindings.get(input.bindingId);
         return { type: 'bearer', token: token ?? 'fallback-bearer-token' };
       },
