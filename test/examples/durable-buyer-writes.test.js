@@ -38,6 +38,43 @@ describe('durable buyer writes PostgreSQL example', { skip: !DATABASE_URL && 'Po
     end_time: '2027-01-01T00:00:00Z',
   };
   const failed = message => ({ status: 'failed', errors: [{ code: 'INTERNAL_ERROR', message }] });
+  const completed = (mediaBuyStatus, confirmedAt) => ({
+    status: 'completed',
+    media_buy_id: 'media-buy-a',
+    revision: 1,
+    accepted_proposal: {
+      proposal_id: 'proposal-a',
+      proposal_kind: 'new_media_buy',
+      proposal_status: 'accepted',
+      media_buy_id: 'media-buy-a',
+      accepted_at: '2026-09-17T00:00:00Z',
+      name: 'Accepted proposal',
+      commercial_terms: {
+        brand: { domain: 'example.com' },
+        purchases: [
+          {
+            product_id: 'product-a',
+            pricing_option_id: 'price-a',
+            pricing: {
+              pricing_option_id: 'price-a',
+              pricing_model: 'cpm',
+              currency: 'USD',
+              fixed_price: 10,
+            },
+            start_time: '2026-09-18T00:00:00Z',
+            end_time: '2027-01-01T00:00:00Z',
+          },
+        ],
+        start_time: '2026-09-18T00:00:00Z',
+        end_time: '2027-01-01T00:00:00Z',
+      },
+      terms_digest: `sha256:${'A'.repeat(43)}`,
+    },
+    purchase_bindings: [{ purchase_index: 0, product_id: 'product-a', package_id: 'package-a' }],
+    available_actions: [],
+    media_buy_status: mediaBuyStatus,
+    confirmed_at: confirmedAt,
+  });
 
   before(async () => {
     const { Pool } = require('pg');
@@ -122,6 +159,39 @@ describe('durable buyer writes PostgreSQL example', { skip: !DATABASE_URL && 'Po
         ).rows[0].count
       ),
       0
+    );
+  });
+
+  test('mutable readback fields converge on one immutable commitment fingerprint', async () => {
+    const logicalOperationId = 'operation-mutable-readback';
+    const first = completed('active', '2026-09-17T00:00:00Z');
+    await ledger.stage(logicalOperationId, 'order-mutable-readback', session, request);
+    await ledger.observe(logicalOperationId, 'completed', first, 'seller-task-mutable');
+    await ledger.observe(
+      logicalOperationId,
+      'completed',
+      completed('paused', '2026-09-17T00:01:00Z'),
+      'seller-task-mutable'
+    );
+
+    const stored = await ledger.get(logicalOperationId);
+    assert.deepEqual(stored.terminalResult, first);
+    assert.equal(
+      Number(
+        (
+          await pool.query(
+            `SELECT count(*) FROM ${STORE_NAMES.publications}
+             WHERE deployment_namespace = $1 AND logical_operation_id = $2`,
+            [STORE_NAMES.deployment, logicalOperationId]
+          )
+        ).rows[0].count
+      ),
+      1
+    );
+    await pool.query(
+      `UPDATE ${STORE_NAMES.publications} SET published_at = clock_timestamp()
+       WHERE deployment_namespace = $1 AND logical_operation_id = $2`,
+      [STORE_NAMES.deployment, logicalOperationId]
     );
   });
 

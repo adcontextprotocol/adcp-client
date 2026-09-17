@@ -112,7 +112,7 @@ export async function recoverByPolling(
     logicalOperationId,
     task.status === 'cancelled' ? 'canceled' : task.status,
     task.result,
-    task.taskId
+    operation.sellerTaskId
   );
   return task;
 }

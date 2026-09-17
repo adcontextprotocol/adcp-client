@@ -202,10 +202,6 @@ function terminalOutcomeFingerprintPayload(value: unknown): unknown {
     revision: response.revision,
     accepted_proposal: response.accepted_proposal,
     purchase_bindings: response.purchase_bindings,
-    available_actions: response.available_actions,
-    ...(response.media_buy_status !== undefined && { media_buy_status: response.media_buy_status }),
-    ...(response.confirmed_at !== undefined && { confirmed_at: response.confirmed_at }),
-    ...(response.warnings !== undefined && { warnings: response.warnings }),
   };
 }
 

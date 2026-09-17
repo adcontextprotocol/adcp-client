@@ -224,10 +224,12 @@ canonical commitment payload intentionally converge; the first observed label
 remains in the operational status column.
 
 Only schema-valid terminal seller result payloads are fingerprinted. The
-fingerprint projects the explicit commitment fields and excludes delivery-only
-`replayed`, `context`, and `ext` fields, so direct, poll, and callback delivery
-of the same business result converge. The first full validated payload remains
-the publication value. The ledger's `status` column records task-envelope
+fingerprint projects immutable commitment identity (`media_buy_id`, `revision`,
+`accepted_proposal`, and `purchase_bindings`) and excludes delivery-only or
+time-varying fields such as `replayed`, `context`, `ext`, `available_actions`,
+`media_buy_status`, `confirmed_at`, and `warnings`, so direct, poll, and
+callback delivery of the same business result converge. The first full
+validated payload remains the publication value. The ledger's `status` column records task-envelope
 status independently from the commitment payload's own `completed`/`failed`
 discriminant. SDK-local transport failures and terminal polls that
 omit `result` remain nonterminal host observations. An incomplete terminal
