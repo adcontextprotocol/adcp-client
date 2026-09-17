@@ -2281,7 +2281,21 @@ ${managedDueArm}       )
           -- Ordered and cut off by the database clock, exactly as every other
           -- receipt read path is, so a skewed host cannot make the lifecycle
           -- projection see a different receipt set than get_reporting_status.
-          WHERE receipt.recorded_at <= $2
+          --
+          -- Current leaves only. The fold reads exactly one thing from each
+          -- chain — its leaf — and derived that leaf by walking the whole
+          -- history, so a subject repaired often enough pushed this read past
+          -- MAX_SNAPSHOT_ITEMS and the projection threw. The receipt store
+          -- admits MAX_RECEIPTS_PER_CONSUMER (100,000) per consumer, so that
+          -- was a state the write path allows and the lifecycle can never
+          -- reconcile: every attempt failed, backoff paced it forever, and
+          -- the producer's own recovery reconcile aborted the sweep behind
+          -- it. One leaf per (consumer, subject) is what the verdict needs
+          -- and is bounded by the subjects this obligation has. The wire
+          -- counters are computed on the read path, which still sees every
+          -- row.
+          WHERE receipt.is_current
+            AND receipt.recorded_at <= $2
             AND (
               (receipt.receipt_kind = 'revision' AND EXISTS (
                  SELECT 1 FROM adcp_reporting_revisions revision

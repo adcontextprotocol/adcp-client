@@ -650,6 +650,24 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
                    )
                    AND (live.data -> 'resource' ->> 'expires_at')::timestamptz > clock_timestamp()
               )
+         ), superseded AS (
+           -- Successive prunes each tombstoned whatever was current at the
+           -- time, so a subject accumulated several current-leaf tombstones:
+           -- prune R1 while current, record R2 over it, prune R2. Reading
+           -- back, whichever the planner returned first answered for the
+           -- chain, and picking R1 rejected R3's legitimate succession to
+           -- R2. A subject has exactly one leaf, so demote the older
+           -- tombstones the moment a newer leaf is recorded.
+           UPDATE adcp_reporting_receipt_tombstones prior
+              SET was_current = false
+             FROM doomed
+            WHERE doomed.is_current
+              AND prior.account_id = doomed.account_id
+              AND prior.consumer_id = doomed.consumer_id
+              AND prior.receipt_kind = doomed.receipt_kind
+              AND prior.subject_id = doomed.subject_id
+              AND prior.reporting_receipt_id <> doomed.reporting_receipt_id
+              AND prior.was_current
          ), tombstoned AS (
            INSERT INTO adcp_reporting_receipt_tombstones
              (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
@@ -1203,6 +1221,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         [input?.account_id ?? null]
       );
       for (const { account_id } of accounts.rows) await advisoryLock(client, accountLock(account_id));
+      // Only the accounts this transaction actually locked. Waiting on
+      // account A's lock takes real time, and account B's lease can expire in
+      // it: the statement below re-reads eligibility at mutation time, so
+      // without this restriction B became newly eligible and was failed
+      // without its lock ever being taken — precisely the unfenced write the
+      // lock exists to prevent. B is simply left for the next sweep.
+      const lockedAccounts = accounts.rows.map(row => row.account_id);
       const result = await client.query(
         `UPDATE adcp_reporting_materializations SET status = 'failed',
           data = data || jsonb_build_object(
@@ -1221,14 +1246,15 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           status = 'pending'
           AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
           AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+          AND account_id = ANY($2::text[])
           AND materialization_id IN (
             SELECT materialization_id FROM adcp_reporting_materializations
              WHERE status = 'pending'
                AND lease_generation >= ${MAX_MATERIALIZATION_ATTEMPTS}
                AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
-               AND ($1::text IS NULL OR account_id = $1)
-             ORDER BY created_at LIMIT $2)`,
-        [input?.account_id ?? null, limit]
+               AND account_id = ANY($2::text[])
+             ORDER BY created_at LIMIT $1)`,
+        [limit, lockedAccounts]
       );
       return result.rowCount ?? 0;
     });
@@ -1721,12 +1747,24 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     // whose accepted leaf was pruned stays terminal — otherwise letting a body
     // expire would quietly reopen reconciliation on settled billing evidence.
     const tombstones = await client.query<
-      QueryRow & { reporting_receipt_id: string; status: string; was_current: boolean; semantic_fingerprint: string }
+      QueryRow & {
+        reporting_receipt_id: string;
+        subject_id: string;
+        status: string;
+        was_current: boolean;
+        semantic_fingerprint: string;
+      }
     >(
       `SELECT reporting_receipt_id, subject_id, status, was_current, semantic_fingerprint
          FROM adcp_reporting_receipt_tombstones
         WHERE account_id = $1 AND consumer_id = $2
-          AND (reporting_receipt_id = $3 OR (receipt_kind = $4 AND subject_id = $5))`,
+          AND (reporting_receipt_id = $3 OR (receipt_kind = $4 AND subject_id = $5))
+        -- Newest leaf first. The demotion above keeps at most one current
+        -- tombstone per subject, but rows written before it existed, and any
+        -- future shape that tombstones two leaves at once, must still resolve
+        -- to one deterministic answer rather than to whatever the planner
+        -- emitted first.
+        ORDER BY was_current DESC, pruned_at DESC, reporting_receipt_id DESC`,
       [batch.account_id, batch.consumer_id, entry.receipt.reporting_receipt_id, entry.kind, subjectIdFor(entry)]
     );
     for (const tombstone of tombstones.rows) {

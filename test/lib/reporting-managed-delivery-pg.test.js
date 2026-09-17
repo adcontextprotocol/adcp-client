@@ -4332,6 +4332,455 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
   });
 
+  test('keeps one current-leaf tombstone per subject across successive prunes', async () => {
+    const chain = await deliverOnce(await seedSkewLedger('tombtwice', 'consumer_receipt'));
+    const context = { account: { id: chain.accountId }, agent: { agent_url: 'https://tombtwice-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    const rejection = id => ({
+      reporting_receipt_id: id,
+      status: 'rejected',
+      rejection_codes: ['ROW_COUNT_MISMATCH'],
+    });
+    const age = async () => {
+      await pool.query(
+        `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+          WHERE account_id = $1`,
+        [chain.accountId]
+      );
+      await pool.query(
+        `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+          WHERE account_id = $1`,
+        [chain.accountId]
+      );
+      await pool.query(
+        `UPDATE adcp_reporting_materializations
+            SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+          WHERE account_id = $1`,
+        [chain.accountId]
+      );
+    };
+
+    const first = await sync(
+      {
+        idempotency_key: 'receipt-tombtwice-batch-0001',
+        receipts: [receipt(chain, rejection('receipt-tombtwice-0001'))],
+      },
+      context
+    );
+    assert.equal(first.results[0].result, 'recorded');
+    await age();
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: chain.accountId })).receipts, 1);
+
+    // The successor of the pruned leaf, which the tombstone chain admits.
+    const second = await sync(
+      {
+        idempotency_key: 'receipt-tombtwice-batch-0002',
+        receipts: [
+          receipt(chain, {
+            ...rejection('receipt-tombtwice-0002'),
+            supersedes_reporting_receipt_id: 'receipt-tombtwice-0001',
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(second.results[0].result, 'recorded');
+    await age();
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: chain.accountId })).receipts, 1);
+
+    // Two prunes, two leaves tombstoned. A subject has one leaf, so only the
+    // later one may still claim to be current — otherwise the read picks
+    // whichever row the scan returns first and can answer for a leaf that was
+    // superseded two prunes ago.
+    const current = await pool.query(
+      `SELECT reporting_receipt_id FROM adcp_reporting_receipt_tombstones
+        WHERE account_id = $1 AND was_current ORDER BY reporting_receipt_id`,
+      [chain.accountId]
+    );
+    assert.deepEqual(
+      current.rows.map(value => value.reporting_receipt_id),
+      ['receipt-tombtwice-0002'],
+      'exactly one tombstone still claims the subject, and it is the later leaf'
+    );
+
+    const third = await sync(
+      {
+        idempotency_key: 'receipt-tombtwice-batch-0003',
+        receipts: [
+          receipt(chain, {
+            ...rejection('receipt-tombtwice-0003'),
+            supersedes_reporting_receipt_id: 'receipt-tombtwice-0002',
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(third.results[0].result, 'recorded', 'the successor of the latest pruned leaf is admitted');
+    const stale = await sync(
+      {
+        idempotency_key: 'receipt-tombtwice-batch-0004',
+        receipts: [
+          receipt(chain, {
+            ...rejection('receipt-tombtwice-0004'),
+            supersedes_reporting_receipt_id: 'receipt-tombtwice-0001',
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(stale.results[0].result, 'failed', 'and succeeding a leaf two prunes old is still refused');
+  });
+
+  test('fails only the accounts the exhaustion sweep actually locked', async () => {
+    // Its own schema: this runs the sweep with no account filter, and a
+    // shared schema full of other fixtures makes "which accounts did it
+    // touch" unanswerable.
+    const { Pool } = require('pg');
+    const sweepSchema = `${schema}_sweepscope`;
+    await bootstrap.query(`CREATE SCHEMA "${sweepSchema}"`);
+    const sweepPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${sweepSchema}"` });
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${sweepSchema}"` });
+    try {
+      await sweepPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await sweepPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const sweepCore = new ledger.PostgresReportingLedgerStore(sweepPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const sweepManaged = new ledger.PostgresReportingManagedDeliveryStore(sweepPool);
+      const exhaust = async suffix => {
+        const seeded = await seedSkewLedgerInto(sweepCore, sweepManaged, suffix);
+        assert.equal(await sweepManaged.planMaterializations({ account_id: seeded.accountId }), 1);
+        for (let round = 0; round < 8; round += 1) {
+          const claimed = await sweepManaged.claimMaterialization({
+            owner: `${suffix}-worker-${round}`,
+            now: new Date().toISOString(),
+            lease_milliseconds: 1,
+            account_id: seeded.accountId,
+          });
+          if (!claimed) break;
+          await new Promise(resolve => setTimeout(resolve, 3));
+        }
+        return seeded;
+      };
+      const locked = await exhaust('sweepa');
+      const later = await exhaust('sweepb');
+      // Not yet eligible: its lease has not expired, so the sweep's selection
+      // does not see it and never takes its account lock.
+      await sweepPool.query(
+        `UPDATE adcp_reporting_materializations
+            SET lease_expires_at = clock_timestamp() + INTERVAL '400 milliseconds'
+          WHERE account_id = $1`,
+        [later.accountId]
+      );
+
+      const holder = await sidePool.connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `adcp-reporting-account:${locked.accountId}`,
+        ]);
+        // Waiting on one account's lock is real time, and another account's
+        // lease expires inside it. The mutation re-reads eligibility, so
+        // without restricting it to the accounts this transaction locked, the
+        // newly eligible one was failed with its lock never taken.
+        const sweeping = sweepManaged.failExhaustedMaterializations({});
+        await new Promise(resolve => setTimeout(resolve, 700));
+        await holder.query('COMMIT');
+        assert.equal(await sweeping, 1, 'only the locked account is failed');
+      } finally {
+        holder.release();
+      }
+      const statuses = await sweepPool.query(
+        `SELECT account_id, status FROM adcp_reporting_materializations ORDER BY account_id`,
+        []
+      );
+      assert.deepEqual(
+        statuses.rows.map(value => [value.account_id, value.status]).sort(),
+        [
+          [locked.accountId, 'failed'],
+          [later.accountId, 'pending'],
+        ].sort(),
+        'the account whose lock was never taken is left for the next sweep'
+      );
+      assert.equal(
+        await sweepManaged.failExhaustedMaterializations({}),
+        1,
+        'and the next sweep takes its lock and fails it'
+      );
+    } finally {
+      await sidePool.end();
+      await sweepPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${sweepSchema}" CASCADE`);
+    }
+  });
+
+  test('projects a lifecycle verdict for a subject repaired past the snapshot bound', async () => {
+    const { Pool } = require('pg');
+    const deepSchema = `${schema}_deepchain`;
+    await bootstrap.query(`CREATE SCHEMA "${deepSchema}"`);
+    const deepPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${deepSchema}"` });
+    try {
+      await deepPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await deepPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const deepCore = new ledger.PostgresReportingLedgerStore(deepPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const deepManaged = new ledger.PostgresReportingManagedDeliveryStore(deepPool);
+      const deep = await seedSkewLedgerInto(deepCore, deepManaged, 'deepchain', 'consumer_receipt');
+      const adapter = {
+        verificationProfiles: ['canonical_digest'],
+        revocationFencesDeliveryGenerations: true,
+        deliver: async () => materializationOutcome(deep),
+        read: async () => Buffer.from(''),
+        revoke: async () => {},
+      };
+      await deepManaged.planMaterializations({ account_id: deep.accountId });
+      await ledger.runManagedDeliveryWorker(deepManaged, adapter, {
+        maxIterations: 2,
+        account_id: deep.accountId,
+      });
+      const settled = await deepPool.query(
+        `SELECT data FROM adcp_reporting_materializations WHERE obligation_id = $1 AND status = 'available'`,
+        [deep.obligation.reporting_obligation_id]
+      );
+      deep.materialization = settled.rows[0].data;
+
+      const consumerId = 'https://deepchain-buyer.example';
+      const context = { account: { id: deep.accountId }, agent: { agent_url: consumerId } };
+      const sync = ledger.createSyncReportingReceiptsHandler(deepManaged, value => value.agent.agent_url);
+      const accepted = await sync(
+        {
+          idempotency_key: 'receipt-deepchain-batch-0001',
+          receipts: [receipt(deep, { reporting_receipt_id: 'receipt-deepchain-0001' })],
+        },
+        context
+      );
+      assert.equal(accepted.results[0].result, 'recorded');
+
+      // A subject repaired more times than a snapshot page may carry. The
+      // receipt store admits 100,000 receipts per consumer, so this is a
+      // state the write path allows; the lifecycle used to read the whole
+      // chain and throw above 10,000, which no retry or backoff could ever
+      // clear.
+      await deepPool.query(
+        `INSERT INTO adcp_reporting_receipts
+          (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+           is_current, semantic_fingerprint, data, received_at, recorded_at)
+         SELECT $1, $2, 'receipt-deepchain-superseded-' || i, 'revision', $3,
+                false, 'superseded', '{}'::jsonb, clock_timestamp(), clock_timestamp()
+           FROM generate_series(1, 10001) AS i`,
+        [deep.accountId, consumerId, deep.revision.reporting_revision_id]
+      );
+
+      const projection = await deepCore.getManagedLifecycleProjection({
+        reporting_obligation_id: deep.obligation.reporting_obligation_id,
+        ledgerAsOf: await deepCore.readLedgerInstant(),
+      });
+      assert.equal(projection.consumers.length, 1, 'the consumer is still projected');
+      assert.deepEqual(
+        projection.consumers[0].receipts.map(value => value.reporting_receipt_id),
+        ['receipt-deepchain-0001'],
+        'the verdict reads the current leaf, which is all it has ever used'
+      );
+      // And the whole reconcile completes rather than failing forever.
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store: deepCore,
+        reporting_obligation_id: deep.obligation.reporting_obligation_id,
+      });
+      const watermark = await deepPool.query(
+        `SELECT processed_at FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
+        [deep.obligation.reporting_obligation_id]
+      );
+      assert.equal(watermark.rowCount, 1, 'the obligation reconciles instead of failing every pass');
+    } finally {
+      await deepPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${deepSchema}" CASCADE`);
+    }
+  });
+
+  test('does not restore a future caller cutoff when the compare-and-set retries', async () => {
+    const retried = await deliverOnce(await seedSkewLedger('retrypin', 'consumer_receipt'));
+    const { Pool } = require('pg');
+    const sidePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${schema}"` });
+    let interleaved = 0;
+    const interleavingPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        const query = client.query.bind(client);
+        client.query = async (sql, values) => {
+          const result = await query(sql, values);
+          if (
+            interleaved === 0 &&
+            typeof sql === 'string' &&
+            sql.includes('FROM adcp_reporting_obligations WHERE obligation_id = $1 FOR UPDATE')
+          ) {
+            interleaved += 1;
+            // Move managed state under the open apply so its token no longer
+            // matches. The apply refuses and the reconcile retries, which is
+            // the path that used to hand the caller's future pin straight
+            // back to the retry it was clamped out of.
+            const moved = await sidePool.query(
+              `UPDATE adcp_reporting_materializations SET changed_at = clock_timestamp()
+                WHERE account_id = $1`,
+              [retried.accountId]
+            );
+            assert.equal(moved.rowCount, 1, 'the interleaved managed write really did commit');
+          }
+          return result;
+        };
+        const release = client.release.bind(client);
+        client.release = (...args) => {
+          client.query = query;
+          client.release = release;
+          return release(...args);
+        };
+        return client;
+      },
+      query: (sql, values) => pool.query(sql, values),
+      end: async () => {},
+    };
+
+    try {
+      const racing = new ledger.PostgresReportingLedgerStore(interleavingPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store: racing,
+        reporting_obligation_id: retried.obligation.reporting_obligation_id,
+        // A host running an hour fast.
+        ledgerAsOf: new Date(Date.now() + 3_600_000).toISOString(),
+      });
+      assert.equal(interleaved, 1, 'the compare-and-set really was forced to retry');
+      const dated = await pool.query(
+        `SELECT
+           (SELECT COUNT(*) FROM adcp_reporting_transitions
+             WHERE obligation_id = $1 AND occurred_at > clock_timestamp())::int AS transitions,
+           (SELECT COUNT(*) FROM adcp_reporting_issues
+             WHERE obligation_id = $1 AND observed_at > clock_timestamp())::int AS issues,
+           (SELECT COUNT(*) FROM adcp_reporting_transitions WHERE obligation_id = $1)::int AS total`,
+        [retried.obligation.reporting_obligation_id]
+      );
+      assert.ok(dated.rows[0].total >= 1, 'the retry did persist something to check');
+      assert.equal(dated.rows[0].transitions, 0, 'no transition is dated ahead of the ledger clock');
+      assert.equal(dated.rows[0].issues, 0, 'nor is any issue');
+      const watermark = await pool.query(
+        `SELECT processed_at <= clock_timestamp() AS reached FROM adcp_reporting_lifecycle_state
+          WHERE obligation_id = $1`,
+        [retried.obligation.reporting_obligation_id]
+      );
+      assert.equal(watermark.rows[0].reached, true);
+    } finally {
+      await sidePool.end();
+    }
+  });
+
+  test('keeps an adjustment receipt readable when paging splits it from its adjustment', async () => {
+    const paged = await deliverOnce(await seedSkewLedger('pageadj', 'consumer_receipt'));
+    const rows = [{ media_buy_id: 'buy-3', impressions: 13 }];
+    const bytes = Buffer.from(canonicalize(rows), 'utf8');
+    const wireAdjustmentWithoutDigest = {
+      reporting_adjustment_id: 'adjustment-pageadj-0001',
+      adjusts_reporting_revision_id: paged.revision.reporting_revision_id,
+      reason_code: 'source_correction',
+      accounting_period: { start: paged.period.start, end: paged.period.end },
+      control_total_deltas: [{ name: 'row_count', value: '0', value_type: 'integer' }],
+      correction_observed_at: paged.now,
+      created_at: paged.now,
+    };
+    const canonicalAdjustmentSha256 = createHash('sha256')
+      .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+      .digest('hex');
+    await core.commitAdjustment(
+      {
+        reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+        reporting_obligation_id: paged.obligation.reporting_obligation_id,
+        adjusts_reporting_revision_id: paged.revision.reporting_revision_id,
+        adjustmentNumber: 1,
+        manifest: { level: 'basic', objectRef: 'pageadj-manifest', sha256: 'b'.repeat(64), byteCount: 1 },
+        sourcePublicationId: 'adjustment-publication-pageadj',
+        binding: {
+          algorithm: 'rfc8785_jcs_v1',
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          byteCount: bytes.byteLength,
+          rowCount: rows.length,
+        },
+        rows,
+        observedAt: paged.now,
+        dataThrough: paged.period.end,
+        sourceReadCutoffAt: paged.now,
+        createdAt: paged.now,
+        wireAdjustment: { ...wireAdjustmentWithoutDigest, canonical_adjustment_sha256: canonicalAdjustmentSha256 },
+      },
+      paged.coreLease
+    );
+
+    const context = { account: { id: paged.accountId }, agent: { agent_url: 'https://pageadj-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const accepted = await sync(
+      {
+        idempotency_key: 'adjustment-pageadj-batch-0001',
+        adjustment_receipts: [
+          {
+            reporting_receipt_id: 'adjustment-receipt-pageadj-0001',
+            reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+            adjusts_reporting_revision_id: paged.revision.reporting_revision_id,
+            observed_adjustment_sha256: canonicalAdjustmentSha256,
+            observed_at: paged.now,
+            status: 'accepted',
+          },
+        ],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    // One item per page. The adjustment and the receipt that names it are
+    // separate items, so they land on different pages; filtering the receipt
+    // against its own page's adjustments dropped it from every page and the
+    // acceptance was unreadable through the API meant to evidence it.
+    const seenReceipts = [];
+    let cursor;
+    let pages = 0;
+    do {
+      const page = await getStatus(
+        {
+          account: { account_id: paged.accountId },
+          view: 'periods',
+          period: paged.period,
+          pagination: { max_results: 1, ...(cursor ? { cursor } : {}) },
+        },
+        context
+      );
+      pages += 1;
+      assert.equal(
+        validateResponse('get_reporting_status', page, '3.2.0-rc.3').valid,
+        true,
+        JSON.stringify(validateResponse('get_reporting_status', page, '3.2.0-rc.3').issues)
+      );
+      for (const value of page.adjustment_receipts ?? []) {
+        seenReceipts.push(value.reporting_receipt_id);
+        // RC3 revision_adjustments still holds per page: the receipt may only
+        // appear beside the correction it names.
+        assert.ok(
+          (page.adjustments ?? []).some(
+            adjustment => adjustment.reporting_adjustment_id === value.reporting_adjustment_id
+          ),
+          'the adjustment the receipt names travels with it'
+        );
+      }
+      cursor = page.pagination.cursor;
+    } while (cursor);
+    assert.ok(pages > 1, 'sanity: paging really did split this obligation');
+    assert.deepEqual(seenReceipts, ['adjustment-receipt-pageadj-0001'], 'the acceptance is readable exactly once');
+  });
+
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {
     const promised = await seedSkewLedger('retentiondefault');
     await managed.planMaterializations({ account_id: promised.accountId });

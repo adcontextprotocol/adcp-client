@@ -179,7 +179,30 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         throw new RangeError(`settlementGraceMilliseconds must not exceed ${MAX_SETTLEMENT_GRACE_MS}`);
       }
       const owner = `reporting-worker-${randomUUID()}`;
-      const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 };
+      const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0, reconcilesDeferred: 0 };
+      // Publishing a projection is downstream of the durable write, and it
+      // must not take the sweep down with it. An obligation whose projection
+      // cannot be computed — one that has outgrown a projection bound, a
+      // subscriber that throws — aborted every tenant queued behind it, and
+      // the recovery path then rethrew the same failure, so the worker could
+      // not make progress at all. Containing it leaves the obligation due:
+      // this writes no watermark, so the deadline sweep, which isolates per
+      // obligation and records a backoff, owns the retry.
+      const reconcileQuietly = async (reporting_obligation_id: string, nowAt: Date) => {
+        try {
+          await reconcileReportingStatusLifecycleV1({
+            store: options.store,
+            reporting_obligation_id,
+            // Fallback clock, not a pin; see planObligations.
+            now: () => nowAt,
+            subscribers: options.subscribers,
+          });
+        } catch (error) {
+          if (workerOptions.signal?.aborted) workerOptions.signal.throwIfAborted();
+          if (isLeaseLost(error)) throw error;
+          counts.reconcilesDeferred += 1;
+        }
+      };
       // No host cutoff. The sweeps resolve the ledger's own instant, which is
       // what lands in each obligation's watermark — a worker host running
       // fast would otherwise permanently bury database-timestamped work
@@ -236,13 +259,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               obligation.state = nextExisting ? 'pending' : 'terminal';
               obligation.nextAttemptAt = nextExisting ?? nowValue.toISOString();
               await options.store.updateObligation(obligation, lease);
-              await reconcileReportingStatusLifecycleV1({
-                store: options.store,
-                reporting_obligation_id: obligation.reporting_obligation_id,
-                // Fallback clock, not a pin; see planObligations.
-                now: () => nowValue,
-                subscribers: options.subscribers,
-              });
+              await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
               continue;
             }
           }
@@ -276,13 +293,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await options.store.updateObligation(obligation, lease);
             if (result.error.code === 'NOT_READY' || result.error.code === 'PARTIAL_RESULT') counts.notReady += 1;
             else counts.failed += 1;
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: obligation.reporting_obligation_id,
-              // Fallback clock, not a pin; see planObligations.
-              now: () => nowValue,
-              subscribers: options.subscribers,
-            });
+            await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
             continue;
           }
           const manifest = await validateReportingSourceExecutionV1({
@@ -330,13 +341,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           obligation.attemptCount += 1;
           await options.store.updateObligation(obligation, lease);
           await options.store.resolveIssue(sourceExecutionIssueId(obligation), nowValue.toISOString());
-          await reconcileReportingStatusLifecycleV1({
-            store: options.store,
-            reporting_obligation_id: obligation.reporting_obligation_id,
-            // Fallback clock, not a pin; see planObligations.
-            now: () => nowValue,
-            subscribers: options.subscribers,
-          });
+          await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
         } catch (error) {
           if (workerOptions.signal?.aborted) workerOptions.signal.throwIfAborted();
           if (isLeaseLost(error)) continue;
@@ -354,13 +359,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               lease,
               sourceExecutionIssue(obligation, nowValue.toISOString())
             );
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: obligation.reporting_obligation_id,
-              // Fallback clock, not a pin; see planObligations.
-              now: () => nowValue,
-              subscribers: options.subscribers,
-            });
+            await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
           } catch (recoveryError) {
             if (!isLeaseLost(recoveryError)) throw recoveryError;
           }

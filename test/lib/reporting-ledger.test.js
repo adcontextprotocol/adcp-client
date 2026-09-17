@@ -988,11 +988,25 @@ describe('seller reporting ledger', () => {
       if (store.revisions.size > 0) throw new Error('fixture lifecycle interruption');
       return applyLifecycleProjection(input);
     };
-    await assert.rejects(
-      () => producer.runWorker({ now: () => new Date(anchor + 2 * 86_400_000 + 1), maxIterations: 1 }),
-      /lifecycle interruption/
-    );
+    // The durable revision commits and the projection does not. That must not
+    // abort the worker: every tenant queued behind this one would be stranded
+    // by an obligation whose projection cannot be computed, and the recovery
+    // path would rethrow the same failure on the next pass forever. It is
+    // reported instead, and the obligation stays due.
+    const transitionsBefore = (await store.listTransitions(obligation.reporting_obligation_id)).length;
+    const interrupted = await producer.runWorker({
+      now: () => new Date(anchor + 2 * 86_400_000 + 1),
+      maxIterations: 1,
+    });
+    assert.equal(interrupted.revisionsCommitted, 1, 'the durable write still happened');
+    assert.equal(interrupted.reconcilesDeferred, 1, 'and the unpublished projection is reported, not swallowed');
     assert.equal((await store.listRevisions(obligation.reporting_obligation_id)).length, 1);
+    assert.notEqual(
+      (await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health,
+      'complete',
+      'the projection that failed published nothing'
+    );
+    assert.ok(transitionsBefore >= 1);
     store.applyLifecycleProjection = applyLifecycleProjection;
     await producer.runWorker({ now: () => new Date(anchor + 2 * 86_400_000 + 2), maxIterations: 1 });
     assert.equal((await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'complete');

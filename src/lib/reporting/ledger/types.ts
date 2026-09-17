@@ -865,7 +865,19 @@ export interface ReportingProducerV1 {
     executionDeadlineMilliseconds?: number;
     settlementGraceMilliseconds?: number;
     account_id?: string;
-  }): Promise<{ claimed: number; revisionsCommitted: number; notReady: number; failed: number }>;
+  }): Promise<{
+    claimed: number;
+    revisionsCommitted: number;
+    notReady: number;
+    failed: number;
+    /**
+     * Obligations whose durable work committed but whose projection could not
+     * be published on this pass. They stay due for the deadline sweep, which
+     * isolates and backs off per obligation; a non-zero count that does not
+     * clear is an operational signal, not a lost write.
+     */
+    reconcilesDeferred: number;
+  }>;
 }
 
 export type ReportingSourceWithReaderV1 = ReportingSourceExecutorV1 & ReportingSourceStagedObjectReaderV1;

@@ -36,11 +36,19 @@ async function resolveLedgerAsOf(
   // skew was then permanently behind it: excluded from the projection that
   // wrote it, and never due again. Clamping keeps a backdated replay exact
   // while making a forward pin harmless.
-  if (attempt === 0) {
-    return input.store.readLedgerInstant && compareReportingInstants(input.ledgerAsOf, resolved) > 0
-      ? resolved
-      : input.ledgerAsOf;
+  //
+  // A store with its own clock therefore never returns anything but that
+  // clock on a retry. Taking the later of the two instead put the caller's
+  // future pin straight back: the database was at 04:45, the retry resolved
+  // 04:46, and the pinned 06:00 won again — so the first attempt's clamp was
+  // undone by the very CAS retry that exists to take a fresh cutoff.
+  if (input.store.readLedgerInstant) {
+    return attempt === 0 && compareReportingInstants(input.ledgerAsOf, resolved) <= 0 ? input.ledgerAsOf : resolved;
   }
+  // No authoritative clock, so `resolved` is the host's own. Keep the pin
+  // when it is later, because a simulated-time driver replaying synthetic
+  // instants has nothing else to order by, and a cutoff must never move
+  // backwards past a transition already recorded at a later instant.
   // `compareReportingInstants`, never `Date.parse`. Date truncates to
   // milliseconds, so a retry moving .123500Z to .123600Z compared equal and
   // kept the old cutoff — the projection then excluded a .123550Z write while

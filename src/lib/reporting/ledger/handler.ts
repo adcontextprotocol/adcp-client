@@ -303,6 +303,27 @@ export function createReportingStatusHandler<TContext = unknown>(
         account_id: accountId,
       };
 
+      // Adjustments the snapshot considers visible, under exactly the rule
+      // the store used when it built the item stream. An adjustment receipt
+      // and the adjustment it names are separate pagination items, so a small
+      // `max_results` puts them on different pages; filtering the receipt
+      // against only the adjustments that landed on its own page dropped it
+      // from every page, and the acceptance was unreadable through the API
+      // that is supposed to evidence it. The receipt still may not appear
+      // without the correction it names, so the named adjustment travels with
+      // it as context on that page. Items, not this array, are what the
+      // cursor counts, so nothing about paging changes.
+      const finality = page.snapshot.query.finality;
+      const visibleRevisionIds = new Set(
+        page.snapshot.revisions
+          .filter(value => !finality || finality.includes(value.finality))
+          .map(value => value.reporting_revision_id)
+      );
+      const visibleAdjustments = finality
+        ? page.snapshot.adjustments.filter(value => visibleRevisionIds.has(value.adjusts_reporting_revision_id))
+        : page.snapshot.adjustments;
+      const pageAdjustmentIds = new Set(page.adjustments.map(value => value.reporting_adjustment_id));
+
       if (view === 'revision') {
         const id = query.reporting_revision_id;
         const inSnapshot = id ? page.snapshot.revisions.some(value => value.reporting_revision_id === id) : false;
@@ -318,10 +339,21 @@ export function createReportingStatusHandler<TContext = unknown>(
         if (!revision) {
           return lookupUnavailable(view);
         }
-        const revisionAdjustments = page.adjustments.filter(
-          value => value.adjusts_reporting_revision_id === revision.reporting_revision_id
+        const revisionAdjustmentIds = new Set(
+          visibleAdjustments
+            .filter(value => value.adjusts_reporting_revision_id === revision.reporting_revision_id)
+            .map(value => value.reporting_adjustment_id)
         );
-        const revisionAdjustmentIds = new Set(revisionAdjustments.map(value => value.reporting_adjustment_id));
+        const revisionAdjustmentReceipts = (page.adjustmentReceipts ?? []).filter(value =>
+          revisionAdjustmentIds.has(value.reporting_adjustment_id)
+        );
+        const receiptAdjustmentIds = new Set(revisionAdjustmentReceipts.map(value => value.reporting_adjustment_id));
+        const revisionAdjustments = visibleAdjustments.filter(
+          value =>
+            value.adjusts_reporting_revision_id === revision.reporting_revision_id &&
+            (pageAdjustmentIds.has(value.reporting_adjustment_id) ||
+              receiptAdjustmentIds.has(value.reporting_adjustment_id))
+        );
         return {
           ...base,
           view: 'revision',
@@ -345,9 +377,7 @@ export function createReportingStatusHandler<TContext = unknown>(
           // or correction may appear." Emitting the page's whole adjustment
           // receipt set let a read of R1 return a receipt for an adjustment on
           // R2 while `adjustments` was empty.
-          adjustment_receipts: (page.adjustmentReceipts ?? []).filter(value =>
-            revisionAdjustmentIds.has(value.reporting_adjustment_id)
-          ),
+          adjustment_receipts: revisionAdjustmentReceipts,
           errors: [],
           pagination: {
             has_more: page.hasMore,
@@ -361,8 +391,19 @@ export function createReportingStatusHandler<TContext = unknown>(
         const pageIds = new Set(page.obligations.map(value => value.reporting_obligation_id));
         const pageProjected = selected.filter(value => pageIds.has(value.obligation.reporting_obligation_id));
         const selectedPageIds = new Set(selected.map(value => value.obligation.reporting_obligation_id));
-        const pageAdjustments = page.adjustments.filter(value => selectedPageIds.has(value.reporting_obligation_id));
-        const pageAdjustmentIds = new Set(pageAdjustments.map(value => value.reporting_adjustment_id));
+        const scopedAdjustments = visibleAdjustments.filter(value =>
+          selectedPageIds.has(value.reporting_obligation_id)
+        );
+        const scopedAdjustmentIds = new Set(scopedAdjustments.map(value => value.reporting_adjustment_id));
+        const scopedAdjustmentReceipts = (page.adjustmentReceipts ?? []).filter(value =>
+          scopedAdjustmentIds.has(value.reporting_adjustment_id)
+        );
+        const receiptAdjustmentIds = new Set(scopedAdjustmentReceipts.map(value => value.reporting_adjustment_id));
+        const pageAdjustments = scopedAdjustments.filter(
+          value =>
+            pageAdjustmentIds.has(value.reporting_adjustment_id) ||
+            receiptAdjustmentIds.has(value.reporting_adjustment_id)
+        );
         return {
           ...base,
           view: 'periods',
@@ -395,9 +436,7 @@ export function createReportingStatusHandler<TContext = unknown>(
           ...(consumerId ? { consumer_statuses: (page.consumerStatuses ?? []).map(wireConsumerStatus) } : {}),
           // Same scoping rule as the revision view: a receipt may only appear
           // beside the correction or revision it names.
-          adjustment_receipts: (page.adjustmentReceipts ?? []).filter(value =>
-            pageAdjustmentIds.has(value.reporting_adjustment_id)
-          ),
+          adjustment_receipts: scopedAdjustmentReceipts,
           materializations: (page.materializations ?? []).filter(value =>
             selectedPageIds.has(value.reporting_obligation_id)
           ),
