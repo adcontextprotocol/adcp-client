@@ -1486,6 +1486,8 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
           poisonManaged.adoptAdvertisedPolicies({
             automatedRecoveryWindowSeconds: 60,
             statusRetentionDays: 90,
+            resourceRetentionDays: 120,
+            authorizationRevocationSeconds: 10,
           }),
         error => /at least the widest installed managed Core recovery window \(900s\)/.test(String(error.cause))
       );
@@ -1493,22 +1495,28 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       // meant the correct restart could be refused by a partial durable policy.
       const registry = await poisonPool.query(
         `SELECT advertised_recovery_window_seconds::text AS recovery,
-                advertised_status_retention_days::text AS status
+                advertised_status_retention_days::text AS status,
+                advertised_resource_retention_days::text AS resource,
+                advertised_authorization_revocation_seconds::text AS revocation
            FROM adcp_reporting_managed_policy`
       );
       assert.equal(registry.rowCount, 0, 'a refused adoption writes nothing');
       await poisonManaged.adoptAdvertisedPolicies({
         automatedRecoveryWindowSeconds: 900,
         statusRetentionDays: 90,
+        resourceRetentionDays: 120,
+        authorizationRevocationSeconds: 10,
       });
       const settledRegistry = await poisonPool.query(
         `SELECT advertised_recovery_window_seconds::text AS recovery,
-                advertised_status_retention_days::text AS status
+                advertised_status_retention_days::text AS status,
+                advertised_resource_retention_days::text AS resource,
+                advertised_authorization_revocation_seconds::text AS revocation
            FROM adcp_reporting_managed_policy`
       );
       assert.deepEqual(
         settledRegistry.rows[0],
-        { recovery: '900', status: '90' },
+        { recovery: '900', status: '90', resource: '120', revocation: '10' },
         'the corrected policy then registers cleanly'
       );
     } finally {
@@ -1517,16 +1525,37 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     }
   });
 
-  test('adopts runtime policies atomically and permits a corrected restart after conflict', async () => {
+  test('upgrades and adopts all policies atomically without poisoning a corrected restart', async () => {
     const { Pool } = require('pg');
     const atomicSchema = `${schema}_atomic_policy`;
     await bootstrap.query(`CREATE SCHEMA "${atomicSchema}"`);
     const atomicPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${atomicSchema}"` });
     try {
       await atomicPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      // Simulate the two-column registry installed by an earlier RC. The
+      // additive migration must upgrade it in place before four-policy use.
+      await atomicPool.query(`CREATE TABLE adcp_reporting_managed_policy (
+        policy_key TEXT PRIMARY KEY,
+        advertised_recovery_window_seconds BIGINT,
+        advertised_status_retention_days BIGINT,
+        recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+        changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+      )`);
       await atomicPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
       const existing = new ledger.PostgresReportingManagedDeliveryStore(atomicPool);
-      await existing.adoptAdvertisedStatusRetentionDays(30);
+      await existing.adoptAdvertisedPolicies({
+        automatedRecoveryWindowSeconds: 900,
+        statusRetentionDays: 30,
+        resourceRetentionDays: 30,
+        authorizationRevocationSeconds: 60,
+      });
+      const atomicCore = new ledger.PostgresReportingLedgerStore(atomicPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const seeded = await seedSkewLedgerInto(atomicCore, existing, 'atomic-policy', 'delivery_only', {
+        recoveryWindowMilliseconds: 900_000,
+      });
 
       const restarting = new ledger.PostgresReportingManagedDeliveryStore(atomicPool);
       await assert.rejects(
@@ -1534,26 +1563,92 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
           restarting.adoptAdvertisedPolicies({
             automatedRecoveryWindowSeconds: 60,
             statusRetentionDays: 90,
+            resourceRetentionDays: 120,
+            authorizationRevocationSeconds: 10,
           }),
-        error => /already registered with an advertised status retention of 30 days/.test(String(error.cause))
+        error => /at least the widest installed managed Core recovery window \(900s\)/.test(String(error.cause))
       );
       const afterConflict = await atomicPool.query(
         `SELECT advertised_recovery_window_seconds::text AS recovery,
-                advertised_status_retention_days::text AS status
+                advertised_status_retention_days::text AS status,
+                advertised_resource_retention_days::text AS resource,
+                advertised_authorization_revocation_seconds::text AS revocation
            FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
       );
-      assert.deepEqual(afterConflict.rows[0], { recovery: null, status: '30' });
+      assert.deepEqual(
+        afterConflict.rows[0],
+        { recovery: '900', status: '30', resource: '30', revocation: '60' },
+        'a failed stronger recovery bound rolls every policy column back'
+      );
 
       await restarting.adoptAdvertisedPolicies({
         automatedRecoveryWindowSeconds: 900,
-        statusRetentionDays: 30,
+        statusRetentionDays: 90,
+        resourceRetentionDays: 120,
+        authorizationRevocationSeconds: 10,
       });
       const corrected = await atomicPool.query(
         `SELECT advertised_recovery_window_seconds::text AS recovery,
-                advertised_status_retention_days::text AS status
+                advertised_status_retention_days::text AS status,
+                advertised_resource_retention_days::text AS resource,
+                advertised_authorization_revocation_seconds::text AS revocation
            FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
       );
-      assert.deepEqual(corrected.rows[0], { recovery: '900', status: '30' });
+      assert.deepEqual(corrected.rows[0], {
+        recovery: '900',
+        status: '90',
+        resource: '120',
+        revocation: '10',
+      });
+
+      // A direct caller using a weaker per-call floor is still held to the
+      // strongest resource promise another replica adopted.
+      assert.equal(await existing.planMaterializations({ account_id: seeded.accountId }), 1);
+      const lease = await existing.claimMaterialization({
+        owner: 'atomic-policy-worker',
+        now: seeded.now,
+        lease_milliseconds: 600_000,
+        account_id: seeded.accountId,
+      });
+      assert.ok(lease);
+      assert.equal(
+        await existing.settleMaterialization({
+          lease,
+          now: seeded.now,
+          minimum_resource_retention_days: 30,
+          outcome: materializationOutcome(seeded),
+        }),
+        false,
+        'the durable 120-day resource floor rejects a 31-day materialization'
+      );
+      const terminalized = await atomicPool.query(
+        `SELECT status, data->>'failure_code' AS failure_code
+           FROM adcp_reporting_materializations WHERE materialization_id = $1`,
+        [lease.materialization.reporting_materialization_id]
+      );
+      assert.deepEqual(terminalized.rows[0], {
+        status: 'failed',
+        failure_code: 'RESOURCE_RETENTION_INSUFFICIENT',
+      });
+
+      await existing.revokeDestination({
+        account_id: seeded.accountId,
+        destination_ref: seeded.binding.destination_ref,
+        generation: seeded.binding.authorization_generation,
+        revoked_at: seeded.now,
+      });
+      const revocation = await existing.claimRevocation({
+        owner: 'atomic-policy-revoker',
+        now: seeded.now,
+        lease_milliseconds: 30_000,
+        account_id: seeded.accountId,
+        authorization_revocation_seconds: 3_600,
+      });
+      assert.ok(revocation);
+      assert.ok(
+        revocation.remaining_milliseconds <= 10_000,
+        'the durable 10-second revocation maximum overrides a weaker caller value'
+      );
     } finally {
       await atomicPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${atomicSchema}" CASCADE`);
@@ -2311,7 +2406,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.ok(second.revocationsOverdue >= 1, 'overdue follows the SLA, not the lease');
   });
 
-  test('holds every store instance to one durable agent-wide recovery window', async () => {
+  test('serializes binding install with four-policy adoption and never weakens promises', async () => {
     // The promise is agent-wide and the registry is the database, so this runs
     // in its own schema: registering a window here must not constrain, or be
     // constrained by, the rest of the suite.
@@ -2326,48 +2421,29 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       await policyPool.query(ledger.REPORTING_LEDGER_MIGRATION);
       await policyPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
 
-      // Two instances, as two replicas would be, racing incompatible windows.
       const first = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
       const second = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
-      const raced = await Promise.allSettled([
-        first.adoptAdvertisedRecoveryWindowSeconds(60),
-        second.adoptAdvertisedRecoveryWindowSeconds(900),
-      ]);
-      assert.equal(
-        raced.filter(value => value.status === 'fulfilled').length,
-        1,
-        'exactly one window can win; in-memory state would have let both believe they had'
-      );
-      const registered = await policyPool.query(
-        `SELECT advertised_recovery_window_seconds::text AS value FROM adcp_reporting_managed_policy`
-      );
-      const winner = Number(registered.rows[0].value);
-      assert.ok(winner === 60 || winner === 900);
+      await first.adoptAdvertisedPolicies({
+        automatedRecoveryWindowSeconds: 900,
+        statusRetentionDays: 30,
+        resourceRetentionDays: 30,
+        authorizationRevocationSeconds: 60,
+      });
 
-      // A third instance that never adopted is still held to the durable value.
-      const third = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
-      await assert.rejects(
-        () => third.adoptAdvertisedRecoveryWindowSeconds(winner === 60 ? 900 : 60),
-        error => /already registered with an advertised recovery window/.test(String(error.cause))
-      );
-
-      // And the bound is enforced on the authoritative install path, by an
-      // instance that has adopted nothing in this process.
       const policyCore = new ledger.PostgresReportingLedgerStore(policyPool, {
         acknowledgeIsolatedDatabase: true,
         managedDelivery: true,
       });
-      const widerSeconds = winner + 60;
       const configuration = {
         ...fixture.configuration,
         configurationId: 'configuration-policy-wide-1',
         account: { account_id: 'account-policy' },
         delivery_config_id: 'policy-files',
-        schedule: { ...fixture.configuration.schedule, recoveryWindowMilliseconds: widerSeconds * 1000 },
+        schedule: { ...fixture.configuration.schedule, recoveryWindowMilliseconds: 900_000 },
         semanticFingerprint: 'configuration-policy-wide-fingerprint',
       };
       await policyCore.putConfiguration(configuration);
-      await third.authorizeDestination({
+      await second.authorizeDestination({
         account_id: 'account-policy',
         destination_ref: 'destination-policy-1',
         generation: 1,
@@ -2380,17 +2456,51 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         delivery_config_id: configuration.delivery_config_id,
         destination_ref: 'destination-policy-1',
       });
-      await assert.rejects(
-        () => third.installBinding(wideBinding),
-        error =>
-          /transaction failed/.test(String(error)) &&
-          new RegExp(`advertises automated_recovery_window_seconds ${winner}s`).test(String(error.cause))
-      );
-      const absent = await policyPool.query(
+      // Whichever reaches the shared policy fence first may commit. They can
+      // never both commit: that would leave a 900s binding under a 60s promise.
+      const raced = await Promise.allSettled([
+        second.installBinding(wideBinding),
+        first.adoptAdvertisedPolicies({
+          automatedRecoveryWindowSeconds: 60,
+          statusRetentionDays: 90,
+          resourceRetentionDays: 120,
+          authorizationRevocationSeconds: 10,
+        }),
+      ]);
+      assert.equal(raced.filter(value => value.status === 'fulfilled').length, 1);
+      const installed = await policyPool.query(
         'SELECT 1 FROM adcp_reporting_managed_bindings WHERE configuration_id = $1',
         [configuration.configurationId]
       );
-      assert.equal(absent.rowCount, 0, 'nothing was written');
+      const registered = await policyPool.query(
+        `SELECT advertised_recovery_window_seconds::text AS recovery,
+                advertised_status_retention_days::text AS status,
+                advertised_resource_retention_days::text AS resource,
+                advertised_authorization_revocation_seconds::text AS revocation
+           FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
+      );
+      const adoptionWon = raced[1].status === 'fulfilled';
+      assert.equal(installed.rowCount, adoptionWon ? 0 : 1);
+      const expected = adoptionWon
+        ? { recovery: '60', status: '90', resource: '120', revocation: '10' }
+        : { recovery: '900', status: '30', resource: '30', revocation: '60' };
+      assert.deepEqual(registered.rows[0], expected);
+
+      // A later replica may advertise weaker values, but the authoritative
+      // registry and returned enforcement policy can only stay or strengthen.
+      const third = new ledger.PostgresReportingManagedDeliveryStore(policyPool);
+      const retained = await third.adoptAdvertisedPolicies({
+        automatedRecoveryWindowSeconds: 1_200,
+        statusRetentionDays: 20,
+        resourceRetentionDays: 20,
+        authorizationRevocationSeconds: 120,
+      });
+      assert.deepEqual(retained, {
+        automatedRecoveryWindowSeconds: Number(expected.recovery),
+        statusRetentionDays: Number(expected.status),
+        resourceRetentionDays: Number(expected.resource),
+        authorizationRevocationSeconds: Number(expected.revocation),
+      });
     } finally {
       await policyPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${policySchema}" CASCADE`);
@@ -2416,7 +2526,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       const short = new ledger.PostgresReportingManagedDeliveryStore(retentionPool, { evidenceRetentionDays: 30 });
       await assert.rejects(
         () => short.pruneExpiredEvidence({ account_id: 'account-any' }),
-        error => /shorter than the advertised statusRetentionDays 90/.test(String(error.cause))
+        error => /shorter than the strongest advertised status\/resource retention of 90 days/.test(String(error.cause))
       );
       const sufficient = new ledger.PostgresReportingManagedDeliveryStore(retentionPool, {
         evidenceRetentionDays: 120,

@@ -94,6 +94,14 @@ export interface ReportingReceiptBatchInputV1 {
   received_at: string;
 }
 
+/** Agent-wide Managed Delivery promises durably shared by every replica. */
+export interface ReportingManagedDeliveryAdvertisedPoliciesV1 {
+  automatedRecoveryWindowSeconds: number;
+  statusRetentionDays: number;
+  resourceRetentionDays: number;
+  authorizationRevocationSeconds: number;
+}
+
 export interface ReportingManagedDeliveryStore {
   /**
    * Prove that this store shares the supplied Core authority and has its
@@ -117,23 +125,32 @@ export interface ReportingManagedDeliveryStore {
    * Durably registers the advertised `status_retention_days`.
    *
    * Direct-store integrations can use this separate hook when no runtime is
-   * publishing both policies. The runtime factory uses the combined atomic
-   * hook below so a failed startup cannot register only one promise.
+   * publishing the full capability policy. The runtime factory uses the
+   * combined atomic hook below so a failed startup cannot partially register
+   * its promises.
    */
   adoptAdvertisedStatusRetentionDays?(days: number): Promise<void>;
   /**
-   * Atomically registers every policy advertised by a Managed Delivery
-   * runtime. A rejected value must leave both durable policies unchanged.
+   * Atomically adopts every policy advertised by a Managed Delivery runtime
+   * and returns the strongest values enforced across all replicas.
+   *
+   * Recovery and authorization-revocation windows are maximum-delay promises,
+   * so the adopted value may only decrease. Status and resource retention are
+   * minimum-duration promises, so the adopted value may only increase. The
+   * operation must serialize with `installBinding`, validate every installed
+   * binding against the adopted recovery bound while holding that fence, and
+   * leave all four values unchanged if any validation or write fails. The
+   * store must enforce the adopted resource and revocation values at its
+   * settlement and revocation-claim boundaries.
    *
    * Optional on the base interface so direct-store integrations that use the
    * separate hooks remain source-compatible. Capability publication requires
    * this combined hook because two independent writes cannot prevent a failed
    * startup from leaving only one promise registered.
    */
-  adoptAdvertisedPolicies?(policy: {
-    automatedRecoveryWindowSeconds: number;
-    statusRetentionDays: number;
-  }): Promise<void>;
+  adoptAdvertisedPolicies?(
+    policy: ReportingManagedDeliveryAdvertisedPoliciesV1
+  ): Promise<ReportingManagedDeliveryAdvertisedPoliciesV1>;
   authorizeDestination(
     input: Omit<ReportingDestinationAuthorizationV1, 'revoked_at' | 'cleanup_completed_at'>
   ): Promise<void>;
@@ -316,7 +333,7 @@ export async function createReportingManagedDeliveryRuntime<
   }
   if (typeof options.store.adoptAdvertisedPolicies !== 'function') {
     throw new Error(
-      'Managed Delivery capability publication requires atomic durable recovery-window and status-retention policy adoption'
+      'Managed Delivery capability publication requires atomic durable adoption of every advertised policy'
     );
   }
   nonnegativeInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
@@ -405,30 +422,32 @@ export async function createReportingManagedDeliveryRuntime<
   // honours it; going later does not. So one agent-wide value is truthful
   // exactly when it is at least every installed window, and the conservative
   // agent-wide policy is to require that bound and nothing more.
-  const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
-  const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
-  if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
-    throw new Error(
-      `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
-        `(${widestInstalledWindow}s); advertising ${options.automatedRecoveryWindowSeconds}s would promise a ` +
-        `recovery bound this deployment does not keep for every tenant`
-    );
-  }
   // Every side-effect-free validation and construction above completes before
   // the durable write. Otherwise a malformed adapter or offering could
   // register policy that no runtime ever published, then reject a corrected
-  // restart using different values. The store validates the recovery bound
-  // again inside its adoption transaction, closing the binding-install race
-  // between the read above and this write.
-  // Register both promises atomically. Advertising 90 days while the durable
-  // retention policy stayed null lets a shorter-lived store prune inside the
-  // published horizon; retaining only the recovery write after a retention
-  // conflict also poisons a corrected restart. The store therefore commits
-  // both values together or leaves both unchanged.
-  await options.store.adoptAdvertisedPolicies({
+  // restart using different values.
+  // The store owns the authoritative binding check under the same fence as
+  // `installBinding`; a list-then-adopt check here would be inherently racy.
+  // It also returns the strongest promises already adopted by any replica so
+  // this worker enforces those values even when it advertises weaker ones.
+  const adoptedPolicy = await options.store.adoptAdvertisedPolicies({
     automatedRecoveryWindowSeconds: options.automatedRecoveryWindowSeconds,
     statusRetentionDays: options.statusRetentionDays,
+    resourceRetentionDays: options.resourceRetentionDays,
+    authorizationRevocationSeconds: options.authorizationRevocationSeconds,
   });
+  nonnegativeInteger(adoptedPolicy.automatedRecoveryWindowSeconds, 'adopted automatedRecoveryWindowSeconds');
+  positiveInteger(adoptedPolicy.statusRetentionDays, 'adopted statusRetentionDays');
+  positiveInteger(adoptedPolicy.resourceRetentionDays, 'adopted resourceRetentionDays');
+  nonnegativeInteger(adoptedPolicy.authorizationRevocationSeconds, 'adopted authorizationRevocationSeconds');
+  if (
+    adoptedPolicy.automatedRecoveryWindowSeconds > options.automatedRecoveryWindowSeconds ||
+    adoptedPolicy.statusRetentionDays < options.statusRetentionDays ||
+    adoptedPolicy.resourceRetentionDays < options.resourceRetentionDays ||
+    adoptedPolicy.authorizationRevocationSeconds > options.authorizationRevocationSeconds
+  ) {
+    throw new Error('Managed Delivery policy adoption returned values weaker than the capability being published');
+  }
 
   return {
     reportingDeliveryCapabilities,
@@ -440,12 +459,14 @@ export async function createReportingManagedDeliveryRuntime<
         ...workerOptions,
         minimumResourceRetentionDays: Math.max(
           options.resourceRetentionDays,
+          adoptedPolicy.resourceRetentionDays,
           workerOptions?.minimumResourceRetentionDays ?? 0
         ),
         // The capability block is the promise; the worker is what keeps it.
         // A caller may only tighten the advertised window, never widen it.
         authorizationRevocationSeconds: Math.min(
           options.authorizationRevocationSeconds,
+          adoptedPolicy.authorizationRevocationSeconds,
           workerOptions?.authorizationRevocationSeconds ?? options.authorizationRevocationSeconds
         ),
       }),

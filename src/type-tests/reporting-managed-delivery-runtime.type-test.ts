@@ -20,6 +20,18 @@ declare const publishingStore: ReportingManagedDeliveryStore &
   Required<Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedPolicies'>>;
 const runtimeStoreWithAtomicPolicyHook: RuntimeStore = publishingStore;
 
+publishingStore.adoptAdvertisedPolicies({
+  automatedRecoveryWindowSeconds: 60,
+  statusRetentionDays: 30,
+  resourceRetentionDays: 30,
+  authorizationRevocationSeconds: 60,
+});
+// @ts-expect-error Atomic capability adoption must include the resource and revocation promises.
+publishingStore.adoptAdvertisedPolicies({
+  automatedRecoveryWindowSeconds: 60,
+  statusRetentionDays: 30,
+});
+
 void runtimeStoreMissingAtomicPolicyHook;
 void runtimeStoreWithOnlySeparatePolicyHooks;
 void runtimeStoreWithAtomicPolicyHook;

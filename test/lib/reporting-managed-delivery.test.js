@@ -147,7 +147,7 @@ describe('seller managed reporting runtime', () => {
           store: {
             probe: async () => true,
             listInstalledRecoveryWindowSeconds: async () => [60],
-            adoptAdvertisedPolicies: async () => {},
+            adoptAdvertisedPolicies: async policy => policy,
           },
           offerings: [offering('consumer_receipt')],
         }),
@@ -157,7 +157,7 @@ describe('seller managed reporting runtime', () => {
 
   test('derives optional tier claims from the installed handler and verifier set', async () => {
     const durablePolicyHooks = {
-      adoptAdvertisedPolicies: async () => {},
+      adoptAdvertisedPolicies: async policy => policy,
     };
     const common = {
       coreStore: {},
@@ -187,30 +187,40 @@ describe('seller managed reporting runtime', () => {
         }),
       /generation-fencing revocation components/
     );
-    // `automated_recovery_window_seconds` is published once per agent while
-    // Core windows are per configuration, so the advertised value is required
-    // to be an upper bound over installed windows rather than equal to each.
-    // Advertising more than the widest is conservative and allowed; advertising
-    // less promises a recovery bound the deployment does not keep.
+    // The atomic store hook owns the authoritative binding check. The old
+    // list-then-adopt precheck was racy with installBinding, so the factory
+    // must surface this fenced rejection without relying on the list method.
+    const boundPolicyHooks = {
+      adoptAdvertisedPolicies: async policy => {
+        if (policy.automatedRecoveryWindowSeconds < 900) {
+          throw new Error('automatedRecoveryWindowSeconds must be at least the widest installed window (900s)');
+        }
+        return policy;
+      },
+    };
     await assert.rejects(
       () =>
         ledger.createReportingManagedDeliveryRuntime({
           ...common,
           store: {
             probe: async () => true,
-            listInstalledRecoveryWindowSeconds: async () => [60, 900],
-            ...durablePolicyHooks,
+            listInstalledRecoveryWindowSeconds: async () => {
+              throw new Error('the runtime must not perform a racy list precheck');
+            },
+            ...boundPolicyHooks,
           },
           automatedRecoveryWindowSeconds: 300,
         }),
-      /at least the widest installed managed Core recovery window \(900s\)/
+      /at least the widest installed window \(900s\)/
     );
     const heterogeneous = await ledger.createReportingManagedDeliveryRuntime({
       ...common,
       store: {
         probe: async () => true,
-        listInstalledRecoveryWindowSeconds: async () => [60, 900],
-        ...durablePolicyHooks,
+        listInstalledRecoveryWindowSeconds: async () => {
+          throw new Error('the runtime must not perform a racy list precheck');
+        },
+        ...boundPolicyHooks,
       },
       automatedRecoveryWindowSeconds: 900,
     });
@@ -287,7 +297,18 @@ describe('seller managed reporting runtime', () => {
     };
     await assert.rejects(
       () => ledger.createReportingManagedDeliveryRuntime(options),
-      /requires atomic durable recovery-window and status-retention policy adoption/
+      /requires atomic durable adoption of every advertised policy/
+    );
+    await assert.rejects(
+      () =>
+        ledger.createReportingManagedDeliveryRuntime({
+          ...options,
+          store: {
+            ...options.store,
+            adoptAdvertisedPolicies: async policy => ({ ...policy, resourceRetentionDays: 1 }),
+          },
+        }),
+      /returned values weaker than the capability being published/
     );
   });
 
@@ -303,6 +324,7 @@ describe('seller managed reporting runtime', () => {
           throw new Error('durable managed policy conflict');
         }
         adoptedPolicy = structuredClone(policy);
+        return structuredClone(policy);
       },
     };
     const validAdapter = {
@@ -338,7 +360,14 @@ describe('seller managed reporting runtime', () => {
     });
     assert.equal(corrected.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
     assert.equal(corrected.reportingDeliveryCapabilities.status_retention_days, 90);
-    assert.deepEqual(adoptionCalls, [{ automatedRecoveryWindowSeconds: 900, statusRetentionDays: 90 }]);
+    assert.deepEqual(adoptionCalls, [
+      {
+        automatedRecoveryWindowSeconds: 900,
+        statusRetentionDays: 90,
+        resourceRetentionDays: 30,
+        authorizationRevocationSeconds: 60,
+      },
+    ]);
   });
 
   test('uses one atomic adoption so a policy conflict cannot partially poison restart', async () => {
@@ -354,6 +383,7 @@ describe('seller managed reporting runtime', () => {
           throw new Error('durable status policy conflict');
         }
         adoptedPolicy = structuredClone(policy);
+        return structuredClone(policy);
       },
     };
     const options = {
@@ -381,8 +411,58 @@ describe('seller managed reporting runtime', () => {
       automatedRecoveryWindowSeconds: 900,
       statusRetentionDays: 30,
     });
-    assert.deepEqual(adoptedPolicy, { automatedRecoveryWindowSeconds: 900, statusRetentionDays: 30 });
+    assert.deepEqual(adoptedPolicy, {
+      automatedRecoveryWindowSeconds: 900,
+      statusRetentionDays: 30,
+      resourceRetentionDays: 30,
+      authorizationRevocationSeconds: 60,
+    });
     assert.equal(corrected.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
+  });
+
+  test('enforces the strongest policies returned by a custom atomic store hook', async () => {
+    const claimed = lease();
+    let materializationClaims = 0;
+    let revocationClaim;
+    let settlement;
+    const store = {
+      probe: async () => true,
+      listInstalledRecoveryWindowSeconds: async () => [],
+      adoptAdvertisedPolicies: async policy => ({
+        ...policy,
+        resourceRetentionDays: 120,
+        authorizationRevocationSeconds: 10,
+      }),
+      planMaterializations: async () => 1,
+      claimRevocation: async input => {
+        revocationClaim = structuredClone(input);
+        return null;
+      },
+      claimMaterialization: async () => (materializationClaims++ === 0 ? structuredClone(claimed) : null),
+      settleMaterialization: async input => {
+        settlement = structuredClone(input);
+        return true;
+      },
+    };
+    const runtime = await ledger.createReportingManagedDeliveryRuntime({
+      coreStore: {},
+      store,
+      adapter: {
+        verificationProfiles: ['canonical_digest'],
+        revocationFencesDeliveryGenerations: true,
+        deliver: async () => outcome(),
+        read: async () => new Uint8Array(),
+        revoke: async () => {},
+      },
+      offerings: [offering()],
+      automatedRecoveryWindowSeconds: 60,
+      statusRetentionDays: 30,
+      resourceRetentionDays: 30,
+      authorizationRevocationSeconds: 60,
+    });
+    await runtime.runWorker({ maxIterations: 2 });
+    assert.equal(revocationClaim.authorization_revocation_seconds, 10);
+    assert.equal(settlement.minimum_resource_retention_days, 120);
   });
 
   test('does not publish a delivery when authorization is revoked during adapter I/O', async () => {

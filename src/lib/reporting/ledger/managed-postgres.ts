@@ -24,6 +24,7 @@ import {
   type ReportingDestinationAuthorizationV1,
   type ReportingDestinationRevocationLeaseV1,
   type ReportingManagedDeliveryLeaseV1,
+  type ReportingManagedDeliveryAdvertisedPoliciesV1,
   type ReportingManagedDeliveryStore,
   type ReportingReceiptBatchEntryV1,
   type ReportingReceiptBatchInputV1,
@@ -168,9 +169,16 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_managed_policy (
   policy_key TEXT PRIMARY KEY,
   advertised_recovery_window_seconds BIGINT,
   advertised_status_retention_days BIGINT,
+  advertised_resource_retention_days BIGINT,
+  advertised_authorization_revocation_seconds BIGINT,
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   changed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
+-- Upgrade registries installed by earlier Managed Delivery release candidates.
+ALTER TABLE adcp_reporting_managed_policy
+  ADD COLUMN IF NOT EXISTS advertised_resource_retention_days BIGINT;
+ALTER TABLE adcp_reporting_managed_policy
+  ADD COLUMN IF NOT EXISTS advertised_authorization_revocation_seconds BIGINT;
 
 -- Permanent, compact identity for a receipt whose body has aged out.
 -- Bodies are retained only through the advertised horizon, but identity is
@@ -278,6 +286,13 @@ type StoredReceiptBatchResult = {
 
 type StoredBatch = { results: StoredReceiptBatchResult[]; request_fingerprint: string };
 
+type ManagedPolicyColumn =
+  | 'advertised_recovery_window_seconds'
+  | 'advertised_status_retention_days'
+  | 'advertised_resource_retention_days'
+  | 'advertised_authorization_revocation_seconds';
+type ManagedPolicyRow = Record<ManagedPolicyColumn, number | null>;
+
 export interface PostgresReportingManagedDeliveryStoreOptions {
   /**
    * The `automated_recovery_window_seconds` this deployment advertises.
@@ -333,18 +348,20 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
    * so a second store instance — in this process or another replica — must be
    * held to the same value, and `installBinding` must read it inside its own
    * transaction rather than trusting whatever the local object happens to
-   * know. Idempotent for the same value; a disagreement is refused rather
-   * than silently taking the newer one, because two runtimes publishing
-   * different windows over one database cannot both be honoured.
+   * know. Multiple replicas monotonically retain the smallest registered
+   * maximum: a shorter recovery promise is stronger and can never be widened
+   * by a later runtime.
    */
   async adoptAdvertisedRecoveryWindowSeconds(seconds: number): Promise<void> {
     nonnegativeSafeInteger(seconds, 'automatedRecoveryWindowSeconds');
-    await this.upsertPolicy('advertised_recovery_window_seconds', seconds, 'advertised recovery window', 's', {
+    await this.upsertPolicy('advertised_recovery_window_seconds', seconds, {
+      strongest: Math.min,
       // Checked inside the same transaction that would persist it. Writing
       // first and validating afterwards poisoned the registry: a rejected
       // 60s startup against an installed 900s binding still left a durable
       // 60, and the correct 900s restart was then refused as a conflict.
-      validate: client => this.validateRecoveryWindow(client, seconds),
+      validate: (client, effective) =>
+        this.validateRecoveryWindow(client, effective.advertised_recovery_window_seconds!),
     });
   }
 
@@ -357,33 +374,50 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
    */
   async adoptAdvertisedStatusRetentionDays(days: number): Promise<void> {
     positiveInteger(days, 'statusRetentionDays');
-    await this.upsertPolicy('advertised_status_retention_days', days, 'advertised status retention', ' days');
+    await this.upsertPolicy('advertised_status_retention_days', days, {
+      strongest: Math.max,
+    });
   }
 
   /** Registers the complete capability policy under one lock and transaction. */
-  async adoptAdvertisedPolicies(policy: {
-    automatedRecoveryWindowSeconds: number;
-    statusRetentionDays: number;
-  }): Promise<void> {
+  async adoptAdvertisedPolicies(
+    policy: ReportingManagedDeliveryAdvertisedPoliciesV1
+  ): Promise<ReportingManagedDeliveryAdvertisedPoliciesV1> {
     nonnegativeSafeInteger(policy.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
     positiveInteger(policy.statusRetentionDays, 'statusRetentionDays');
-    await this.upsertPolicies(
+    positiveInteger(policy.resourceRetentionDays, 'resourceRetentionDays');
+    nonnegativeSafeInteger(policy.authorizationRevocationSeconds, 'authorizationRevocationSeconds');
+    const adopted = await this.upsertPolicies(
       [
         {
           column: 'advertised_recovery_window_seconds',
           value: policy.automatedRecoveryWindowSeconds,
-          label: 'advertised recovery window',
-          unit: 's',
+          strongest: Math.min,
         },
         {
           column: 'advertised_status_retention_days',
           value: policy.statusRetentionDays,
-          label: 'advertised status retention',
-          unit: ' days',
+          strongest: Math.max,
+        },
+        {
+          column: 'advertised_resource_retention_days',
+          value: policy.resourceRetentionDays,
+          strongest: Math.max,
+        },
+        {
+          column: 'advertised_authorization_revocation_seconds',
+          value: policy.authorizationRevocationSeconds,
+          strongest: Math.min,
         },
       ],
-      client => this.validateRecoveryWindow(client, policy.automatedRecoveryWindowSeconds)
+      (client, effective) => this.validateRecoveryWindow(client, effective.advertised_recovery_window_seconds!)
     );
+    return {
+      automatedRecoveryWindowSeconds: adopted.advertised_recovery_window_seconds!,
+      statusRetentionDays: adopted.advertised_status_retention_days!,
+      resourceRetentionDays: adopted.advertised_resource_retention_days!,
+      authorizationRevocationSeconds: adopted.advertised_authorization_revocation_seconds!,
+    };
   }
 
   /**
@@ -395,10 +429,21 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   private async ensurePolicyRegistered(): Promise<void> {
     if (this.policyRegistered) return;
     if (this.pendingRecoveryWindowSeconds !== undefined && this.statusRetentionDays !== undefined) {
-      await this.adoptAdvertisedPolicies({
-        automatedRecoveryWindowSeconds: this.pendingRecoveryWindowSeconds,
-        statusRetentionDays: this.statusRetentionDays,
-      });
+      await this.upsertPolicies(
+        [
+          {
+            column: 'advertised_recovery_window_seconds',
+            value: this.pendingRecoveryWindowSeconds,
+            strongest: Math.min,
+          },
+          {
+            column: 'advertised_status_retention_days',
+            value: this.statusRetentionDays,
+            strongest: Math.max,
+          },
+        ],
+        (client, effective) => this.validateRecoveryWindow(client, effective.advertised_recovery_window_seconds!)
+      );
     } else if (this.pendingRecoveryWindowSeconds !== undefined) {
       await this.adoptAdvertisedRecoveryWindowSeconds(this.pendingRecoveryWindowSeconds);
     } else if (this.statusRetentionDays !== undefined) {
@@ -408,65 +453,75 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
   }
 
   private async upsertPolicy(
-    column: string,
+    column: ManagedPolicyColumn,
     value: number,
-    label: string,
-    unit: string,
-    options: { validate?: (client: PgClient) => Promise<void> } = {}
+    options: {
+      strongest: (current: number, requested: number) => number;
+      validate?: (client: PgClient, effective: ManagedPolicyRow) => Promise<void>;
+    }
   ): Promise<void> {
-    await this.upsertPolicies([{ column, value, label, unit }], options.validate);
+    await this.upsertPolicies([{ column, value, strongest: options.strongest }], options.validate);
   }
 
   private async upsertPolicies(
-    policies: Array<{ column: string; value: number; label: string; unit: string }>,
-    validate?: (client: PgClient) => Promise<void>
-  ): Promise<void> {
-    await this.transaction(async client => {
+    policies: Array<{
+      column: ManagedPolicyColumn;
+      value: number;
+      strongest: (current: number, requested: number) => number;
+    }>,
+    validate?: (client: PgClient, effective: ManagedPolicyRow) => Promise<void>
+  ): Promise<ManagedPolicyRow> {
+    return this.transaction(async client => {
       // Serialize adopters so two racing runtimes cannot both read "absent"
       // and each install their own value.
       await advisoryLock(client, 'adcp-reporting-managed-policy');
-      // Any precondition runs here, under the same lock and in the same
-      // transaction, so a refusal rolls the write back with it.
-      await validate?.(client);
-      // Validate every constraint before issuing either write. The transaction
-      // would roll a later failure back too, but this ordering also guarantees
-      // that an ordinary policy conflict never performs a transient partial
-      // update inside the transaction.
+      const current = await this.readPolicyRow(client);
+      const effective = { ...current };
       for (const policy of policies) {
-        const existing = await client.query<QueryRow & { value: string | null }>(
-          `SELECT ${policy.column}::text AS value FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
-        );
-        const current = existing.rows[0]?.value;
-        if (current !== null && current !== undefined && Number(current) !== policy.value) {
-          throw new Error(
-            `Managed reporting is already registered with an ${policy.label} of ${current}${policy.unit} and cannot ` +
-              `also register ${policy.value}${policy.unit}; every runtime over one database must publish the same promise`
-          );
-        }
+        const existing = current[policy.column];
+        effective[policy.column] = existing === null ? policy.value : policy.strongest(existing, policy.value);
       }
+      // Binding compatibility is checked here, under the same policy fence
+      // that installBinding takes before it writes. A rejected stronger policy
+      // therefore leaves all columns unchanged, and an incompatible binding
+      // cannot slip between a runtime's check and adoption.
+      await validate?.(client, effective);
       for (const policy of policies) {
         await client.query(
           `INSERT INTO adcp_reporting_managed_policy (policy_key, ${policy.column})
            VALUES ('agent', $1)
            ON CONFLICT (policy_key) DO UPDATE SET ${policy.column} = EXCLUDED.${policy.column},
              changed_at = clock_timestamp()`,
-          [policy.value]
+          [effective[policy.column]]
         );
       }
+      return effective;
     });
   }
 
   private async validateRecoveryWindow(client: PgClient, seconds: number): Promise<void> {
-    const widest = await client.query<QueryRow & { widest: string | null }>(
-      `SELECT MAX(CEIL(
-                (configuration.data->'schedule'->>'recoveryWindowMilliseconds')::numeric / 1000
-              ))::text AS widest
-         FROM adcp_reporting_managed_bindings binding
-         JOIN adcp_reporting_configurations configuration
-           ON configuration.configuration_id = binding.configuration_id`
+    const widest = await client.query<QueryRow & { installed: string; valid: string; widest: string | null }>(
+      `WITH installed AS (
+         SELECT configuration.data->'schedule'->>'recoveryWindowMilliseconds' AS milliseconds
+           FROM adcp_reporting_managed_bindings binding
+           JOIN adcp_reporting_configurations configuration
+             ON configuration.configuration_id = binding.configuration_id
+       )
+       SELECT COUNT(*)::text AS installed,
+              COUNT(*) FILTER (WHERE milliseconds ~ '^[0-9]+$')::text AS valid,
+              MAX(CASE WHEN milliseconds ~ '^[0-9]+$'
+                       THEN CEIL(milliseconds::numeric / 1000) END)::text AS widest
+         FROM installed`
     );
-    const widestInstalled = Number(widest.rows[0]?.widest ?? 0);
-    if (Number.isFinite(widestInstalled) && seconds < widestInstalled) {
+    const row = widest.rows[0];
+    if (row?.installed !== row?.valid) {
+      throw new Error('Every installed managed Core configuration must have a usable non-negative recovery window');
+    }
+    const widestInstalled = Number(row?.widest ?? 0);
+    if (!Number.isSafeInteger(widestInstalled) || widestInstalled < 0) {
+      throw new Error('Installed managed Core recovery windows exceed the supported safe-integer range');
+    }
+    if (seconds < widestInstalled) {
       throw new Error(
         `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
           `(${widestInstalled}s); advertising ${seconds}s would promise a recovery bound this deployment ` +
@@ -475,18 +530,37 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     }
   }
 
-  private async readPolicy(
-    client: PgClient
-  ): Promise<{ recoveryWindowSeconds: number | null; statusRetentionDays: number | null }> {
-    const result = await client.query<QueryRow & { recovery: string | null; status: string | null }>(
+  private async readPolicyRow(client: PgClient): Promise<ManagedPolicyRow> {
+    const result = await client.query<
+      QueryRow & { recovery: string | null; status: string | null; resource: string | null; revocation: string | null }
+    >(
       `SELECT advertised_recovery_window_seconds::text AS recovery,
-              advertised_status_retention_days::text AS status
+              advertised_status_retention_days::text AS status,
+              advertised_resource_retention_days::text AS resource,
+              advertised_authorization_revocation_seconds::text AS revocation
          FROM adcp_reporting_managed_policy WHERE policy_key = 'agent'`
     );
     const row = result.rows[0];
     return {
-      recoveryWindowSeconds: row?.recovery === null || row?.recovery === undefined ? null : Number(row.recovery),
-      statusRetentionDays: row?.status === null || row?.status === undefined ? null : Number(row.status),
+      advertised_recovery_window_seconds: policyNumber(row?.recovery),
+      advertised_status_retention_days: policyNumber(row?.status),
+      advertised_resource_retention_days: policyNumber(row?.resource),
+      advertised_authorization_revocation_seconds: policyNumber(row?.revocation),
+    };
+  }
+
+  private async readPolicy(client: PgClient): Promise<{
+    recoveryWindowSeconds: number | null;
+    statusRetentionDays: number | null;
+    resourceRetentionDays: number | null;
+    authorizationRevocationSeconds: number | null;
+  }> {
+    const policy = await this.readPolicyRow(client);
+    return {
+      recoveryWindowSeconds: policy.advertised_recovery_window_seconds,
+      statusRetentionDays: policy.advertised_status_retention_days,
+      resourceRetentionDays: policy.advertised_resource_retention_days,
+      authorizationRevocationSeconds: policy.advertised_authorization_revocation_seconds,
     };
   }
 
@@ -563,11 +637,11 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       // had just been advertised.
       await advisoryLock(client, 'adcp-reporting-managed-policy');
       const registered = await this.readPolicy(client);
-      if (registered.statusRetentionDays !== null && days < registered.statusRetentionDays) {
+      const retentionFloor = Math.max(registered.statusRetentionDays ?? 0, registered.resourceRetentionDays ?? 0);
+      if (days < retentionFloor) {
         throw new Error(
-          `evidenceRetentionDays ${days} is shorter than the advertised statusRetentionDays ` +
-            `${registered.statusRetentionDays} registered for this database; pruning would cut inside an ` +
-            `advertised horizon`
+          `evidenceRetentionDays ${days} is shorter than the strongest advertised status/resource retention ` +
+            `of ${retentionFloor} days registered for this database; pruning would cut inside an advertised horizon`
         );
       }
       // One cutoff for every statement below, taken once. Re-evaluating
@@ -1370,27 +1444,32 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     if (requested !== undefined && (!Number.isSafeInteger(requested) || requested < 0)) {
       throw new RangeError('minimum_resource_retention_days must be a non-negative safe integer');
     }
-    // The binding's promise is a floor, not a default. Taking the caller's
-    // value outright let an explicit 0 accept a one-day resource against a
-    // thirty-day binding — a caller cannot waive a retention the deployment
-    // already published. A larger value is a caller tightening its own
-    // requirement, which is always allowed.
-    const minimumRetentionDays = Math.max(requested ?? 0, input.lease.binding.resource_retention_days);
-    // Enforced at the seam that persists, not only in the worker's own
-    // pre-flight. A caller driving the store directly must not be able to
-    // persist evidence whose profile, revision binding or delivery method is
-    // inconsistent with the lease.
-    // A missing expiry is already rejected and terminalized by the fenced SQL
-    // below. Preserve that durable failure path: it spends the bad attempt
-    // instead of throwing before the row can leave pending. Every outcome
-    // eligible to persist successfully must pass the complete evidence
-    // assertion here.
+    // Preserve direct, actionable evidence validation before opening the
+    // transaction. Retention itself is intentionally database-clocked below;
+    // assertMaterializationOutcome validates every other persistence invariant.
     if (input.outcome.status !== 'failed' && input.outcome.resource.expires_at !== undefined) {
-      assertMaterializationOutcome(input.lease, input.outcome, input.now, minimumRetentionDays);
+      assertMaterializationOutcome(
+        input.lease,
+        input.outcome,
+        input.now,
+        Math.max(requested ?? 0, input.lease.binding.resource_retention_days)
+      );
     }
     return this.transaction(async client => {
       const { lease } = input;
+      // Policy first is the store-wide lock order. Holding it until commit
+      // prevents a stronger resource promise from being adopted between this
+      // read and persistence under a weaker horizon.
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
       await advisoryLock(client, accountLock(lease.binding.account_id));
+      const registeredPolicy = await this.readPolicy(client);
+      // The binding, caller and every replica's durable capability promise are
+      // floors. A caller may tighten them, never waive any of them.
+      const minimumRetentionDays = Math.max(
+        requested ?? 0,
+        lease.binding.resource_retention_days,
+        registeredPolicy.resourceRetentionDays ?? 0
+      );
       const authorized = await client.query(
         `SELECT 1 FROM adcp_reporting_destination_authorizations
           WHERE account_id = $1 AND destination_ref = $2 AND generation = $3 AND revoked_at IS NULL`,
@@ -1472,7 +1551,21 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     steal_after_milliseconds?: number;
   }): Promise<ReportingDestinationRevocationLeaseV1 | null> {
     positiveInteger(input.lease_milliseconds, 'lease_milliseconds');
+    if (input.authorization_revocation_seconds !== undefined) {
+      nonnegativeSafeInteger(input.authorization_revocation_seconds, 'authorization_revocation_seconds');
+    }
     return this.transaction(async client => {
+      // Serialize with adoption and use the strongest maximum-delay promise
+      // registered by any replica. A direct caller cannot widen or omit it.
+      await advisoryLock(client, 'adcp-reporting-managed-policy');
+      const registeredPolicy = await this.readPolicy(client);
+      const revocationSeconds =
+        registeredPolicy.authorizationRevocationSeconds === null
+          ? input.authorization_revocation_seconds
+          : Math.min(
+              registeredPolicy.authorizationRevocationSeconds,
+              input.authorization_revocation_seconds ?? registeredPolicy.authorizationRevocationSeconds
+            );
       const result = await client.query<
         QueryRow & {
           data: ReportingDestinationAuthorizationV1;
@@ -1535,7 +1628,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
           input.owner,
           input.lease_milliseconds,
           input.account_id ?? null,
-          input.authorization_revocation_seconds ?? null,
+          revocationSeconds ?? null,
           input.steal_after_milliseconds ?? input.lease_milliseconds,
         ]
       );
@@ -2210,6 +2303,10 @@ function nonnegativeSafeInteger(value: number, name: string): void {
 
 function positiveInteger(value: number, name: string): void {
   if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${name} must be a positive safe integer`);
+}
+
+function policyNumber(value: string | null | undefined): number | null {
+  return value === null || value === undefined ? null : Number(value);
 }
 
 async function advisoryLock(client: PgClient, key: string): Promise<void> {
