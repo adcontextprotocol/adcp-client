@@ -15,6 +15,7 @@ import {
 import {
   aggregateReportingHealthV1,
   assertReportingConsumerMismatchEscalation,
+  reportingEffectiveConsumerMismatchEscalationV1,
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
 } from './health';
@@ -60,7 +61,11 @@ export function createReportingStatusHandler<TContext = unknown>(
   // snapshot and the handler projects severity afterwards, so two different
   // windows would make a filtered periods read contradict the summary.
   const consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(
-    resolveConsumerMismatchEscalation(options?.consumerMismatchEscalation, store)
+    reportingEffectiveConsumerMismatchEscalationV1(
+      options?.consumerMismatchEscalation,
+      store,
+      'createReportingStatusHandler'
+    )
   );
   const activeReadsByAccount = new Map<string, number>();
   return async (request, context) => {
@@ -488,32 +493,6 @@ export function createReportingStatusHandler<TContext = unknown>(
   };
 }
 
-/**
- * One escalation commitment for both the snapshot pre-filter and the
- * projection. Throws when the handler and the store were configured with
- * different windows rather than letting the two views silently diverge.
- */
-function resolveConsumerMismatchEscalation(
-  fromOptions: ReportingConsumerMismatchEscalationV1 | undefined,
-  store: ReportingLedgerStore
-): ReportingConsumerMismatchEscalationV1 | undefined {
-  const fromStore = (store as { consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1 })
-    .consumerMismatchEscalation;
-  if (!fromOptions) return fromStore;
-  if (!fromStore) return fromOptions;
-  if (
-    fromOptions.escalationSeconds !== fromStore.escalationSeconds ||
-    fromOptions.operationsContact.url !== fromStore.operationsContact.url ||
-    fromOptions.operationsContact.email !== fromStore.operationsContact.email
-  ) {
-    throw new TypeError(
-      'consumerMismatchEscalation differs between createReportingStatusHandler and the reporting ledger store; ' +
-        'configure one value so a health-filtered periods read cannot disagree with the summary'
-    );
-  }
-  return fromOptions;
-}
-
 /** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */
 export function createReportingDeliveryHandler(store: ReportingLedgerStore): ReportingDeliveryHandlerV1 {
   const activeReadsByAccount = new Map<string, number>();
@@ -645,13 +624,7 @@ function wireObligation(
       source_timezone: obligation.period.sourceTimezone,
     },
     expected_at: obligation.expectedAt,
-    schedule: {
-      period_duration: `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
-      alignment: 'billing_cycle',
-      period_anchor: obligation.schedule.anchor,
-      period_timezone: obligation.period.sourceTimezone,
-      delivery_sla: `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
-    },
+    schedule: wireSchedule(obligation),
     required_finality: obligation.requiredFinality,
     reconciliation_mode: managed?.binding.reconciliation_mode ?? 'delivery_only',
     reconciliation_status: managed?.reconciliationStatus ?? 'not_required',
@@ -1209,4 +1182,40 @@ function copyArray(raw: Record<string, unknown>, key: string): Record<string, un
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Project an obligation's schedule under the alignment it actually describes.
+ *
+ * `core/reporting-schedule.json` forbids `period_anchor` for every alignment
+ * except `billing_cycle`, and forbids `period_timezone` for `utc`. Reporting a
+ * spec-origin schedule as `billing_cycle` therefore both contradicts what the
+ * offering advertised at discovery and carries a field the wire rejects for the
+ * alignment the buyer was promised.
+ */
+function wireSchedule(obligation: ReportingLedgerObligationV1) {
+  // Echo the identity the configuration was installed with. A generation that
+  // predates the stored identity keeps the projection it has always emitted:
+  // deriving one from the boundaries cannot recover the installed alignment,
+  // and would silently rewrite a P1D billing_cycle schedule anchored at UTC
+  // midnight into `utc`, dropping the period_anchor and period_timezone that
+  // its immutable installed-schedule match depends on.
+  const alignment = obligation.schedule.alignment ?? 'billing_cycle';
+  const periodTimezone = obligation.schedule.periodTimezone ?? obligation.period.sourceTimezone;
+  return {
+    period_duration: obligation.schedule.periodDuration ?? `PT${obligation.schedule.periodMilliseconds / 1_000}S`,
+    alignment,
+    // reporting-schedule.json: billing_cycle requires both fields,
+    // source_timezone requires period_timezone and forbids period_anchor, and
+    // utc/account_timezone forbid both. Emitting period_timezone for
+    // account_timezone fails the whole strict get_reporting_status response.
+    ...(alignment === 'billing_cycle' ? { period_anchor: obligation.schedule.anchor } : {}),
+    ...(alignment === 'billing_cycle' || alignment === 'source_timezone' ? { period_timezone: periodTimezone } : {}),
+    // Echo the installed lexical duration. Recomputing it from expected_at
+    // would answer PT3600S where the offering advertised PT1H — the same
+    // instant, but not the same value installed_schedule_match compares.
+    delivery_sla:
+      obligation.schedule.deliverySlaDuration ??
+      `PT${(Date.parse(obligation.expectedAt) - Date.parse(obligation.period.end)) / 1_000}S`,
+  };
 }

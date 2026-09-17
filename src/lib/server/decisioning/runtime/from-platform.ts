@@ -2785,6 +2785,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   // empty support list as a positive 3.1 metric-optimization declaration.
   const som = somCandidate != null && somCandidate.length > 0 ? somCandidate : undefined;
   const fc = platform.capabilities.frequency_capping;
+  const reportingDelivery = platform.reporting?.capabilities;
   const targeting = platform.capabilities.targeting
     ? normalizeTargetingCapabilities(platform.capabilities.targeting)
     : undefined;
@@ -2806,6 +2807,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     cs != null ||
     som != null ||
     fc != null ||
+    reportingDelivery != null ||
     targeting != null ||
     supportsProposals !== undefined;
   // App `version` / capability `build_version` are deployment metadata and
@@ -2818,6 +2820,9 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     throw new PlatformConfigError(
       `Configured AdCP version '${configuredAdcpVersion}' is not a valid release identifier`
     );
+  }
+  if (reportingDelivery && !isAdcpVersionAtLeast(configuredAdcpVersion, '3.2.0-rc.3')) {
+    throw new PlatformConfigError('Reliable Reporting Core requires an AdCP 3.2.0-rc.3 or newer schema pin');
   }
   for (const advertisedVersion of platform.capabilities.supported_versions ?? []) {
     const advertisedRelease = parseAdcpRelease(advertisedVersion);
@@ -2847,6 +2852,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     ...(cs != null && { content_standards: cs }),
     ...(som != null && { supported_optimization_metrics: som }),
     ...(fc != null && { frequency_capping: fc }),
+    ...(reportingDelivery != null && { reporting_delivery: reportingDelivery }),
     ...(targeting != null && { execution: { targeting } }),
     ...(supportsProposals !== undefined && { supports_proposals: supportsProposals }),
     features: {
@@ -3029,6 +3035,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
   const adopterExtensionsSupported = platform.capabilities.extensions_supported;
   const adopterCapabilityExt = platform.capabilities.ext;
   const adopterOverrides = platform.capabilities.overrides;
+  const adopterExperimentalFeatures = (adopterOverrides?.experimental_features ?? []) as readonly string[];
+  if (
+    reportingDelivery &&
+    !adopterExperimentalFeatures.includes('media_buy.reporting_delivery') &&
+    adopterExperimentalFeatures.length >= 32
+  ) {
+    throw new PlatformConfigError(
+      'Reliable Reporting Core cannot be added because experimental_features already contains 32 entries'
+    );
+  }
+  const experimentalFeatures = reportingDelivery
+    ? Array.from(new Set([...adopterExperimentalFeatures, 'media_buy.reporting_delivery']))
+    : adopterOverrides?.experimental_features;
   const adopterSupportedVersions = platform.capabilities.supported_versions;
   const hasOverridesObject = hasOverridesProjection || adopterOverrides !== undefined;
 
@@ -3063,6 +3082,7 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
         }),
         ...(hasComplianceTestingProjection &&
           complianceTestingOverrides != null && { compliance_testing: complianceTestingOverrides }),
+        ...(experimentalFeatures !== undefined && { experimental_features: experimentalFeatures }),
       },
     }),
   };
@@ -3164,6 +3184,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // cross-credential collisions without reopening a duplicate-buy window
     // on create_media_buy/update_media_buy. Explicit adopter resolvers still
     // win for every tool.
+    // A service-installed reporting platform names the consumer a receipt is
+    // deposited for; scope that tool's replay by the same value rather than by
+    // the caller's credential, which two operator seats can share.
+    ...((opts.resolveReportingConsumerId ?? platform.reporting?.resolveConsumerId)
+      ? {
+          resolveReportingConsumerId:
+            opts.resolveReportingConsumerId ??
+            ((ctx, params) =>
+              platform.reporting!.resolveConsumerId!(
+                ctxFor(ctx as HandlerContext<Account>, params) as RequestContext<Account>
+              )),
+        }
+      : {}),
     resolveIdempotencyPrincipal:
       opts.resolveIdempotencyPrincipal ??
       ((ctx, _params, toolName) =>
@@ -3316,7 +3349,8 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
       ),
       'mediaBuy',
       mergeOpts,
-      defaultCreativeWireMode
+      defaultCreativeWireMode,
+      platform.mediaBuyLifecycle?.getMediaBuyDelivery !== undefined || platform.sales?.getMediaBuyDelivery !== undefined
     ),
     proposalNegotiation: platformProposalNegotiation ?? opts.proposalNegotiation,
     creative: mergeHandlers(
@@ -4415,7 +4449,11 @@ function mergeHandlers<T extends object>(
   custom: T | undefined,
   platform: T | undefined,
   domain: string,
-  opts: { mode: MergeSeamMode; logger: AdcpLogger }
+  opts: { mode: MergeSeamMode; logger: AdcpLogger },
+  // Keys the caller composes into a single routed handler instead of letting
+  // one side shadow the other. They are not a migration-seam collision, so
+  // strict mode must not reject them.
+  composedKeys: ReadonlySet<string> = new Set()
 ): T | undefined {
   if (!custom && !platform) return undefined;
   if (!custom) return platform;
@@ -4424,6 +4462,7 @@ function mergeHandlers<T extends object>(
   if (opts.mode !== 'silent') {
     const collisions: string[] = [];
     for (const key of Object.keys(platform)) {
+      if (composedKeys.has(key)) continue;
       if (key in (custom as Record<string, unknown>)) collisions.push(key);
     }
     if (collisions.length > 0) {
@@ -4465,12 +4504,43 @@ function mergeMediaBuyHandlers(
   platform: MediaBuyHandlers<Account> | undefined,
   domain: string,
   opts: { mode: MergeSeamMode; logger: AdcpLogger },
-  fallbackWireMode: 'canonical' | 'legacy'
+  fallbackWireMode: 'canonical' | 'legacy',
+  platformServesCumulativeDelivery: boolean
 ): MediaBuyHandlers<Account> | undefined {
-  const merged = mergeHandlers(custom, platform, domain, opts);
+  // Decide the composition first so collision enforcement can see it: a
+  // reporting-only platform contributes `getMediaBuyDelivery` solely for exact
+  // revision reads, which is a deliberate split of one tool across two owners
+  // rather than an un-migrated override for strict mode to reject.
+  const composesDelivery =
+    !platformServesCumulativeDelivery &&
+    typeof custom?.getMediaBuyDelivery === 'function' &&
+    typeof platform?.getMediaBuyDelivery === 'function';
+  const merged = mergeHandlers(
+    custom,
+    platform,
+    domain,
+    opts,
+    composesDelivery ? new Set(['getMediaBuyDelivery']) : undefined
+  );
   if (!custom || !platform || !merged) return merged;
 
   const routed = { ...merged } as Record<string, unknown>;
+  // Installing reporting makes the platform emit `getMediaBuyDelivery` purely to
+  // serve exact revision reads. On a reporting-only platform that key would
+  // otherwise shadow an adopter's still-current cumulative handler and answer
+  // UNSUPPORTED_FEATURE, so route unbound reads back to the adopter. The custom
+  // handler keeps receiving the raw HandlerContext it is written against.
+  const customDelivery = custom.getMediaBuyDelivery;
+  const platformDelivery = platform.getMediaBuyDelivery;
+  if (composesDelivery && typeof customDelivery === 'function' && typeof platformDelivery === 'function') {
+    routed.getMediaBuyDelivery = (...args: unknown[]) => {
+      const revisionId = (args[0] as { reporting_revision_id?: unknown } | undefined)?.reporting_revision_id;
+      const exactRevisionRead = typeof revisionId === 'string' && revisionId.length > 0;
+      return exactRevisionRead
+        ? Reflect.apply(platformDelivery, platform, args)
+        : Reflect.apply(customDelivery, custom, args);
+    };
+  }
   for (const key of ['createMediaBuy', 'updateMediaBuy', 'getMediaBuys'] as const) {
     const customHandler = (custom as Record<string, unknown>)[key];
     const platformHandler = (platform as Record<string, unknown>)[key];
@@ -6428,12 +6498,14 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
 ): MediaBuyHandlers<Account> | undefined {
   const sales = platform.sales;
   const lifecycle = platform.mediaBuyLifecycle;
-  const getMediaBuyDelivery = lifecycle?.getMediaBuyDelivery ?? sales?.getMediaBuyDelivery;
+  const reporting = platform.reporting;
+  const liveMediaBuyDelivery = lifecycle?.getMediaBuyDelivery ?? sales?.getMediaBuyDelivery;
+  const getMediaBuyDelivery = liveMediaBuyDelivery ?? reporting?.getMediaBuyDelivery;
   const getMediaBuys = lifecycle?.getMediaBuys ?? sales?.getMediaBuys;
   const proposalManager = (platform as { proposalManager?: import('../proposal').ProposalManager }).proposalManager;
   // Without a legacy sales surface, compact lifecycle, or proposal manager,
   // there's nothing to dispatch.
-  if (!sales && !lifecycle && !proposalManager) return undefined;
+  if (!sales && !lifecycle && !proposalManager && !reporting) return undefined;
 
   const dispatchCompactMutation = async <TResult>(
     tool: string,
@@ -6491,6 +6563,21 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
       },
       value => value
     );
+  };
+
+  const reportingContext = (
+    tool: 'get_media_buy_delivery' | 'get_reporting_status' | 'sync_reporting_status',
+    params: Readonly<Record<string, unknown>>,
+    ctx: HandlerContext<Account>
+  ): RequestContext<Account> => {
+    if (ctx.authInfo === undefined && ctx.agent === undefined) {
+      throw new AdcpError('AUTH_MISSING', {
+        message: `${tool} requires an authenticated buyer principal`,
+        recovery: 'correctable',
+      });
+    }
+    if (!ctx.account?.id) throw missingAccountError(tool, platform.accounts.resolution);
+    return ctxFor(ctx, params);
   };
 
   // Core lifecycle methods are optional on the SalesPlatform interface
@@ -7080,7 +7167,20 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getMediaBuyDelivery']>>
       ) => {
         const responseWireMode = creativeWireModeForRequest(ctx, creativeWireMode, params);
-        const reqCtx = ctxFor(ctx, params);
+        const requestedRevisionId = (params as { reporting_revision_id?: unknown }).reporting_revision_id;
+        // One predicate decides routing, auth scope, and the raw-passthrough
+        // gate. Routing on mere presence sent `reporting_revision_id: null` to
+        // the ledger as if it were an exact read — where it is not one — so a
+        // cumulative request answered SERVICE_UNAVAILABLE wherever request
+        // validation is off. It also must not rest on handler identity alone:
+        // an adopter may wire one function into both the sales and reporting
+        // slots, and an unbound read would inherit the exact-revision bypass.
+        const exactRevisionRead = typeof requestedRevisionId === 'string' && requestedRevisionId.length > 0;
+        const exactRevisionRequested = exactRevisionRead;
+        const reportingRevisionRequested = exactRevisionRequested && reporting !== undefined;
+        const reqCtx = reportingRevisionRequested
+          ? reportingContext('get_media_buy_delivery', params, ctx)
+          : ctxFor(ctx, params);
         // v1.5 seam: hydrate ctx.recipes for delivery reads. Per
         // Resolutions §5, recipe-driven delivery aggregation needs the
         // same recipe view the originating createMediaBuy used.
@@ -7103,7 +7203,32 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
         }
         return projectSync(
           async () => {
-            const result = await getMediaBuyDelivery(asValidatedDomainRequest(params), reqCtx);
+            const selectedDelivery = exactRevisionRequested
+              ? (reporting?.getMediaBuyDelivery ?? liveMediaBuyDelivery)
+              : liveMediaBuyDelivery;
+            if (!selectedDelivery) {
+              throw new AdcpError('UNSUPPORTED_FEATURE', {
+                message: 'This reporting-only platform does not provide cumulative delivery reads',
+                recovery: 'correctable',
+              });
+            }
+            const servedByReportingLedger =
+              exactRevisionRead &&
+              reporting?.getMediaBuyDelivery !== undefined &&
+              selectedDelivery === reporting.getMediaBuyDelivery;
+            const result = await selectedDelivery(asValidatedDomainRequest(params), reqCtx);
+            if (servedByReportingLedger) {
+              // An exact reporting revision is hash-bound: its rows are an
+              // opaque payload carried under the revision's RFC 8785 JCS
+              // SHA-256 digest, not creative-bearing media-buy delivery.
+              // Creative-format projection would rewrite row content without
+              // updating that digest, and it rejects a perfectly legitimate
+              // row whose columns happen to be named `creative_id` and
+              // `format_kind` with INVALID_REQUEST. Return the bytes the
+              // ledger bound. `projectSync` still applies the ctx_metadata /
+              // implementation_config leak strip around this.
+              return result;
+            }
             warnIfTruncatedMultiIdResponse(
               'getMediaBuyDelivery',
               'media_buy_ids',
@@ -7122,6 +7247,26 @@ function buildMediaBuyHandlers<P extends DecisioningPlatform<any, any>>(
           actuals => actuals
         );
       },
+    }),
+
+    ...(reporting?.getReportingStatus && {
+      getReportingStatus: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['getReportingStatus']>>
+      ) =>
+        projectSync(
+          () => reporting.getReportingStatus(params, reportingContext('get_reporting_status', params, ctx)),
+          value => value
+        ),
+    }),
+
+    ...(reporting?.syncReportingStatus && {
+      syncReportingStatus: async (
+        ...[params, ctx]: Parameters<NonNullable<MediaBuyHandlers<Account>['syncReportingStatus']>>
+      ) =>
+        projectSync(
+          () => reporting.syncReportingStatus!(params, reportingContext('sync_reporting_status', params, ctx)),
+          value => value
+        ),
     }),
 
     // Optional methods — return UNSUPPORTED_FEATURE when the platform omits

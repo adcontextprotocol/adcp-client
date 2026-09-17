@@ -345,6 +345,119 @@ describe('PostgresReportingLedgerStore', { skip: !DATABASE_URL && 'PostgreSQL UR
     );
     assert.equal((await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'action_required');
 
+    const upgradeAccount = { account_id: 'account-pre-v14-finality' };
+    const upgradeConfiguration = {
+      ...configuration,
+      configurationId: 'rcfg_pg_pre_v14_finality',
+      account: upgradeAccount,
+      delivery_config_id: 'delivery-pg-pre-v14-finality',
+      semanticFingerprint: 'sha256:pre-v14-finality-configuration',
+    };
+    await store.putConfiguration(upgradeConfiguration);
+    const upgradeObligation = {
+      ...obligation,
+      reporting_obligation_id: 'robl_pg_pre_v14_finality',
+      configurationId: upgradeConfiguration.configurationId,
+      account: upgradeAccount,
+      delivery_config_id: upgradeConfiguration.delivery_config_id,
+      semanticFingerprint: 'sha256:pre-v14-finality-obligation',
+    };
+    await store.putObligation(upgradeObligation);
+    const snapshotCreatedAt = new Date(now + 100).toISOString();
+    const legacyTransitionAt = new Date(now + 200).toISOString();
+    const officialCreatedAt = new Date(now + 300).toISOString();
+    const upgradeSnapshot = {
+      ...revision,
+      reporting_revision_id: 'rrev_pg_pre_v14_snapshot',
+      reporting_obligation_id: upgradeObligation.reporting_obligation_id,
+      createdAt: snapshotCreatedAt,
+      wireRevision: {
+        ...revision.wireRevision,
+        reporting_revision_id: 'rrev_pg_pre_v14_snapshot',
+      },
+    };
+    await pool.query(
+      `INSERT INTO adcp_reporting_revisions
+         (revision_id, obligation_id, revision_number, finality, kind, content_sha256, data, created_at)
+       VALUES ($1, $2, 1, 'snapshot', 'snapshot', $3, $4::jsonb, $5)`,
+      [
+        'rrev_pg_pre_v14_snapshot',
+        upgradeObligation.reporting_obligation_id,
+        'pre-v14-snapshot',
+        JSON.stringify(upgradeSnapshot),
+        snapshotCreatedAt,
+      ]
+    );
+    assert.deepEqual(
+      await store.appendTransition({
+        transitionId: 'rst_pg_pre_v14_without_finality',
+        reporting_obligation_id: upgradeObligation.reporting_obligation_id,
+        previousHealth: 'waiting',
+        health: 'complete',
+        issueIds: [],
+        occurredAt: legacyTransitionAt,
+      }),
+      { inserted: true }
+    );
+    const upgradeOfficial = {
+      ...official,
+      reporting_revision_id: 'rrev_pg_pre_v14_official',
+      reporting_obligation_id: upgradeObligation.reporting_obligation_id,
+      supersedes_reporting_revision_id: upgradeSnapshot.reporting_revision_id,
+      createdAt: officialCreatedAt,
+      wireRevision: {
+        ...official.wireRevision,
+        reporting_revision_id: 'rrev_pg_pre_v14_official',
+      },
+    };
+    await pool.query(
+      `INSERT INTO adcp_reporting_revisions
+         (revision_id, obligation_id, revision_number, finality, kind, supersedes_revision_id,
+          content_sha256, data, created_at)
+       VALUES ($1, $2, 2, 'official', 'official', $3, $4, $5::jsonb, $6)`,
+      [
+        'rrev_pg_pre_v14_official',
+        upgradeObligation.reporting_obligation_id,
+        'rrev_pg_pre_v14_snapshot',
+        'pre-v14-official',
+        JSON.stringify(upgradeOfficial),
+        officialCreatedAt,
+      ]
+    );
+    // A pre-v14 row's baseline is never reconstructed, so it resolves to 'none'
+    // and the store fails closed against any other claimed predecessor.
+    assert.deepEqual(
+      await store.appendTransition({
+        transitionId: 'rst_pg_pre_v14_reconstructed_predecessor',
+        reporting_obligation_id: upgradeObligation.reporting_obligation_id,
+        previousHealth: 'complete',
+        health: 'complete',
+        previousFinality: 'snapshot',
+        finality: 'official',
+        issueIds: [],
+        occurredAt: new Date(now + 400).toISOString(),
+      }),
+      { inserted: false }
+    );
+    assert.deepEqual(
+      await store.appendTransition({
+        transitionId: 'rst_pg_pre_v14_official_successor',
+        reporting_obligation_id: upgradeObligation.reporting_obligation_id,
+        previousHealth: 'complete',
+        health: 'complete',
+        previousFinality: 'none',
+        finality: 'official',
+        issueIds: [],
+        occurredAt: new Date(now + 400).toISOString(),
+      }),
+      { inserted: true }
+    );
+    assert.equal(
+      (await store.listTransitions(upgradeObligation.reporting_obligation_id))[0].finality,
+      'none',
+      'the pre-v14 row carries the committed baseline after the first resolution'
+    );
+
     const snapshot = await store.createSnapshot({ account_id: request.account.account_id, view: 'periods' });
     assert.match(snapshot.changesCheckpoint, /^[0-9a-f-]{36}$/i);
     const page = await store.readSnapshotPage(snapshot.snapshotId, request.account.account_id, undefined, 10);

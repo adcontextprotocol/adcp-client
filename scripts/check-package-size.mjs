@@ -51,13 +51,16 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // not published. Retiring the v3.1 beta type bundle removes eight artifacts;
 // its current legacy-view wholesale type replacement adds four, for 6,107
 // published files. Byte budgets stay fixed.
-// Managed Delivery and Reconciled Billing add two public dual-format
-// runtime/declaration module sets — `reporting/ledger/managed` and
-// `reporting/ledger/managed-postgres`, each CJS + ESM + both declaration
-// flavours — for +8 files over the 6,107 baseline, so 6,115 published files.
-// Its remaining changes edit existing modules, and its guide edit and
-// PostgreSQL tests add no published files. Byte budgets stay fixed.
-const MAX_PACKED_FILE_COUNT = 6_115;
+// Reliable Reporting Core adds three module sets (CJS + ESM + both declaration
+// flavours) and one packaged setup guide, bringing the clean package to 6,120
+// published files. Byte budgets stay fixed.
+// Transactional reporting notification activity adds one module set (CJS + ESM
+// + both declaration flavours), for 6,124 published files. Managed Delivery and
+// Reconciled Billing add two public dual-format runtime/declaration module sets
+// — `reporting/ledger/managed` and `reporting/ledger/managed-postgres`, each CJS
+// + ESM + both declaration flavours — for +8 files and 6,132 total. The
+// remaining changes edit existing modules; byte budgets stay fixed.
+const MAX_PACKED_FILE_COUNT = 6_132;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

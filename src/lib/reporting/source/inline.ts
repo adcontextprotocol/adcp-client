@@ -129,6 +129,16 @@ type SealedExecution = {
 };
 
 type ExecutionEntry = {
+  /**
+   * The admission transaction currently claiming this entry, if any. The entry
+   * stays fully replayable while claimed — only that transaction's `commit()`
+   * removes it — but no other admission may plan it.
+   *
+   * Identity matters, not presence: a boolean let a stale transaction commit a
+   * claim that had been revoked and re-taken, deleting evidence a replay had
+   * been served and another admission was counting on.
+   */
+  reservation?: object;
   scopeKey: string;
   requestFingerprint: string;
   promise: Promise<SealedExecution>;
@@ -150,6 +160,63 @@ const INLINE_MAX_OBJECT_BYTES_V1 = 64 * 1_024 * 1_024;
 const INLINE_MAX_TOTAL_OBJECT_BYTES_V1 = 256 * 1_024 * 1_024;
 const INLINE_MAX_SCOPE_OBJECT_BYTES_V1 = 32 * 1_024 * 1_024;
 const INLINE_MAX_ROWS_V1 = 100_000;
+
+interface InlineStagingCapacitiesV1 {
+  /** Ceiling for a single staged object. */
+  readonly object: number;
+  /** Ceiling for every staged object this executor holds. */
+  readonly total: number;
+  /** Ceiling for the staged objects of one source scope. */
+  readonly scope: number;
+  /** Ceiling for retained executions across every scope. */
+  readonly executions: number;
+  /** Ceiling for retained executions in one source scope. */
+  readonly scopeExecutions: number;
+}
+
+/**
+ * Test-only instrumentation. Counts how often a slice asks for more capacity,
+ * which is the only externally invisible effect of a reclamation loop that
+ * cannot make progress.
+ *
+ * @internal
+ */
+export interface InlineCapacityObserverV1 {
+  onCapacityRequest?(): void;
+}
+
+const INLINE_SHIPPED_CAPACITIES_V1: InlineStagingCapacitiesV1 = {
+  object: INLINE_MAX_OBJECT_BYTES_V1,
+  total: INLINE_MAX_TOTAL_OBJECT_BYTES_V1,
+  scope: INLINE_MAX_SCOPE_OBJECT_BYTES_V1,
+  executions: INLINE_MAX_EXECUTIONS_V1,
+  scopeExecutions: INLINE_MAX_EXECUTIONS_PER_SCOPE_V1,
+};
+
+/**
+ * Tighten the shipped ceilings. Every field is clamped with `Math.min` against
+ * the shipped constant and a malformed value keeps the shipped one, so no input
+ * here can widen a staging or count limit.
+ *
+ * Only reachable through {@link createInlineReportingSourceExecutorForTestsV1},
+ * which is deliberately absent from every barrel and from the package's public
+ * type surface. Nothing is read off an adopter-supplied options object -- an
+ * earlier revision looked up a `Symbol.for` key there, which was both globally
+ * discoverable and an inherited-property read, so `Object.prototype` could carry
+ * a poisoned value or an accessor into ordinary calls.
+ */
+function tightenInlineStagingCapacities(override: Partial<InlineStagingCapacitiesV1>): InlineStagingCapacitiesV1 {
+  const tighten = (shipped: number, value: unknown): number =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? Math.min(shipped, value) : shipped;
+  return {
+    object: tighten(INLINE_MAX_OBJECT_BYTES_V1, override.object),
+    total: tighten(INLINE_MAX_TOTAL_OBJECT_BYTES_V1, override.total),
+    scope: tighten(INLINE_MAX_SCOPE_OBJECT_BYTES_V1, override.scope),
+    executions: tighten(INLINE_MAX_EXECUTIONS_V1, override.executions),
+    scopeExecutions: tighten(INLINE_MAX_EXECUTIONS_PER_SCOPE_V1, override.scopeExecutions),
+  };
+}
+
 // One comprehensive budget for every per-row check availability verification performs:
 // each requested metric and each requested dimension, once per row, once per constituent
 // that names the row's media buy. Metrics alone left dimensions and constituent fanout
@@ -232,10 +299,88 @@ const InlineReportingAvailabilityEvidenceV1Schema = z.strictObject({
  * Adapt a synchronous delivery handler to the reporting-source contract.
  * The returned object is both the executor and its generation-pinned reader.
  */
+/**
+ * Explicit replay-retention policy for the inline executor.
+ *
+ * By default every admitted execution is retained, which is what makes an
+ * admitted key replayable for the executor's lifetime — and what caps a scope
+ * at `INLINE_MAX_EXECUTIONS_PER_SCOPE_V1` slices. A scheduled feed that outlives
+ * that ceiling must either install a durable executor or opt in here, which
+ * trades the lifetime replay guarantee for a bounded window: a replay of an
+ * evicted key re-executes instead of returning its recorded result. Opting in
+ * is safe against the ledger, which binds each obligation to an immutable
+ * revision and refuses to rewrite one, but it is never applied silently.
+ */
+export interface InlineReportingReplayRetentionV1 {
+  /** Reclaim the oldest settled execution to admit new work. */
+  readonly evictSettled: true;
+}
+
+export interface CreateInlineReportingSourceExecutorOptionsV1 {
+  readonly replayRetention?: InlineReportingReplayRetentionV1;
+}
+
 export function createInlineReportingSourceExecutor(
   deliveryFetch: InlineReportingDeliveryFetchV1,
-  offeringInput: ReportingSourceOfferingV1
+  offeringInput: ReportingSourceOfferingV1,
+  executorOptions: CreateInlineReportingSourceExecutorOptionsV1 = {}
 ): InlineReportingSourceExecutorV1 {
+  return createInlineExecutorWithCapacities(
+    deliveryFetch,
+    offeringInput,
+    executorOptions,
+    INLINE_SHIPPED_CAPACITIES_V1
+  );
+}
+
+/**
+ * Test harness entry. Builds the same executor against tightened ceilings so the
+ * byte-pressure and reclamation paths can be exercised at kilobyte scale instead
+ * of staging hundreds of megabytes per assertion.
+ *
+ * Not re-exported by `./index`, by `src/lib/index.ts`, or by any package entry
+ * point, so it is absent from the public type surface and from the generated
+ * adapter interface. `tightenInlineStagingCapacities` clamps every field against
+ * the shipped constant regardless, so even a deep import cannot widen a limit.
+ *
+ * @internal
+ */
+export function createInlineReportingSourceExecutorForTestsV1(
+  deliveryFetch: InlineReportingDeliveryFetchV1,
+  offeringInput: ReportingSourceOfferingV1,
+  executorOptions: CreateInlineReportingSourceExecutorOptionsV1,
+  capacities: Partial<InlineStagingCapacitiesV1>,
+  observer?: InlineCapacityObserverV1
+): InlineReportingSourceExecutorV1 {
+  return createInlineExecutorWithCapacities(
+    deliveryFetch,
+    offeringInput,
+    executorOptions,
+    tightenInlineStagingCapacities(capacities),
+    observer
+  );
+}
+
+/**
+ * Resolve tightened ceilings without building an executor, so the clamp itself
+ * can be asserted field by field.
+ *
+ * @internal
+ */
+export function inlineStagingCapacitiesForTestsV1(
+  capacities: Partial<InlineStagingCapacitiesV1>
+): InlineStagingCapacitiesV1 {
+  return tightenInlineStagingCapacities(capacities);
+}
+
+function createInlineExecutorWithCapacities(
+  deliveryFetch: InlineReportingDeliveryFetchV1,
+  offeringInput: ReportingSourceOfferingV1,
+  executorOptions: CreateInlineReportingSourceExecutorOptionsV1,
+  capacities: InlineStagingCapacitiesV1,
+  observer?: InlineCapacityObserverV1
+): InlineReportingSourceExecutorV1 {
+  const evictSettled = executorOptions.replayRetention?.evictSettled === true;
   const parsedOffering = ReportingSourceOfferingV1Schema.parse(offeringInput);
   if (!parsedOffering.sourceExecution.manifestLevels.includes('basic')) {
     throw new TypeError('Inline reporting requires a basic manifest offering');
@@ -341,20 +486,53 @@ export function createInlineReportingSourceExecutor(
         if (existing.requestFingerprint !== requestFingerprint) {
           return failure('INTEGRITY_FAILED', 'terminal', 'sourceExecutionKey was reused with a different request');
         }
+        // Serving this entry revokes any admission's claim on it. A reservation
+        // keeps the entry replayable on purpose, so once a replay has been
+        // handed its evidence that evidence must survive.
+        existing.reservation = undefined;
         return awaitInlineExecution(existing, context.signal, request.deadline.deadlineAt);
       }
 
-      if (executions.size >= INLINE_MAX_EXECUTIONS_V1) {
-        return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline reporting replay capacity is exhausted');
+      const scopeCount = [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length;
+      const exhaustedGlobally = executions.size >= capacities.executions;
+      const exhaustedForScope = scopeCount >= capacities.scopeExecutions;
+      if ((exhaustedGlobally || exhaustedForScope) && !evictSettled) {
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          `Inline reporting ${exhaustedGlobally ? 'replay' : 'scope replay'} capacity is exhausted; supply a ` +
+            'durable executor or an explicit replayRetention policy for long-lived feeds'
+        );
       }
-      if (
-        [...executions.values()].filter(candidate => candidate.scopeKey === scopeKey).length >=
-        INLINE_MAX_EXECUTIONS_PER_SCOPE_V1
-      ) {
-        return failure('QUOTA_EXHAUSTED', 'terminal', 'Inline reporting scope replay capacity is exhausted');
-      }
+      // Admission is decided before anything is reclaimed. Evicting first and
+      // then refusing would destroy a replayable execution for work never run.
       if (activeExecutions >= INLINE_MAX_CONCURRENT_EXECUTIONS_V1) {
         return failure('RATE_LIMITED', 'retryable', 'Inline reporting concurrency capacity is exhausted');
+      }
+      // One plan-only transaction for the whole admission: the count ceilings
+      // and byte pressure both reclaim through it, and nothing is deleted until
+      // staging is certain.
+      const reclaimer = evictSettled ? createAdmissionReclaimer(executions, storage) : undefined;
+      if (exhaustedGlobally && reclaimer?.plan(scopeKey, false) === undefined) {
+        reclaimer?.release();
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          'Inline reporting replay capacity is exhausted; supply a durable executor or an explicit ' +
+            'replayRetention policy for long-lived feeds'
+        );
+      }
+      if (
+        scopeCount - (reclaimer?.plannedInScope(scopeKey) ?? 0) >= capacities.scopeExecutions &&
+        reclaimer?.plan(scopeKey, true) === undefined
+      ) {
+        reclaimer?.release();
+        return failure(
+          'QUOTA_EXHAUSTED',
+          'terminal',
+          'Inline reporting scope replay capacity is exhausted; supply a durable executor or an explicit ' +
+            'replayRetention policy for long-lived feeds'
+        );
       }
 
       activeExecutions += 1;
@@ -372,7 +550,10 @@ export function createInlineReportingSourceExecutor(
             controller.signal,
             storage,
             key,
-            scopeKey
+            scopeKey,
+            capacities,
+            reclaimer,
+            observer
           )
         )
         .then(result => ({ requestFingerprint, result }))
@@ -383,6 +564,8 @@ export function createInlineReportingSourceExecutor(
         .finally(() => {
           activeExecutions -= 1;
           entry.pending = false;
+          // Staging commits; every other outcome leaves the victims intact.
+          reclaimer?.release();
         });
       const entry: ExecutionEntry = {
         scopeKey,
@@ -438,7 +621,10 @@ async function executeAndSeal(
     scopeBytes: Map<string, number>;
   },
   executionNamespace: string,
-  scopeKey: string
+  scopeKey: string,
+  capacities: InlineStagingCapacitiesV1,
+  reclaimer?: InlineAdmissionReclaimerV1,
+  observer?: InlineCapacityObserverV1
 ): Promise<ReportingSourceExecutorResultV1> {
   let fetched: InlineReportingDeliveryResultV1;
   try {
@@ -926,46 +1112,96 @@ async function executeAndSeal(
   // Projecting earlier spent the staging budget proving nothing, so a response whose
   // own evidence already decided the outcome came back terminal STAGING_FAILED
   // instead of the verdict it earned.
-  const remainingCapacity = Math.min(
-    INLINE_MAX_OBJECT_BYTES_V1,
-    INLINE_MAX_TOTAL_OBJECT_BYTES_V1 - storage.totalBytes,
-    INLINE_MAX_SCOPE_OBJECT_BYTES_V1 - (storage.scopeBytes.get(scopeKey) ?? 0)
-  );
-  let projectionBudget = remainingCapacity;
-  let rows: readonly Record<string, unknown>[];
-  try {
-    // Only the source collection is projected. The auxiliary collection is validated
-    // from its captured claims and never staged, so projecting it charged a budget
-    // against values nothing would read -- 20,000 valid auxiliary rows were enough to
-    // fail a response whose staged object is sixty-eight bytes.
-    rows = sourceSnapshots.map(snapshot =>
-      projectSnapshotRow(
-        snapshot,
-        request,
-        upperBound => {
-          if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
-          projectionBudget -= upperBound;
-        },
-        {
-          allowMissingMetrics: true,
-          allowMissingDimensions: true,
-          strictMetricClaims: availabilityEvidence !== undefined,
-          includeDimensions: true,
-        }
-      )
-    );
-  } catch (error) {
-    if (error instanceof RangeError) {
-      return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+  // Reclamation is planned, not committed, while this slice can still fail, and
+  // the planned bytes are credited so projection and encoding proceed as if the
+  // space were already free. Credits are split because an out-of-scope victim
+  // relieves only the global budget. Seeded from what the count ceilings
+  // already reserved: those victims are deleted by the same commit.
+  const reservedBytes = reclaimer?.grantReservedBytes(scopeKey) ?? { global: 0, scope: 0 };
+  let plannedGlobalCredit = reservedBytes.global;
+  let plannedScopeCredit = reservedBytes.scope;
+  const globalRoom = (): number => capacities.total - storage.totalBytes + plannedGlobalCredit;
+  const scopeRoom = (): number => capacities.scope - (storage.scopeBytes.get(scopeKey) ?? 0) + plannedScopeCredit;
+  const capacity = (): number => Math.min(capacities.object, globalRoom(), scopeRoom());
+  const planMoreCapacity = (): boolean => {
+    // Reclaim where the pressure is. A zero-byte victim still reclaims its
+    // count and state but frees nothing, so keep advancing past it.
+    for (;;) {
+      const freed = reclaimer?.plan(scopeKey, scopeRoom() <= globalRoom(), true);
+      if (freed === undefined) return false;
+      if (freed.bytes <= 0) continue;
+      plannedGlobalCredit += freed.bytes;
+      if (freed.sameScope) plannedScopeCredit += freed.bytes;
+      return true;
     }
-    return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+  };
+  // Reclaim only while it buys capacity. Once the binding ceiling is the
+  // per-object bound, freeing victims moves nothing: the loop would evict every
+  // tenant's settled evidence and re-project once per victim, holding the
+  // executor the whole time, and still refuse. Require strict growth.
+  const growCapacity = (available: number): number | undefined => {
+    observer?.onCapacityRequest?.();
+    if (!planMoreCapacity()) return undefined;
+    const grown = capacity();
+    return grown > available ? grown : undefined;
+  };
+  let remainingCapacity = capacity();
+  let projectionBudget = remainingCapacity;
+  let rows: readonly Record<string, unknown>[] | undefined;
+  while (rows === undefined) {
+    projectionBudget = remainingCapacity;
+    try {
+      // Only the source collection is projected. The auxiliary collection is validated
+      // from its captured claims and never staged, so projecting it charged a budget
+      // against values nothing would read -- 20,000 valid auxiliary rows were enough to
+      // fail a response whose staged object is sixty-eight bytes.
+      rows = sourceSnapshots.map(snapshot =>
+        projectSnapshotRow(
+          snapshot,
+          request,
+          upperBound => {
+            if (upperBound > projectionBudget) throw new RangeError('Inline projection capacity exhausted');
+            projectionBudget -= upperBound;
+          },
+          {
+            allowMissingMetrics: true,
+            allowMissingDimensions: true,
+            strictMetricClaims: availabilityEvidence !== undefined,
+            includeDimensions: true,
+          }
+        )
+      );
+    } catch (error) {
+      if (!(error instanceof RangeError)) {
+        return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+      }
+      // Capacity, not an oversized object: free settled evidence and retry.
+      const grown = growCapacity(remainingCapacity);
+      if (grown === undefined) {
+        return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+      }
+      remainingCapacity = grown;
+    }
   }
-  let bytes: Uint8Array;
-  try {
-    bytes = encodeRows(rows, format.mediaType, remainingCapacity);
-  } catch {
-    return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+  let encoded: Uint8Array | undefined;
+  while (encoded === undefined) {
+    try {
+      encoded = encodeRows(rows, format.mediaType, remainingCapacity);
+    } catch (error) {
+      // Only a capacity exhaustion is worth reclaiming for. An unserializable
+      // row throws a TypeError and will throw again after every eviction, so
+      // retrying it emptied the executor to reach the same terminal answer.
+      if (!(error instanceof RangeError)) {
+        return failure('INTEGRITY_FAILED', 'terminal', 'Inline delivery row contains invalid evidence values');
+      }
+      const grown = growCapacity(remainingCapacity);
+      if (grown === undefined) {
+        return failure('STAGING_FAILED', 'terminal', 'Inline delivery evidence exceeds the bounded replay capacity');
+      }
+      remainingCapacity = grown;
+    }
   }
+  const bytes = encoded;
   const objectDigest = digest(bytes);
   const objectRef = `inline-${executionNamespace.slice(0, 32)}`;
   const generation = `sha256-${objectDigest}`;
@@ -1024,6 +1260,17 @@ async function executeAndSeal(
   // Check the absolute deadline before publishing any replayable evidence.
   if (Date.parse(deadlineAt) <= Date.now()) {
     return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
+  }
+  // Commit is itself failure-capable: a claim revoked while this slice was
+  // fetching must be replaced with equivalent count and bytes, and if it
+  // cannot be, the slice is refused rather than staged past its budget. A
+  // failed commit deletes nothing.
+  if (reclaimer !== undefined && !reclaimer.commit(scopeKey)) {
+    return failure(
+      'STAGING_FAILED',
+      'terminal',
+      'Inline reporting could not reacquire the capacity a revoked reservation had promised'
+    );
   }
   storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
   storage.totalBytes += bytes.byteLength;
@@ -2237,6 +2484,246 @@ function inlineDeliveryDates(request: ReportingSourceSliceRequestV1): { start: s
   const end = sourceLocalMidnightDate(request.period.end, request.period.sourceTimezone);
   if (start !== request.period.sourceLocalDate) throw new RangeError('sourceLocalDate does not match period start');
   return { start, end };
+}
+
+/**
+ * One plan-only capacity transaction for a single admission.
+ *
+ * Both the execution-count ceilings and byte pressure reclaim through here, so
+ * the admission either commits every victim at staging or releases them
+ * untouched. Claims carry the identity of the transaction holding them, and a
+ * commit that cannot make itself whole deletes nothing at all.
+ */
+export interface InlineAdmissionReclaimerV1 {
+  /**
+   * Plan one victim. `scopeOnly` keeps it inside the requesting scope. Pass
+   * `credit` when the caller will spend the returned bytes as capacity: only
+   * credit actually granted is ever owed back if the claim is later revoked.
+   */
+  plan(scopeKey: string, scopeOnly: boolean, credit?: boolean): { bytes: number; sameScope: boolean } | undefined;
+  /** Claims still owned by this transaction that belong to `scopeKey`. */
+  plannedInScope(scopeKey: string): number;
+  /**
+   * Grant, and return, the bytes the count ceilings already reserved. Claims
+   * revoked before this call grant nothing, so they are never owed back.
+   */
+  grantReservedBytes(scopeKey: string): { global: number; scope: number };
+  /**
+   * Delete every still-owned claim, having first proven that any claim revoked
+   * while the slice was fetching can be replaced with equivalent count and
+   * bytes. Returns false — deleting nothing — when it cannot.
+   */
+  commit(scopeKey: string): boolean;
+  release(): void;
+}
+
+/** Staged evidence is keyed deterministically from the execution key. */
+function stagedObjectRef(executionKey: string): string {
+  return `inline-${executionKey.slice(0, 32)}`;
+}
+
+/** Bytes an entry currently holds, read now rather than trusted from plan time. */
+function stagedBytesOf(storage: { objects: Map<string, StoredObject> }, executionKey: string): number {
+  return storage.objects.get(stagedObjectRef(executionKey))?.bytes.byteLength ?? 0;
+}
+
+/**
+ * Choose the oldest settled execution eligible for reclamation without
+ * mutating anything. Pending entries, entries a replay is joined to, and
+ * entries another transaction holds are never eligible.
+ */
+function planReclaim(
+  executions: Map<string, ExecutionEntry>,
+  excluded: readonly string[],
+  scopeKey?: string
+): string | undefined {
+  for (const [key, entry] of executions) {
+    if (entry.pending || entry.waiters > 0 || entry.reservation !== undefined) continue;
+    if (scopeKey !== undefined && entry.scopeKey !== scopeKey) continue;
+    if (excluded.includes(key)) continue;
+    return key;
+  }
+  return undefined;
+}
+
+/**
+ * Reclaim one execution together with its staged evidence and byte accounting.
+ * Dropping only the execution left the staged object behind under its old
+ * generation, so a later replay re-staged the same ref under a new one while
+ * the scope byte budget never recovered.
+ */
+function commitReclaim(
+  executions: Map<string, ExecutionEntry>,
+  storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> },
+  key: string
+): void {
+  const entry = executions.get(key);
+  if (!entry) return;
+  executions.delete(key);
+  const objectRef = stagedObjectRef(key);
+  const stored = storage.objects.get(objectRef);
+  if (!stored) return;
+  storage.objects.delete(objectRef);
+  storage.totalBytes -= stored.bytes.byteLength;
+  const remaining = (storage.scopeBytes.get(entry.scopeKey) ?? 0) - stored.bytes.byteLength;
+  // Drop the row rather than parking a zero, or a stream of unique scopes grows
+  // this map without limit.
+  if (remaining > 0) storage.scopeBytes.set(entry.scopeKey, remaining);
+  else storage.scopeBytes.delete(entry.scopeKey);
+}
+
+function createAdmissionReclaimer(
+  executions: Map<string, ExecutionEntry>,
+  storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> }
+): InlineAdmissionReclaimerV1 {
+  // `grantedGlobal`/`grantedScope` are the bytes this transaction actually spent
+  // as capacity on the victim's behalf. A claim reserved for its count alone --
+  // or revoked before its bytes were ever granted -- carries zero, so a commit
+  // never has to repay capacity it never received.
+  type PlannedVictim = { key: string; sameScope: boolean; grantedGlobal: number; grantedScope: number };
+  const planned: PlannedVictim[] = [];
+  const token: object = {};
+  const owns = (key: string): boolean => executions.get(key)?.reservation === token;
+  let settled = false;
+  return {
+    plan(scopeKey, scopeOnly, credit = false) {
+      // A scope-bound victim relieves both budgets; an out-of-scope one relieves
+      // only the global budget, which is what a fresh scope needs when its
+      // siblings hold the total.
+      const victim = planReclaim(
+        executions,
+        planned.map(entry => entry.key),
+        scopeOnly ? scopeKey : undefined
+      );
+      if (victim === undefined) return undefined;
+      const entry = executions.get(victim);
+      if (entry) entry.reservation = token;
+      const sameScope = entry?.scopeKey === scopeKey;
+      const bytes = stagedBytesOf(storage, victim);
+      planned.push({
+        key: victim,
+        sameScope,
+        grantedGlobal: credit ? bytes : 0,
+        grantedScope: credit && sameScope ? bytes : 0,
+      });
+      return { bytes, sameScope };
+    },
+    plannedInScope(scopeKey) {
+      // Only still-owned claims count: a revoked one relieves nothing.
+      return planned.filter(entry => owns(entry.key) && executions.get(entry.key)?.scopeKey === scopeKey).length;
+    },
+    grantReservedBytes(scopeKey) {
+      let global = 0;
+      let scope = 0;
+      for (const victim of planned) {
+        // A revoked claim relieves nothing, so it grants nothing. Charging its
+        // bytes at commit invented debt the slice never spent, which evicted
+        // other scopes' evidence or refused staging outright.
+        if (!owns(victim.key)) {
+          victim.grantedGlobal = 0;
+          victim.grantedScope = 0;
+          continue;
+        }
+        const bytes = stagedBytesOf(storage, victim.key);
+        const sameScope = executions.get(victim.key)?.scopeKey === scopeKey;
+        victim.grantedGlobal = bytes;
+        victim.grantedScope = sameScope ? bytes : 0;
+        global += bytes;
+        if (sameScope) scope += bytes;
+      }
+      return { global, scope };
+    },
+    commit(scopeKey) {
+      if (settled) return true;
+      const owned: string[] = [];
+      const spared: PlannedVictim[] = [];
+      for (const victim of planned) {
+        const entry = executions.get(victim.key);
+        if (entry === undefined) {
+          // Already gone; whatever it was credited for is no longer available.
+          spared.push(victim);
+          continue;
+        }
+        // Only claims this transaction still holds may be deleted. A replay
+        // served between planning and here revoked the claim, and another
+        // admission may since have taken it.
+        if (entry.reservation !== token || entry.pending || entry.waiters > 0) spared.push(victim);
+        else owned.push(victim.key);
+      }
+
+      // Debts the revoked claims were credited for. Bytes are owed only to the
+      // extent this transaction actually spent them -- charging a victim's full
+      // staged size invented debt for claims whose bytes were never granted,
+      // needlessly evicting other scopes or refusing staging. Count is owed
+      // independently of bytes, and scoped count independently of global count:
+      // replacing a revoked zero-byte victim from another scope satisfies no
+      // scope slot, and the requesting scope would sit over its ceiling.
+      let owedCount = 0;
+      let owedScopeCount = 0;
+      let owedGlobalBytes = 0;
+      let owedScopeBytes = 0;
+      for (const victim of spared) {
+        owedCount += 1;
+        owedGlobalBytes += victim.grantedGlobal;
+        if (victim.sameScope) {
+          owedScopeCount += 1;
+          owedScopeBytes += victim.grantedScope;
+        }
+      }
+
+      // Find replacements without deleting anything, so a commit that cannot
+      // make itself whole leaves every retained execution intact.
+      const excluded = planned.map(victim => victim.key);
+      const replacements: string[] = [];
+      const bound = executions.size;
+      for (let attempt = 0; attempt < bound; attempt += 1) {
+        if (owedCount <= 0 && owedScopeCount <= 0 && owedGlobalBytes <= 0 && owedScopeBytes <= 0) break;
+        const needScope = owedScopeCount > 0 || owedScopeBytes > 0;
+        const candidate = planReclaim(executions, [...excluded, ...replacements], needScope ? scopeKey : undefined);
+        if (candidate === undefined) {
+          if (needScope) break;
+          break;
+        }
+        replacements.push(candidate);
+        const bytes = stagedBytesOf(storage, candidate);
+        owedCount -= 1;
+        owedGlobalBytes -= bytes;
+        if (executions.get(candidate)?.scopeKey === scopeKey) {
+          owedScopeCount -= 1;
+          owedScopeBytes -= bytes;
+        }
+      }
+
+      settled = true;
+      if (owedCount > 0 || owedScopeCount > 0 || owedGlobalBytes > 0 || owedScopeBytes > 0) {
+        // Delete nothing and hand the claims back.
+        for (const key of owned) {
+          const entry = executions.get(key);
+          if (entry?.reservation === token) entry.reservation = undefined;
+        }
+        planned.length = 0;
+        return false;
+      }
+      for (const key of owned) {
+        const entry = executions.get(key);
+        if (entry?.reservation === token) entry.reservation = undefined;
+        commitReclaim(executions, storage, key);
+      }
+      for (const key of replacements) commitReclaim(executions, storage, key);
+      planned.length = 0;
+      return true;
+    },
+    release() {
+      if (settled) return;
+      settled = true;
+      for (const victim of planned) {
+        const entry = executions.get(victim.key);
+        // Never clear a claim this transaction no longer holds.
+        if (entry?.reservation === token) entry.reservation = undefined;
+      }
+      planned.length = 0;
+    },
+  };
 }
 
 function sourceLocalMidnightDate(instant: string, timeZone: string): string {

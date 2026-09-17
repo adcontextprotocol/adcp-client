@@ -2117,11 +2117,43 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   // --- Seller reporting ledger ---
   ln(`## Seller Reporting Ledger`);
   ln();
-  ln(`Import from \`@adcp/sdk/reporting/ledger\`.`);
+  ln(
+    `Ledger symbols import from \`@adcp/sdk/reporting/ledger\`; \`createPostgresPersistentNotificationRuntime\` is a server symbol and imports from \`@adcp/sdk/server\`.`
+  );
   ln();
   ln('```typescript');
-  ln(`const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });`);
+  ln(`// Build the notification path first: the store must be constructed with the`);
+  ln(`// activity port, or lifecycle transitions record no activity and notify nobody.`);
+  ln(`const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({`);
+  ln(`  db: pool,`);
+  ln(`  namespace: 'seller-production',`);
+  ln(`});`);
+  ln(`const notifications = createPostgresPersistentNotificationRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  publisherScope: 'seller-production',`);
+  ln(`  checkpointDeliveryAttempt: attemptCheckpoint,`);
+  ln(`  subscriptions: { acknowledgeIsolatedDatabase: true },`);
+  ln(`  ...notificationOptions,`);
+  ln(`});`);
+  ln(`const reportingActivity = createPostgresReportingNotificationActivityRuntime({`);
+  ln(`  db: pool,`);
+  ln(`  notifications,`);
+  ln(`  namespace: 'seller-production',`);
+  ln(`  attemptCheckpoint,`);
+  ln(`  tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),`);
+  ln(`});`);
+  ln();
+  ln(`// One store, wired to the activity port, used by every participant below.`);
+  ln(`const store = new PostgresReportingLedgerStore(pool, {`);
+  ln(`  acknowledgeIsolatedDatabase: true,`);
+  ln(`  notificationActivityPort: reportingActivity.port,`);
+  ln(`});`);
+  ln();
+  ln(`// Every migration this wiring needs, before probing.`);
   ln(`await pool.query(REPORTING_LEDGER_MIGRATION);`);
+  ln(`for (const sql of notifications.migrations.all) await pool.query(sql);`);
+  ln(`for (const sql of reportingActivity.migrations.all) await pool.query(sql);`);
+  ln();
   ln(`const producer = createReportingProducer({ store, source, offerings, contact });`);
   ln(`await producer.planObligations();`);
   ln(`await producer.runWorker();`);
@@ -2132,10 +2164,68 @@ function generateTypeSummary(index: SchemaIndex, tools: ToolInfo[]): string {
   ln(`const syncReportingStatus = createSyncReportingStatusHandler(store, {`);
   ln(`  resolveConsumerId: context => context.agent.agent_url,`);
   ln(`});`);
+  ln();
+  ln(`await reportingActivity.probe();`);
+  ln(`// Run repeatedly from a durable scheduler; this call is bounded.`);
+  ln(`await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });`);
+  ln(`const activityPage = await reportingActivity.listActivity({`);
+  ln(`  tenantId: trustedTenant,`);
+  ln(`  accountId: resolvedAccountId,`);
+  ln(`  limit: 100,`);
+  ln(`});`);
   ln('```');
   ln();
   ln(
     `The store freezes configuration lineage and period-end denominators, retains immutable RFC 8785 JCS/SHA-256-bound revisions, atomically fences lifecycle projections against their revision evidence, and provides leased production plus snapshot-stable status pagination. \`projectReportingObligationHealthV1\` implements waiting, healthy, delayed, action_required, and complete without I/O.`
+  );
+  ln();
+  ln(
+    `\`ReportingLedgerNotificationActivityPortV1<TTransaction>\` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through \`PersistentNotificationRuntime\`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. \`listActivity()\` is adopter-facing only because no public AdCP account-activity read task exists.`
+  );
+  ln();
+
+  // --- Reliable reporting service ---
+  ln(`## Reliable Reporting Service`);
+  ln();
+  ln(
+    `Import from \`@adcp/sdk/reporting/service\`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.`
+  );
+  ln();
+  ln('```typescript');
+  ln(`interface ReliableReportingAdapterV1 {`);
+  ln(`  readonly sourceOffering: ReportingSourceOfferingV1;`);
+  ln(`  readonly deliveryOffering: ReportingDeliveryOffering;`);
+  ln(`  // Exactly one of fetchSlice or executor.`);
+  ln(`  readonly fetchSlice?: InlineReportingDeliveryFetchV1;`);
+  ln(`  readonly executor?: ReportingSourceWithReaderV1;`);
+  ln(`  // Opt-in bounded replay window for the inline executor; never applied`);
+  ln(`  // silently. A feed that outlives its replay ceiling needs this or a`);
+  ln(`  // durable executor.`);
+  ln(`  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;`);
+  ln(`}`);
+  ln();
+  ln(`const reporting = createReliableReportingService({`);
+  ln(`  store,`);
+  ln(`  adapters,`);
+  ln(`  contact,`);
+  ln(`  automatedRecoveryWindowSeconds,`);
+  ln(`  statusRetentionDays, // enforce this commitment in the ledger database`);
+  ln(`  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),`);
+  ln(`  resolveCurrency: account => currency,`);
+  ln(`  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator`);
+  ln(`  resolveConsumerId, // optional; controls consumer-status handler/capability`);
+  ln(`});`);
+  ln();
+  ln(`await pool.query(reporting.setup.migrations[0]);`);
+  ln(`const installedPlatform = reporting.install(platform);`);
+  ln(`await reporting.installConfiguration(configuration, { account: ctx.account });`);
+  ln(`await reporting.runCycle({ accountId }); // tenant-partitioned`);
+  ln(`reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan`);
+  ln(`await reporting.stop();`);
+  ln('```');
+  ln();
+  ln(
+    `Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free \`sourceScope\`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply \`account\`, \`sourceScope\`, \`sourceTimezone\`, \`contract\`, \`currency\`, \`constituents\`, or \`mediaBuyIds\`; \`mediaBuyIds\` is derived from \`resolveCoverage\`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires \`platform.accounts.upsert\`, which owns the advertised \`sync_accounts\` configuration path.`
   );
   ln();
 

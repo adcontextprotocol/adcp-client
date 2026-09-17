@@ -2,6 +2,110 @@
 
 `@adcp/sdk/reporting/ledger` turns a conforming reporting source into durable seller-side Reliable Reporting Core. It is separate from the buyer-side `reconcileReporting` API.
 
+## Recommended: install the lifecycle service
+
+`createReliableReportingService` is the adapter-first production path. A
+provider adapter supplies one bounded slice fetch and two immutable offering
+descriptions; the service reuses the PostgreSQL ledger, source executor,
+producer, handlers, and decisioning-platform account resolver.
+
+```ts
+import { Pool } from 'pg';
+import { PostgresReportingLedgerStore } from '@adcp/sdk/reporting/ledger';
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+});
+
+const reporting = createReliableReportingService({
+  store,
+  adapters: {
+    // These descriptions are immutable declarations owned by your adapter.
+    gam: { sourceOffering: gamSourceOffering, deliveryOffering: gamDeliveryOffering,
+      fetchSlice: (slice, ctx) => gam.fetchDeliverySlice(slice, ctx) },
+  },
+  contact: { name: 'Reporting operations', email: 'reporting@example.com' },
+  automatedRecoveryWindowSeconds: 86_400,
+  statusRetentionDays: 90,
+
+  // `account` is the framework-resolved account, not request.account.
+  resolveSource: account => ({
+    adapterId: 'gam',
+    sourceScope: { network_id: account.ctx_metadata.gam.networkId },
+    sourceTimezone: account.ctx_metadata.gam.reportingTimezone,
+  }),
+  // Resolve from trusted commercial/account state. The result is frozen into
+  // the generation and every obligation; no request-body fallback exists.
+  resolveCurrency: account => account.ctx_metadata.gam.currency,
+  // The authorization boundary for shared upstream networks: return only the
+  // constituents this account may report on. Never echo the declaration.
+  resolveCoverage: async account => ({
+    constituents: await bookings.authorizedReportingConstituents(account.id),
+  }),
+  resolveConsumerId: ctx => {
+    if (!ctx.agent) throw new Error('Authenticated buyer-agent registry required');
+    return ctx.agent.agent_url;
+  },
+});
+
+await pool.query(reporting.setup.migrations[0]);
+const installedPlatform = reporting.install(platform);
+const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
+
+reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
+process.once('SIGTERM', () => void reporting.stop());
+```
+
+The service advertises Reliable Reporting Core only. An inline adapter cannot
+turn on Managed Delivery, Reconciled Billing, receipts, webhook activity, or
+reporting notifications. `sync_reporting_status` is advertised only when
+`resolveConsumerId` is installed and the supplied ledger implements its
+atomic consumer-status methods. Follow-up work adds those higher tiers; do not
+place them in a manual capability override.
+
+Install a buyer declaration after the account and its media-buy scope have
+been authorized and resolved. `installConfiguration` intentionally accepts no
+account, `sourceScope`, contract, timezone, currency, `constituents`, or
+`mediaBuyIds` fields from the declaration. Pass the framework-resolved
+`ctx.account`; trusted callbacks derive the remaining lineage. `resolveCoverage`
+is the media-buy/package authorization boundary and must derive the denominator
+from the resolved account: `sourceScope` may legitimately name a shared upstream
+network, in which case the constituent list is the only thing keeping one
+buyer's orders out of another buyer's report. `mediaBuyIds` is always derived
+from the returned constituents, so a buyer-named order ID can never reach
+`fetchSlice`. `expectedCurrency`, `expectedSourceTimezone`, and
+`expectedMediaBuyIds` are optional assertions and fail closed on conflict.
+The service rejects credential-shaped keys and `ctx_metadata` anywhere in the
+returned `sourceScope`, then applies the source contract and existing ledger
+immutability checks. Return the resulting secret-free configuration state from
+your `sync_accounts` implementation.
+
+For tenant-partitioned jobs, call `runCycle({ accountId })`, or configure
+`start({ accountIds: [...] })`. Every planner and worker call receives that
+same account boundary. A deployment-owned worker must explicitly pass
+`deploymentWide: true`; use that form only when one trusted service instance is
+authorized for every account in the store. Widening is reachable only through
+that opt-in: a cycle with a missing, empty, or overlong `accountId` is refused
+rather than silently promoted to a deployment-wide scan. Under `accountIds`,
+one account's failed cycle is reported to `onError` and the remaining accounts
+still run, so a persistently failing tenant cannot starve the tenants behind
+it. Planning is resumable and bounded;
+set `maxObligationsPerAccount` and `maxWorkerIterationsPerAccount` for tighter
+operational limits. `stop()` aborts current source work, waits for settlement,
+and wakes a sleeping scheduler immediately. Planning is a bounded ledger
+operation rather than abortable source I/O, so shutdown waits for an in-flight
+planning pass to settle and does not begin its worker afterward.
+
+Run `runReliableReportingServiceConformanceV1` against an isolated test ledger
+before deployment. It covers source replay, two-account isolation,
+configuration replay/frozen currency, lifecycle start/stop, and Core
+capability truthfulness.
+
+## Advanced: assemble the primitives directly
+
 ```ts
 import { Pool } from 'pg';
 import {
@@ -39,7 +143,42 @@ Pass `getReportingStatus` and `getMediaBuyDelivery` directly to the matching `cr
 
 The planner uses fixed millisecond periods and an explicitly frozen IANA source timezone. Calendar or billing-cycle schedules should be expanded by the seller into immutable period boundaries before installation; the SDK intentionally has no Temporal dependency. At period end, the obligation freezes the constituent denominator and coverage. A zero-row source object commits like any other revision. Absence remains an empty revision association. A deployment with per-tenant workers should pass the resolved `account_id` to both `planObligations()` and `runWorker()`; omitting it intentionally runs a deployment-wide worker.
 
-Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline.
+### Migrating an existing manual lifecycle
+
+Keep the same `PostgresReportingLedgerStore` and run the same
+`REPORTING_LEDGER_MIGRATION`; there is no second store and no data migration.
+Move each inline fetch plus its source/delivery offering into an entry in
+`adapters`, move account routing and currency lookup into the two trusted
+resolvers, and replace manual producer/handler/capability assembly with
+`reporting.install(platform)`. Replace cron calls to `planObligations` and
+`runWorker` with `runCycle` or `start`. Remove manual reporting capability
+overrides so discovery has one owner. Existing configuration IDs and semantic
+fingerprints remain compatible because the service delegates installation to
+the existing producer: replaying a generation that predates the reserved
+adapter route key reuses its stored `sourceScope` verbatim, so the fingerprint
+still matches and the replay does not trip generation immutability. Only new
+generations carry the reserved key. With one installed adapter, pre-service
+obligations without the reserved adapter route continue through that sole
+adapter. A
+multi-adapter migration must create a new immutable configuration generation
+with an explicit route. An adapter supplies exactly one of `fetchSlice` or
+`executor`: `fetchSlice` is the inline boundary, and `executor` accepts any
+`ReportingSourceWithReaderV1` — including a paginated, asynchronous, or
+externally staged one — so a custom executor that needs those capabilities
+runs under the service today rather than waiting for a future extension. The
+inline-only knob `inlineReplayRetention` applies to `fetchSlice` adapters and
+is ignored by an adapter that brings its own executor.
+
+`reporting.install(platform)` mutates that platform object in place and
+requires it to be extensible; this preserves class instances and private-field
+methods that a shallow wrapper would break. It also requires the platform's
+native `accounts.upsert` seam. The service cannot truthfully advertise `configuration_task:
+sync_accounts` without it. That account method remains responsible for mapping
+an authorized wire reporting configuration to the service's resolved input and
+calling `installConfiguration`; the service does not claim a generic mapping
+that the current protocol does not define.
+
+Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline: the service refuses a configuration whose `officialAfterMilliseconds` disagrees with the `schedule.delivery_sla` its offering advertises, and omitting the field derives that same advertised value.
 
 Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and exact decimal control totals for requested numeric metrics. A revision number and obligation are immutable. Official revisions are terminal; later source corrections are immutable adjustments bound to the official revision, never superseding revisions. Status snapshots omit row payloads, are capped at 8 MiB, expire after 15 minutes, and keep cursor pages stable over the flat obligation/revision/adjustment union. A periods response returns an opaque `changes_checkpoint`; echo that value verbatim as `changes_after` rather than supplying a timestamp. Account-scoped write/snapshot locks make those checkpoints gap-free for SDK store writes. The default table set is deployment-wide; use a dedicated database/schema and acknowledge that boundary explicitly. `sourceScope` must contain opaque routing identities only—never credentials or bearer tokens—because it is retained with the obligation. Retained resource locations are held to the same rule, and at the seam that persists them rather than only in the worker's pre-flight, because a caller driving `settleMaterialization` directly would otherwise store a presigned location that `get_reporting_status` then publishes. Query and fragment are refused on the raw string rather than on a successful parse, because a relative path carrying a presigning query never parsed as a URL at all; userinfo is refused as a colon-separated pair before the `@`, which is the credential shape, plus any `http(s)` userinfo at all. A blanket `@` rule would refuse `abfss://container@account.dfs.core.windows.net/...` and a Snowflake stage reference, neither of which carries a secret.
 
@@ -119,11 +258,445 @@ Managed-only changes are lifecycle candidates in their own right. A settlement, 
 
 The managed tables are additive and do not alter the Core tables. This is the schema boundary coordinated with #2943: that work owns transactional reporting notification/activity intent and the existing webhook delivery/credential plane. Managed Delivery does not create a second webhook sender, outbox, credential store, or subscriber model. Apply both feature migrations after the Core migration in either order; each owns separate tables and both reuse the Core authority.
 
+## Transactional status notifications and account activity
+
+Production deployments can join every health or observed-finality transition to
+a compact account-operator activity record. Health transitions additionally
+create one durable, schema-conformant `reporting.status_changed` intent;
+finality-only changes remain internal activity because the AdCP event is defined
+only for health changes:
+
+```ts
+import { createPostgresPersistentNotificationRuntime } from '@adcp/sdk/server';
+import {
+  createPostgresReportingNotificationActivityRuntime,
+  createPostgresReportingNotificationAttemptCheckpoint,
+  PostgresReportingLedgerStore,
+  REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION,
+  REPORTING_LEDGER_MIGRATION,
+} from '@adcp/sdk/reporting/ledger';
+
+// Build the durable pre-POST checkpoint first. The notification runtime needs
+// it, and the activity runtime verifies it targets the same durable store —
+// a mismatched pair checkpoints nothing and loses notifications silently, so
+// both are refused at construction.
+const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
+  db: pool,
+  namespace: 'seller-production',
+});
+const notifications = createPostgresPersistentNotificationRuntime({
+  db: pool,
+  publisherScope: 'seller-production',
+  checkpointDeliveryAttempt: attemptCheckpoint,
+  subscriptions: { acknowledgeIsolatedDatabase: true },
+  ...notificationOptions, // proof, protected credentials, webhooks, authorization
+});
+const reportingActivity = createPostgresReportingNotificationActivityRuntime({
+  db: pool,
+  notifications,
+  // Use a deployment-unique value whenever a PostgreSQL schema is shared.
+  namespace: 'seller-production',
+  // The same checkpoint, so its store can be verified against this runtime's.
+  attemptCheckpoint,
+  // Pure host-owned mapping from an internal ledger account. Never derive
+  // this from transition data, an incoming request body, or ctx_metadata.
+  tenantScopeForAccount: accountId => durableAccountDirectory.tenantFor(accountId),
+});
+
+// Rolling-deployment order: ledger and notification tables, activity table,
+// drain legacy pending transitions, then application code configured with the port.
+await pool.query(REPORTING_LEDGER_MIGRATION);
+for (const sql of notifications.migrations.all) await pool.query(sql);
+for (const sql of reportingActivity.migrations.all) await pool.query(sql);
+
+// Before enabling the port, keep legacy subscribers configured and run
+// retryReportingStatusNotificationsV1() until listPendingTransitions() is empty.
+// The transactional store fails closed if legacy pending rows remain.
+
+// Last cutover step, only once no pre-SDK-14 writer is still serving: fence
+// finality-less transitions out of the log. A surviving legacy writer now fails
+// closed on append instead of silently adding another redundant finality event.
+await pool.query(REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION);
+
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+  notificationActivityPort: reportingActivity.port,
+});
+
+// Do not also pass legacy ReportingLedgerSubscriberV1 callbacks to lifecycle
+// reconciliation. The transactional port is the sole notification handoff.
+
+await reportingActivity.probe();
+await notifications.probe();
+
+// Run both bounded calls repeatedly from the deployment's durable scheduler.
+await reportingActivity.recoverOnce({
+  ownerToken: process.env.INSTANCE_ID!,
+  onError: (error, claim) => operationalLogger.error({ error, claim }),
+});
+await notifications.recoverOnce({ ownerToken: process.env.INSTANCE_ID! });
+```
+
+`applyLifecycleProjection()` owns the transaction. After locking and rechecking
+the obligation and revision evidence, the PostgreSQL store inserts the
+transition, updates its issues, and calls `notificationActivityPort` with that
+same transaction client. A port error rolls the whole unit back. The port does
+no network I/O and stores no destination or authentication material. Only after
+commit does `recoverOnce()` call the existing persistent-notification runtime,
+which reads current subscriptions, enforces tenant/account matching and live
+authorization, resolves opaque credential bindings, and checkpoints the normal
+encrypted webhook outbox before POSTing. The activity queue is not a second
+sender, credential authority, retry engine, or reporting ledger.
+The store atomically stamps the transition's `notifiedAt` field as a durable
+handoff marker in that same transaction. In transactional mode this field means
+the activity intent is durable, not that a recipient matched or network delivery
+occurred. A legacy deployment with unnotified transitions must drain or
+explicitly resolve them before enabling the port; the lifecycle rejects the
+cutover rather than silently abandoning those rows.
+
+The logical notification identity is derived from the immutable transition and
+is reused through ambiguous crashes. Intent insertion is exactly once;
+delivery remains at least once. A crash before commit exposes neither the
+transition nor its activity. A crash after commit leaves pending work. A crash
+after webhook checkpointing may replay projection, but the existing webhook
+delivery identity prevents rebinding. The bridge intentionally binds recipients
+when the existing notification runtime checkpoints each per-subscriber webhook
+delivery, not while the ledger transaction is open: that keeps subscription
+credentials and destination authority out of the ledger transaction and ensures
+a replacement or revocation that wins before checkpointing is honored. From
+that checkpoint onward the subscriber and destination generation are stable;
+the runtime rechecks live authorization on every attempt and suppresses stale
+or revoked generations. Already-authorized in-flight POSTs cannot be retracted.
+This explicit drain-time rule is what the replacement and revocation crash tests
+assert.
+
+Account operators can read a bounded keyset page without loading report rows:
+
+```ts
+const page = await reportingActivity.listActivity({
+  tenantId: authenticatedTenant.id,
+  accountId: resolvedInternalAccount.id,
+  limit: 100, // 1..200
+  cursor: previousPage.nextCursor,
+});
+```
+
+Both scope values must come from authenticated server context. Cursors are
+scope-bound and cannot be moved between accounts or tenants; the runtime also
+revalidates the account-to-tenant mapping on every read. Pagination is a
+newest-first operator view, not a gap-free change feed: a transaction that
+commits after a page was read may have an earlier PostgreSQL sequence, so
+refresh from the first page to discover concurrent late commits. Records include
+the transition identity, health and observed-finality change, occurrence and
+projection timestamps, issue IDs, period, and non-secret configuration/report
+correlation references. They never embed revision rows, `sourceScope`,
+subscriber destinations, credential handles, credentials, or `ctx_metadata`.
+Each compact activity intent is capped at 64 KiB.
+The runtime also applies atomic per-tenant backpressure at 100,000 pending
+health notifications by default; tune `maxPendingPerTenant` to deployment
+capacity and alert on the operational error instead of dropping durable intent.
+This is an SDK/adopter API only: AdCP defines the complete health-notification
+wire payload but no public account-activity read task, so do not expose `listActivity()`
+as an invented wire extension.
+
+Projected activity defaults to 90-day retention measured from projection (or
+from commit for finality-only records that require no wire projection).
+Abandoned activity is retained on the same schedule, measured from
+`abandoned_at`. Override `retentionMs` only to match an explicit operator
+policy, schedule bounded `pruneProjected()` calls — which reclaims projected and
+abandoned rows alike — and retain pending rows until they are settled. The
+reporting worker retries a failed projection up to `maxAttempts` (default 100)
+and then abandons the claim; once the notification runtime has durably accepted
+every matched subscriber, its own webhook outbox owns delivery retry and
+retention. Supply `recoverOnce({ onError })` to report a
+failed projection attempt without changing lease or retry semantics.
+`matched` reports how many active subscribers were checkpointed; a projected
+row with `matched: 0` is expected after revocation and does not claim network
+delivery. Each recovery poll claims one row at a time so work waiting behind a
+slow fanout is never left under an expiring pre-claimed lease.
+The host remains responsible for a database-level retained-row/byte quota and
+storage alerting per tenant or isolated deployment; the runtime's pending cap
+protects delivery backlog but is not a general PostgreSQL storage quota.
+
+### Recipient intent is frozen before any send, and revisable per recipient
+
+The recovery worker commits its resolved recipients before anything leaves the
+process, via `NotificationEvent.freezeRecipients`. The runtime then delivers
+only the intersection of what is resolvable now and what was committed, so each
+subscriber's `delivery_id` — and therefore the `idempotency_key` it dedupes on —
+is stable across an ambiguous retry.
+
+What makes a frozen set safely revisable is a second durable barrier:
+`PersistentNotificationRuntimeOptions.checkpointDeliveryAttempt`, awaited on the
+allow path of live delivery authority immediately before every external POST.
+Wire `createPostgresReportingNotificationAttemptCheckpoint()` into it. It is a
+runtime-level option keyed on the durable attempt context rather than a
+per-emission closure because an emission snapshot cannot carry a function, so a
+per-emission barrier would be skipped by the recovered outbox path — the path
+where an ambiguous send is most likely.
+
+The hook is runtime-wide, so the reporting checkpoint passes any event type it
+does not own straight through. Failing closed on another subsystem's
+notification would suppress every one of its attempts until the retry horizon
+expired. `eventTypes` **extends** the owned set and can never shrink it —
+`reporting.status_changed` is always owned, because a configuration that
+silently stopped checkpointing reporting deliveries while the runtime still
+advertised checkpoint support is the precise bug the checkpoint exists to
+prevent.
+
+The checkpoint is bound to the exact `(queryable, namespace, table)` it writes
+to, and the activity runtime requires that same object as `attemptCheckpoint`.
+It verifies in two tiers: when the port exposes `deliveryAttemptCheckpoint` —
+the checkpoint it actually invokes — that must be the identical object, because
+two correctly-built checkpoints can each look valid while targeting different
+stores. When it does not, the declared store binding becomes mandatory and is
+compared instead. Either way a mismatch is refused at construction. Configuring the two independently was
+undetectable at runtime: the checkpoint's update matched no row, every attempt
+was suppressed as retryable, the delivery binding eventually retired, the
+recipient settled terminal and the activity projected — losing the notification
+with no error anywhere.
+
+Construction and `probe()` both fail closed unless the notification port proves
+it runs the checkpoint. A custom `{ emit }` port must set
+`hasDeliveryAttemptCheckpoint: true`, asserting that it forwards the event it is
+handed to a runtime that does; otherwise a crash plus a destination replacement
+re-addresses the notification under a second generation and idempotency key.
+`acknowledgeMissingAttemptCheckpoint` exists only for tests that deliberately
+demonstrate that hazard.
+
+Declaring the capability is not sufficient, and is not trusted. Freeze and
+checkpoint are one contract: a port that declares support but never calls
+`freezeRecipients` leaves nothing addressable, so the checkpoint has no row to
+mark and settlement would see zero outstanding recipients and record the
+notification as delivered although nothing was sent. The runtime verifies that
+the freeze actually ran and refuses to project the emission otherwise.
+
+The checkpoint and a concurrent recipient replacement run as separate statements
+against a pool, so neither sees the other's uncommitted work: a freeze can
+propose a replacement generation while the original is being checkpointed, and
+PostgreSQL keeps both rows. A partial unique index on
+`(namespace, transition_id, subscriber_key) WHERE attempt_at IS NOT NULL` is the
+arbiter — the second generation's checkpoint fails, so it is never POSTed, and
+the next freeze drops it because its subscriber is already claimed.
+
+Revisability is tracked **per recipient**, in `<activity_table>_recipients`:
+
+- A recipient with no `attempt_at` provably never received a POST, because
+  suppression fails closed before the checkpoint. It is replaced in place when
+  it goes stale, which closes the window where a destination is replaced between
+  candidate enumeration and the first POST.
+- A recipient with `attempt_at` is pinned. Pinning is keyed on the **subscriber**,
+  not the destination generation: once a subscriber has been addressed, a later
+  generation of that subscriber is never addressed for this notification,
+  because that would be one logical delivery under two idempotency keys.
+- One recipient's attempt never pins a sibling. In a fanout, a subscriber
+  suppressed stale before its own first POST is still re-resolved while an
+  already-addressed sibling stays pinned.
+- Unattempted rows are replaced rather than superseded, so a claim that retries
+  many times before any send cannot accumulate rows. A settled recipient is left
+  out of later emissions — it still gates projection, but re-addressing it would
+  be redundant traffic.
+- Settled history is compacted to one row per subscriber, and
+  `maxRetainedRecipients` bounds **every retained row**. Counting only the
+  addressable recipients let
+  terminal rows grow for the lifetime of a claim that kept retrying while fresh
+  subscribers settled.
+- Every mutation — the replacement delete, the insert, compaction and
+  settlement — takes a `FOR UPDATE` lock on the parent activity row before it
+  touches a recipient, in a `MATERIALIZED` CTE so that lock is the statement's
+  first act. Reading the lease without locking it only proved the lease was
+  live when the snapshot was taken: a statement that then blocked on a
+  recipient lock could resume after a successor had claimed, still see its own
+  lease in the cached snapshot, and mutate the successor's rows. Holding the
+  parent means a takeover cannot complete while a leaseholder's statement is in
+  flight, and a statement starting after one matches nothing. Lock order is
+  always parent then recipient, so the paths cannot deadlock.
+- Every mutation is also gated on a live, matching lease, and so is the gate
+  that authorises them. A stale worker sees an empty lease source, which makes every
+  other source empty and the budget zero; gating only the row sources let that
+  empty budget satisfy the check and reap the rows a successor had already
+  frozen. After a takeover a stale worker is a strict no-op that refuses.
+- `maxRecipients` bounds one emission's fanout and must be **at least** the
+  notification runtime's `maxFanoutCandidates`. `maxRetainedRecipients` bounds
+  every stored row — that fanout plus the pinned identities of subscribers
+  addressed and then replaced — and defaults to twice `maxRecipients`. They are
+  separate because a maximum 10,000-recipient fanout with one former subscriber
+  pinned needs 10,001 rows, which a single bound capped at the fanout ceiling
+  could never express. Setting either below what a notification legitimately
+  needs is a misconfiguration: the claim retries until `maxAttempts` (default
+  100) abandons it. An abandoned claim leaves the pending set — so it cannot
+  exhaust `maxPendingPerTenant` and start refusing writes for the whole tenant —
+  while staying visible as `notificationAbandonedAt` (the real abandonment
+  instant) in account activity. It is never recorded as delivered.
+- The bound and the replacement are one statement, and the rows it measures are
+  taken `FOR UPDATE`. Measuring separately let a concurrent checkpoint turn a
+  revisable row into a pinned one after the budget approved the write: the
+  `DELETE` then re-checked the locked row, skipped it, and the retained set
+  landed above the bound. Compaction runs before the budget, so a bound that
+  compaction can satisfy never refuses, and a refusal mutates nothing — raise
+  `maxRecipients` and the claim self-heals on its next pass.
+
+| Replacement lands | Outcome |
+| --- | --- |
+| Before candidate enumeration | New generation enumerated and delivered |
+| Between enumeration and the first POST | Suppressed `subscription_stale`, claim released, next pass replaces that recipient with the new generation; the superseded one gets nothing |
+| After that recipient was checkpointed | Never re-addressed; the pinned recipient settles terminally |
+| Revoked entirely | Empty recipient set is committed and the activity settles undelivered |
+
+### Suppression is not delivery, and delivery is not settlement
+
+Live delivery authority fails closed before every POST. Use
+`notificationSuppressionDisposition(reason)` to tell the two kinds apart:
+
+- **terminal** — `subscription_missing`, `subscription_inactive`,
+  `event_not_allowed`, `authorization_denied`. The subscriber must not receive
+  this event.
+- **retryable** — `authorization_error`, `credential_unavailable`,
+  `subscription_stale`, `attempt_checkpoint_unavailable`. Authority could not be
+  established: a store read failed, an authorization or credential callback threw
+  or timed out, the generation moved mid-flight, or the durable checkpoint could
+  not be written. Nothing was sent (`attempts: 0`).
+
+`subscription_stale` is the one reason whose disposition depends on the caller.
+A live emission can re-resolve the new generation, so it stays retryable. A
+**recovered** attempt (`WebhookEmitAttempt.recovered`) is pinned to the snapshot
+it was taken from and can never become valid for a replaced generation, so it is
+terminal — otherwise the outbox reclaims a dead delivery until its horizon
+expires.
+
+A delivery that throws is classified too: a retired binding or an exhausted
+retry horizon surfaces as `failure.reason: 'delivery_binding_retired'` with
+`terminal: true` and settles under terminal policy. Flattening it into a
+retryable failure left the activity pending forever and eventually exhausted the
+tenant's pending capacity.
+
+A retryable suppression no longer terminalizes the delivery in the webhook
+outbox either — it releases it, exactly as a retryable exhausted HTTP result
+does, so the only durable record of the send survives for the outbox worker.
+
+Projection requires **every** stored recipient to have reached a terminal
+disposition: delivered, or deliberately not delivered. An outcome that never
+reached a subscriber — a retryable suppression, a transport error, an exhausted
+but retryable HTTP result — leaves the claim unsettled and the activity is not
+recorded as delivered. The bundled runtime raises
+`ReportingNotificationRetryableSuppressionError` for a retryable suppression.
+Custom notification runtimes must implement the same barriers and the same
+classification.
+
+Intent is stored relationally, one row per recipient, keyed by a bounded 64-hex
+fingerprint; only that fingerprint is indexed, so an individual recipient
+reference has no length limit. `maxRecipients` defaults to 10,000 — the ceiling
+the notification runtime enforces on `maxFanoutCandidates`.
+
+Custom ledger stores implement
+`ReportingLedgerNotificationActivityPortV1<TTransaction>` over their existing
+authority transaction. Their `applyLifecycleProjection` equivalent must call
+`recordTransition({ transition, obligation }, tx)` after its compare/lock and
+before commit, and must roll back the authoritative transition if the port
+fails. In the same transaction they must stamp `notifiedAt` as the durable
+handoff marker. Stores must also compare `expectedPreviousFinality` with the
+latest stored transition before applying a finality-only projection; this field
+is optional only so pre-v14 implementations continue to compile during
+migration.
+
+That comparison must read **one** committed baseline, never a freshly
+recomputed one. Transitions written from SDK 14 onward carry their own
+`finality`, so the baseline is read straight back off the row. Pre-v14 rows
+carry none, and their baseline is **not** reconstructed — it resolves to `none`,
+which the store persists via
+`resolveTransitionFinalityBaseline(reporting_obligation_id)` under its account
+lock. `reconcileReportingStatusLifecycleV1` calls that port before deciding the
+transition.
+
+Stores that omit the port must also ignore `expectedPreviousFinality`, and
+omitting it is **not** the same as returning `none`. The lifecycle cannot
+persist a baseline on such a store's behalf, so it uses the currently observed
+finality instead and the comparison becomes a no-op: finality is unobservable
+there, health transitions still fire, and finality-only ones never do — exactly
+the behaviour from before finality existed. Assuming `none` instead would make
+every reconciliation tick observe `none -> official` and append another
+finality-only transition, forever. Implement the port if you want finality-only
+activity at all.
+
+Do not try to reconstruct a historical baseline. Nothing already stored proves
+which revisions had committed when a pre-v14 transition was recorded:
+
+- **Payload timestamps** (a revision's `createdAt` against the transition's
+  `occurredAt`) rank creation instants, not commits. A revision constructed
+  before the transition but committed after it counts as already observed.
+- **Insert wall clocks** (`recorded_at`, `created_at`, anything derived from
+  `clock_timestamp()`) can repeat within a microsecond and can step backward, so
+  a revision that committed after the transition can still compare equal or
+  earlier. Comparing one against the transition's application-clock `occurredAt`
+  additionally mixes clocks, so the store and the lifecycle decision disagree
+  under skew and the compare-and-set wedges permanently.
+
+Either rule can conclude `official`, which makes `previousFinality` equal
+`finality` and silently suppresses the real snapshot→official transition and its
+activity record forever. Resolving to `none` instead records at most one
+redundant finality-only transition per obligation at upgrade, which stays
+internal activity because the AdCP status webhook is health-only.
+
+That bound holds only while no pre-v14 writer is still appending. During a
+rolling deploy an old pod keeps writing finality-less transitions; each becomes
+the latest row, gets its baseline committed as `none`, and produces another
+redundant finality-only transition. Deploy ordering and wall clocks cannot rule
+that out, so make it enforceable in the database.
+`REPORTING_LEDGER_FINALITY_WRITER_FENCE_MIGRATION` adds
+
+```sql
+CHECK (data ? 'finality') NOT VALID
+```
+
+to `adcp_reporting_transitions`. `NOT VALID` is the whole point: PostgreSQL
+enforces the constraint for every INSERT and UPDATE while leaving historical
+rows unvalidated, so existing finality-less rows keep working and new
+legacy-shaped writes are rejected. Two consequences to plan for:
+
+- **Run it last**, after legacy pending transitions are drained and no old pod
+  remains. A surviving legacy writer will fail its appends with
+  `rejected by the finality writer fence`. That is deliberate — a loud rejection
+  beats a quietly unbounded event stream.
+- **Any UPDATE must leave the row fence-clean.** The baseline resolver and
+  `markTransitionNotified` both write `finality` as part of their update, so a
+  historical row is repaired by the same statement that touches it.
+
+A store that implements neither the baseline port nor the optional `finality`
+fields is treated as unable to observe finality at all: the baseline becomes the
+currently observed finality, so the comparison is a no-op and no finality-only
+transition is ever written. Without that, every reconciliation tick would see
+`none -> official` and append another one forever. Such a store behaves exactly
+as it did before finality existed — health transitions still fire.
+
+Custom stores carry the same obligation: after cutover, reject any transition
+write that does not record an observed finality, and enforce it in the storage
+engine rather than in application code — an application-level check does not
+bind a pod running last release's binary. Repair a historical row in the same
+statement that mutates it.
+
+The transaction argument must be one BEGIN/COMMIT-bound connection, never a
+pool or autocommit queryable; the per-tenant advisory transaction lock provides
+capacity serialization under READ COMMITTED. Never call the port in a
+post-commit subscriber callback. The bundled
+PostgreSQL activity runtime accepts only the active queryable transaction and
+can therefore be reused by a custom PostgreSQL ledger without adopting the SDK
+ledger tables.
+
+The transactional port and legacy `ReportingLedgerSubscriberV1` callbacks are
+mutually exclusive. The bundled store exposes that mode to lifecycle
+reconciliation and fails closed if both are supplied, preventing double fire;
+the port's pending rows, rather than `listPendingTransitions()`, own retry.
+
+The activity table is deliberately separate from Core revision and obligation
+rows. Managed Delivery/Reconciled Billing work in #2944 can add immutable
+materialization and receipt tables without changing this transition identity,
+queue schema, or migration ordering.
+
 `planObligations()` creates at most 1,000 obligations per call by default. Use its `account_id` and `maxObligations` options from a resumable scheduler when catching up dense or old schedules. Source executions are bounded to 10,000 objects, 1,000,000 rows, and 64 MiB per revision.
 
 When `get_reporting_status` omits a period, the operational default horizon is the 24 hours ending at `ledger_as_of`. The `health` and `finality` arrays filter periods-view output only; they do not rewrite summary health or the underlying obligation projection.
 
-`projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and `reporting.status_changed` transitions, then calls only subscribers already authorized and supplied by the host. When the store implements the optional `getManagedLifecycleProjection`, the reconciler folds Managed Delivery through the same projection the read path uses, so a persisted transition and its webhook report the health a read of that obligation would return instead of Core health alone. Every managed instant is written at database precision: a JS `Date` holds milliseconds, so taking the batch instant through one truncated `recorded_at` below the microsecond watermark written from the same clock and the reconcile it should have triggered could never become due. The lifecycle projection reads each chain's leaf **as of the cutoff** — the receipt nothing recorded by then supersedes — rather than its whole history, because the leaf is the only thing the verdict uses. Asking which row is current *now* and only then applying the cutoff answered "neither" for a rejection an acceptance had since repaired, and persisted `RECEIPT_REQUIRED` over a rejection the buyer had already filed. Reading the history instead made an obligation whose subject was repaired more times than a snapshot page may carry — a state the receipt store admits — permanently unreconcilable. A leaf also stops being a leaf when its successor is pruned — the tombstone records what it superseded — or retention handed a settled subject back to the rejection its acceptance had replaced. The read path applies the same rule at the verdict: a tombstoned acceptance outranks a rejection it superseded, so `reconciliation_status` cannot report `rejected` for a subject the lifecycle considers settled. Evidence recorded after the cutoff is out of scope at that cutoff: revisions and adjustments alike are filtered by it exactly as receipts are — a revision committed after the cutoff arrives with no materialization and no receipt in scope and would read as an unmet consumer obligation, while the compare-and-set still fences on the full revision set, which is a concurrency check rather than a statement about an instant — by the store's own ordering column, not by the producer-authored `createdAt` on the body, because a producer clock running ahead otherwise hid a committed correction from the lifecycle while the public read, which orders by that column, kept demanding a receipt for it — and pruned conclusions carry the instant they concluded, so a historical reconcile cannot settle on an acceptance or a delivery that had not happened yet. The bound is now one leaf per (consumer, subject), which is the product of two dimensions the store admits independently, and crossing it — like an oversized roster or conclusion set — truncates at a deterministic boundary and reports `receiptEvidenceComplete: false` rather than failing: a bound the write path can legitimately cross must never be a hard error, and an incomplete projection is treated exactly as an unproven roster is, so it can never report an obligation reconciled. Wire counters are computed on the read path, which still sees every row. A projection that cannot be published is reported by `runWorker` as `reconcilesDeferred` rather than aborting the sweep — the durable write already committed and the obligation stays due, so the deadline sweep, which isolates and backs off per obligation, owns the retry. Reads are scoped to one authenticated consumer while a transition is account-level, so the reconciler keeps the most severe consumer: the seller's obligation is not reconciled until every consumer that owes a receipt has accepted. Consumer-specific issue codes — `RECEIPT_REQUIRED`, `RECEIPT_REJECTED`, `ADJUSTMENT_RECEIPT_REQUIRED`, `ADJUSTMENT_RECEIPT_REJECTED` — are deliberately excluded from that persisted set and from transition `issueIds`, because the issue store is keyed by obligation with no consumer dimension and reads republish persisted issues to whichever consumer is asking; publishing them would hand one consumer another's rejection state and exact receipt ingest timing. Their severity still reaches the account-level `health`, and each caller's own issues are recomputed per read. Aggregation runs over `obligatedConsumerIds`, not over whoever happens to have submitted, so a silent authorized consumer cannot vanish when another accepts. The managed tables carry no consumer dimension on destination authorizations or bindings, so the built-in PostgreSQL store cannot prove the roster is complete and reports `obligatedConsumerRosterComplete: false`; while that is false the reconciler keeps one zero-receipt consumer in the fold and never reports a `consumer_receipt` obligation reconciled. Supply the roster from your own authorization layer through the store's `obligatedConsumers` option — `(input: { reporting_obligation_id, account_id }) => Promise<{ ids, complete }>` — and return `complete: true` to get accurate reconciled transitions. Because the conservative default holds a `consumer_receipt` obligation at `action_required` from first delivery, and the per-consumer receipt issues are deliberately not persisted, the reconciler restates that state once per obligation as a `RECEIPT_REQUIRED` issue anchored to the obligation's own `expected_at`. It names no principal and carries no receipt timing, so a degraded persisted health is never unexplained and the leak stays closed.
+`projectReportingObligationHealthV1` is the pure five-state projection. Before `expectedAt`, missing evidence is `waiting`; during recovery it is `delayed`; after the recovery deadline it is `action_required`; readable qualifying evidence is `healthy` for an open scope and `complete` for a closed scope. An unfiltered closed scope with no caller-owned configurations or no due periods is vacuously `complete`; an explicitly unknown configuration returns `lookup_unavailable`, and a snapshot with missing elapsed obligations fails closed. The simplified lifecycle persists deterministic issues and `reporting.status_changed` transitions. In legacy mode it then calls only subscribers already authorized and supplied by the host; with the transactional port, finality-only changes stay in internal activity and health changes flow through the durable AdCP notification runtime. When the store implements the optional `getManagedLifecycleProjection`, the reconciler folds Managed Delivery through the same projection the read path uses, so a persisted transition and its webhook report the health a read of that obligation would return instead of Core health alone. Every managed instant is written at database precision: a JS `Date` holds milliseconds, so taking the batch instant through one truncated `recorded_at` below the microsecond watermark written from the same clock and the reconcile it should have triggered could never become due. The lifecycle projection reads each chain's leaf **as of the cutoff** — the receipt nothing recorded by then supersedes — rather than its whole history, because the leaf is the only thing the verdict uses. Asking which row is current *now* and only then applying the cutoff answered "neither" for a rejection an acceptance had since repaired, and persisted `RECEIPT_REQUIRED` over a rejection the buyer had already filed. Reading the history instead made an obligation whose subject was repaired more times than a snapshot page may carry — a state the receipt store admits — permanently unreconcilable. A leaf also stops being a leaf when its successor is pruned — the tombstone records what it superseded — or retention handed a settled subject back to the rejection its acceptance had replaced. The read path applies the same rule at the verdict: a tombstoned acceptance outranks a rejection it superseded, so `reconciliation_status` cannot report `rejected` for a subject the lifecycle considers settled. Evidence recorded after the cutoff is out of scope at that cutoff: revisions and adjustments alike are filtered by it exactly as receipts are — a revision committed after the cutoff arrives with no materialization and no receipt in scope and would read as an unmet consumer obligation, while the compare-and-set still fences on the full revision set, which is a concurrency check rather than a statement about an instant — by the store's own ordering column, not by the producer-authored `createdAt` on the body, because a producer clock running ahead otherwise hid a committed correction from the lifecycle while the public read, which orders by that column, kept demanding a receipt for it — and pruned conclusions carry the instant they concluded, so a historical reconcile cannot settle on an acceptance or a delivery that had not happened yet. The bound is now one leaf per (consumer, subject), which is the product of two dimensions the store admits independently, and crossing it — like an oversized roster or conclusion set — truncates at a deterministic boundary and reports `receiptEvidenceComplete: false` rather than failing: a bound the write path can legitimately cross must never be a hard error, and an incomplete projection is treated exactly as an unproven roster is, so it can never report an obligation reconciled. Wire counters are computed on the read path, which still sees every row. A projection that cannot be published is reported by `runWorker` as `reconcilesDeferred` rather than aborting the sweep — the durable write already committed and the obligation stays due, so the deadline sweep, which isolates and backs off per obligation, owns the retry. Reads are scoped to one authenticated consumer while a transition is account-level, so the reconciler keeps the most severe consumer: the seller's obligation is not reconciled until every consumer that owes a receipt has accepted. Consumer-specific issue codes — `RECEIPT_REQUIRED`, `RECEIPT_REJECTED`, `ADJUSTMENT_RECEIPT_REQUIRED`, `ADJUSTMENT_RECEIPT_REJECTED` — are deliberately excluded from that persisted set and from transition `issueIds`, because the issue store is keyed by obligation with no consumer dimension and reads republish persisted issues to whichever consumer is asking; publishing them would hand one consumer another's rejection state and exact receipt ingest timing. Their severity still reaches the account-level `health`, and each caller's own issues are recomputed per read. Aggregation runs over `obligatedConsumerIds`, not over whoever happens to have submitted, so a silent authorized consumer cannot vanish when another accepts. The managed tables carry no consumer dimension on destination authorizations or bindings, so the built-in PostgreSQL store cannot prove the roster is complete and reports `obligatedConsumerRosterComplete: false`; while that is false the reconciler keeps one zero-receipt consumer in the fold and never reports a `consumer_receipt` obligation reconciled. Supply the roster from your own authorization layer through the store's `obligatedConsumers` option — `(input: { reporting_obligation_id, account_id }) => Promise<{ ids, complete }>` — and return `complete: true` to get accurate reconciled transitions. Because the conservative default holds a `consumer_receipt` obligation at `action_required` from first delivery, and the per-consumer receipt issues are deliberately not persisted, the reconciler restates that state once per obligation as a `RECEIPT_REQUIRED` issue anchored to the obligation's own `expected_at`. It names no principal and carries no receipt timing, so a degraded persisted health is never unexplained and the leak stays closed.
 
 ## Consumer status ingest
 

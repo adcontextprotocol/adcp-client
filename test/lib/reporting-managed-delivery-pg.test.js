@@ -5753,11 +5753,16 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       managedDelivery: true,
       obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'e1' }),
     });
-    await ledger.reconcileReportingStatusLifecycleV1({
+    const historicalTransition = await ledger.reconcileReportingStatusLifecycleV1({
       store: rosterStore,
       reporting_obligation_id: early.obligation.reporting_obligation_id,
       ledgerAsOf: cutoff,
     });
+    assert.equal(
+      historicalTransition?.finality,
+      'none',
+      'a revision outside the managed cutoff cannot advance finality at that historical instant'
+    );
     const issues = await pool.query(
       `SELECT data ->> 'code' AS code FROM adcp_reporting_issues
         WHERE obligation_id = $1 AND resolved_at IS NULL`,

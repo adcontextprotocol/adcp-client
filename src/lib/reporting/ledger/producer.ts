@@ -8,6 +8,8 @@ import {
   canonicalJsonV1,
   reportingIsoDurationMillisecondsV1,
   reportingCoverageDenominatorFingerprintV1,
+  reportingScheduleOriginV1,
+  reportingUtcOffsetChangesV1,
   REPORTING_SOURCE_CONTRACT_VERSION_V1,
   validateReportingSourceExecutionV1,
   type ReportingSourceManifestV1,
@@ -23,6 +25,7 @@ import {
 import type {
   CreateReportingProducerOptionsV1,
   ReportingLedgerAdjustmentV1,
+  ReportingFinalityV1,
   ReportingLedgerConfigurationV1,
   ReportingLedgerObligationV1,
   ReportingLedgerRevisionV1,
@@ -1151,6 +1154,113 @@ function boundedDiagnostic(value: unknown): string {
     .slice(0, 64);
 }
 
+/** Periods the planner will generate before a configuration is revisited. */
+const OFFSET_HORIZON_MILLISECONDS = 400 * 86_400_000;
+/** Bounds the probe; a century of 10-day samples is a few milliseconds. */
+const MAX_OFFSET_SCAN_MILLISECONDS = 100 * 365 * 86_400_000;
+
+/** Unparseable is simply "does not describe": a calendar duration such as P1M
+ * has no fixed millisecond width, so it can never match these boundaries. */
+function identityDurationMilliseconds(value: string): number | undefined {
+  try {
+    return reportingIsoDurationMillisecondsV1(value);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The echoed schedule identity is a public producer input, and the status
+ * projection emits it verbatim as the installed schedule. Unvalidated, a
+ * caller could install `periodDuration: 'P1M'` over daily millisecond
+ * boundaries and have the ledger advertise a monthly schedule it never runs.
+ */
+function assertScheduleIdentityMatchesBoundaries(
+  schedule: ReportingLedgerConfigurationV1['schedule'],
+  sourceTimezone: string,
+  requiredFinality: ReportingFinalityV1
+): void {
+  if (schedule.periodDuration !== undefined) {
+    if (identityDurationMilliseconds(schedule.periodDuration) !== schedule.periodMilliseconds) {
+      throw new Error('Reporting periodDuration does not describe the configured period boundaries');
+    }
+  }
+  if (schedule.deliverySlaDuration !== undefined) {
+    // `expected_at` is period end plus this duration, and an official
+    // generation expects end + officialAfterMilliseconds. Publishing the
+    // nominal SLA instead would advertise PT2H while every obligation is due
+    // six hours after close.
+    const expectedOffset =
+      requiredFinality === 'official'
+        ? (schedule.officialAfterMilliseconds ?? schedule.deliverySlaMilliseconds)
+        : schedule.deliverySlaMilliseconds;
+    if (identityDurationMilliseconds(schedule.deliverySlaDuration) !== expectedOffset) {
+      throw new Error('Reporting deliverySlaDuration does not describe the offset its obligations expect');
+    }
+  }
+  if (schedule.alignment === undefined) {
+    if (schedule.periodTimezone !== undefined) {
+      throw new Error('Reporting periodTimezone requires an explicit schedule alignment');
+    }
+    return;
+  }
+  if (!['utc', 'account_timezone', 'source_timezone', 'billing_cycle'].includes(schedule.alignment)) {
+    throw new Error('Reporting schedule alignment is not a recognized value');
+  }
+  // reporting-schedule.json: billing_cycle and source_timezone carry a period
+  // timezone; utc and account_timezone forbid one.
+  const carriesTimezone = schedule.alignment === 'billing_cycle' || schedule.alignment === 'source_timezone';
+  if (!carriesTimezone && schedule.periodTimezone !== undefined) {
+    throw new Error(`Reporting ${schedule.alignment} alignment must not declare a period timezone`);
+  }
+  if (carriesTimezone && schedule.periodTimezone !== undefined && schedule.periodTimezone !== sourceTimezone) {
+    throw new Error('Reporting periodTimezone does not match the configured source timezone');
+  }
+  // Only billing_cycle carries its anchor on the wire. Every other alignment
+  // has consumers derive boundaries from the normative origin in
+  // reporting-schedule.json, so an anchor off that grid makes the producer run
+  // one set of periods while buyers compute another — a daily 06:00 anchor is
+  // published as a plain `utc` schedule and read as 00:00 boundaries.
+  if (schedule.alignment === 'billing_cycle') return;
+  if (schedule.alignment === 'account_timezone') {
+    throw new Error('Reporting account_timezone alignment is not schedulable by this ledger');
+  }
+  const anchorMs = instant(schedule.anchor, 'schedule.anchor');
+  const originMs = reportingScheduleOriginV1(schedule.alignment, sourceTimezone);
+  const offset = anchorMs - originMs;
+  const phase = ((offset % schedule.periodMilliseconds) + schedule.periodMilliseconds) % schedule.periodMilliseconds;
+  if (phase !== 0) {
+    throw new Error(
+      `Reporting ${schedule.alignment} anchor is not on a period boundary derived from its protocol origin`
+    );
+  }
+  // Boundaries here advance by fixed milliseconds, while the spec advances
+  // calendar durations through local civil time. They agree only while the
+  // zone holds one offset: a P1D America/New_York generation anchored at
+  // 05:00Z keeps computing 05:00Z after the spring transition, where civil
+  // time says 04:00Z.
+  // Span both today and the anchor, whichever comes first, through the horizon
+  // beyond the later of them. Starting at the anchor collapsed the scan to a
+  // zero-width window for any anchor past `now + horizon`, so a future-dated
+  // DST generation was accepted without ever being probed.
+  // Obligations begin at `max(anchor, installedAt)`, so history before
+  // installation is never generated and must not refuse a configuration. A
+  // scan starting at the anchor rejected the protocol's own 1970 origin for
+  // any zone that ran DST decades ago — Asia/Shanghai, Asia/Seoul — while the
+  // identical schedule at a recent anchor was accepted. Scan the operational
+  // window instead, anchored forward for a future-dated generation so it is
+  // still probed.
+  const now = Date.now();
+  const scanStartMs = Math.max(Math.min(anchorMs, now), now - OFFSET_HORIZON_MILLISECONDS);
+  const scanEndMs = Math.max(anchorMs, now) + OFFSET_HORIZON_MILLISECONDS;
+  if (scanEndMs - scanStartMs > MAX_OFFSET_SCAN_MILLISECONDS) {
+    throw new Error('Reporting configuration anchor is too far from the operational horizon to verify its timezone');
+  }
+  if (reportingUtcOffsetChangesV1(sourceTimezone, scanStartMs, scanEndMs)) {
+    throw new Error('Reporting source timezone changes its UTC offset; fixed-length periods cannot express its days');
+  }
+}
+
 function validateConfigurationAgainstOffering(
   configuration: Omit<ReportingLedgerConfigurationV1, 'configurationId' | 'installedAt' | 'semanticFingerprint'>,
   offering: ReportingSourceOfferingV1
@@ -1185,6 +1295,11 @@ function validateConfigurationAgainstOffering(
   for (const offset of configuration.schedule.restatementMilliseconds ?? []) {
     nonnegativeInteger(offset, 'restatementMilliseconds');
   }
+  assertScheduleIdentityMatchesBoundaries(
+    configuration.schedule,
+    configuration.sourceTimezone,
+    configuration.requiredFinality
+  );
   const anchor = instant(configuration.schedule.anchor, 'schedule.anchor');
   if (configuration.supersededAt && instant(configuration.supersededAt, 'supersededAt') <= anchor) {
     throw new Error('Reporting configuration supersession must follow its schedule anchor');

@@ -9,3 +9,4 @@ export * from './status-ingest';
 export * from './consumer-status-identity';
 export * from './managed';
 export * from './managed-postgres';
+export * from './notification-activity';
