@@ -3751,6 +3751,158 @@ describe('ReliableReportingService', () => {
     });
   });
 
+  test('warns about scheduler failures nobody was configured to observe', async t => {
+    // The scheduler is a durable loop that must not die, so both a roster
+    // resolver that throws and a tenant cycle that throws are caught and the
+    // loop continues. Without an onError they were then dropped entirely: a
+    // deployment could run zero tenants every interval, indefinitely, with
+    // nothing in its logs.
+    const warnings = [];
+    const logger = { warn: message => warnings.push(message) };
+    // Bounded: a build that drops the warn must fail an assertion rather than
+    // leave the runner waiting on a condition nobody will satisfy.
+    const settle = async (predicate, label, ms = 5_000) => {
+      const deadline = Date.now() + ms;
+      while (!predicate()) {
+        if (Date.now() > deadline) return false;
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      return true;
+    };
+
+    // 1. Roster resolution failure with no onError.
+    const roster = serviceFixture().service;
+    let planned = 0;
+    roster.producer.planObligations = async () => {
+      planned += 1;
+      return [];
+    };
+    roster.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => roster.stop());
+    roster.start({
+      intervalMilliseconds: 60_000,
+      accountIds: () => {
+        throw new Error('tenant directory is unreachable');
+      },
+      logger,
+    });
+    assert.equal(await settle(() => warnings.length >= 1, 'a roster warning'), true, 'a roster failure must warn');
+    await roster.stop();
+    assert.equal(planned, 0, 'a failed roster runs no tenants');
+    assert.match(warnings[0], /^\[adcp\/reporting\] scheduler could not resolve its account roster/);
+    assert.match(warnings[0], /tenant directory is unreachable/);
+
+    // 2. Per-tenant cycle failure with no onError, and the tenants behind it
+    //    still run.
+    warnings.length = 0;
+    const cycle = serviceFixture().service;
+    const attempted = [];
+    cycle.producer.planObligations = async (_now, options) => {
+      attempted.push(options?.account_id);
+      if (options?.account_id === 'account-a') throw new Error('account-a upstream is down');
+      return [];
+    };
+    cycle.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => cycle.stop());
+    cycle.start({
+      intervalMilliseconds: 60_000,
+      accountIds: ['account-a', 'account-b', 'account-c'],
+      logger,
+    });
+    assert.equal(await settle(() => attempted.length >= 3, 'three tenant attempts'), true, 'every tenant must run');
+    assert.equal(await settle(() => warnings.length >= 1, 'a cycle warning'), true, 'a cycle failure must warn');
+    await cycle.stop();
+    assert.deepEqual(attempted, ['account-a', 'account-b', 'account-c'], 'isolation is unchanged');
+    assert.equal(warnings.length, 1, 'only the failing tenant is warned about');
+    assert.match(warnings[0], /^\[adcp\/reporting\] scheduler cycle failed for account account-a/);
+    assert.match(warnings[0], /later tenants continue/);
+    assert.match(warnings[0], /account-a upstream is down/);
+  });
+
+  test('leaves reporting to a configured onError, except when it throws', async t => {
+    // A configured observer owns reporting: warning alongside it would
+    // duplicate every failure into a log sink the adopter did not choose. An
+    // observer that throws is the exception -- it would otherwise take both
+    // its own failure and the one it was handed.
+    const warnings = [];
+    const logger = { warn: message => warnings.push(message) };
+    const settle = async (predicate, ms = 5_000) => {
+      const deadline = Date.now() + ms;
+      while (!predicate()) {
+        if (Date.now() > deadline) return false;
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      return true;
+    };
+
+    const observed = serviceFixture().service;
+    const errors = [];
+    const failing = (_now, options) => {
+      if (options?.account_id === 'account-a') throw new Error('account-a upstream is down');
+      return Promise.resolve([]);
+    };
+    observed.producer.planObligations = failing;
+    observed.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => observed.stop());
+    observed.start({
+      intervalMilliseconds: 60_000,
+      accountIds: ['account-a', 'account-b'],
+      onError: error => {
+        errors.push(String(error));
+      },
+      logger,
+    });
+    assert.equal(await settle(() => errors.length >= 1), true, 'the observer must be called');
+    await observed.stop();
+    assert.match(errors[0], /account-a upstream is down/);
+    assert.deepEqual(warnings, [], 'a configured observer is never duplicated');
+
+    // An observer that throws leaves both failures visible, once.
+    const broken = serviceFixture().service;
+    broken.producer.planObligations = failing;
+    broken.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => broken.stop());
+    const seen = [];
+    broken.start({
+      intervalMilliseconds: 60_000,
+      accountIds: ['account-a', 'account-b'],
+      onError: error => {
+        seen.push(error);
+        throw new Error('pager webhook rejected the alert');
+      },
+      logger,
+    });
+    assert.equal(await settle(() => warnings.length >= 1), true, 'a throwing observer must not silence the failure');
+    await broken.stop();
+    assert.equal(seen.length, 1, 'the observer still ran');
+    assert.equal(warnings.length, 1, 'and the failure surfaced exactly once');
+    assert.match(warnings[0], /account-a upstream is down/);
+    assert.match(warnings[0], /the configured onError also threw: pager webhook rejected the alert/);
+  });
+
+  test('keeps a scheduler warning free of credentials and stacks', async t => {
+    const warnings = [];
+    const service = serviceFixture().service;
+    service.producer.planObligations = async () => {
+      throw new Error('upstream refused Authorization: Bearer abcdef0123456789abcdef0123456789');
+    };
+    service.producer.runWorker = async () => ({ claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 });
+    t.after(() => service.stop());
+    service.start({
+      intervalMilliseconds: 60_000,
+      accountIds: ['account-a'],
+      logger: { warn: message => warnings.push(message) },
+    });
+    const deadline = Date.now() + 5_000;
+    while (warnings.length < 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 2));
+    await service.stop();
+    assert.equal(warnings.length, 1, 'the failure must warn');
+
+    assert.equal(warnings[0].includes('abcdef0123456789abcdef0123456789'), false, 'the bearer must be redacted');
+    assert.match(warnings[0], /Authorization=<redacted>/);
+    assert.equal(warnings[0].includes('\n'), false, 'a stack must never reach the log line');
+  });
+
   test('keeps scheduling later tenants after one account cycle fails', async () => {
     const { service } = serviceFixture();
     const planned = [];

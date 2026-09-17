@@ -4,6 +4,7 @@ import type { DecisioningPlatform } from '../../server/decisioning/platform';
 import type { ReliableReportingPlatform } from '../../server/decisioning/specialisms/reporting';
 import { scanArgsForCredentials } from '../../server/credential-policy';
 import { canonicalize } from '../../utils/jcs';
+import { redactCredentialPatterns } from '../../utils/redact-credential-patterns';
 import type { ReportingDeliveryCapabilities, ReportingDeliveryOffering } from '../../types/tools.generated';
 import { ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
 import {
@@ -127,6 +128,26 @@ interface ReliableReportingSchedulerBaseOptionsV1 {
   executionDeadlineMilliseconds?: number;
   settlementGraceMilliseconds?: number;
   onError?: (error: unknown) => void | Promise<void>;
+  /**
+   * Destination for the scheduler's own warn-level diagnostics. Defaults to
+   * `console.warn`.
+   *
+   * The scheduler is a durable background loop: a roster resolver that keeps
+   * throwing runs zero tenants every interval, and a tenant whose cycle keeps
+   * failing produces nothing, in both cases indefinitely and by design — the
+   * loop must not die. That makes silence the dangerous outcome, so a failure
+   * no `onError` was configured to observe is warned here instead of dropped.
+   *
+   * A configured `onError` owns reporting and nothing is warned alongside it,
+   * so an adopter's own pipeline is never duplicated. The one exception is an
+   * `onError` that itself throws: it would otherwise take both its own failure
+   * and the one it was handed down with it.
+   *
+   * Messages carry the failure phase, the account when there is one, and the
+   * error's `message` passed through credential redaction — never a stack,
+   * never the error object. Pass `{ warn: () => {} }` to opt out entirely.
+   */
+  logger?: { warn: (message: string) => void };
 }
 
 export type ReliableReportingSchedulerOptionsV1 = ReliableReportingSchedulerBaseOptionsV1 &
@@ -596,7 +617,7 @@ async function schedulerLoop<TCtxMeta>(
             rotation
           );
     } catch (error) {
-      await reportSchedulerError(options, signal, error);
+      await reportSchedulerError(options, signal, error, { phase: 'roster' });
     }
     rotation += 1;
     for (const accountId of accountIds) {
@@ -625,24 +646,74 @@ async function schedulerLoop<TCtxMeta>(
         // One tenant's cycle failure must not starve the tenants queued behind
         // it: a persistently failing account would otherwise skip every later
         // account on every interval, indefinitely.
-        await reportSchedulerError(options, signal, error);
+        await reportSchedulerError(options, signal, error, { phase: 'cycle', accountId });
       }
     }
     if (!signal.aborted) await abortableDelay(options.intervalMilliseconds, signal);
   }
 }
 
+interface SchedulerFailureSiteV1 {
+  readonly phase: 'roster' | 'cycle';
+  readonly accountId?: string | undefined;
+}
+
 async function reportSchedulerError(
   options: ReliableReportingSchedulerOptionsV1,
   signal: AbortSignal,
-  error: unknown
+  error: unknown,
+  site: SchedulerFailureSiteV1
 ): Promise<void> {
-  if (signal.aborted || !options.onError) return;
-  try {
-    await options.onError(error);
-  } catch {
-    // Error observers must not terminate the reporting lifecycle.
+  if (signal.aborted) return;
+  if (options.onError) {
+    try {
+      await options.onError(error);
+    } catch (observerError) {
+      // Error observers must not terminate the reporting lifecycle -- and must
+      // not make the failure they were handed disappear with their own.
+      warnSchedulerFailure(options, site, error, observerError);
+    }
+    return;
   }
+  // No observer is configured, so this is the only place the failure surfaces.
+  warnSchedulerFailure(options, site, error);
+}
+
+function warnSchedulerFailure(
+  options: ReliableReportingSchedulerOptionsV1,
+  site: SchedulerFailureSiteV1,
+  error: unknown,
+  observerError?: unknown
+): void {
+  const warn = options.logger?.warn ?? DEFAULT_SCHEDULER_WARN;
+  const where =
+    site.phase === 'roster'
+      ? 'could not resolve its account roster, so this pass ran no tenants'
+      : site.accountId === undefined
+        ? 'deployment-wide cycle failed; the scheduler continues'
+        : `cycle failed for account ${site.accountId}; later tenants continue`;
+  const observed =
+    observerError === undefined ? '' : ` (the configured onError also threw: ${safeMessage(observerError)})`;
+  try {
+    warn(`[adcp/reporting] scheduler ${where}: ${safeMessage(error)}${observed}`);
+  } catch {
+    // A logger that throws must not terminate the reporting lifecycle either.
+  }
+}
+
+const DEFAULT_SCHEDULER_WARN = (message: string): void => {
+  console.warn(message);
+};
+
+/**
+ * The error's own message only, credential-redacted. Stacks and error objects
+ * can carry request payloads and upstream credentials into a log sink the
+ * adopter did not choose.
+ */
+function safeMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const redacted = redactCredentialPatterns(raw);
+  return typeof redacted === 'string' && redacted.length > 0 ? redacted : 'unknown error';
 }
 
 /**
