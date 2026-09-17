@@ -1616,9 +1616,18 @@ function cellVerdictForSnapshot(
     if (cell.status === 'explicit_zero' && (flags & CLAIM_VALUE_IS_ZERO_V1) === 0) return 'integrity';
   }
   const directClaimed = (flags & CLAIM_DIRECT_CLAIMED_V1) !== 0;
-  const claimClaimed = directClaimed || (flags & CLAIM_NESTED_CLAIMED_V1) !== 0;
-  const claimValid = (directClaimed ? flags & CLAIM_DIRECT_VALID_V1 : flags & CLAIM_NESTED_VALID_V1) !== 0;
-  if (claimClaimed && !claimValid) return 'integrity';
+  const nestedClaimed = (flags & CLAIM_NESTED_CLAIMED_V1) !== 0;
+  const directValid = (flags & CLAIM_DIRECT_VALID_V1) !== 0;
+  const nestedValid = (flags & CLAIM_NESTED_VALID_V1) !== 0;
+  // Every claim that is actually present must be a usable evidence value. Checking only
+  // the governing claim let an invalid duplicate ride along on a valid direct value --
+  // `totals.impressions: null` beside `impressions: 10`. Projection rejects that on a
+  // source row, but the auxiliary collection is validated here and never projected, so
+  // this is the only place that sees it. Both claims are observed whenever evidence is
+  // supplied, so nothing extra is read to check them; without evidence this function
+  // never runs and the `totals` slot stays unobserved.
+  if ((directClaimed && !directValid) || (nestedClaimed && !nestedValid)) return 'integrity';
+  const claimValid = directClaimed ? directValid : nestedValid;
   // A row claiming the same metric twice with different quantities is a contradiction,
   // and that verdict belongs here rather than waiting for projection: deferred, an
   // unrelated row exhausting the staging budget first reported STAGING_FAILED and the

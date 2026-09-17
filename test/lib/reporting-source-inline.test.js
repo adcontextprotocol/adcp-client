@@ -2157,6 +2157,75 @@ describe('createInlineReportingSourceExecutor', () => {
     assert.equal(validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code, 'INTEGRITY_FAILED');
   });
 
+  test('rejects an invalid duplicate claim on an auxiliary row', async () => {
+    // A claim that is present must be usable, whichever half of the duplicate it is.
+    // Checking only the governing claim let an invalid `totals` value ride along on a
+    // valid direct one; projection rejects that on a source row, but the auxiliary
+    // collection is validated from its claims and never projected, so nothing saw it.
+    const auxiliarySource = nested =>
+      createInlineReportingSourceExecutor(
+        input => ({
+          reporting_period: { start: input.start_date, end: input.end_date },
+          currency: 'USD',
+          reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+          media_buy_deliveries: [
+            { media_buy_id: 'fixture-media-buy', impressions: 10, totals: { impressions: nested } },
+          ],
+          availability_evidence: presentAvailability(input),
+        }),
+        redactedReportingSourceOfferingV1
+      );
+    for (const [index, nested] of [null, {}, [], true].entries()) {
+      const result = await auxiliarySource(nested).execute(
+        request(`fixture-inline-auxiliary-invalid-nested-${index}`),
+        context()
+      );
+      assert.equal(
+        validateReportingSourceFailureV1(result, 'INTEGRITY_FAILED').code,
+        'INTEGRITY_FAILED',
+        `auxiliary totals.impressions=${JSON.stringify(nested)} is refused`
+      );
+    }
+
+    // The same shape on a source row is refused too, so both collections agree.
+    const sourceRow = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25', totals: { impressions: null } },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    assert.equal(
+      validateReportingSourceFailureV1(
+        await sourceRow.execute(request('fixture-inline-source-invalid-nested'), context()),
+        'INTEGRITY_FAILED'
+      ).code,
+      'INTEGRITY_FAILED'
+    );
+
+    // A valid duplicate that agrees still seals, so the check is not over-broad.
+    const agreeing = createInlineReportingSourceExecutor(
+      input => ({
+        reporting_period: { start: input.start_date, end: input.end_date },
+        currency: 'USD',
+        reporting_rows: [{ media_buy_id: 'fixture-media-buy', impressions: 10, spend: '1.25' }],
+        media_buy_deliveries: [
+          { media_buy_id: 'fixture-media-buy', impressions: 10, totals: { impressions: '10.00' } },
+        ],
+        availability_evidence: presentAvailability(input),
+      }),
+      redactedReportingSourceOfferingV1
+    );
+    const sealed = await agreeing.execute(request('fixture-inline-auxiliary-valid-nested'), context());
+    assert.equal(sealed.ok, true, 'an agreeing auxiliary duplicate still seals');
+    const manifest = parseVerifiedReportingSourceManifestV1(sealed.response.manifest, sealed.manifestBytes, 'basic');
+    assert.equal(manifest.coverage.status, 'full');
+  });
+
   test('checks auxiliary rows against availability evidence', async () => {
     // The auxiliary collection carries claims that evidence must still reconcile. A
     // `media_buy_deliveries` row reporting spend contradicts a `missing` spend cell even
