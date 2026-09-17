@@ -311,44 +311,7 @@ export async function createReportingManagedDeliveryRuntime<
     );
   }
   nonnegativeInteger(options.automatedRecoveryWindowSeconds, 'automatedRecoveryWindowSeconds');
-  // `automated_recovery_window_seconds` is published once per agent, in one
-  // capability document, while Core recovery windows are per configuration.
-  // Requiring the advertised value to equal every installed window was
-  // therefore unsatisfiable for any agent serving two tenants on different
-  // windows — and since a capability document cannot be split per tenant,
-  // "run one runtime per cohort" only worked for a seller willing to run one
-  // endpoint per cohort. It also refused to start with no binding installed,
-  // which a fresh deployment always has, and which is the state a deployment
-  // returns to when its last managed tenant offboards.
-  //
-  // The advertised value is a maximum: "the maximum late interval during which
-  // a due obligation may remain delayed while automated recovery continues
-  // before action_required". Going action_required sooner than advertised
-  // honours it; going later does not. So one agent-wide value is truthful
-  // exactly when it is at least every installed window, and the conservative
-  // agent-wide policy is to require that bound and nothing more.
-  // Hand the store the bound before reading the installed set, so a binding
-  // racing this wiring is already held to it rather than slipping in between
-  // the check and the first enforced install.
-  // Awaited, and before anything is published. These calls can reject — a
-  // replica registering a different window over the same database is refused
-  // — and firing them without awaiting let a runtime publish a capability
-  // document whose promise the registry had already rejected.
-  await options.store.adoptAdvertisedRecoveryWindowSeconds(options.automatedRecoveryWindowSeconds);
-  const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
-  const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
-  if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
-    throw new Error(
-      `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
-        `(${widestInstalledWindow}s); advertising ${options.automatedRecoveryWindowSeconds}s would promise a ` +
-        `recovery bound this deployment does not keep for every tenant`
-    );
-  }
   positiveInteger(options.statusRetentionDays, 'statusRetentionDays');
-  // Register the retention horizon too. Advertising 90 days while the durable
-  // policy stayed null let a store built with 45 days of evidence retention
-  // prune inside the horizon this runtime publishes.
-  await options.store.adoptAdvertisedStatusRetentionDays(options.statusRetentionDays);
   positiveInteger(options.resourceRetentionDays, 'resourceRetentionDays');
   nonnegativeInteger(options.authorizationRevocationSeconds, 'authorizationRevocationSeconds');
   if (
@@ -417,6 +380,43 @@ export async function createReportingManagedDeliveryRuntime<
       `Managed Delivery capability wiring is invalid: ${parsedCapabilities.error.issues[0]?.message ?? 'invalid'}`
     );
   }
+  // `automated_recovery_window_seconds` is published once per agent, in one
+  // capability document, while Core recovery windows are per configuration.
+  // Requiring the advertised value to equal every installed window was
+  // therefore unsatisfiable for any agent serving two tenants on different
+  // windows — and since a capability document cannot be split per tenant,
+  // "run one runtime per cohort" only worked for a seller willing to run one
+  // endpoint per cohort. It also refused to start with no binding installed,
+  // which a fresh deployment always has, and which is the state a deployment
+  // returns to when its last managed tenant offboards.
+  //
+  // The advertised value is a maximum: "the maximum late interval during which
+  // a due obligation may remain delayed while automated recovery continues
+  // before action_required". Going action_required sooner than advertised
+  // honours it; going later does not. So one agent-wide value is truthful
+  // exactly when it is at least every installed window, and the conservative
+  // agent-wide policy is to require that bound and nothing more.
+  const installedRecoveryWindows = await options.store.listInstalledRecoveryWindowSeconds();
+  const widestInstalledWindow = installedRecoveryWindows.reduce((widest, value) => Math.max(widest, value), 0);
+  if (options.automatedRecoveryWindowSeconds < widestInstalledWindow) {
+    throw new Error(
+      `automatedRecoveryWindowSeconds must be at least the widest installed managed Core recovery window ` +
+        `(${widestInstalledWindow}s); advertising ${options.automatedRecoveryWindowSeconds}s would promise a ` +
+        `recovery bound this deployment does not keep for every tenant`
+    );
+  }
+  // Every side-effect-free validation and construction above completes before
+  // either durable write. Otherwise a malformed adapter or offering could
+  // register policy that no runtime ever published, then reject a corrected
+  // restart using different values. The store validates the recovery bound
+  // again inside its adoption transaction, closing the binding-install race
+  // between the read above and this write.
+  await options.store.adoptAdvertisedRecoveryWindowSeconds(options.automatedRecoveryWindowSeconds);
+  // Register the retention horizon too. Advertising 90 days while the durable
+  // policy stayed null let a store built with 45 days of evidence retention
+  // prune inside the horizon this runtime publishes. Both writes are awaited
+  // before returning the capability document.
+  await options.store.adoptAdvertisedStatusRetentionDays(options.statusRetentionDays);
 
   return {
     reportingDeliveryCapabilities,

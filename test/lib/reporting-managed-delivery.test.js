@@ -304,6 +304,68 @@ describe('seller managed reporting runtime', () => {
     );
   });
 
+  test('validates the complete runtime before adopting durable policy', async () => {
+    let adoptedRecoveryWindow;
+    let adoptedStatusRetention;
+    const adoptionCalls = [];
+    const store = {
+      probe: async () => true,
+      listInstalledRecoveryWindowSeconds: async () => [0],
+      adoptAdvertisedRecoveryWindowSeconds: async value => {
+        adoptionCalls.push(['recovery', value]);
+        if (adoptedRecoveryWindow !== undefined && adoptedRecoveryWindow !== value) {
+          throw new Error('durable recovery policy conflict');
+        }
+        adoptedRecoveryWindow = value;
+      },
+      adoptAdvertisedStatusRetentionDays: async value => {
+        adoptionCalls.push(['status', value]);
+        if (adoptedStatusRetention !== undefined && adoptedStatusRetention !== value) {
+          throw new Error('durable status policy conflict');
+        }
+        adoptedStatusRetention = value;
+      },
+    };
+    const validAdapter = {
+      verificationProfiles: ['native_commit'],
+      revocationFencesDeliveryGenerations: true,
+      deliver: async () => {},
+      read: async () => new Uint8Array(),
+      revoke: async () => {},
+    };
+    const initial = {
+      coreStore: {},
+      store,
+      adapter: validAdapter,
+      // This is deliberately one of the last pure validations in the factory.
+      offerings: [{ ...offering(), method: {} }],
+      automatedRecoveryWindowSeconds: 60,
+      statusRetentionDays: 30,
+      resourceRetentionDays: 30,
+      authorizationRevocationSeconds: 60,
+    };
+    await assert.rejects(
+      () => ledger.createReportingManagedDeliveryRuntime(initial),
+      /does not satisfy the complete installed RC3 schema/
+    );
+    assert.deepEqual(adoptionCalls, [], 'failed validation performs no durable adoption');
+    assert.equal(adoptedRecoveryWindow, undefined);
+    assert.equal(adoptedStatusRetention, undefined);
+
+    const corrected = await ledger.createReportingManagedDeliveryRuntime({
+      ...initial,
+      offerings: [offering()],
+      automatedRecoveryWindowSeconds: 900,
+      statusRetentionDays: 90,
+    });
+    assert.equal(corrected.reportingDeliveryCapabilities.automated_recovery_window_seconds, 900);
+    assert.equal(corrected.reportingDeliveryCapabilities.status_retention_days, 90);
+    assert.deepEqual(adoptionCalls, [
+      ['recovery', 900],
+      ['status', 90],
+    ]);
+  });
+
   test('does not publish a delivery when authorization is revoked during adapter I/O', async () => {
     const claimed = lease();
     let authorized = true;
