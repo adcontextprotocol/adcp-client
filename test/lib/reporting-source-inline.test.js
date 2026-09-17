@@ -2201,6 +2201,14 @@ describe('createInlineReportingSourceExecutor', () => {
       { impressions: '00', nested: '0' },
       { impressions: '0', nested: '00.00' },
       { impressions: 0, nested: '000' },
+      // Reconciliation trims a string before canonicalizing it, so zero detection must
+      // read the same padded spellings as zero rather than the string as written.
+      { impressions: ' 0 ', nested: undefined },
+      { impressions: '  00.00  ', nested: undefined },
+      { impressions: ' -0 ', nested: undefined },
+      { impressions: '\t0\n', nested: undefined },
+      { impressions: ' 0 ', nested: '0' },
+      { impressions: '0', nested: ' 00.0 ' },
     ].entries()) {
       const result = await evidenced(item.impressions, item.nested, 'explicit_zero').execute(
         request(`fixture-inline-zero-spelling-${index}`),
@@ -2223,6 +2231,16 @@ describe('createInlineReportingSourceExecutor', () => {
       { impressions: '10' },
       { impressions: '-0.01' },
       { impressions: 1e-7 },
+      // Padding does not make a nonzero quantity zero, and padding alone is not a value.
+      { impressions: ' 0.1 ' },
+      { impressions: ' 1 ' },
+      { impressions: ' ' },
+      { impressions: '   ' },
+      // A stray sign, a leading plus and an exponent string all fail canonicalization,
+      // so none of them reads as zero either.
+      { impressions: '- 0' },
+      { impressions: '+0' },
+      { impressions: ' 0e0 ' },
     ].entries()) {
       assert.equal(
         validateReportingSourceFailureV1(
@@ -2239,11 +2257,20 @@ describe('createInlineReportingSourceExecutor', () => {
 
     // The same spellings still reconcile as one quantity under a present cell, so the two
     // rules now agree in both directions.
-    const present = await evidenced('00', '0', 'present').execute(
-      request('fixture-inline-zero-present-duplicate'),
-      context()
-    );
-    assert.equal(present.ok, true, 'a zero duplicate still reconciles under a present cell');
+    for (const [index, item] of [
+      { impressions: '00', nested: '0' },
+      { impressions: ' 0 ', nested: '0' },
+    ].entries()) {
+      const present = await evidenced(item.impressions, item.nested, 'present').execute(
+        request(`fixture-inline-zero-present-duplicate-${index}`),
+        context()
+      );
+      assert.equal(
+        present.ok,
+        true,
+        `${JSON.stringify(item.impressions)} still reconciles with ${JSON.stringify(item.nested)} under a present cell`
+      );
+    }
   });
 
   test('rejects an invalid duplicate claim on an auxiliary row', async () => {
