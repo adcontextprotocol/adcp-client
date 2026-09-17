@@ -2876,6 +2876,171 @@ describe('ReliableReportingService', () => {
     assert.equal(installed.schedule.recoveryWindowMilliseconds, 86_400_000);
   });
 
+  /**
+   * Drive an ABA race deterministically: fill a scope, hold one admission
+   * inside its fetch, let a replay revoke its claim, let a second admission
+   * re-take that claim, then release them in order. Every wait is bounded and
+   * every held fetch is drained, so a build without the fix fails on an
+   * assertion rather than stranding the runner.
+   */
+  function abaRace(t, rowsFor) {
+    const gates = [];
+    const inFlight = [];
+    let entered = 0;
+    let stall = false;
+    let issued = 0;
+    const retained = createInlineReportingSourceExecutor(
+      async () => {
+        const index = issued;
+        issued += 1;
+        if (stall) {
+          entered += 1;
+          await new Promise(resolve => gates.push(resolve));
+        }
+        return rowsFor(index);
+      },
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    t.after(async () => {
+      stall = false;
+      while (gates.length > 0) gates.shift()();
+      await Promise.allSettled(inFlight);
+    });
+    const ctx = () => ({ signal: new AbortController().signal });
+    const budget = async (promise, label, ms = 10_000) => {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), ms);
+            timer.unref?.();
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const waitUntil = async (predicate, label, ms = 10_000) => {
+      const deadline = Date.now() + ms;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+    };
+    const readInputFor = (request, sealed) => {
+      const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+      return {
+        objectRef: object.objectRef,
+        objectGeneration: object.objectGeneration,
+        sourceScope: request.sourceScope,
+        account: request.account,
+        delivery_config_id: request.delivery_config_id,
+        delivery_config_version: request.delivery_config_version,
+        report_definition_id: request.report_definition_id,
+        reporting_obligation_id: request.reporting_obligation_id,
+        maxBytes: 8 * 1024 * 1024,
+      };
+    };
+    return {
+      retained,
+      ctx,
+      budget,
+      waitUntil,
+      readInputFor,
+      read: input => retained.read({ ...input, signal: new AbortController().signal }),
+      request: key => redactedReportingSourceRequestV1({ sourceExecutionKey: key }),
+      openGate: () => gates.shift()(),
+      entered: () => entered,
+      beginStalling: () => {
+        stall = true;
+      },
+      track: promise => {
+        inFlight.push(promise);
+        return promise;
+      },
+    };
+  }
+
+  test('replaces one revoked claim with one victim, not the whole executor', async t => {
+    // A reserves entry0; a replay revokes it; B re-reserves it; A commits. A
+    // owes exactly one count and one victim's bytes. Growing the replacement
+    // loop's own bound made it reclaim every eligible execution instead.
+    const row = [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }];
+    const race = abaRace(t, () => row);
+    const key = index => `aba-count-${String(index).padStart(4, '0')}`;
+
+    const staged = [];
+    for (let index = 0; index < 100; index += 1) {
+      const request = race.request(key(index));
+      const sealed = await race.retained.execute(request, race.ctx());
+      assert.equal(sealed.ok, true, `slice ${index}`);
+      staged.push(race.readInputFor(request, sealed));
+    }
+    const oldest = race.request(key(0));
+
+    race.beginStalling();
+    const admissionA = race.track(race.retained.execute(race.request(key(100)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 1, 'admission A to enter its fetch');
+    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true, 'a claimed entry stays replayable');
+    const admissionB = race.track(race.retained.execute(race.request(key(101)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 2, 'admission B to enter its fetch');
+
+    race.openGate();
+    assert.equal((await race.budget(admissionA, 'admission A')).ok, true);
+
+    assert.ok((await race.budget(race.read(staged[0]), 'entry0')).byteLength > 0, 'the re-taken claim survives');
+    let survivors = 0;
+    for (let index = 1; index < 100; index += 1) {
+      try {
+        await race.read(staged[index]);
+        survivors += 1;
+      } catch {
+        /* reclaimed */
+      }
+    }
+    assert.equal(survivors, 98, `one revoked claim must cost exactly one replacement, saw ${99 - survivors} lost`);
+
+    race.openGate();
+    await race.budget(admissionB, 'admission B').catch(() => undefined);
+  });
+
+  test('refuses to stage when a revoked claim cannot be replaced byte for byte', async t => {
+    // entry0 is the only entry in the scope holding bytes; the rest are empty.
+    // Replacing a revoked claim by count alone let the slice stage past the
+    // scope cap on stale credit, so it must fail cleanly instead.
+    const big = Array.from({ length: 60_000 }, (_, index) => ({
+      media_buy_id: 'fixture-media-buy',
+      impressions: index,
+      spend: '0.10',
+    }));
+    const race = abaRace(t, index => (index === 0 || index >= 100 ? big : []));
+    const key = index => `aba-bytes-${String(index).padStart(4, '0')}`;
+
+    const oldest = race.request(key(0));
+    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true);
+    for (let index = 1; index < 100; index += 1) {
+      assert.equal((await race.retained.execute(race.request(key(index)), race.ctx())).ok, true, `filler ${index}`);
+    }
+
+    race.beginStalling();
+    const admissionA = race.track(race.retained.execute(race.request(key(100)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 1, 'admission A to enter its fetch');
+    // A replay revokes A's claim on the only byte-holding victim.
+    assert.equal((await race.retained.execute(oldest, race.ctx())).ok, true);
+    const admissionB = race.track(race.retained.execute(race.request(key(101)), race.ctx()));
+    await race.waitUntil(() => race.entered() === 2, 'admission B to enter its fetch');
+
+    race.openGate();
+    const outcome = await race.budget(admissionA, 'admission A');
+    assert.equal(outcome.ok, false, 'staging on stale credit would exceed the scope cap');
+    assert.equal(outcome.error.code, 'STAGING_FAILED');
+
+    race.openGate();
+    await race.budget(admissionB, 'admission B').catch(() => undefined);
+  });
+
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {
     const { service } = serviceFixture();
     const seen = [];

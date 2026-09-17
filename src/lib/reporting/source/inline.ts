@@ -737,10 +737,18 @@ async function executeAndSeal(
   if (Date.parse(deadlineAt) <= Date.now()) {
     return failure('DEADLINE_EXCEEDED', 'retryable', 'Inline reporting execution deadline elapsed');
   }
-  // Nothing below can refuse the slice, so the planned reclamations commit here
-  // — after every failure-capable check, immediately before the evidence they
-  // made room for is installed.
-  reclaimer?.commit();
+  // The planned reclamations commit here — after every other failure-capable
+  // check, immediately before the evidence they made room for is installed.
+  // Commit is itself failure-capable: a claim revoked while this slice was
+  // fetching has to be replaced with equivalent count and bytes, and if it
+  // cannot be, the slice is refused rather than staged past its budget.
+  if (reclaimer !== undefined && !reclaimer.commit(scopeKey)) {
+    return failure(
+      'STAGING_FAILED',
+      'terminal',
+      'Inline reporting could not reacquire the capacity a revoked reservation had promised'
+    );
+  }
   storage.objects.set(objectRef, { request: structuredClone(request), generation, bytes: Uint8Array.from(bytes) });
   storage.totalBytes += bytes.byteLength;
   storage.scopeBytes.set(scopeKey, (storage.scopeBytes.get(scopeKey) ?? 0) + bytes.byteLength);
@@ -1028,11 +1036,16 @@ function planReclaim(
 export interface InlineAdmissionReclaimerV1 {
   /** Plan one victim. `scopeOnly` keeps it inside the requesting scope. */
   plan(scopeKey: string, scopeOnly: boolean): { bytes: number; sameScope: boolean } | undefined;
-  /** Victims planned so far that belong to `scopeKey`. */
+  /** Claims still owned by this transaction that belong to `scopeKey`. */
   plannedInScope(scopeKey: string): number;
-  /** Bytes already reserved, split by whether they relieve `scopeKey` too. */
+  /** Bytes reserved by still-owned claims, split by scope relief. */
   plannedBytes(scopeKey: string): { global: number; scope: number };
-  commit(): void;
+  /**
+   * Delete every still-owned claim and repair what revoked claims were
+   * credited for. Returns false when the count or bytes a revoked claim
+   * promised cannot be reacquired, in which case the caller must not stage.
+   */
+  commit(scopeKey: string): boolean;
   release(): void;
 }
 
@@ -1040,46 +1053,55 @@ function createAdmissionReclaimer(
   executions: Map<string, ExecutionEntry>,
   storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> }
 ): InlineAdmissionReclaimerV1 {
-  const planned: string[] = [];
+  type PlannedVictim = { key: string; bytes: number; sameScope: boolean };
+  const planned: PlannedVictim[] = [];
   // Identity for this transaction's claims. A bare boolean let a stale
   // transaction commit a claim that had been revoked and re-taken, deleting
   // evidence a replay had been served and another admission was counting on.
   const token: object = {};
+  const owns = (key: string): boolean => executions.get(key)?.reservation === token;
   let settled = false;
   return {
     plan(scopeKey, scopeOnly) {
       // A scope-bound victim relieves both the scope and the global budget; an
       // out-of-scope victim relieves only the global one, which is exactly what
       // a fresh scope needs when other scopes hold the global budget.
-      const victim = planReclaim(executions, planned, scopeOnly ? scopeKey : undefined);
+      const victim = planReclaim(
+        executions,
+        planned.map(entry => entry.key),
+        scopeOnly ? scopeKey : undefined
+      );
       if (victim === undefined) return undefined;
-      planned.push(victim);
       const entry = executions.get(victim);
       if (entry) entry.reservation = token;
-      return {
+      const record = {
+        key: victim,
         bytes: storage.objects.get(stagedObjectRef(victim))?.bytes.byteLength ?? 0,
         sameScope: entry?.scopeKey === scopeKey,
       };
+      planned.push(record);
+      return { bytes: record.bytes, sameScope: record.sameScope };
     },
     plannedInScope(scopeKey) {
-      return planned.filter(key => executions.get(key)?.scopeKey === scopeKey).length;
+      // Only still-owned claims count: a revoked one relieves nothing.
+      return planned.filter(entry => owns(entry.key) && executions.get(entry.key)?.scopeKey === scopeKey).length;
     },
     plannedBytes(scopeKey) {
       let global = 0;
       let scope = 0;
-      for (const key of planned) {
-        const bytes = storage.objects.get(stagedObjectRef(key))?.bytes.byteLength ?? 0;
-        global += bytes;
-        if (executions.get(key)?.scopeKey === scopeKey) scope += bytes;
+      for (const entry of planned) {
+        if (!owns(entry.key)) continue;
+        global += entry.bytes;
+        if (executions.get(entry.key)?.scopeKey === scopeKey) scope += entry.bytes;
       }
       return { global, scope };
     },
-    commit() {
-      if (settled) return;
+    commit(scopeKey) {
+      if (settled) return true;
       settled = true;
-      const spared: string[] = [];
+      const spared: PlannedVictim[] = [];
       for (const victim of planned) {
-        const entry = executions.get(victim);
+        const entry = executions.get(victim.key);
         if (entry === undefined) continue;
         // Commit only claims this transaction still holds. A replay served
         // between planning and here revoked the claim, and another admission
@@ -1090,26 +1112,47 @@ function createAdmissionReclaimer(
           continue;
         }
         entry.reservation = undefined;
-        commitReclaim(executions, storage, victim);
+        commitReclaim(executions, storage, victim.key);
       }
       planned.length = 0;
-      // Every revoked claim was credited toward a ceiling this admission has
-      // already cleared, so replace it where one is available. Without this the
-      // executor sits one entry over its limit until the next admission.
-      // The spared victims are excluded: they are exactly the entries a replay
-      // was served from or another admission now holds.
-      for (let attempt = 0; attempt < spared.length; attempt += 1) {
-        const replacement = planReclaim(executions, spared);
+      if (spared.length === 0) return true;
+
+      // A revoked claim was already credited toward a ceiling this admission
+      // cleared, so the same count *and* the same bytes have to be reacquired
+      // from entries nobody else holds. Repairing by count alone let a large
+      // revoked victim be replaced by an empty one and the object staged past
+      // the scope cap.
+      let owedCount = spared.length;
+      let owedGlobal = spared.reduce((sum, victim) => sum + victim.bytes, 0);
+      let owedScope = spared.reduce((sum, victim) => sum + (victim.sameScope ? victim.bytes : 0), 0);
+      // Excluded from selection, so a spared victim is never taken and a
+      // replacement is never counted twice. The loop is bounded by the map
+      // size captured here; previously it grew its own bound and reclaimed
+      // every eligible execution in the executor.
+      const excluded = spared.map(victim => victim.key);
+      const bound = executions.size;
+      for (let attempt = 0; attempt < bound; attempt += 1) {
+        if (owedCount <= 0 && owedGlobal <= 0 && owedScope <= 0) break;
+        const preferScope = owedScope > 0;
+        const replacement =
+          planReclaim(executions, excluded, preferScope ? scopeKey : undefined) ??
+          (preferScope ? planReclaim(executions, excluded) : undefined);
         if (replacement === undefined) break;
-        spared.push(replacement);
+        excluded.push(replacement);
+        const entry = executions.get(replacement);
+        const bytes = storage.objects.get(stagedObjectRef(replacement))?.bytes.byteLength ?? 0;
+        owedCount -= 1;
+        owedGlobal -= bytes;
+        if (entry?.scopeKey === scopeKey) owedScope -= bytes;
         commitReclaim(executions, storage, replacement);
       }
+      return owedCount <= 0 && owedGlobal <= 0 && owedScope <= 0;
     },
     release() {
       if (settled) return;
       settled = true;
       for (const victim of planned) {
-        const entry = executions.get(victim);
+        const entry = executions.get(victim.key);
         // Never clear a claim this transaction no longer holds.
         if (entry?.reservation === token) entry.reservation = undefined;
       }
