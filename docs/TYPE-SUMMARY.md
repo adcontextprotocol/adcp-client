@@ -1,6 +1,6 @@
 # AdCP Type Summary
 
-> Generated at: 2026-09-16
+> Generated at: 2026-09-17
 > @adcp/sdk v14.0.0-rc.38
 
 Curated reference of the types that matter for using the AdCP client. For full generated types see `src/lib/types/tools.generated.ts` and `src/lib/types/core.generated.ts`.
@@ -2826,21 +2826,8 @@ type ReportingSourceExecutorResultV1 =
 Ledger symbols import from `@adcp/sdk/reporting/ledger`; `createPostgresPersistentNotificationRuntime` is a server symbol and imports from `@adcp/sdk/server`.
 
 ```typescript
-const store = new PostgresReportingLedgerStore(pool, { acknowledgeIsolatedDatabase: true });
-await pool.query(REPORTING_LEDGER_MIGRATION);
-const producer = createReportingProducer({ store, source, offerings, contact });
-await producer.planObligations();
-await producer.runWorker();
-const getReportingStatus = createReportingStatusHandler(store);
-const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
-
-// AdCP 3.2.0-rc.3: identity comes from authenticated transport.
-const syncReportingStatus = createSyncReportingStatusHandler(store, {
-  resolveConsumerId: context => context.agent.agent_url,
-});
-
-// Build the durable pre-POST checkpoint first: the notification runtime
-// needs it, and the activity runtime verifies it targets the same store.
+// Build the notification path first: the store must be constructed with the
+// activity port, or lifecycle transitions record no activity and notify nobody.
 const attemptCheckpoint = createPostgresReportingNotificationAttemptCheckpoint({
   db: pool,
   namespace: 'seller-production',
@@ -2859,14 +2846,29 @@ const reportingActivity = createPostgresReportingNotificationActivityRuntime({
   attemptCheckpoint,
   tenantScopeForAccount: accountId => trustedTenantDirectory.tenantFor(accountId),
 });
-const transactionalStore = new PostgresReportingLedgerStore(pool, {
+
+// One store, wired to the activity port, used by every participant below.
+const store = new PostgresReportingLedgerStore(pool, {
   acknowledgeIsolatedDatabase: true,
   notificationActivityPort: reportingActivity.port,
 });
 
 // Every migration this wiring needs, before probing.
+await pool.query(REPORTING_LEDGER_MIGRATION);
 for (const sql of notifications.migrations.all) await pool.query(sql);
 for (const sql of reportingActivity.migrations.all) await pool.query(sql);
+
+const producer = createReportingProducer({ store, source, offerings, contact });
+await producer.planObligations();
+await producer.runWorker();
+const getReportingStatus = createReportingStatusHandler(store);
+const getMediaBuyDelivery = createReportingDeliveryHandler(store); // exact reporting_revision_id reads
+
+// AdCP 3.2.0-rc.3: identity comes from authenticated transport.
+const syncReportingStatus = createSyncReportingStatusHandler(store, {
+  resolveConsumerId: context => context.agent.agent_url,
+});
+
 await reportingActivity.probe();
 // Run repeatedly from a durable scheduler; this call is bounded.
 await reportingActivity.recoverOnce({ ownerToken: stableWorkerId });

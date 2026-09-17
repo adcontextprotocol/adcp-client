@@ -2491,6 +2491,29 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         text.includes('@adcp/sdk/server'),
         `${name}: attributes createPostgresPersistentNotificationRuntime to the server entry point`
       );
+      // Once an activity runtime is in the picture, every store built after it
+      // must carry the port. A portless store there silently records no
+      // activity and notifies nobody, which looks exactly like a healthy
+      // deployment. (A ledger-only example with no activity runtime is fine.)
+      const activityAt = text.indexOf('createPostgresReportingNotificationActivityRuntime({');
+      assert.notEqual(activityAt, -1, `${name}: wires an activity runtime`);
+      const afterActivity = text.slice(activityAt);
+      const storeConstructions = afterActivity.match(/new PostgresReportingLedgerStore\(pool, \{[^}]*\}/g) ?? [];
+      assert.ok(storeConstructions.length >= 1, `${name}: constructs a ledger store for the notification path`);
+      for (const construction of storeConstructions) {
+        assert.match(
+          construction,
+          /notificationActivityPort/,
+          `${name}: every store built alongside the activity runtime carries the port`
+        );
+      }
+      const producerAt = afterActivity.indexOf('createReportingProducer({ store');
+      if (producerAt !== -1) {
+        assert.ok(
+          producerAt > afterActivity.indexOf('notificationActivityPort'),
+          `${name}: the producer is wired to the store that carries the port`
+        );
+      }
     }
 
     // Now actually run that wiring, from nothing.
@@ -2498,6 +2521,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     const freshSchema = `adcp_reporting_docs_${process.pid}`;
     await bootstrap.query(`CREATE SCHEMA "${freshSchema}"`);
     const freshPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${freshSchema}"` });
+    const docsFetches = [];
     try {
       const docsAttemptCheckpoint = ledger.createPostgresReportingNotificationAttemptCheckpoint({
         db: freshPool,
@@ -2510,7 +2534,10 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         subscriptions: { acknowledgeIsolatedDatabase: true },
         webhooks: {
           signerKey: signerKey(),
-          fetch: async () => ({ status: 204, headers: { get: () => undefined } }),
+          fetch: async (url, init) => {
+            docsFetches.push({ url, body: JSON.parse(init.body) });
+            return { status: 204, headers: { get: () => undefined } };
+          },
           retries: { maxAttempts: 1, initialDelayMs: 0, maxDelayMs: 0, jitter: 0 },
           sleep: async () => {},
         },
@@ -2544,6 +2571,41 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
         leaseLost: 0,
         abandoned: 0,
       });
+
+      // Construction is not the claim being made: the documented wiring has to
+      // actually record activity and deliver a notification.
+      await docsNotifications.replace(
+        { kind: 'account', tenantId: 'tenant-a', principalId: 'principal-docs', accountId: 'account-docs' },
+        [
+          {
+            subscriber_id: 'docs-subscriber',
+            url: 'https://buyer.example/docs',
+            event_types: ['reporting.status_changed'],
+          },
+        ]
+      );
+      const docsConfiguration = configurationFixture('docs-example', 'account-docs');
+      await docsStore.putConfiguration(docsConfiguration);
+      const docsObligation = obligationFixture('docs-example', docsConfiguration);
+      await docsStore.putObligation(docsObligation);
+      const docsTransition = await ledger.reconcileReportingStatusLifecycleV1({
+        store: docsStore,
+        reporting_obligation_id: docsObligation.reporting_obligation_id,
+        ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      });
+      assert.ok(docsTransition, 'the documented store records a lifecycle transition');
+      const docsPage = await docsActivity.listActivity({ tenantId: 'tenant-a', accountId: 'account-docs' });
+      assert.equal(
+        docsPage.activities.filter(value => value.transitionId === docsTransition.transitionId).length,
+        1,
+        'the documented wiring records account activity'
+      );
+      assert.equal((await docsActivity.recoverOnce({ ownerToken: 'docs-example-worker-two' })).projected, 1);
+      assert.deepEqual(
+        docsFetches.map(value => value.url),
+        ['https://buyer.example/docs'],
+        'and delivers the notification'
+      );
 
       // Re-running every migration must be a no-op, not repeated destructive DDL.
       const definitionsBefore = await activityDefinitions(freshPool);
@@ -2745,7 +2807,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
     assert.equal(second.abandoned, 0);
   });
 
-  test('reruns every migration under a held read lock without blocking', async () => {
+  test('reruns every migration under a held writer transaction without blocking', async () => {
     // `ADD COLUMN IF NOT EXISTS` still takes ACCESS EXCLUSIVE to discover the
     // column is already there, so a rerun during ordinary traffic queued behind
     // readers and failed outright under a lock_timeout. An already-upgraded
@@ -2768,9 +2830,19 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       for (const sql of runtime.migrations.all) await migrationPool.query(sql);
       const before = await activityDefinitions(migrationPool);
 
-      // An ordinary reader holds ACCESS SHARE for the whole rerun.
+      // An ordinary *writer* holds RowExclusiveLock for the whole rerun. A
+      // reader's ACCESS SHARE is compatible with the ShareLock that
+      // `CREATE INDEX IF NOT EXISTS` takes, so it never surfaced that; a writer
+      // is not, which is the lock every live insert holds.
       await reader.query('BEGIN');
-      await reader.query('SELECT 1 FROM adcp_reporting_notification_activity LIMIT 0');
+      await reader.query(
+        `INSERT INTO adcp_reporting_notification_activity
+           (namespace, transition_id, tenant_scope, account_id, obligation_id, activity,
+            intent_fingerprint, notification_required)
+         VALUES ('rerun-tests', 'rst_rerun_writer', 'tenant-a', 'account-a', 'obligation-a',
+                 '{}'::jsonb, $1, true)`,
+        ['f'.repeat(64)]
+      );
       const migrator = await migrationPool.connect();
       try {
         await migrator.query("SET lock_timeout = '250ms'");
@@ -2780,7 +2852,7 @@ describe('transactional reporting notification activity', { skip: !DATABASE_URL 
       } finally {
         migrator.release();
       }
-      await reader.query('COMMIT');
+      await reader.query('ROLLBACK');
 
       assert.deepEqual(await activityDefinitions(migrationPool), before, 'the rerun changed no constraint or index');
     } finally {

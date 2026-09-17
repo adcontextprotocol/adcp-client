@@ -381,33 +381,74 @@ CREATE TABLE IF NOT EXISTS ${recipientTable} (
     (settled_at IS NOT NULL AND disposition IN ('delivered', 'terminal'))
   )
 );
-CREATE INDEX IF NOT EXISTS idx_${rawRecipients}_unsettled
-  ON ${recipientTable}(namespace, transition_id)
-  WHERE settled_at IS NULL;
--- At most one addressed generation per subscriber, enforced by the database.
---
--- The checkpoint and a concurrent recipient replacement run as separate
--- statements against a connection pool, so neither sees the other's uncommitted
--- work: a freeze can propose a replacement generation while the original is
--- being checkpointed, and PostgreSQL will keep both rows. This index is the
--- serialization point. The second generation's checkpoint fails, so it is never
--- POSTed, and the next freeze drops it because its subscriber is already
--- claimed. One logical delivery, one idempotency key.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_${rawRecipients}_attempted_subscriber
-  ON ${recipientTable}(namespace, transition_id, subscriber_key)
-  WHERE attempt_at IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS idx_${raw}_pending
-  ON ${table}(namespace, next_attempt_at, lease_expires_at, activity_sequence)
-  WHERE state = 'pending';
-CREATE INDEX IF NOT EXISTS idx_${raw}_pending_tenant
-  ON ${table}(namespace, tenant_scope)
-  WHERE state = 'pending';
-CREATE INDEX IF NOT EXISTS idx_${raw}_account_activity
-  ON ${table}(namespace, tenant_scope, account_id, activity_sequence DESC);
-CREATE INDEX IF NOT EXISTS idx_${raw}_retention
-  ON ${table}(namespace, retain_until, activity_sequence)
-  WHERE state IN ('projected', 'abandoned');
+-- Indexes are catalog-guarded too. CREATE INDEX IF NOT EXISTS still takes a
+-- ShareLock to discover the index already exists, which conflicts with the
+-- RowExclusiveLock every ordinary writer holds — so an already-current rerun
+-- would stall live traffic, or fail under a lock_timeout, despite creating
+-- nothing. Scoped to this schema's tables by regclass, like every other guard.
+DO $$
+DECLARE
+  activity_table regclass := to_regclass('${raw}');
+  recipient_table regclass := to_regclass('${rawRecipients}');
+BEGIN
+  IF activity_table IS NULL OR recipient_table IS NULL THEN
+    RETURN;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = recipient_table AND index_class.relname = 'idx_${rawRecipients}_unsettled'
+  ) THEN
+    CREATE INDEX idx_${rawRecipients}_unsettled
+      ON ${recipientTable}(namespace, transition_id)
+      WHERE settled_at IS NULL;
+  END IF;
+  -- At most one addressed generation per subscriber, enforced by the database.
+  --
+  -- The checkpoint and a concurrent recipient replacement run as separate
+  -- statements against a connection pool, so neither sees the other's
+  -- uncommitted work: a freeze can propose a replacement generation while the
+  -- original is being checkpointed, and PostgreSQL will keep both rows. This
+  -- index is the serialization point. The second generation's checkpoint fails,
+  -- so it is never POSTed, and the next freeze drops it because its subscriber
+  -- is already claimed. One logical delivery, one idempotency key.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = recipient_table
+      AND index_class.relname = 'idx_${rawRecipients}_attempted_subscriber'
+  ) THEN
+    CREATE UNIQUE INDEX idx_${rawRecipients}_attempted_subscriber
+      ON ${recipientTable}(namespace, transition_id, subscriber_key)
+      WHERE attempt_at IS NOT NULL;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_pending'
+  ) THEN
+    CREATE INDEX idx_${raw}_pending
+      ON ${table}(namespace, next_attempt_at, lease_expires_at, activity_sequence)
+      WHERE state = 'pending';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_pending_tenant'
+  ) THEN
+    CREATE INDEX idx_${raw}_pending_tenant
+      ON ${table}(namespace, tenant_scope)
+      WHERE state = 'pending';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_index
+     JOIN pg_class index_class ON index_class.oid = pg_index.indexrelid
+    WHERE pg_index.indrelid = activity_table AND index_class.relname = 'idx_${raw}_account_activity'
+  ) THEN
+    CREATE INDEX idx_${raw}_account_activity
+      ON ${table}(namespace, tenant_scope, account_id, activity_sequence DESC);
+  END IF;
+END $$;
 `.trim();
 }
 
