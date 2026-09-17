@@ -10,6 +10,13 @@ import type { ReportingLedgerStore } from '../lib/reporting/ledger/types';
  * `test/**\/*.js` file is inert: those files are outside every TypeScript
  * config, so making either member required would not fail anything. Here it is
  * a compile error.
+ *
+ * The `.type-test.ts` suffix is load-bearing. `tsconfig.json` excludes
+ * `**\/*.test.ts`, which needs a literal `.test.ts`; the hyphen in
+ * `-test.ts` means this file — like the twenty-one fixtures beside it — is
+ * resolved into the program. Verified with TypeScript's own
+ * `parseJsonConfigFileContent`: all 22 files in this directory appear in
+ * `fileNames`, none are excluded.
  */
 
 /** Keys a caller may omit entirely. */

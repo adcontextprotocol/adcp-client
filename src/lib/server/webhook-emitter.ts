@@ -1175,19 +1175,39 @@ function isTerminalStatus(status: number, wwwAuthenticate?: string): boolean {
   return false;
 }
 
+/**
+ * Backoff in whole milliseconds, inside the retry-after range every durable
+ * recovery backend accepts.
+ *
+ * Normalized here rather than at the call sites because this value is both slept
+ * on and handed to `WebhookDeliveryRecoveryClaim.release`, which asserts a safe
+ * integer from 0 through 604800000. A fractional configured delay used to reach
+ * that assertion unchanged: releasing a retryable suppression threw instead of
+ * releasing, and the delivery stayed leased until its lease expired.
+ */
 function backoffDelay(attempt: number, retries: Required<WebhookRetryOptions>): number {
   const base = Math.min(retries.initialDelayMs * Math.pow(2, attempt - 1), retries.maxDelayMs);
-  if (retries.jitter <= 0) return base;
-  const jitterWindow = base * retries.jitter;
-  const offset = Math.random() * jitterWindow * 2 - jitterWindow;
-  return Math.max(0, Math.floor(base + offset));
+  const jittered =
+    retries.jitter <= 0 ? base : base + (Math.random() * base * retries.jitter * 2 - base * retries.jitter);
+  return clampRetryAfterMs(jittered);
 }
 
+/** Whole milliseconds within the recovery contract's accepted range. */
+function clampRetryAfterMs(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(MAX_RETRY_AFTER_MS, Math.max(0, Math.floor(value)));
+}
+
+const MAX_RETRY_AFTER_MS = 604_800_000;
+
 function resolveRetries(opts?: WebhookRetryOptions): Required<WebhookRetryOptions> {
+  // Delays are normalized to whole milliseconds on the way in as well, so the
+  // durable snapshot a recovered attempt replays carries the same integers this
+  // process used rather than whatever was configured.
   return {
-    maxAttempts: Math.max(1, opts?.maxAttempts ?? 5),
-    initialDelayMs: Math.max(0, opts?.initialDelayMs ?? 1000),
-    maxDelayMs: Math.max(0, opts?.maxDelayMs ?? 60_000),
+    maxAttempts: Math.max(1, Math.floor(opts?.maxAttempts ?? 5)),
+    initialDelayMs: clampRetryAfterMs(opts?.initialDelayMs ?? 1000),
+    maxDelayMs: clampRetryAfterMs(opts?.maxDelayMs ?? 60_000),
     jitter: Math.max(0, Math.min(1, opts?.jitter ?? 0.25)),
   };
 }

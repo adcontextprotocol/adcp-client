@@ -25,6 +25,73 @@ const { InMemoryRevocationStore } = require('../../dist/lib/signing/revocation.j
 const { signerKeyToProvider } = require('../../dist/lib/signing/testing.js');
 
 // ────────────────────────────────────────────────────────────
+// Retry-delay normalization
+// ────────────────────────────────────────────────────────────
+
+test('releases a retryable suppression even when the configured backoff is fractional', async () => {
+  // The recovery contract requires an integer retryAfterMs, but the configured
+  // delays were only clamped for sign, never coerced. A fractional
+  // initialDelayMs therefore produced a fractional backoff, and releasing a
+  // retryable suppression threw instead of releasing — leaving the delivery
+  // leased until its lease expired.
+  const signerKey = makeSignerKey();
+  const { assertRetryAfterMs } = require('../../dist/lib/server/webhook-delivery/common.js');
+  const released = [];
+  const claim = {
+    leaseExpiresAtMs: Date.now() + 60_000,
+    async renew() {
+      return true;
+    },
+    async release(retryAfterMs) {
+      // Exactly what every bundled durable backend enforces.
+      assertRetryAfterMs(retryAfterMs);
+      released.push(retryAfterMs);
+      return true;
+    },
+    async settle() {
+      return true;
+    },
+  };
+  const emitter = createWebhookEmitter({
+    signerKey,
+    fetch: async () => {
+      throw new Error('no external attempt should be made');
+    },
+    sleep: async () => {},
+    // Fractional and above the accepted ceiling: both shapes must be normalized.
+    retries: { maxAttempts: 3, initialDelayMs: 250.5, maxDelayMs: 900_000_000.5, jitter: 0 },
+    deliveryRecovery: {
+      durability: 'durable',
+      checkpoint() {
+        return claim;
+      },
+      settle() {},
+    },
+    authorizeAttempt: () => ({ decision: 'suppress', reason: 'authorization_error', retryable: true }),
+  });
+
+  const result = await emitter.emit({
+    url: 'http://x/h',
+    payload: { timestamp: 'stable' },
+    delivery_id: 'delivery.fractional-backoff',
+  });
+
+  assert.strictEqual(result.delivered, false);
+  assert.strictEqual(result.terminal, false, 'a retryable suppression stays retryable');
+  assert.strictEqual(result.attempts, 0, 'nothing was sent');
+  assert.deepStrictEqual(
+    result.errors,
+    [],
+    'releasing the lease must not fail: a held lease blocks recovery until it expires'
+  );
+  assert.strictEqual(released.length, 1, 'the recovery lease was released');
+  assert.ok(
+    Number.isSafeInteger(released[0]) && released[0] >= 0 && released[0] <= 604_800_000,
+    `retryAfterMs must satisfy the recovery contract, got ${released[0]}`
+  );
+});
+
+// ────────────────────────────────────────────────────────────
 // Fixtures
 // ────────────────────────────────────────────────────────────
 
