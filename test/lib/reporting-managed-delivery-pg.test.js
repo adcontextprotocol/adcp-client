@@ -4887,7 +4887,13 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       await widePool.query(
         `INSERT INTO adcp_reporting_adjustments
           (adjustment_id, obligation_id, adjusts_revision_id, adjustment_number, content_sha256, data, created_at)
-         SELECT 'adjustment-crossproduct-' || i, $1, $2, i, repeat('a', 64), '{}'::jsonb, clock_timestamp()
+         SELECT 'adjustment-crossproduct-' || i, $1, $2::text, i, repeat('a', 64),
+                jsonb_build_object(
+                  'reporting_adjustment_id', 'adjustment-crossproduct-' || i,
+                  'adjusts_reporting_revision_id', $2::text,
+                  'createdAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                ),
+                clock_timestamp()
            FROM generate_series(1, 99) AS i`,
         [wide.obligation.reporting_obligation_id, wide.revision.reporting_revision_id]
       );
@@ -4932,6 +4938,498 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     } finally {
       await widePool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${wideSchema}" CASCADE`);
+    }
+  });
+
+  test('stores receipt instants at database precision, not host milliseconds', async () => {
+    const micro = await deliverOnce(await seedSkewLedger('microsecond', 'consumer_receipt'));
+    const context = { account: { id: micro.accountId }, agent: { agent_url: 'https://microsecond-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const recorded = await sync(
+      {
+        idempotency_key: 'receipt-microsecond-batch-0001',
+        receipts: [receipt(micro, { reporting_receipt_id: 'receipt-microsecond-0001' })],
+      },
+      context
+    );
+    assert.equal(recorded.results[0].result, 'recorded');
+    // The instant used to go through a JS Date, which holds milliseconds, so
+    // recorded_at was durably older than the microsecond watermark written
+    // from the same clock and the reconcile it should trigger never became
+    // due. Six fractional digits on the wire, and the column equal to them.
+    assert.match(recorded.results[0].receipt.received_at, /\.\d{6}Z$/);
+    const stored = await pool.query(
+      `SELECT recorded_at = (data ->> 'received_at')::timestamptz AS aligned,
+              recorded_at = received_at AS same_column,
+              to_char(recorded_at AT TIME ZONE 'UTC', 'US') AS fraction
+         FROM adcp_reporting_receipts
+        WHERE account_id = $1 AND reporting_receipt_id = 'receipt-microsecond-0001'`,
+      [micro.accountId]
+    );
+    assert.equal(stored.rows[0].aligned, true, 'the ordering column is the instant the wire reports');
+    assert.equal(stored.rows[0].same_column, true);
+    assert.equal(stored.rows[0].fraction.length, 6);
+  });
+
+  test('does not fold evidence recorded after the cutoff into a historical reconcile', async () => {
+    const historical = await deliverOnce(await seedSkewLedger('historyscope', 'consumer_receipt'));
+    const consumerId = 'https://historyscope-buyer.example';
+    const context = { account: { id: historical.accountId }, agent: { agent_url: consumerId } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const accepted = await sync(
+      {
+        idempotency_key: 'receipt-historyscope-batch-0001',
+        receipts: [receipt(historical, { reporting_receipt_id: 'receipt-historyscope-0001' })],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+
+    // An authoritative roster, so the verdict turns on the evidence rather
+    // than on the conservative unknown-roster fail-safe.
+    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'h1' }),
+    });
+    const cutoff = await rosterStore.readLedgerInstant();
+    const settled = await rosterStore.getManagedLifecycleProjection({
+      reporting_obligation_id: historical.obligation.reporting_obligation_id,
+      ledgerAsOf: cutoff,
+    });
+    assert.equal(settled.consumers[0].receipts[0].reporting_receipt_id, 'receipt-historyscope-0001');
+
+    // A correction filed after that cutoff. At the cutoff it does not exist,
+    // so demanding a receipt for it reconciles a moment that never happened:
+    // the adjustment was folded in while the receipt that would answer it was
+    // filtered out by the same cutoff.
+    const rows = [{ media_buy_id: 'buy-3', impressions: 14 }];
+    const bytes = Buffer.from(canonicalize(rows), 'utf8');
+    const wireAdjustmentWithoutDigest = {
+      reporting_adjustment_id: 'adjustment-historyscope-0001',
+      adjusts_reporting_revision_id: historical.revision.reporting_revision_id,
+      reason_code: 'source_correction',
+      accounting_period: { start: historical.period.start, end: historical.period.end },
+      control_total_deltas: [{ name: 'row_count', value: '0', value_type: 'integer' }],
+      correction_observed_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+    };
+    await core.commitAdjustment(
+      {
+        reporting_adjustment_id: wireAdjustmentWithoutDigest.reporting_adjustment_id,
+        reporting_obligation_id: historical.obligation.reporting_obligation_id,
+        adjusts_reporting_revision_id: historical.revision.reporting_revision_id,
+        adjustmentNumber: 1,
+        manifest: { level: 'basic', objectRef: 'historyscope-manifest', sha256: 'b'.repeat(64), byteCount: 1 },
+        sourcePublicationId: 'adjustment-publication-historyscope',
+        binding: {
+          algorithm: 'rfc8785_jcs_v1',
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          byteCount: bytes.byteLength,
+          rowCount: rows.length,
+        },
+        rows,
+        observedAt: new Date().toISOString(),
+        dataThrough: historical.period.end,
+        sourceReadCutoffAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        wireAdjustment: {
+          ...wireAdjustmentWithoutDigest,
+          canonical_adjustment_sha256: createHash('sha256')
+            .update(canonicalize(wireAdjustmentWithoutDigest), 'utf8')
+            .digest('hex'),
+        },
+      },
+      historical.coreLease
+    );
+
+    const atCutoff = await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: historical.obligation.reporting_obligation_id,
+      ledgerAsOf: cutoff,
+    });
+    const transitions = await core.listTransitions(historical.obligation.reporting_obligation_id);
+    assert.notEqual(
+      (atCutoff ?? transitions.at(-1)).health,
+      'action_required',
+      'a correction that did not exist at the cutoff cannot make that moment unreconciled'
+    );
+    // And reconciling now, when the correction does exist, does demand one.
+    const atNow = await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: historical.obligation.reporting_obligation_id,
+    });
+    const latest = atNow ?? (await core.listTransitions(historical.obligation.reporting_obligation_id)).at(-1);
+    assert.equal(latest.health, 'action_required', 'sanity: the correction does change the present verdict');
+  });
+
+  test('dates pruned conclusions so a historical cutoff cannot settle on them', async () => {
+    const conclusion = await deliverOnce(await seedSkewLedger('tombcutoff', 'consumer_receipt'));
+    const context = { account: { id: conclusion.accountId }, agent: { agent_url: 'https://tombcutoff-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    // Accepted AFTER the cutoff above.
+    const accepted = await sync(
+      {
+        idempotency_key: 'receipt-tombcutoff-batch-0001',
+        receipts: [receipt(conclusion, { reporting_receipt_id: 'receipt-tombcutoff-0001' })],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [conclusion.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [conclusion.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET recorded_at = clock_timestamp() - INTERVAL '200 days',
+              data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [conclusion.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    const pruned = await retaining.pruneExpiredEvidence({ account_id: conclusion.accountId });
+    assert.equal(pruned.receipts, 1);
+    assert.equal(pruned.materializations, 1);
+    // Older than the acceptance and the delivery this tombstone records,
+    // both of which sit 200 days back after the ageing above.
+    const cutoff = (
+      await pool.query(
+        `SELECT to_char((clock_timestamp() - INTERVAL '300 days') AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value`
+      )
+    ).rows[0].value;
+
+    // A conclusion is a fact about an instant. Applying it at a cutoff before
+    // it happened let a historical reconcile settle on evidence that did not
+    // exist yet.
+    const before = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: conclusion.obligation.reporting_obligation_id,
+      ledgerAsOf: cutoff,
+    });
+    assert.deepEqual(before.tombstonedAcceptedSubjects, [], 'the acceptance had not happened at this cutoff');
+    assert.deepEqual(before.tombstonedDeliveredRevisionIds, [], 'nor had the delivery it records');
+    const after = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: conclusion.obligation.reporting_obligation_id,
+      ledgerAsOf: await core.readLedgerInstant(),
+    });
+    assert.equal(after.tombstonedAcceptedSubjects.length, 1, 'and both still apply at a later cutoff');
+    assert.equal(after.tombstonedDeliveredRevisionIds.length, 1);
+  });
+
+  test('does not let a pruned successor hand the chain back to its predecessor', async () => {
+    const revived = await deliverOnce(await seedSkewLedger('revive', 'consumer_receipt'));
+    const context = { account: { id: revived.accountId }, agent: { agent_url: 'https://revive-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const rejected = await sync(
+      {
+        idempotency_key: 'receipt-revive-batch-0001',
+        receipts: [
+          receipt(revived, {
+            reporting_receipt_id: 'receipt-revive-0001',
+            status: 'rejected',
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(rejected.results[0].result, 'recorded');
+    const accepted = await sync(
+      {
+        idempotency_key: 'receipt-revive-batch-0002',
+        receipts: [
+          receipt(revived, {
+            reporting_receipt_id: 'receipt-revive-0002',
+            supersedes_reporting_receipt_id: 'receipt-revive-0001',
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+
+    // Age out only the acceptance. The rejection it superseded stays live.
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1 AND reporting_receipt_id = 'receipt-revive-0002'`,
+      [revived.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [revived.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [revived.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: revived.accountId })).receipts, 1);
+    const live = await pool.query(`SELECT reporting_receipt_id FROM adcp_reporting_receipts WHERE account_id = $1`, [
+      revived.accountId,
+    ]);
+    assert.deepEqual(
+      live.rows.map(value => value.reporting_receipt_id),
+      ['receipt-revive-0001'],
+      'the rejection it superseded is still stored'
+    );
+
+    // Counting only live successors made that rejection the leaf again: the
+    // subject read rejected, overriding the acceptance tombstone, while the
+    // write path refused any repair because the tombstone says terminal.
+    const projection = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: revived.obligation.reporting_obligation_id,
+      ledgerAsOf: await core.readLedgerInstant(),
+    });
+    assert.deepEqual(
+      projection.consumers.flatMap(value => value.receipts.map(entry => entry.reporting_receipt_id)),
+      [],
+      'a receipt whose successor was pruned is not a leaf'
+    );
+    assert.equal(projection.tombstonedAcceptedSubjects.length, 1, 'the acceptance still settles the subject');
+  });
+
+  test('omits managed evidence for revisions a finality filter excludes', async () => {
+    // Its own snapshot-finality fixture rather than the shared one: the
+    // revision has to be non-official for `finality: ['official']` to have
+    // anything to exclude.
+    const snapshot = await deliverOnce(await seedSnapshotFinalityLedger('finalityscope'));
+    const context = {
+      account: { id: snapshot.accountId },
+      agent: { agent_url: 'https://finalityscope-buyer.example' },
+    };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const filed = await sync(
+      {
+        idempotency_key: 'receipt-finalityscope-batch-0001',
+        receipts: [receipt(snapshot, { reporting_receipt_id: 'receipt-finalityscope-0001' })],
+      },
+      context
+    );
+    assert.equal(filed.results[0].result, 'recorded');
+    const getStatus = ledger.createReportingStatusHandler(core, {
+      resolveConsumerId: value => value.agent.agent_url,
+    });
+    const official = await getStatus(
+      {
+        account: { account_id: snapshot.accountId },
+        view: 'periods',
+        period: snapshot.period,
+        finality: ['official'],
+      },
+      context
+    );
+    assert.deepEqual(official.revisions, [], 'sanity: the snapshot revision is filtered out');
+    // Managed evidence names a revision. Returning it while its revision is
+    // filtered out left public references to a revision the response does not
+    // contain.
+    assert.deepEqual(official.materializations ?? [], []);
+    assert.deepEqual(official.receipts ?? [], []);
+    assert.equal(
+      validateResponse('get_reporting_status', official, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('get_reporting_status', official, '3.2.0-rc.3').issues)
+    );
+    // Unfiltered, the same read still carries them.
+    const unfiltered = await getStatus(
+      { account: { account_id: snapshot.accountId }, view: 'periods', period: snapshot.period },
+      context
+    );
+    assert.ok((unfiltered.receipts ?? []).length >= 1, 'sanity: the evidence exists');
+  });
+
+  test('truncates an oversized roster and an oversized conclusion set instead of failing', async () => {
+    const { Pool } = require('pg');
+    const guardSchema = `${schema}_guards`;
+    await bootstrap.query(`CREATE SCHEMA "${guardSchema}"`);
+    const guardPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${guardSchema}"` });
+    try {
+      await guardPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await guardPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const wideRoster = Array.from({ length: 10_001 }, (_value, index) => `https://guard-${index}.example`);
+      const guardCore = new ledger.PostgresReportingLedgerStore(guardPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+        obligatedConsumers: async () => ({ ids: wideRoster, complete: true, version: 'g1' }),
+      });
+      const guardManaged = new ledger.PostgresReportingManagedDeliveryStore(guardPool);
+      const guarded = await seedSkewLedgerInto(guardCore, guardManaged, 'guards', 'consumer_receipt');
+
+      // A roster this process will not hold is still valid state. Throwing
+      // wedged the obligation forever, because nothing about a retry makes a
+      // roster smaller.
+      const projection = await guardCore.getManagedLifecycleProjection({
+        reporting_obligation_id: guarded.obligation.reporting_obligation_id,
+        ledgerAsOf: await guardCore.readLedgerInstant(),
+      });
+      assert.equal(projection.obligatedConsumerIds.length, 10_000, 'truncated, not refused');
+      assert.equal(
+        projection.obligatedConsumerRosterComplete,
+        false,
+        'a truncated roster is not the authoritative roster it claimed to be'
+      );
+      assert.equal(projection.receiptEvidenceComplete, false);
+
+      // Conclusions truncate the same way, and must say so: every subject
+      // past the cut reads as never settled, which is exactly how retention
+      // reopens work that was already done.
+      await guardPool.query(
+        `INSERT INTO adcp_reporting_adjustments
+          (adjustment_id, obligation_id, adjusts_revision_id, adjustment_number, content_sha256, data, created_at)
+         SELECT 'adjustment-guards-' || i, $1, $2::text, i, repeat('a', 64),
+                jsonb_build_object(
+                  'reporting_adjustment_id', 'adjustment-guards-' || i,
+                  'createdAt', to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+                ),
+                clock_timestamp()
+           FROM generate_series(1, 99) AS i`,
+        [guarded.obligation.reporting_obligation_id, guarded.revision.reporting_revision_id]
+      );
+      await guardPool.query(
+        `INSERT INTO adcp_reporting_receipt_tombstones
+          (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+           status, was_current, semantic_fingerprint, subject_recorded_at)
+         SELECT $1,
+                'https://guard-' || consumer || '.example',
+                'receipt-guards-' || consumer || '-' || subject,
+                CASE WHEN subject = 0 THEN 'revision' ELSE 'adjustment' END,
+                CASE WHEN subject = 0 THEN $2::text ELSE 'adjustment-guards-' || subject END,
+                'accepted', true, 'tomb', clock_timestamp()
+           FROM generate_series(1, 101) AS consumer, generate_series(0, 99) AS subject`,
+        [guarded.accountId, guarded.revision.reporting_revision_id]
+      );
+      const withTombstones = await guardCore.getManagedLifecycleProjection({
+        reporting_obligation_id: guarded.obligation.reporting_obligation_id,
+        ledgerAsOf: await guardCore.readLedgerInstant(),
+      });
+      assert.equal(withTombstones.tombstonedAcceptedSubjects.length, 10_000, 'truncated deterministically');
+      assert.equal(
+        withTombstones.receiptEvidenceComplete,
+        false,
+        'and reported, so the fold cannot settle on a partial conclusion set'
+      );
+      // Whatever else is true, the obligation still reconciles rather than
+      // failing every pass.
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store: guardCore,
+        reporting_obligation_id: guarded.obligation.reporting_obligation_id,
+      });
+      const watermark = await guardPool.query(
+        `SELECT processed_at FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
+        [guarded.obligation.reporting_obligation_id]
+      );
+      assert.equal(watermark.rowCount, 1);
+    } finally {
+      await guardPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${guardSchema}" CASCADE`);
+    }
+  });
+
+  test('reads an obligation’s receipts through the subject index, not a global scan', async () => {
+    const { Pool } = require('pg');
+    const planSchema = `${schema}_receiptplan`;
+    await bootstrap.query(`CREATE SCHEMA "${planSchema}"`);
+    const planPool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${planSchema}"` });
+    try {
+      await planPool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await planPool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const planCore = new ledger.PostgresReportingLedgerStore(planPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const planManaged = new ledger.PostgresReportingManagedDeliveryStore(planPool);
+      const planned = await seedSkewLedgerInto(planCore, planManaged, 'receiptplan', 'consumer_receipt');
+      // Receipt history belonging to other obligations, which is what the old
+      // shape re-scanned on every due obligation in every sweep.
+      await planPool.query(
+        `INSERT INTO adcp_reporting_receipts
+          (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+           is_current, semantic_fingerprint, data, received_at, recorded_at)
+         SELECT 'account-plan-noise', 'https://plan-noise.example', 'receipt-plan-noise-' || i,
+                'revision', 'revision-plan-noise-' || i, true, 'noise', '{}'::jsonb,
+                clock_timestamp(), clock_timestamp()
+           FROM generate_series(1, 40000) AS i`
+      );
+      await planPool.query('ANALYZE adcp_reporting_receipts');
+
+      // Capture the statement the store actually issues and explain that,
+      // rather than a hand-written approximation of it.
+      let captured;
+      const capturingPool = {
+        connect: async () => {
+          const client = await planPool.connect();
+          const query = client.query.bind(client);
+          client.query = async (sql, values) => {
+            if (typeof sql === 'string' && sql.includes('WITH subject AS')) captured = { sql, values };
+            return query(sql, values);
+          };
+          const release = client.release.bind(client);
+          client.release = (...args) => {
+            client.query = query;
+            client.release = release;
+            return release(...args);
+          };
+          return client;
+        },
+        query: (sql, values) => planPool.query(sql, values),
+        end: async () => {},
+      };
+      const capturing = new ledger.PostgresReportingLedgerStore(capturingPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      await capturing.getManagedLifecycleProjection({
+        reporting_obligation_id: planned.obligation.reporting_obligation_id,
+        ledgerAsOf: await planCore.readLedgerInstant(),
+      });
+      assert.ok(captured, 'the projection issued its receipt read');
+      const explained = await planPool.query(`EXPLAIN (FORMAT JSON) ${captured.sql}`, captured.values);
+      const plan = JSON.stringify(explained.rows[0]['QUERY PLAN']);
+      assert.equal(
+        /"Node Type":"Seq Scan","Parallel Aware":(?:true|false),"Async Capable":(?:true|false),"Relation Name":"adcp_reporting_receipts"/.test(
+          plan
+        ),
+        false,
+        `the receipt table is not scanned whole: ${plan}`
+      );
+      assert.match(plan, /adcp_reporting_receipts_subject/);
+
+      // The shape this replaced, explained against the same data: asking the
+      // global receipt table which of its rows belong to this obligation.
+      // Without this comparison the assertion above only says "the plan we
+      // have is fine", not that it is better than the plan we had.
+      const previous = await planPool.query(
+        `EXPLAIN (FORMAT JSON)
+         SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
+           FROM adcp_reporting_receipts receipt
+          WHERE receipt.recorded_at <= $2
+            AND ((receipt.receipt_kind = 'revision' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_revisions revision
+                    WHERE revision.revision_id = receipt.subject_id
+                      AND revision.obligation_id = $1))
+              OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_adjustments adjustment
+                    WHERE adjustment.adjustment_id = receipt.subject_id
+                      AND adjustment.obligation_id = $1)))`,
+        [planned.obligation.reporting_obligation_id, captured.values[1]]
+      );
+      assert.match(
+        JSON.stringify(previous.rows[0]['QUERY PLAN']),
+        /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_receipts"/,
+        'sanity: the shape this replaced really did scan the whole receipt table'
+      );
+    } finally {
+      await planPool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${planSchema}" CASCADE`);
     }
   });
 
@@ -5183,7 +5681,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     return { accountId, now, period, configuration, obligation, revision, binding, coreLease };
   }
 
-  async function seedSnapshotFinalityLedger() {
+  async function seedSnapshotFinalityLedger(suffix = 'snapshot') {
     // A non-billing consumer_receipt contract whose Core configuration requires
     // only snapshot finality. Legal under RC3 and previously unreconcilable.
     const nowMs = Date.now();
@@ -5192,7 +5690,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       start: new Date(nowMs - 7_200_000).toISOString(),
       end: new Date(nowMs - 5_400_000).toISOString(),
     };
-    const accountId = 'account-managed-snapshot';
+    const accountId = `account-managed-${suffix}`;
     const canonicalization = {
       id: 'analytics-rows-v1',
       uri: 'https://schemas.fixture.example/canonicalization.json',
@@ -5200,7 +5698,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       primaryKeys: ['media_buy_id'],
     };
     const configuration = {
-      configurationId: 'configuration-managed-snapshot-1',
+      configurationId: `configuration-managed-${suffix}-1`,
       account: { account_id: accountId },
       sourceScope: { warehouse: 'fixture' },
       delivery_config_id: 'analytics-files',
@@ -5224,12 +5722,12 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       sourceSettings: {},
       contract: { reportingProfile: 'analytics-v1' },
       installedAt: period.start,
-      semanticFingerprint: 'configuration-managed-snapshot-fingerprint',
+      semanticFingerprint: `configuration-managed-${suffix}-fingerprint`,
     };
     await core.putConfiguration(configuration);
     await managed.authorizeDestination({
       account_id: accountId,
-      destination_ref: 'destination-snapshot-1',
+      destination_ref: `destination-${suffix}-1`,
       generation: 1,
       authorized_at: now,
     });
@@ -5238,7 +5736,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       account_id: accountId,
       delivery_config_id: configuration.delivery_config_id,
       delivery_config_version: 1,
-      destination_ref: 'destination-snapshot-1',
+      destination_ref: `destination-${suffix}-1`,
       authorization_generation: 1,
       feed_purpose: 'analytics',
       method: 'file_transfer',
@@ -5250,7 +5748,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     });
     await managed.installBinding(binding);
     const obligation = {
-      reporting_obligation_id: 'obligation-managed-snapshot-1',
+      reporting_obligation_id: `obligation-managed-${suffix}-1`,
       configurationId: configuration.configurationId,
       account: configuration.account,
       sourceScope: configuration.sourceScope,
@@ -5285,12 +5783,12 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       nextAttemptAt: period.end,
       attemptCount: 0,
       state: 'pending',
-      semanticFingerprint: 'obligation-managed-snapshot-fingerprint',
+      semanticFingerprint: `obligation-managed-${suffix}-fingerprint`,
       createdAt: now,
     };
     await core.putObligation(obligation);
     const coreLease = await core.claimObligation({
-      owner: 'snapshot-core-worker',
+      owner: `${suffix}-core-worker`,
       now,
       leaseMilliseconds: 600_000,
       account_id: accountId,
@@ -5299,7 +5797,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     const controlTotals = [{ name: 'impressions', value: '9', value_type: 'integer', unit: 'impressions' }];
     const revisionBytes = Buffer.from(
       canonicalize({
-        reporting_revision_id: 'revision-managed-snapshot-1',
+        reporting_revision_id: `revision-managed-${suffix}-1`,
         row_count: rows.length,
         control_totals: controlTotals,
         reporting_rows: rows,
@@ -5313,13 +5811,13 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       canonicalization_sha256: canonicalization.sha256,
     };
     const revision = {
-      reporting_revision_id: 'revision-managed-snapshot-1',
+      reporting_revision_id: `revision-managed-${suffix}-1`,
       reporting_obligation_id: obligation.reporting_obligation_id,
       revisionNumber: 1,
       finality: 'snapshot',
       kind: 'snapshot',
       manifest: { level: 'basic', objectRef: 'manifest', sha256: 'a'.repeat(64), byteCount: 1 },
-      sourcePublicationId: 'publication-managed-snapshot-1',
+      sourcePublicationId: `publication-managed-${suffix}-1`,
       binding: {
         algorithm: 'rfc8785_jcs_v1',
         sha256: createHash('sha256').update(revisionBytes).digest('hex'),
@@ -5332,7 +5830,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       sourceReadCutoffAt: now,
       createdAt: now,
       wireRevision: {
-        reporting_revision_id: 'revision-managed-snapshot-1',
+        reporting_revision_id: `revision-managed-${suffix}-1`,
         revision_content_sha256: createHash('sha256').update(revisionBytes).digest('hex'),
         report_definition_id: 'analytics-v1',
         report_definition_uri: 'https://schemas.fixture.example/report-definition.json',

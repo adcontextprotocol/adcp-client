@@ -167,14 +167,16 @@ export async function reconcileReportingStatusLifecycleV1(
   // Resolve the cutoff before anything reads against it. A retry always takes
   // a fresh one: the previous attempt lost a race, so re-evaluating at the
   // instant it already failed at can only fail again or apply a stale health.
-  const ledgerAsOf = await resolveLedgerAsOf(input, attempt);
+  let ledgerAsOf = await resolveLedgerAsOf(input, attempt);
   const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
-  const coreProjection = projectReportingObligationHealthV1(
-    obligation,
-    revisions,
-    ledgerAsOf,
-    Date.parse(obligation.period.end) <= Date.parse(ledgerAsOf)
-  );
+  const projectCore = (at: string) =>
+    projectReportingObligationHealthV1(
+      obligation,
+      revisions,
+      at,
+      compareReportingInstants(obligation.period.end, at) <= 0
+    );
+  let coreProjection = projectCore(ledgerAsOf);
   // Persist and notify the same health `get_reporting_status` returns. Before
   // this, the transition log carried Core health only: a managed delivery
   // failure or an outstanding consumer receipt could webhook `complete` with no
@@ -182,12 +184,32 @@ export async function reconcileReportingStatusLifecycleV1(
   // `RECEIPT_REQUIRED`, and a managed-only change produced no transition at all
   // so nothing was ever notified. The read path and this path now call the one
   // `projectManagedDelivery`, so the rule itself cannot drift again.
-  const composed = await composeManagedLifecycleProjection(
+  let composed = await composeManagedLifecycleProjection(
     { store: input.store, ledgerAsOf },
     obligation,
     revisions,
     coreProjection
   );
+  // The store may resolve a different instant than the one asked for — a
+  // microsecond cutoff where the caller had only milliseconds, or its own
+  // clock. That resolved instant is the one the managed projection was
+  // actually computed at, so everything downstream has to use it too: leaving
+  // the host value in place watermarked a moment later than the projection
+  // read, and every change in between was buried. Re-project once against it;
+  // pinning it is idempotent, so this converges rather than looping.
+  if (
+    composed.resolvedLedgerAsOf !== undefined &&
+    compareReportingInstants(composed.resolvedLedgerAsOf, ledgerAsOf) !== 0
+  ) {
+    ledgerAsOf = composed.resolvedLedgerAsOf;
+    coreProjection = projectCore(ledgerAsOf);
+    composed = await composeManagedLifecycleProjection(
+      { store: input.store, ledgerAsOf },
+      obligation,
+      revisions,
+      coreProjection
+    );
+  }
   const projection = composed.projection;
   const transitions = await input.store.listTransitions(obligation.reporting_obligation_id);
   for (const pending of transitions.filter(value => !value.notifiedAt)) {
@@ -311,7 +333,14 @@ async function composeManagedLifecycleProjection(
     ledgerAsOf: input.ledgerAsOf,
   });
   if (!managed) return { projection: coreProjection };
-  const adjustments = await input.store.listAdjustments(obligation.reporting_obligation_id);
+  // Scoped to the cutoff, exactly as the receipts are. An adjustment created
+  // after it is not part of the ledger this reconcile describes, and folding
+  // it in demanded a receipt whose own row the cutoff then filtered out — so
+  // a historical reconcile persisted ADJUSTMENT_RECEIPT_REQUIRED for a
+  // correction that did not exist yet at the instant it claims to describe.
+  const adjustments = (await input.store.listAdjustments(obligation.reporting_obligation_id)).filter(
+    value => compareReportingInstants(value.createdAt, input.ledgerAsOf) <= 0
+  );
   // Aggregate over the obligated roster, not merely over whoever has already
   // submitted. A consumer that owes a receipt and has sent nothing has no
   // receipt row, so aggregating observed consumers alone let it disappear as

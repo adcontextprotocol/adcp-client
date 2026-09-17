@@ -1688,7 +1688,7 @@ ${managedDueArm}       )
         // Terminal acceptances whose bodies have aged out. The projection
         // needs them or a settled subject reopens the moment retention bites.
         const tombstonedAcceptedSubjects = managedInstalled
-          ? await this.listTombstonedAcceptedSubjects(client, query, obligationIds)
+          ? (await this.listTombstonedAcceptedSubjects(client, query, obligationIds, false, ledgerAsOf)).subjects
           : [];
         // Conclusions survive their evidence: a pruned successful
         // materialization must still read as delivered, or the filtered
@@ -1697,8 +1697,9 @@ ${managedDueArm}       )
           ? (
               await client.query<QueryResultRow & { revision_id: string }>(
                 `SELECT revision_id FROM adcp_reporting_materialization_tombstones
-                  WHERE obligation_id = ANY($1::text[]) AND reached_success LIMIT $2`,
-                [obligationIds, MAX_SNAPSHOT_ITEMS + 1]
+                  WHERE obligation_id = ANY($1::text[]) AND reached_success
+                    AND COALESCE(reached_success_at, pruned_at) <= $3::timestamptz LIMIT $2`,
+                [obligationIds, MAX_SNAPSHOT_ITEMS + 1, ledgerAsOf]
               )
             ).rows.map(row => row.revision_id)
           : [];
@@ -2287,8 +2288,23 @@ ${managedDueArm}       )
         const receipts = await client.query<
           JsonRow<ReportingReceipt | ReportingAdjustmentReceipt> & { consumer_id: string; receipt_kind: string }
         >(
-          `SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
-           FROM adcp_reporting_receipts receipt
+          `WITH subject AS (
+             -- Drive from this obligation's own subjects. Asking the global
+             -- receipt table "which of your rows belong to this obligation"
+             -- matched no index — they lead with account and consumer, and
+             -- this question supplies neither — so every due obligation
+             -- re-scanned the whole receipt history.
+             SELECT revision_id AS subject_id, 'revision' AS receipt_kind
+               FROM adcp_reporting_revisions WHERE obligation_id = $1
+             UNION ALL
+             SELECT adjustment_id, 'adjustment'
+               FROM adcp_reporting_adjustments WHERE obligation_id = $1
+           )
+           SELECT receipt.consumer_id, receipt.receipt_kind, receipt.data
+           FROM subject
+           JOIN adcp_reporting_receipts receipt
+             ON receipt.subject_id = subject.subject_id
+            AND receipt.receipt_kind = subject.receipt_kind
           -- Ordered and cut off by the database clock, exactly as every other
           -- receipt read path is, so a skewed host cannot make the lifecycle
           -- projection see a different receipt set than get_reporting_status.
@@ -2312,17 +2328,17 @@ ${managedDueArm}       )
                  AND successor.supersedes_receipt_id = receipt.reporting_receipt_id
                  AND successor.recorded_at <= $2
             )
-            AND (
-              (receipt.receipt_kind = 'revision' AND EXISTS (
-                 SELECT 1 FROM adcp_reporting_revisions revision
-                  WHERE revision.revision_id = receipt.subject_id
-                    AND revision.obligation_id = $1
-               ))
-              OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
-                 SELECT 1 FROM adcp_reporting_adjustments adjustment
-                  WHERE adjustment.adjustment_id = receipt.subject_id
-                    AND adjustment.obligation_id = $1
-               ))
+            -- A successor whose body has been pruned still superseded this
+            -- row. Counting only live successors let retention resurrect the
+            -- rejected predecessor of a pruned acceptance as the live leaf,
+            -- which overrode that acceptance's own tombstone and reopened a
+            -- settled subject the write path then refused to repair.
+            AND NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_receipt_tombstones gone
+               WHERE gone.account_id = receipt.account_id
+                 AND gone.consumer_id = receipt.consumer_id
+                 AND gone.supersedes_receipt_id = receipt.reporting_receipt_id
+                 AND COALESCE(gone.subject_recorded_at, gone.pruned_at) <= $2
             )
           ORDER BY receipt.consumer_id, receipt.subject_id, receipt.recorded_at, receipt.reporting_receipt_id
           LIMIT $3`,
@@ -2376,19 +2392,23 @@ ${managedDueArm}       )
         // and attempt rows, so without these the lifecycle would recompute an
         // accepted subject as outstanding and a delivered revision as never
         // delivered — retention would silently reopen settled work.
-        const tombstonedAcceptedSubjects = await this.listTombstonedAcceptedSubjects(
+        const tombstoned = await this.listTombstonedAcceptedSubjects(
           client,
           { account_id: binding.account_id, consumer_id: undefined, view: 'periods' } as ReportingLedgerSnapshotQueryV1,
           [input.reporting_obligation_id],
-          true
+          true,
+          resolvedLedgerAsOf
         );
-        const tombstonedDeliveredRevisionIds = (
-          await client.query<QueryResultRow & { revision_id: string }>(
-            `SELECT revision_id FROM adcp_reporting_materialization_tombstones
-              WHERE obligation_id = $1 AND reached_success LIMIT $2`,
-            [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1]
-          )
-        ).rows.map(row => row.revision_id);
+        if (!tombstoned.complete) receiptEvidenceComplete = false;
+        const tombstonedAcceptedSubjects = tombstoned.subjects;
+        const delivered = await client.query<QueryResultRow & { revision_id: string }>(
+          `SELECT revision_id FROM adcp_reporting_materialization_tombstones
+            WHERE obligation_id = $1 AND reached_success
+              AND COALESCE(reached_success_at, pruned_at) <= $3::timestamptz LIMIT $2`,
+          [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1, resolvedLedgerAsOf]
+        );
+        if (delivered.rows.length > MAX_SNAPSHOT_ITEMS) receiptEvidenceComplete = false;
+        const tombstonedDeliveredRevisionIds = delivered.rows.slice(0, MAX_SNAPSHOT_ITEMS).map(row => row.revision_id);
         // Read last, inside the same transaction as everything above, so the
         // token covers exactly the state this projection was computed from.
         const managedStateVersion = await this.readManagedStateVersion(client, input.reporting_obligation_id);
@@ -2439,14 +2459,18 @@ ${managedDueArm}       )
     // billing permanently unreconciled. Observed principals are still folded
     // in when the roster is NOT complete, where the union is the conservative
     // answer rather than a widening of an authority.
-    const ids = obligatedConsumerIdsFor(supplied, base.obligatedConsumerIds ?? []);
-    if (ids.length > MAX_SNAPSHOT_ITEMS) {
-      throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
-    }
+    const all = obligatedConsumerIdsFor(supplied, base.obligatedConsumerIds ?? []);
+    // A roster larger than this process will hold is not an error either: it
+    // is truncated deterministically and declared unproven, exactly as the
+    // leaves are. Throwing wedged the obligation permanently, since nothing
+    // about a retry makes the roster smaller.
+    const ids = all.slice(0, MAX_SNAPSHOT_ITEMS);
+    const rosterComplete = supplied.complete === true && all.length === ids.length;
     return {
       ...base,
       obligatedConsumerIds: ids,
-      obligatedConsumerRosterComplete: supplied.complete === true,
+      obligatedConsumerRosterComplete: rosterComplete,
+      ...(all.length === ids.length ? {} : { receiptEvidenceComplete: false }),
       obligatedConsumerRosterVersion: obligatedConsumerRosterVersionFor(supplied, ids),
     };
   }
@@ -2689,9 +2713,13 @@ ${managedDueArm}       )
     client: ReportingPgClient,
     query: ReportingLedgerSnapshotQueryV1,
     obligationIds: string[],
-    allConsumers = false
-  ): Promise<Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>> {
-    if (!obligationIds.length || (!query.consumer_id && !allConsumers)) return [];
+    allConsumers = false,
+    ledgerAsOf?: string
+  ): Promise<{
+    subjects: Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>;
+    complete: boolean;
+  }> {
+    if (!obligationIds.length || (!query.consumer_id && !allConsumers)) return { subjects: [], complete: true };
     const result = await client.query<
       QueryResultRow & { receipt_kind: string; subject_id: string; consumer_id: string }
     >(
@@ -2699,6 +2727,14 @@ ${managedDueArm}       )
          FROM adcp_reporting_receipt_tombstones tombstone
         WHERE tombstone.account_id = $1 AND ($2::text IS NULL OR tombstone.consumer_id = $2)
           AND tombstone.status = 'accepted' AND tombstone.was_current
+          -- A conclusion still has a place in time. Applying every accepted
+          -- tombstone regardless of when its receipt was filed let a
+          -- historical projection settle a subject on an acceptance that had
+          -- not happened yet at its cutoff. Rows written before the column
+          -- existed fall back to pruned_at, which is never earlier, so the
+          -- fallback can only withhold a conclusion, never invent one.
+          AND ($5::timestamptz IS NULL
+               OR COALESCE(tombstone.subject_recorded_at, tombstone.pruned_at) <= $5::timestamptz)
           AND ((tombstone.receipt_kind = 'revision' AND EXISTS (
                   SELECT 1 FROM adcp_reporting_revisions revision
                    WHERE revision.revision_id = tombstone.subject_id
@@ -2708,16 +2744,30 @@ ${managedDueArm}       )
                    WHERE adjustment.adjustment_id = tombstone.subject_id
                      AND adjustment.obligation_id = ANY($3::text[]))))
         LIMIT $4`,
-      [query.account_id, allConsumers ? null : query.consumer_id, obligationIds, MAX_SNAPSHOT_ITEMS + 1]
+      [
+        query.account_id,
+        allConsumers ? null : query.consumer_id,
+        obligationIds,
+        MAX_SNAPSHOT_ITEMS + 1,
+        ledgerAsOf ?? null,
+      ]
     );
-    return result.rows.map(row => ({
-      kind: row.receipt_kind === 'adjustment' ? ('adjustment' as const) : ('revision' as const),
-      subjectId: row.subject_id,
-      // Carried through deliberately. An acceptance belongs to the consumer
-      // that gave it, so a lifecycle fold that runs per consumer must not let
-      // A's pruned acceptance settle the obligation on B's behalf.
-      consumerId: row.consumer_id,
-    }));
+    // Silently returning a truncated conclusion set is the one failure mode
+    // worse than returning none: every subject beyond the cut reads as never
+    // settled, so retention reopens it. Say so instead, and let the caller
+    // refuse to call the obligation reconciled.
+    const complete = result.rows.length <= MAX_SNAPSHOT_ITEMS;
+    return {
+      complete,
+      subjects: result.rows.slice(0, MAX_SNAPSHOT_ITEMS).map(row => ({
+        kind: row.receipt_kind === 'adjustment' ? ('adjustment' as const) : ('revision' as const),
+        subjectId: row.subject_id,
+        // Carried through deliberately. An acceptance belongs to the consumer
+        // that gave it, so a lifecycle fold that runs per consumer must not
+        // let A's pruned acceptance settle the obligation on B's behalf.
+        consumerId: row.consumer_id,
+      })),
+    };
   }
 
   private async managedTablesInstalled(client: ReportingPgClient): Promise<boolean> {
@@ -3055,14 +3105,20 @@ function snapshotItems(snapshot: ReportingLedgerSnapshotV1) {
   const obligationByAdjustment = new Map(
     snapshot.adjustments.map(value => [value.reporting_adjustment_id, value.reporting_obligation_id])
   );
+  // Managed evidence names a revision, so a finality filter that hides the
+  // revision has to hide it too. Returning a materialization or a receipt for
+  // a snapshot revision that `finality: official` omitted left the response
+  // carrying public references to a revision it does not contain.
   const materializations = new Map<string, ReportingMaterialization[]>();
   for (const materialization of snapshot.materializations ?? []) {
+    if (snapshot.query.finality && !visibleRevisionIds.has(materialization.reporting_revision_id)) continue;
     const values = materializations.get(materialization.reporting_obligation_id) ?? [];
     values.push(materialization);
     materializations.set(materialization.reporting_obligation_id, values);
   }
   const receipts = new Map<string, ReportingReceipt[]>();
   for (const receipt of snapshot.receipts ?? []) {
+    if (snapshot.query.finality && !visibleRevisionIds.has(receipt.reporting_revision_id)) continue;
     const obligationId = obligationByRevision.get(receipt.reporting_revision_id);
     if (!obligationId) continue;
     const values = receipts.get(obligationId) ?? [];
@@ -3070,7 +3126,9 @@ function snapshotItems(snapshot: ReportingLedgerSnapshotV1) {
     receipts.set(obligationId, values);
   }
   const adjustmentReceipts = new Map<string, ReportingAdjustmentReceipt[]>();
+  const visibleAdjustmentIds = new Set([...adjustments.values()].flat().map(value => value.reporting_adjustment_id));
   for (const receipt of snapshot.adjustmentReceipts ?? []) {
+    if (snapshot.query.finality && !visibleAdjustmentIds.has(receipt.reporting_adjustment_id)) continue;
     const obligationId = obligationByAdjustment.get(receipt.reporting_adjustment_id);
     if (!obligationId) continue;
     const values = adjustmentReceipts.get(obligationId) ?? [];
@@ -3346,18 +3404,28 @@ const MANAGED_DUE_ARM = `           OR (EXISTS (
                            AND GREATEST(authz.changed_at, COALESCE(authz.cleanup_completed_at, authz.changed_at))
                                > watermark.since
                            AND authz.changed_at <= $2)
+                      -- Driven from this obligation's subjects into the
+                      -- receipt table's subject index. Asking the global
+                      -- receipt table which of its rows belong to this
+                      -- obligation supplied neither account nor consumer, so
+                      -- every candidate obligation in every sweep re-scanned
+                      -- the whole receipt history.
                       OR EXISTS (
-                        SELECT 1 FROM adcp_reporting_receipts receipt
-                         WHERE receipt.recorded_at > watermark.since
-                           AND receipt.recorded_at <= $2
-                           AND ((receipt.receipt_kind = 'revision' AND EXISTS (
-                                  SELECT 1 FROM adcp_reporting_revisions rv
-                                   WHERE rv.revision_id = receipt.subject_id
-                                     AND rv.obligation_id = obligation.obligation_id))
-                             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
-                                  SELECT 1 FROM adcp_reporting_adjustments aj
-                                   WHERE aj.adjustment_id = receipt.subject_id
-                                     AND aj.obligation_id = obligation.obligation_id))))
+                        SELECT 1 FROM adcp_reporting_revisions rv
+                          JOIN adcp_reporting_receipts receipt
+                            ON receipt.receipt_kind = 'revision'
+                           AND receipt.subject_id = rv.revision_id
+                         WHERE rv.obligation_id = obligation.obligation_id
+                           AND receipt.recorded_at > watermark.since
+                           AND receipt.recorded_at <= $2)
+                      OR EXISTS (
+                        SELECT 1 FROM adcp_reporting_adjustments aj
+                          JOIN adcp_reporting_receipts receipt
+                            ON receipt.receipt_kind = 'adjustment'
+                           AND receipt.subject_id = aj.adjustment_id
+                         WHERE aj.obligation_id = obligation.obligation_id
+                           AND receipt.recorded_at > watermark.since
+                           AND receipt.recorded_at <= $2)
                       OR EXISTS (
                         SELECT 1 FROM adcp_reporting_consumer_statuses status
                          WHERE status.obligation_id = obligation.obligation_id

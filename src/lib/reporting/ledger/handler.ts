@@ -437,10 +437,17 @@ export function createReportingStatusHandler<TContext = unknown>(
           // Same scoping rule as the revision view: a receipt may only appear
           // beside the correction or revision it names.
           adjustment_receipts: scopedAdjustmentReceipts,
-          materializations: (page.materializations ?? []).filter(value =>
-            selectedPageIds.has(value.reporting_obligation_id)
+          // Managed evidence names a revision, so the finality filter that
+          // scopes `revisions` scopes these too — otherwise the response
+          // carries public references to a revision it does not contain.
+          materializations: (page.materializations ?? []).filter(
+            value =>
+              selectedPageIds.has(value.reporting_obligation_id) && visibleRevisionIds.has(value.reporting_revision_id)
           ),
-          receipts: (page.receipts ?? []).filter(value => selectedPageIds.has(value.reporting_obligation_id)),
+          receipts: (page.receipts ?? []).filter(
+            value =>
+              selectedPageIds.has(value.reporting_obligation_id) && visibleRevisionIds.has(value.reporting_revision_id)
+          ),
           pagination: {
             has_more: page.hasMore,
             total_count: page.totalCount,

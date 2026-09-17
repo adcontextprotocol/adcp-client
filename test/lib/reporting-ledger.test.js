@@ -13,6 +13,7 @@ const {
   evaluateReportingLedgerCoverageV1,
   projectReportingObligationHealthV1,
   reconcileReportingStatusLifecycleV1,
+  reportingManagedDeliveryBindingV1,
   reconcileReportingStatusDeadlinesV1,
   relevantReportingLedgerConfigurations,
   reportingLedgerScopeClosed,
@@ -203,6 +204,54 @@ describe('seller reporting ledger', () => {
     assert.equal(transition.health, 'delayed');
     assert.equal(transition.occurredAt, '2026-09-02T01:30:00.000Z');
     assert.equal((await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'delayed');
+  });
+
+  test('reconciles at the instant the store resolved, not the one it was asked for', async () => {
+    const store = new MemoryLedgerStore();
+    assert.equal(store.readLedgerInstant, undefined, 'sanity: this store has no authoritative clock');
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    // A store that resolves its own cutoff at a precision the caller cannot
+    // express. The contract says that resolved instant is what the projection
+    // was computed at, so the transition and the watermark have to use it —
+    // leaving the caller's value in place stamped a moment later than the
+    // read and buried everything in between.
+    const resolved = '2026-09-02T01:30:00.499900Z';
+    store.getManagedLifecycleProjection = async () => ({
+      binding: reportingManagedDeliveryBindingV1({
+        configurationId: obligation.configurationId,
+        account_id: obligation.account.account_id,
+        delivery_config_id: obligation.delivery_config_id,
+        delivery_config_version: obligation.delivery_config_version,
+        destination_ref: 'destination-resolved-1',
+        authorization_generation: 1,
+        feed_purpose: 'analytics',
+        method: 'file_transfer',
+        verification_profile: 'canonical_digest',
+        reconciliation_mode: 'delivery_only',
+        resource_retention_days: 30,
+        created_at: obligation.period.end,
+      }),
+      materializations: [],
+      materializationHistory: [],
+      consumers: [],
+      obligatedConsumerIds: [],
+      obligatedConsumerRosterComplete: true,
+      resolvedLedgerAsOf: resolved,
+    });
+    const applied = [];
+    const apply = store.applyLifecycleProjection.bind(store);
+    store.applyLifecycleProjection = async input => {
+      applied.push(input.ledgerAsOf);
+      return apply(input);
+    };
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.500000Z',
+    });
+    assert.equal(transition.occurredAt, resolved);
+    assert.deepEqual(applied, [resolved], 'the watermark is the instant the projection read at');
   });
 
   test('does not overwrite a concurrent terminal obligation update with a stale lifecycle projection', async () => {

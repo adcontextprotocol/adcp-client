@@ -138,6 +138,12 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_receipts_readback
 CREATE INDEX IF NOT EXISTS adcp_reporting_receipts_supersedes
   ON adcp_reporting_receipts (account_id, consumer_id, supersedes_receipt_id)
   WHERE supersedes_receipt_id IS NOT NULL;
+-- Every lifecycle read is "the receipts for this obligation's subjects". The
+-- receipt table is global and its other indexes lead with account and
+-- consumer, neither of which that question supplies, so each due obligation
+-- re-scanned the whole receipt history.
+CREATE INDEX IF NOT EXISTS adcp_reporting_receipts_subject
+  ON adcp_reporting_receipts (subject_id, receipt_kind, recorded_at);
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_batches (
   account_id TEXT NOT NULL,
@@ -182,6 +188,19 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_tombstones (
   pruned_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (account_id, consumer_id, reporting_receipt_id)
 );
+-- When the pruned receipt itself was recorded, and what it superseded. A
+-- tombstone without them is a conclusion with no place in time: a historical
+-- projection applied an acceptance that had not happened yet at its cutoff,
+-- and a chain whose successor was pruned let the predecessor it superseded
+-- come back as the live leaf. Nullable for rows written before this column
+-- existed; readers fall back to pruned_at, which is never earlier.
+ALTER TABLE adcp_reporting_receipt_tombstones
+  ADD COLUMN IF NOT EXISTS subject_recorded_at TIMESTAMPTZ;
+ALTER TABLE adcp_reporting_receipt_tombstones
+  ADD COLUMN IF NOT EXISTS supersedes_receipt_id TEXT;
+CREATE INDEX IF NOT EXISTS adcp_reporting_receipt_tombstones_supersedes
+  ON adcp_reporting_receipt_tombstones (account_id, consumer_id, supersedes_receipt_id)
+  WHERE supersedes_receipt_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS adcp_reporting_receipt_tombstones_subject
   ON adcp_reporting_receipt_tombstones (account_id, consumer_id, receipt_kind, subject_id);
 
@@ -197,6 +216,9 @@ CREATE TABLE IF NOT EXISTS adcp_reporting_materialization_tombstones (
   highest_attempt INTEGER NOT NULL,
   reached_success BOOLEAN NOT NULL,
   pruned_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  -- When the delivery this records actually succeeded, so a projection at an
+  -- earlier cutoff does not read it as already delivered.
+  reached_success_at TIMESTAMPTZ,
   PRIMARY KEY (configuration_id, revision_id)
 );
 
@@ -677,9 +699,10 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
          ), tombstoned AS (
            INSERT INTO adcp_reporting_receipt_tombstones
              (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
-              status, was_current, semantic_fingerprint)
+              status, was_current, semantic_fingerprint, subject_recorded_at, supersedes_receipt_id)
            SELECT account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
-                  COALESCE(data ->> 'status', 'unknown'), is_current, semantic_fingerprint
+                  COALESCE(data ->> 'status', 'unknown'), is_current, semantic_fingerprint,
+                  recorded_at, supersedes_receipt_id
              FROM doomed
            ON CONFLICT (account_id, consumer_id, reporting_receipt_id) DO NOTHING
          )
@@ -720,15 +743,21 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
               )
          ), tombstoned AS (
            INSERT INTO adcp_reporting_materialization_tombstones
-             (configuration_id, revision_id, account_id, obligation_id, highest_attempt, reached_success)
+             (configuration_id, revision_id, account_id, obligation_id, highest_attempt, reached_success,
+              reached_success_at)
            SELECT configuration_id, revision_id, account_id, obligation_id,
-                  MAX(attempt), BOOL_OR(status IN ('available', 'delivered'))
+                  MAX(attempt), BOOL_OR(status IN ('available', 'delivered')),
+                  MIN(changed_at) FILTER (WHERE status IN ('available', 'delivered'))
              FROM doomed GROUP BY configuration_id, revision_id, account_id, obligation_id
            ON CONFLICT (configuration_id, revision_id) DO UPDATE SET
              highest_attempt = GREATEST(
                adcp_reporting_materialization_tombstones.highest_attempt, EXCLUDED.highest_attempt),
              reached_success =
-               adcp_reporting_materialization_tombstones.reached_success OR EXCLUDED.reached_success
+               adcp_reporting_materialization_tombstones.reached_success OR EXCLUDED.reached_success,
+             -- The earliest success is what a historical cutoff must compare
+             -- against: a later one does not make the delivery newer.
+             reached_success_at = LEAST(
+               adcp_reporting_materialization_tombstones.reached_success_at, EXCLUDED.reached_success_at)
          )
          DELETE FROM adcp_reporting_materializations target USING doomed
           WHERE target.materialization_id = doomed.materialization_id`,
@@ -1570,8 +1599,15 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       // `recorded_at`, which is a database clock_timestamp() — so trusting the
       // caller made a skewed host publish a `received_at` that disagreed with
       // the order and the visibility cutoff its own receipt was subject to.
-      const instant = (await client.query<QueryRow & { now: Date }>('SELECT clock_timestamp() AS now')).rows[0]!.now;
-      const receivedAt = instant.toISOString();
+      // Rendered in SQL, never through a JS `Date`. A Date holds
+      // milliseconds, so taking the instant as one truncated `recorded_at` to
+      // .500000 while the lifecycle watermark kept the microsecond .500300 it
+      // was written from: the row was durably older than the watermark that
+      // followed it, and the reconcile it should have triggered could never
+      // become due again.
+      const receivedAt = (
+        await client.query<QueryRow & { now: string }>(`SELECT ${rfc3339Micro('clock_timestamp()')} AS now`)
+      ).rows[0]!.now;
       const authorization = await Promise.all(
         input.entries.map(entry => this.loadReceiptEvidence(client, input.account_id, entry).then(Boolean))
       );
@@ -1850,7 +1886,7 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       `INSERT INTO adcp_reporting_receipts
         (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
          supersedes_receipt_id, is_current, semantic_fingerprint, data, received_at, recorded_at)
-       VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8::jsonb,$9,$9)`,
+       VALUES ($1,$2,$3,$4,$5,$6,true,$7,$8::jsonb,$9::timestamptz,$9::timestamptz)`,
       [
         batch.account_id,
         batch.consumer_id,
