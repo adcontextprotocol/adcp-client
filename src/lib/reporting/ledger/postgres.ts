@@ -1914,24 +1914,26 @@ ${managedDueArm}       )
                   ledgerAsOf,
                   reportingLedgerScopeClosed(query, ledgerAsOf, ledgerCoverage.complete)
                 );
-                const managed = projectManagedDelivery(
-                  value,
-                  managedBindings.find(binding => binding.configurationId === value.configurationId),
-                  obligationRevisions,
-                  adjustments.filter(item => item.reporting_obligation_id === value.reporting_obligation_id),
-                  materializationProjection.filter(
+                const managed = projectManagedDelivery({
+                  obligation: value,
+                  binding: managedBindings.find(binding => binding.configurationId === value.configurationId),
+                  revisions: obligationRevisions,
+                  adjustments: adjustments.filter(
                     item => item.reporting_obligation_id === value.reporting_obligation_id
                   ),
-                  materializationHistoryProjection.filter(
+                  materializations: materializationProjection.filter(
                     item => item.reporting_obligation_id === value.reporting_obligation_id
                   ),
-                  receiptProjection,
-                  adjustmentReceiptProjection,
-                  baseProjection,
+                  materializationHistory: materializationHistoryProjection.filter(
+                    item => item.reporting_obligation_id === value.reporting_obligation_id
+                  ),
+                  receipts: receiptProjection,
+                  adjustmentReceipts: adjustmentReceiptProjection,
+                  base: baseProjection,
                   ledgerAsOf,
                   tombstonedAcceptedSubjects,
-                  tombstonedDeliveredRevisionIds
-                );
+                  tombstonedDeliveredRevisionIds,
+                });
                 const health = mismatch
                   ? moreSevereReportingHealthV1(managed?.projection.health ?? sellerHealth, mismatch.health)
                   : (managed?.projection.health ?? sellerHealth);

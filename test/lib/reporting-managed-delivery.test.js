@@ -637,39 +637,35 @@ describe('seller managed reporting runtime', () => {
     // Exactly at the deadline. Core escalates on `now >= recoveryDeadline`, so
     // a strict comparison here left the managed issue `delayed` while the Core
     // projection of the same obligation was already `action_required`.
-    const atDeadline = ledger.projectManagedDelivery(
+    const atDeadline = ledger.projectManagedDelivery({
       obligation,
-      claimed.binding,
+      binding: claimed.binding,
       revisions,
-      [],
-      [],
-      [],
-      [],
-      [],
+      adjustments: [],
+      materializations: [],
+      materializationHistory: [],
+      receipts: [],
+      adjustmentReceipts: [],
       base,
-      obligation.recoveryDeadlineAt,
-      [],
-      []
-    );
+      ledgerAsOf: obligation.recoveryDeadlineAt,
+    });
     const issue = atDeadline.projection.issues.find(value => value.issueId.includes('managed-delivery'));
     assert.ok(issue, 'the managed delivery issue is raised');
     assert.equal(issue.severity, 'action_required');
     assert.equal(issue.recommendedAction, 'contact_seller');
     // A moment before it, it is still a retry.
-    const before = ledger.projectManagedDelivery(
+    const before = ledger.projectManagedDelivery({
       obligation,
-      claimed.binding,
+      binding: claimed.binding,
       revisions,
-      [],
-      [],
-      [],
-      [],
-      [],
+      adjustments: [],
+      materializations: [],
+      materializationHistory: [],
+      receipts: [],
+      adjustmentReceipts: [],
       base,
-      '2026-08-27T06:59:59.999Z',
-      [],
-      []
-    );
+      ledgerAsOf: '2026-08-27T06:59:59.999Z',
+    });
     assert.equal(
       before.projection.issues.find(value => value.issueId.includes('managed-delivery')).severity,
       'delayed'
@@ -993,6 +989,12 @@ describe('seller managed reporting runtime', () => {
       reporting_receipt_id: 'receipt-invalid-sibling-0001',
       observed_canonical_content_digest: undefined,
     };
+    const oversizedReceipt = {
+      ...validReceipt,
+      reporting_receipt_id: 'receipt-oversized-sibling-01',
+      observed_control_totals: [{ name: 'impressions', value: '1'.repeat(65 * 1024), value_type: 'integer' }],
+    };
+    assert.ok(Buffer.byteLength(JSON.stringify(oversizedReceipt), 'utf8') > 64 * 1024);
     const handler = ledger.createSyncReportingReceiptsHandler(
       {
         syncReceiptBatch: async input => {
@@ -1006,16 +1008,25 @@ describe('seller managed reporting runtime', () => {
       {
         account: { account_id: 'account-1' },
         idempotency_key: 'receipt-siblings-0001',
-        receipts: [validReceipt, invalidReceipt],
+        receipts: [validReceipt, invalidReceipt, oversizedReceipt],
       },
       { account: { id: 'account-1' } }
     );
     assert.equal(recorded.length, 1);
     assert.deepEqual(
       response.results.map(value => value.result),
-      ['recorded', 'failed']
+      ['recorded', 'failed', 'failed']
     );
-    assert.equal(response.results[1].errors[0].code, 'VALIDATION_ERROR');
+    const malformedError = response.results[1].errors[0];
+    assert.equal(malformedError.code, 'VALIDATION_ERROR');
+    assert.match(malformedError.message, /malformed/);
+    assert.equal(malformedError.field, 'receipts[1]');
+    assert.match(malformedError.suggestion, /satisfy the reporting receipt evidence schema/);
+    const oversizedError = response.results[2].errors[0];
+    assert.equal(oversizedError.code, 'VALIDATION_ERROR');
+    assert.match(oversizedError.message, /exceeds the 64 KiB limit/);
+    assert.equal(oversizedError.field, 'receipts[2]');
+    assert.match(oversizedError.suggestion, /64 KiB or less/);
   });
 
   test('does not let managed delivery downgrade Core action_required health', () => {
@@ -1036,19 +1047,19 @@ describe('seller managed reporting runtime', () => {
       observedAt: '2026-08-27T05:00:00.000Z',
     };
     const base = { health: 'action_required', satisfied: false, issues: [coverageIssue] };
-    const managed = ledger.projectManagedDelivery(
+    const managed = ledger.projectManagedDelivery({
       obligation,
-      { ...lease().binding, reconciliation_mode: 'delivery_only' },
-      [{ reporting_revision_id: 'revision-1', revisionNumber: 1, finality: 'official' }],
-      [],
-      [],
-      [],
-      [],
-      [],
+      binding: { ...lease().binding, reconciliation_mode: 'delivery_only' },
+      revisions: [{ reporting_revision_id: 'revision-1', revisionNumber: 1, finality: 'official' }],
+      adjustments: [],
+      materializations: [],
+      materializationHistory: [],
+      receipts: [],
+      adjustmentReceipts: [],
       base,
       // Read before expectedAt: the managed rule on its own says `waiting`.
-      '2026-08-27T05:00:00.000Z'
-    );
+      ledgerAsOf: '2026-08-27T05:00:00.000Z',
+    });
     assert.equal(managed.projection.health, 'action_required');
     assert.ok(
       managed.projection.issues.some(value => value.code === 'REPORTING_COVERAGE_INCOMPLETE'),
@@ -1097,18 +1108,18 @@ describe('seller managed reporting runtime', () => {
       },
     ];
     const project = status =>
-      ledger.projectManagedDelivery(
+      ledger.projectManagedDelivery({
         obligation,
-        lease().binding,
+        binding: lease().binding,
         revisions,
-        [],
-        revoked,
-        [delivered],
-        receiptFor(status),
-        [],
+        adjustments: [],
+        materializations: revoked,
+        materializationHistory: [delivered],
+        receipts: receiptFor(status),
+        adjustmentReceipts: [],
         base,
-        '2026-08-27T04:45:00.000Z'
-      );
+        ledgerAsOf: '2026-08-27T04:45:00.000Z',
+      });
 
     const rejected = project('rejected');
     assert.equal(rejected.reconciliationStatus, 'rejected');

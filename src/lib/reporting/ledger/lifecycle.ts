@@ -448,17 +448,17 @@ async function composeManagedLifecycleProjection(
   let suppressedReceiptIssue = false;
   const issues = new Map<string, ReportingLedgerIssueV1>(coreProjection.issues.map(value => [value.issueId, value]));
   for (const consumer of consumers) {
-    const projected = projectManagedDelivery(
+    const projected = projectManagedDelivery({
       obligation,
-      managed.binding,
+      binding: managed.binding,
       revisions,
       adjustments,
-      managed.materializations,
-      managed.materializationHistory,
-      consumer.receipts,
-      consumer.adjustmentReceipts,
-      coreProjection,
-      input.ledgerAsOf,
+      materializations: managed.materializations,
+      materializationHistory: managed.materializationHistory,
+      receipts: consumer.receipts,
+      adjustmentReceipts: consumer.adjustmentReceipts,
+      base: coreProjection,
+      ledgerAsOf: input.ledgerAsOf,
       // Scoped to the consumer being projected. An acceptance A left behind
       // must never settle the obligation for B, which would let a webhook go
       // complete while B's own read still says action_required.
@@ -467,11 +467,12 @@ async function composeManagedLifecycleProjection(
       // stand-in for "someone unknown may still owe a receipt", flipping an
       // incomplete-roster obligation to complete while real consumers were
       // still pending.
-      consumer.consumer_id === undefined
-        ? []
-        : (managed.tombstonedAcceptedSubjects ?? []).filter(value => value.consumerId === consumer.consumer_id),
-      managed.tombstonedDeliveredRevisionIds ?? []
-    );
+      tombstonedAcceptedSubjects:
+        consumer.consumer_id === undefined
+          ? []
+          : (managed.tombstonedAcceptedSubjects ?? []).filter(value => value.consumerId === consumer.consumer_id),
+      tombstonedDeliveredRevisionIds: managed.tombstonedDeliveredRevisionIds,
+    });
     if (!projected) continue;
     health = moreSevereReportingHealthV1(health, projected.projection.health);
     // One consumer's outstanding receipt leaves the seller's obligation

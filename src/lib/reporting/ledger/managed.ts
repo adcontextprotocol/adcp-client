@@ -40,6 +40,8 @@ const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 const MAX_RECEIPTS_PER_ARRAY = 100;
 /** RC3 `maxItems` on the response `results` array. */
 const MAX_RECEIPT_RESULTS = 100;
+/** Maximum serialized size of one receipt evidence item. */
+const MAX_RECEIPT_EVIDENCE_BYTES = 64 * 1024;
 
 export interface ReportingDestinationAuthorizationV1 {
   account_id: string;
@@ -569,13 +571,15 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
         'sync_reporting_receipts receipt IDs must be unique across the batch'
       );
     }
-    const valid = entries.map(
-      entry =>
-        (entry.kind === 'revision'
-          ? isReportingReceiptEvidence(entry.receipt)
-          : isReportingAdjustmentReceiptEvidence(entry.receipt)) &&
-        Buffer.byteLength(JSON.stringify(entry.receipt), 'utf8') <= 64 * 1024
+    const evidenceValid = entries.map(entry =>
+      entry.kind === 'revision'
+        ? isReportingReceiptEvidence(entry.receipt)
+        : isReportingAdjustmentReceiptEvidence(entry.receipt)
     );
+    const oversized = entries.map(
+      entry => Buffer.byteLength(JSON.stringify(entry.receipt), 'utf8') > MAX_RECEIPT_EVIDENCE_BYTES
+    );
+    const valid = entries.map((_, index) => evidenceValid[index] && !oversized[index]);
     const validEntries = entries.filter((_, index) => valid[index]);
     const request_fingerprint = sha256({ entries });
     const stored = validEntries.length
@@ -591,15 +595,30 @@ export function createSyncReportingReceiptsHandler<TContext extends { account?: 
     let storedIndex = 0;
     return {
       status: 'completed',
-      results: entries.map((entry, index) =>
-        valid[index]
-          ? stored[storedIndex++]!
+      results: entries.map((entry, index) => {
+        if (valid[index]) return stored[storedIndex++]!;
+        const field =
+          entry.kind === 'revision' ? `receipts[${index}]` : `adjustment_receipts[${index - revisionReceipts.length}]`;
+        return oversized[index]
+          ? receiptFailure(
+              reflectableReceiptId(entry.receipt.reporting_receipt_id, index),
+              'VALIDATION_ERROR',
+              'Reporting receipt evidence exceeds the 64 KiB limit',
+              {
+                field,
+                suggestion: `Reduce ${field} to 64 KiB or less and retry.`,
+              }
+            )
           : receiptFailure(
               reflectableReceiptId(entry.receipt.reporting_receipt_id, index),
               'VALIDATION_ERROR',
-              'Reporting receipt evidence is invalid or exceeds 64 KiB'
-            )
-      ),
+              'Reporting receipt evidence is malformed',
+              {
+                field,
+                suggestion: `Correct ${field} to satisfy the reporting receipt evidence schema and retry.`,
+              }
+            );
+      }),
     };
   };
 }
@@ -635,12 +654,13 @@ function reflectableReceiptId(value: unknown, index: number): string {
 function receiptFailure(
   reporting_receipt_id: string,
   code: 'PERMISSION_DENIED' | 'VALIDATION_ERROR',
-  message: string
+  message: string,
+  metadata: { field?: string; suggestion?: string } = {}
 ): SyncReportingReceiptsResponse['results'][number] {
   return {
     result: 'failed',
     reporting_receipt_id,
-    errors: [{ code, message, recovery: 'correctable' }],
+    errors: [{ code, message, recovery: 'correctable', ...metadata }],
   };
 }
 

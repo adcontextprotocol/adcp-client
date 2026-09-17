@@ -255,26 +255,28 @@ export function createReportingStatusHandler<TContext = unknown>(
           ...projection,
           issues: uniqueIssues([...persistedIssues, ...projection.issues, ...(mismatch ? [mismatch.issue] : [])]),
         };
-        const managed = projectManagedDelivery(
+        const managed = projectManagedDelivery({
           obligation,
-          page.snapshot.managedBindings?.find(value => value.configurationId === obligation.configurationId),
+          binding: page.snapshot.managedBindings?.find(value => value.configurationId === obligation.configurationId),
           revisions,
-          page.snapshot.adjustments.filter(
+          adjustments: page.snapshot.adjustments.filter(
             value => value.reporting_obligation_id === obligation.reporting_obligation_id
           ),
-          (page.snapshot.materializationProjection ?? page.snapshot.materializations ?? []).filter(
+          materializations: (page.snapshot.materializationProjection ?? page.snapshot.materializations ?? []).filter(
             value => value.reporting_obligation_id === obligation.reporting_obligation_id
           ),
-          (page.snapshot.materializationHistoryProjection ?? page.snapshot.materializations ?? []).filter(
-            value => value.reporting_obligation_id === obligation.reporting_obligation_id
-          ),
-          page.snapshot.receiptProjection ?? page.snapshot.receipts ?? [],
-          page.snapshot.adjustmentReceiptProjection ?? page.snapshot.adjustmentReceipts ?? [],
-          baseProjection,
-          page.snapshot.ledgerAsOf,
-          page.snapshot.tombstonedAcceptedSubjects ?? [],
-          page.snapshot.tombstonedDeliveredRevisionIds ?? []
-        );
+          materializationHistory: (
+            page.snapshot.materializationHistoryProjection ??
+            page.snapshot.materializations ??
+            []
+          ).filter(value => value.reporting_obligation_id === obligation.reporting_obligation_id),
+          receipts: page.snapshot.receiptProjection ?? page.snapshot.receipts ?? [],
+          adjustmentReceipts: page.snapshot.adjustmentReceiptProjection ?? page.snapshot.adjustmentReceipts ?? [],
+          base: baseProjection,
+          ledgerAsOf: page.snapshot.ledgerAsOf,
+          tombstonedAcceptedSubjects: page.snapshot.tombstonedAcceptedSubjects,
+          tombstonedDeliveredRevisionIds: page.snapshot.tombstonedDeliveredRevisionIds,
+        });
         return {
           obligation,
           revisions,
@@ -659,17 +661,17 @@ function wireObligation(
   };
 }
 
-export function projectManagedDelivery(
-  obligation: ReportingLedgerObligationV1,
-  binding: ReportingManagedDeliveryBindingV1 | undefined,
-  revisions: ReportingLedgerRevisionSnapshotV1[],
-  adjustments: ReportingLedgerAdjustmentSnapshotV1[],
-  materializations: ReportingMaterialization[],
-  materializationHistory: ReportingMaterialization[],
-  receipts: ReportingReceipt[],
-  adjustmentReceipts: ReportingAdjustmentReceipt[],
-  base: ReturnType<typeof projectReportingObligationHealthV1>,
-  ledgerAsOf: string,
+export interface ProjectManagedDeliveryInputV1 {
+  obligation: ReportingLedgerObligationV1;
+  binding?: ReportingManagedDeliveryBindingV1;
+  revisions: ReportingLedgerRevisionSnapshotV1[];
+  adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  materializations: ReportingMaterialization[];
+  materializationHistory: ReportingMaterialization[];
+  receipts: ReportingReceipt[];
+  adjustmentReceipts: ReportingAdjustmentReceipt[];
+  base: ReturnType<typeof projectReportingObligationHealthV1>;
+  ledgerAsOf: string;
   /**
    * Subjects whose accepted receipt body has aged out of retention.
    *
@@ -677,11 +679,11 @@ export function projectManagedDelivery(
    * body is gone — otherwise letting evidence expire silently reopens a
    * settled subject and the obligation degrades on its own.
    */
-  tombstonedAcceptedSubjects: ReadonlyArray<{
+  tombstonedAcceptedSubjects?: ReadonlyArray<{
     kind: 'revision' | 'adjustment';
     subjectId: string;
     consumerId?: string;
-  }> = [],
+  }>;
   /**
    * Revisions whose successful materialization row has been pruned.
    *
@@ -689,8 +691,25 @@ export function projectManagedDelivery(
    * so without this a delivered revision reads as never delivered and an
    * accepted subject is dragged back to `pending`.
    */
-  tombstonedDeliveredRevisionIds: readonly string[] = []
-) {
+  tombstonedDeliveredRevisionIds?: readonly string[];
+}
+
+/** Project Managed Delivery state without positional array arguments that can be accidentally transposed. */
+export function projectManagedDelivery(input: ProjectManagedDeliveryInputV1) {
+  const {
+    obligation,
+    binding,
+    revisions,
+    adjustments,
+    materializations,
+    materializationHistory,
+    receipts,
+    adjustmentReceipts,
+    base,
+    ledgerAsOf,
+    tombstonedAcceptedSubjects = [],
+    tombstonedDeliveredRevisionIds = [],
+  } = input;
   if (!binding) return undefined;
   const supersededRevisionIds = new Set(
     revisions.map(value => value.supersedes_reporting_revision_id).filter((value): value is string => Boolean(value))
