@@ -555,6 +555,39 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.equal(revokedReplay.results[0].result, 'recorded');
     assert.equal(revokedReplay.results[0].receipt.reporting_receipt_id, 'receipt-accepted-0001');
     assert.equal(validateResponse('sync_reporting_receipts', revokedReplay, '3.2.0-rc.3').valid, true);
+    const receiptCountBeforeRepresentation = await pool.query(
+      `SELECT COUNT(*)::integer AS count FROM adcp_reporting_receipts
+        WHERE account_id = $1 AND consumer_id = $2`,
+      [fixture.accountId, 'https://buyer-one.example']
+    );
+    const represented = await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
+      {
+        // A fresh key walks immutable receipt resolution rather than the
+        // replay cache. Revocation still must not turn caller-owned,
+        // byte-identical stored state into new evidence.
+        idempotency_key: 'receipt-batch-represented-after-revoke-0001',
+        receipts: [
+          receipt(fixture, {
+            reporting_receipt_id: 'receipt-accepted-0001',
+            supersedes_reporting_receipt_id: 'receipt-rejected-0001',
+            status: 'accepted',
+          }),
+        ],
+      },
+      { account: { id: fixture.accountId }, agent: { agent_url: 'https://buyer-one.example' } }
+    );
+    assert.equal(represented.results[0].result, 'unchanged');
+    assert.equal(represented.results[0].receipt.reporting_receipt_id, 'receipt-accepted-0001');
+    const receiptCountAfterRepresentation = await pool.query(
+      `SELECT COUNT(*)::integer AS count FROM adcp_reporting_receipts
+        WHERE account_id = $1 AND consumer_id = $2`,
+      [fixture.accountId, 'https://buyer-one.example']
+    );
+    assert.equal(
+      receiptCountAfterRepresentation.rows[0].count,
+      receiptCountBeforeRepresentation.rows[0].count,
+      'byte-identical re-presentation writes no evidence'
+    );
     // A new receipt under a fresh key is still refused while revoked.
     const revokedFresh = await ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url)(
       {
@@ -5271,7 +5304,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     assert.ok((unfiltered.receipts ?? []).length >= 1, 'sanity: the evidence exists');
   });
 
-  test('truncates an oversized roster and an oversized conclusion set instead of failing', async () => {
+  test('truncates oversized projections and converges complete and incomplete unversioned rosters', async () => {
     const { Pool } = require('pg');
     const guardSchema = `${schema}_guards`;
     await bootstrap.query(`CREATE SCHEMA "${guardSchema}"`);
@@ -5356,6 +5389,53 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       assert.ok(watermark.rows[0].processed_roster_version, 'the oversized unversioned roster reconciled');
       assert.equal(watermark.rows[0].processed_roster_version, watermark.rows[0].current_roster_version);
       assert.equal(watermark.rows[0].failure_count, 0);
+
+      // Incomplete rosters conservatively include observed principals. Both
+      // engaged statuses and receipt leaves are capped in the stored
+      // projection, but neither cap may truncate the version identity that
+      // the immediate CAS read computes again.
+      const incompleteCore = new ledger.PostgresReportingLedgerStore(guardPool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+        obligatedConsumers: async () => ({
+          ids: ['https://incomplete-hint.example'],
+          complete: false,
+        }),
+      });
+      const incomplete = await seedSkewLedgerInto(incompleteCore, guardManaged, 'incompleteguards', 'consumer_receipt');
+      await guardPool.query(
+        `INSERT INTO adcp_reporting_consumer_statuses
+          (account_id, consumer_id, consumer_status_id, obligation_id, revision_id,
+           chain_key, is_current, semantic_fingerprint, data, created_at)
+         SELECT $1, 'https://incomplete-engaged-' || i || '.example',
+                'status-incomplete-engaged-' || i, $2, NULL,
+                'chain-incomplete-engaged-' || i, false, 'engaged', '{}'::jsonb,
+                clock_timestamp()
+           FROM generate_series(1, 10001) AS i`,
+        [incomplete.accountId, incomplete.obligation.reporting_obligation_id]
+      );
+      const incompleteProjection = await incompleteCore.getManagedLifecycleProjection({
+        reporting_obligation_id: incomplete.obligation.reporting_obligation_id,
+        ledgerAsOf: await incompleteCore.readLedgerInstant(),
+      });
+      assert.equal(incompleteProjection.obligatedConsumerIds.length, 10_000, 'stored payload remains bounded');
+      assert.equal(incompleteProjection.obligatedConsumerRosterComplete, false);
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store: incompleteCore,
+        reporting_obligation_id: incomplete.obligation.reporting_obligation_id,
+      });
+      const incompleteWatermark = await guardPool.query(
+        `SELECT processed_roster_version, current_roster_version, failure_count
+           FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
+        [incomplete.obligation.reporting_obligation_id]
+      );
+      assert.equal(incompleteWatermark.rowCount, 1);
+      assert.ok(incompleteWatermark.rows[0].processed_roster_version, 'the incomplete full identity reconciled');
+      assert.equal(
+        incompleteWatermark.rows[0].processed_roster_version,
+        incompleteWatermark.rows[0].current_roster_version
+      );
+      assert.equal(incompleteWatermark.rows[0].failure_count, 0);
     } finally {
       await guardPool.end();
       await bootstrap.query(`DROP SCHEMA IF EXISTS "${guardSchema}" CASCADE`);

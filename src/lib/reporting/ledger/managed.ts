@@ -248,7 +248,10 @@ export interface CreateReportingManagedDeliveryRuntimeOptionsV1<
   TContext extends { account?: unknown } = { account?: unknown },
 > {
   coreStore: ReportingLedgerStore;
-  store: ReportingManagedDeliveryStore;
+  store: ReportingManagedDeliveryStore &
+    Required<
+      Pick<ReportingManagedDeliveryStore, 'adoptAdvertisedRecoveryWindowSeconds' | 'adoptAdvertisedStatusRetentionDays'>
+    >;
   adapter: ReportingManagedDeliveryAdapterV1;
   offerings: ReportingDeliveryCapabilities['offerings'];
   automatedRecoveryWindowSeconds: number;

@@ -2627,6 +2627,18 @@ ${managedDueArm}       )
     // in when the roster is NOT complete, where the union is the conservative
     // answer rather than a widening of an authority.
     const all = obligatedConsumerIdsFor(supplied, base.obligatedConsumerIds ?? []);
+    // The projection payload stays bounded, but an incomplete unversioned
+    // roster's identity must include every observed consumer. `base` has
+    // already capped both engaged-status rows and receipt leaves, whereas the
+    // immediate CAS recheck deliberately reads them without those payload
+    // caps. Hashing that bounded slice here made the two versions permanently
+    // disagree. Complete rosters ignore observations, and an adopter-supplied
+    // version ignores the derived identity, so only the incomplete fallback
+    // needs this additional untruncated read.
+    const identityIds =
+      supplied.version === undefined && supplied.complete !== true
+        ? obligatedConsumerIdsFor(supplied, await this.observedConsumerIds(input.reporting_obligation_id))
+        : all;
     // A roster larger than this process will hold is not an error either: it
     // is truncated deterministically and declared unproven, exactly as the
     // leaves are. Throwing wedged the obligation permanently, since nothing
@@ -2638,10 +2650,7 @@ ${managedDueArm}       )
       obligatedConsumerIds: ids,
       obligatedConsumerRosterComplete: rosterComplete,
       ...(all.length === ids.length ? {} : { receiptEvidenceComplete: false }),
-      // Projection storage is bounded, but roster identity is not the stored
-      // projection. Hash the full deterministic roster so the immediate CAS
-      // recheck computes the same version for an oversized unversioned roster.
-      obligatedConsumerRosterVersion: obligatedConsumerRosterVersionFor(supplied, all),
+      obligatedConsumerRosterVersion: obligatedConsumerRosterVersionFor(supplied, identityIds),
     };
   }
 
