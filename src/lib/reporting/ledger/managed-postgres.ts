@@ -132,6 +132,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_receipts_current
   ON adcp_reporting_receipts (account_id, consumer_id, receipt_kind, subject_id) WHERE is_current;
 CREATE INDEX IF NOT EXISTS adcp_reporting_receipts_readback
   ON adcp_reporting_receipts (account_id, consumer_id, recorded_at, reporting_receipt_id);
+-- The as-of-cutoff leaf asks, per candidate, whether anything recorded by the
+-- cutoff supersedes it. Without this that question is a scan of the caller's
+-- whole receipt history.
+CREATE INDEX IF NOT EXISTS adcp_reporting_receipts_supersedes
+  ON adcp_reporting_receipts (account_id, consumer_id, supersedes_receipt_id)
+  WHERE supersedes_receipt_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_receipt_batches (
   account_id TEXT NOT NULL,

@@ -183,6 +183,28 @@ describe('seller reporting ledger', () => {
     assert.equal((await listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'complete');
   });
 
+  test('honours a backdated cutoff on a store that has no clock of its own', async () => {
+    const store = new MemoryLedgerStore();
+    assert.equal(store.readLedgerInstant, undefined, 'sanity: this store has no authoritative clock');
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    // The caller is replaying a moment inside the recovery window while the
+    // host clock has already passed the recovery deadline. Clamping the pin
+    // against the host clock reconciled a moment the caller never asked
+    // about, persisting `action_required` at 03:00 where the obligation was
+    // `delayed` at 01:30. There is nothing to clamp against here: `now` is
+    // precisely what a pinned cutoff overrides.
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      now: () => new Date('2026-09-02T03:00:00.000Z'),
+    });
+    assert.equal(transition.health, 'delayed');
+    assert.equal(transition.occurredAt, '2026-09-02T01:30:00.000Z');
+    assert.equal((await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'delayed');
+  });
+
   test('does not overwrite a concurrent terminal obligation update with a stale lifecycle projection', async () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();

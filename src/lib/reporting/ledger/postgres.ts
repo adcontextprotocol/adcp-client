@@ -307,6 +307,17 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_checkpoints_expiry
 `.trim();
 
 const MAX_SNAPSHOT_ITEMS = 10_000;
+// One receipt leaf per (consumer, subject), which is a product of two
+// dimensions the store admits independently: a consumer may hold
+// MAX_RECEIPTS_PER_CONSUMER receipts, and an obligation may carry a revision
+// plus many adjustments. A flat MAX_SNAPSHOT_ITEMS was the wrong shape for a
+// product — 101 consumers against 100 subjects is 10,100 leaves, all of it
+// validly admitted, and the projection refused it permanently. This ceiling
+// exists only so a pathological tenant cannot exhaust the process; crossing
+// it truncates deterministically and marks the evidence incomplete rather
+// than failing, because a bound the write path can legitimately cross must
+// never be a hard error.
+const MAX_LIFECYCLE_RECEIPT_LEAVES = 100_000;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 const MAX_ACTIVE_SNAPSHOTS_PER_ACCOUNT = 32;
 const MAX_ACTIVE_SNAPSHOT_BYTES_PER_ACCOUNT = 128 * 1024 * 1024;
@@ -2282,20 +2293,25 @@ ${managedDueArm}       )
           -- receipt read path is, so a skewed host cannot make the lifecycle
           -- projection see a different receipt set than get_reporting_status.
           --
-          -- Current leaves only. The fold reads exactly one thing from each
-          -- chain — its leaf — and derived that leaf by walking the whole
-          -- history, so a subject repaired often enough pushed this read past
-          -- MAX_SNAPSHOT_ITEMS and the projection threw. The receipt store
-          -- admits MAX_RECEIPTS_PER_CONSUMER (100,000) per consumer, so that
-          -- was a state the write path allows and the lifecycle can never
-          -- reconcile: every attempt failed, backoff paced it forever, and
-          -- the producer's own recovery reconcile aborted the sweep behind
-          -- it. One leaf per (consumer, subject) is what the verdict needs
-          -- and is bounded by the subjects this obligation has. The wire
+          -- One leaf per chain, resolved AS OF the cutoff. The fold reads
+          -- exactly one thing from each chain, and walking the whole history
+          -- to find it pushed this read past its bound for a subject repaired
+          -- often enough. But is_current is today's answer: at a cutoff
+          -- before an acceptance superseded a rejection, the rejection was no
+          -- longer current and the acceptance was not yet in scope, so the
+          -- projection saw neither and persisted RECEIPT_REQUIRED over a
+          -- rejection the buyer had already filed. The leaf at the cutoff is
+          -- the receipt that nothing recorded by then supersedes. Wire
           -- counters are computed on the read path, which still sees every
           -- row.
-          WHERE receipt.is_current
-            AND receipt.recorded_at <= $2
+          WHERE receipt.recorded_at <= $2
+            AND NOT EXISTS (
+              SELECT 1 FROM adcp_reporting_receipts successor
+               WHERE successor.account_id = receipt.account_id
+                 AND successor.consumer_id = receipt.consumer_id
+                 AND successor.supersedes_receipt_id = receipt.reporting_receipt_id
+                 AND successor.recorded_at <= $2
+            )
             AND (
               (receipt.receipt_kind = 'revision' AND EXISTS (
                  SELECT 1 FROM adcp_reporting_revisions revision
@@ -2308,15 +2324,24 @@ ${managedDueArm}       )
                     AND adjustment.obligation_id = $1
                ))
             )
-          ORDER BY receipt.consumer_id, receipt.recorded_at, receipt.reporting_receipt_id
+          ORDER BY receipt.consumer_id, receipt.subject_id, receipt.recorded_at, receipt.reporting_receipt_id
           LIMIT $3`,
-          [input.reporting_obligation_id, resolvedLedgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+          [input.reporting_obligation_id, resolvedLedgerAsOf, MAX_LIFECYCLE_RECEIPT_LEAVES + 1]
         );
-        if (receipts.rows.length > MAX_SNAPSHOT_ITEMS) {
-          throw new Error('Reporting lifecycle projection exceeds the managed receipt limit');
+        // Crossing the ceiling is not an error: it is a tenant this process
+        // cannot hold in memory at once. Drop whole consumers from the end of
+        // a deterministic order — never half of one, which would read as a
+        // consumer who filed less than they did — and say the evidence is
+        // incomplete so the fold refuses to call the obligation reconciled.
+        let receiptEvidenceComplete = true;
+        let leaves = receipts.rows;
+        if (leaves.length > MAX_LIFECYCLE_RECEIPT_LEAVES) {
+          receiptEvidenceComplete = false;
+          const partial = leaves[MAX_LIFECYCLE_RECEIPT_LEAVES]!.consumer_id;
+          leaves = leaves.slice(0, MAX_LIFECYCLE_RECEIPT_LEAVES).filter(row => row.consumer_id !== partial);
         }
         const byConsumer = new Map<string, ReportingManagedLifecycleProjectionV1['consumers'][number]>();
-        for (const row of receipts.rows) {
+        for (const row of leaves) {
           const consumer = byConsumer.get(row.consumer_id) ?? {
             consumer_id: row.consumer_id,
             receipts: [],
@@ -2338,8 +2363,13 @@ ${managedDueArm}       )
           ORDER BY consumer_id LIMIT $2`,
           [input.reporting_obligation_id, MAX_SNAPSHOT_ITEMS + 1]
         );
+        // Same rule as the leaves above: a roster this process cannot hold is
+        // truncated and declared incomplete, not thrown. Throwing wedged the
+        // obligation forever, because nothing about a retry makes the roster
+        // smaller.
         if (engaged.rows.length > MAX_SNAPSHOT_ITEMS) {
-          throw new Error('Reporting lifecycle projection exceeds the consumer roster limit');
+          receiptEvidenceComplete = false;
+          engaged.rows = engaged.rows.slice(0, MAX_SNAPSHOT_ITEMS);
         }
         const observed = [...new Set([...byConsumer.keys(), ...engaged.rows.map(row => row.consumer_id)])].sort();
         // Conclusions that outlived their evidence. Pruning removes bodies
@@ -2369,6 +2399,7 @@ ${managedDueArm}       )
           consumers: [...byConsumer.values()],
           obligatedConsumerIds: observed,
           obligatedConsumerRosterComplete: false,
+          receiptEvidenceComplete,
           managedStateVersion,
           resolvedLedgerAsOf,
           tombstonedAcceptedSubjects,

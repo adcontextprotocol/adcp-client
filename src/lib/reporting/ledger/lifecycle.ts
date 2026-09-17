@@ -45,10 +45,19 @@ async function resolveLedgerAsOf(
   if (input.store.readLedgerInstant) {
     return attempt === 0 && compareReportingInstants(input.ledgerAsOf, resolved) <= 0 ? input.ledgerAsOf : resolved;
   }
-  // No authoritative clock, so `resolved` is the host's own. Keep the pin
-  // when it is later, because a simulated-time driver replaying synthetic
-  // instants has nothing else to order by, and a cutoff must never move
-  // backwards past a transition already recorded at a later instant.
+  // No authoritative clock at all. There is nothing here to clamp a pin
+  // against — `resolved` is the host's own `now`, which is exactly what the
+  // caller overrode by pinning — so the first attempt takes the pin as given.
+  // Clamping it against the host clock instead made a deliberately backdated
+  // replay jump forward: a cutoff of 2026-01-01 against a host at 2026-01-04
+  // persisted `action_required` at Jan 4 where the obligation was still
+  // `waiting` at Jan 1, which is a reconcile of a moment the caller never
+  // asked about.
+  if (attempt === 0) return input.ledgerAsOf;
+  // Retries still take a fresh instant, and keep the pin when it is later:
+  // a simulated-time driver replaying synthetic instants has nothing else to
+  // order by, and a cutoff must never move backwards past a transition
+  // already recorded at a later instant.
   // `compareReportingInstants`, never `Date.parse`. Date truncates to
   // milliseconds, so a retry moving .123500Z to .123600Z compared equal and
   // kept the old cutoff — the projection then excluded a .123550Z write while
@@ -313,7 +322,12 @@ async function composeManagedLifecycleProjection(
   // lifecycle folded in principals the roster excludes — the same widening
   // the live projection and the digest already refuse, so the three would
   // disagree about who owes a receipt.
-  const observed = managed.obligatedConsumerRosterComplete === true ? [] : managed.consumers;
+  // Truncated receipt evidence is exactly as unproven as an unlisted roster:
+  // in both cases some principal's receipts are not in hand, so neither may
+  // be treated as authoritative about who has filed.
+  const rosterAuthoritative =
+    managed.obligatedConsumerRosterComplete === true && managed.receiptEvidenceComplete !== false;
+  const observed = rosterAuthoritative ? [] : managed.consumers;
   const byConsumer = new Map(observed.map(value => [value.consumer_id, value]));
   for (const consumerId of managed.obligatedConsumerIds ?? []) {
     if (!byConsumer.has(consumerId)) {
@@ -330,10 +344,7 @@ async function composeManagedLifecycleProjection(
   // consumer in the fold so a `consumer_receipt` obligation is never called
   // reconciled on the strength of the consumers that happened to be observed.
   // Also covers the plain "nobody has submitted yet" case for either mode.
-  if (
-    !consumers.length ||
-    (managed.binding.reconciliation_mode === 'consumer_receipt' && managed.obligatedConsumerRosterComplete !== true)
-  ) {
+  if (!consumers.length || (managed.binding.reconciliation_mode === 'consumer_receipt' && !rosterAuthoritative)) {
     consumers.push({ receipts: [], adjustmentReceipts: [] });
   }
   let health = coreProjection.health;

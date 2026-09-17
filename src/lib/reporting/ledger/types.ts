@@ -575,6 +575,16 @@ export interface ReportingManagedLifecycleProjectionV1 {
    */
   obligatedConsumerRosterComplete?: boolean;
   /**
+   * False when the store could not project every consumer's receipt evidence.
+   *
+   * A store bounds what it will hold in memory at once. Crossing that bound
+   * must not fail the reconcile — nothing about a retry makes a large tenant
+   * smaller — so the store truncates at a deterministic consumer boundary and
+   * says so here. An incomplete projection can never prove reconciliation, so
+   * the fold treats it exactly as it treats an unproven roster.
+   */
+  receiptEvidenceComplete?: boolean;
+  /**
    * Opaque token over the managed state this projection was computed from.
    *
    * The lifecycle CAS fences Core evidence — revision set, obligation state,

@@ -4560,20 +4560,30 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       );
       assert.equal(accepted.results[0].result, 'recorded');
 
-      // A subject repaired more times than a snapshot page may carry. The
-      // receipt store admits 100,000 receipts per consumer, so this is a
-      // state the write path allows; the lifecycle used to read the whole
-      // chain and throw above 10,000, which no retry or backoff could ever
-      // clear.
+      // A subject repaired more times than a snapshot page may carry: a real
+      // chain, each repair superseding the one before it, with the recorded
+      // acceptance as its leaf. The receipt store admits 100,000 receipts per
+      // consumer, so this is a state the write path allows; the lifecycle
+      // used to read the whole chain and throw above 10,000, which no retry
+      // or backoff could ever clear.
       await deepPool.query(
         `INSERT INTO adcp_reporting_receipts
           (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
-           is_current, semantic_fingerprint, data, received_at, recorded_at)
+           supersedes_receipt_id, is_current, semantic_fingerprint, data, received_at, recorded_at)
          SELECT $1, $2, 'receipt-deepchain-superseded-' || i, 'revision', $3,
+                CASE WHEN i = 1 THEN NULL ELSE 'receipt-deepchain-superseded-' || (i - 1) END,
                 false, 'superseded', '{}'::jsonb, clock_timestamp(), clock_timestamp()
            FROM generate_series(1, 10001) AS i`,
         [deep.accountId, consumerId, deep.revision.reporting_revision_id]
       );
+      const tip = await deepPool.query(
+        `UPDATE adcp_reporting_receipts
+            SET supersedes_receipt_id = 'receipt-deepchain-superseded-10001',
+                recorded_at = clock_timestamp()
+          WHERE account_id = $1 AND reporting_receipt_id = 'receipt-deepchain-0001'`,
+        [deep.accountId]
+      );
+      assert.equal(tip.rowCount, 1, 'the acceptance is the tip of that chain');
 
       const projection = await deepCore.getManagedLifecycleProjection({
         reporting_obligation_id: deep.obligation.reporting_obligation_id,
@@ -4583,7 +4593,7 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
       assert.deepEqual(
         projection.consumers[0].receipts.map(value => value.reporting_receipt_id),
         ['receipt-deepchain-0001'],
-        'the verdict reads the current leaf, which is all it has ever used'
+        'the verdict reads the chain leaf, which is all it has ever used'
       );
       // And the whole reconcile completes rather than failing forever.
       await ledger.reconcileReportingStatusLifecycleV1({
@@ -4779,6 +4789,150 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     } while (cursor);
     assert.ok(pages > 1, 'sanity: paging really did split this obligation');
     assert.deepEqual(seenReceipts, ['adjustment-receipt-pageadj-0001'], 'the acceptance is readable exactly once');
+  });
+
+  test('projects the receipt leaf as of the cutoff, not the leaf as of now', async () => {
+    const asOf = await deliverOnce(await seedSkewLedger('asofleaf', 'consumer_receipt'));
+    const context = { account: { id: asOf.accountId }, agent: { agent_url: 'https://asofleaf-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const rejected = await sync(
+      {
+        idempotency_key: 'receipt-asofleaf-batch-0001',
+        receipts: [
+          receipt(asOf, {
+            reporting_receipt_id: 'receipt-asofleaf-0001',
+            status: 'rejected',
+            rejection_codes: ['ROW_COUNT_MISMATCH'],
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(rejected.results[0].result, 'recorded');
+
+    // The cutoff sits between the rejection and the acceptance that repairs
+    // it. Step past the rejection's own microsecond so it is inside.
+    const cutoff = (
+      await pool.query(
+        `SELECT to_char((MAX(recorded_at) + INTERVAL '1 microsecond') AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value
+           FROM adcp_reporting_receipts WHERE account_id = $1`,
+        [asOf.accountId]
+      )
+    ).rows[0].value;
+
+    const accepted = await sync(
+      {
+        idempotency_key: 'receipt-asofleaf-batch-0002',
+        receipts: [
+          receipt(asOf, {
+            reporting_receipt_id: 'receipt-asofleaf-0002',
+            supersedes_reporting_receipt_id: 'receipt-asofleaf-0001',
+          }),
+        ],
+      },
+      context
+    );
+    assert.equal(accepted.results[0].result, 'recorded');
+
+    // As of the cutoff the buyer had filed a rejection. Asking which row is
+    // current *now* and only then applying the cutoff answered "neither": the
+    // rejection was no longer current and the acceptance was out of scope, so
+    // the projection reported no receipt at all and the reconcile persisted
+    // RECEIPT_REQUIRED over a rejection that had already been filed.
+    const historical = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: asOf.obligation.reporting_obligation_id,
+      ledgerAsOf: cutoff,
+    });
+    assert.deepEqual(
+      historical.consumers.map(value => value.receipts.map(entry => entry.reporting_receipt_id)),
+      [['receipt-asofleaf-0001']],
+      'the cutoff sees the leaf that was current then'
+    );
+    assert.equal(historical.consumers[0].receipts[0].status, 'rejected');
+
+    // And the present still sees the acceptance.
+    const current = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: asOf.obligation.reporting_obligation_id,
+      ledgerAsOf: await core.readLedgerInstant(),
+    });
+    assert.deepEqual(
+      current.consumers.map(value => value.receipts.map(entry => entry.reporting_receipt_id)),
+      [['receipt-asofleaf-0002']]
+    );
+    assert.equal(current.consumers[0].receipts[0].status, 'accepted');
+  });
+
+  test('projects the whole admitted consumer-by-subject cross product', async () => {
+    const { Pool } = require('pg');
+    const wideSchema = `${schema}_crossproduct`;
+    await bootstrap.query(`CREATE SCHEMA "${wideSchema}"`);
+    const widePool = new Pool({ connectionString: DATABASE_URL, options: `-c search_path="${wideSchema}"` });
+    try {
+      await widePool.query(ledger.REPORTING_LEDGER_MIGRATION);
+      await widePool.query(ledger.REPORTING_MANAGED_DELIVERY_MIGRATION);
+      const wideCore = new ledger.PostgresReportingLedgerStore(widePool, {
+        acknowledgeIsolatedDatabase: true,
+        managedDelivery: true,
+      });
+      const wideManaged = new ledger.PostgresReportingManagedDeliveryStore(widePool);
+      const wide = await seedSkewLedgerInto(wideCore, wideManaged, 'crossproduct', 'consumer_receipt');
+
+      // One revision and 99 adjustments is 100 subjects; 101 consumers each
+      // filing a valid 100-entry batch is 10,100 leaves. Every part of that is
+      // admitted by the write path — the per-array cap is 100 and the
+      // per-consumer cap is 100,000 — and the projection refused all of it
+      // against a flat 10,000-row bound that a product was never the right
+      // shape for.
+      await widePool.query(
+        `INSERT INTO adcp_reporting_adjustments
+          (adjustment_id, obligation_id, adjusts_revision_id, adjustment_number, content_sha256, data, created_at)
+         SELECT 'adjustment-crossproduct-' || i, $1, $2, i, repeat('a', 64), '{}'::jsonb, clock_timestamp()
+           FROM generate_series(1, 99) AS i`,
+        [wide.obligation.reporting_obligation_id, wide.revision.reporting_revision_id]
+      );
+      await widePool.query(
+        `INSERT INTO adcp_reporting_receipts
+          (account_id, consumer_id, reporting_receipt_id, receipt_kind, subject_id,
+           is_current, semantic_fingerprint, data, received_at, recorded_at)
+         SELECT $1,
+                'https://crossproduct-' || consumer || '.example',
+                'receipt-crossproduct-' || consumer || '-' || subject,
+                CASE WHEN subject = 0 THEN 'revision' ELSE 'adjustment' END,
+                CASE WHEN subject = 0 THEN $2 ELSE 'adjustment-crossproduct-' || subject END,
+                true, 'leaf', '{"status":"accepted"}'::jsonb, clock_timestamp(), clock_timestamp()
+           FROM generate_series(1, 101) AS consumer, generate_series(0, 99) AS subject`,
+        [wide.accountId, wide.revision.reporting_revision_id]
+      );
+
+      const projection = await wideCore.getManagedLifecycleProjection({
+        reporting_obligation_id: wide.obligation.reporting_obligation_id,
+        ledgerAsOf: await wideCore.readLedgerInstant(),
+      });
+      assert.equal(projection.consumers.length, 101, 'every consumer is projected');
+      assert.equal(
+        projection.consumers.reduce(
+          (total, value) => total + value.receipts.length + value.adjustmentReceipts.length,
+          0
+        ),
+        10_100,
+        'and every one of their leaves'
+      );
+      assert.equal(projection.receiptEvidenceComplete, true, 'nothing was truncated');
+      // And a reconcile over it completes rather than deferring forever.
+      await ledger.reconcileReportingStatusLifecycleV1({
+        store: wideCore,
+        reporting_obligation_id: wide.obligation.reporting_obligation_id,
+      });
+      const watermark = await widePool.query(
+        `SELECT processed_at FROM adcp_reporting_lifecycle_state WHERE obligation_id = $1`,
+        [wide.obligation.reporting_obligation_id]
+      );
+      assert.equal(watermark.rowCount, 1);
+    } finally {
+      await widePool.end();
+      await bootstrap.query(`DROP SCHEMA IF EXISTS "${wideSchema}" CASCADE`);
+    }
   });
 
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {
