@@ -58,9 +58,11 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // + both declaration flavours), for 6,124 published files. Managed Delivery and
 // Reconciled Billing add two public dual-format runtime/declaration module sets
 // — `reporting/ledger/managed` and `reporting/ledger/managed-postgres`, each CJS
-// + ESM + both declaration flavours — for +8 files and 6,132 total. The
+// + ESM + both declaration flavours — for +8 files and 6,132 total.
+// The durable buyer-writes adoption example adds two TypeScript files and one
+// packaged guide, bringing the clean package to 6,135 published files. The
 // remaining changes edit existing modules; byte budgets stay fixed.
-const MAX_PACKED_FILE_COUNT = 6_132;
+const MAX_PACKED_FILE_COUNT = 6_135;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

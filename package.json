@@ -543,6 +543,7 @@
     "examples/gcp-kms-signing-provider.ts",
     "examples/error-compliant-server.ts",
     "examples/existing-platform-thin.ts",
+    "examples/durable-buyer-writes/**/*",
     "examples/targeting-input-existing-platform.ts",
     "examples/signals-agent.ts",
     "examples/decisioning-platform-mock-seller.ts",
