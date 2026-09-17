@@ -955,8 +955,17 @@ function validateConfigurationAgainstDeliveryOffering(
   ) {
     throw new TypeError('Reporting official deadline must equal the advertised delivery SLA of its offering');
   }
-  if (configuration.schedule.recoveryWindowMilliseconds > automatedRecoveryWindowSeconds * 1_000) {
-    throw new TypeError('Reporting configuration recovery window exceeds the advertised maximum');
+  // `automated_recovery_window_seconds` is advertised once for the whole
+  // service, and `recoveryDeadlineAt` — which drives the buyer-facing
+  // consumer_status_pending signal — is computed from the configured window. A
+  // configuration that undercuts the advertised value therefore marks a buyer
+  // pending hours before the deadline the capability promised it. The two must
+  // be the same number.
+  if (configuration.schedule.recoveryWindowMilliseconds !== automatedRecoveryWindowSeconds * 1_000) {
+    throw new TypeError(
+      'Reporting configuration recovery window must equal the advertised automated recovery window; ' +
+        'the advertised value is what buyer-facing deadlines are measured against'
+    );
   }
 }
 
@@ -1105,17 +1114,30 @@ function assertSupportedScheduleSemantics(
   // that changed and changed back: today's offset matches the anchor's, every
   // boundary the window samples is local midnight, and the periods in between
   // silently land at 01:00 local while the planner still schedules them.
+  // Obligations begin at `max(anchor, installedAt)` (producer.ts), so nothing
+  // before installation is ever generated and history the planner will not
+  // touch must not refuse a configuration. Scanning from the anchor rejected
+  // the protocol's own 1970 origin for any zone that ran DST decades ago —
+  // Asia/Shanghai, Asia/Seoul — while the same offering accepted a recent
+  // anchor, which is the same schedule. Validate the operational span instead,
+  // and confirm separately that the grid the anchor sits on still lands on
+  // source-local midnight today.
   const now = Date.now();
+  const spanStartMs = Math.max(anchorMs, now - OFFSET_BACKWARD_HORIZON_DAYS * DAY_MILLISECONDS);
   const spanEndMs = Math.max(now, anchorMs) + OFFSET_FORWARD_HORIZON_DAYS * DAY_MILLISECONDS;
-  if (spanEndMs - anchorMs > MAX_OFFSET_SPAN_DAYS * DAY_MILLISECONDS) {
+  if (reportingUtcOffsetMinutesV1(sourceTimezone, originMs) !== reportingUtcOffsetMinutesV1(sourceTimezone, now)) {
     throw new TypeError(
-      'Reporting configuration anchor is too far from the operational horizon to verify its source timezone; ' +
-        'anchor the generation on a more recent protocol boundary'
+      'Reporting source timezone no longer observes its schedule-origin offset; no anchor derived from the ' +
+        'protocol origin can land on source-local midnight'
     );
   }
-  assertConstantUtcOffset(sourceTimezone, anchorMs, spanEndMs);
-  if (!reportingIsSourceLocalMidnightV1(anchorMs, sourceTimezone)) {
-    throw new TypeError('Reporting configuration anchor does not land on source-local midnight');
+  assertConstantUtcOffset(sourceTimezone, spanStartMs, spanEndMs);
+  if (!reportingIsSourceLocalMidnightV1(spanStartMs === anchorMs ? anchorMs : now, sourceTimezone)) {
+    // A boundary in the operational window, not merely the historical anchor.
+    const ordinal = Math.ceil((spanStartMs - originMs) / schedule.periodMilliseconds);
+    if (!reportingIsSourceLocalMidnightV1(originMs + ordinal * schedule.periodMilliseconds, sourceTimezone)) {
+      throw new TypeError('Reporting configuration boundaries do not land on source-local midnight');
+    }
   }
 }
 

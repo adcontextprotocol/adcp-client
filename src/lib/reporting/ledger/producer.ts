@@ -1186,8 +1186,15 @@ function assertScheduleIdentityMatchesBoundaries(
   // beyond the later of them. Starting at the anchor collapsed the scan to a
   // zero-width window for any anchor past `now + horizon`, so a future-dated
   // DST generation was accepted without ever being probed.
+  // Obligations begin at `max(anchor, installedAt)`, so history before
+  // installation is never generated and must not refuse a configuration. A
+  // scan starting at the anchor rejected the protocol's own 1970 origin for
+  // any zone that ran DST decades ago — Asia/Shanghai, Asia/Seoul — while the
+  // identical schedule at a recent anchor was accepted. Scan the operational
+  // window instead, anchored forward for a future-dated generation so it is
+  // still probed.
   const now = Date.now();
-  const scanStartMs = Math.min(anchorMs, now);
+  const scanStartMs = Math.max(Math.min(anchorMs, now), now - OFFSET_HORIZON_MILLISECONDS);
   const scanEndMs = Math.max(anchorMs, now) + OFFSET_HORIZON_MILLISECONDS;
   if (scanEndMs - scanStartMs > MAX_OFFSET_SCAN_MILLISECONDS) {
     throw new Error('Reporting configuration anchor is too far from the operational horizon to verify its timezone');

@@ -882,7 +882,7 @@ describe('ReliableReportingService', () => {
         }),
         context
       ),
-      /UTC offset/
+      /UTC offset|schedule-origin offset/
     );
 
     // Sub-day windows have no source-local midnight boundary, so the offering
@@ -912,7 +912,7 @@ describe('ReliableReportingService', () => {
         }),
         context
       ),
-      /UTC offset/,
+      /UTC offset|schedule-origin offset/,
       'validation must reach from the anchor through the periods being generated now'
     );
 
@@ -1247,7 +1247,7 @@ describe('ReliableReportingService', () => {
           }),
           context
         ),
-        /UTC offset/,
+        /UTC offset|schedule-origin offset/,
         `${timezone} observes DST and must be refused even when anchored in the future`
       );
     }
@@ -1789,30 +1789,51 @@ describe('ReliableReportingService', () => {
     assert.equal(obligation.schedule.period_timezone, 'UTC', 'billing_cycle requires its timezone');
   });
 
-  test('catches a source timezone that changed and changed back inside the span', async () => {
+  test('judges a change-and-return by the operational window, not by history', async () => {
     // Asia/Tehran ran +04:30 through the summers of 2021 and 2022 and has been
-    // a constant +03:30 since. Both transitions sit far outside any window
-    // around today, and the offset today equals the offset at a 2021 anchor —
-    // so only a scan of the whole span from the anchor sees them.
+    // a constant +03:30 since. Obligations begin at max(anchor, installedAt),
+    // so a generation installed today never produces a 2021 period and those
+    // transitions cannot put a boundary off local midnight — refusing it would
+    // reject a schedule the service executes correctly. What must still be
+    // refused is a zone whose offset moves inside the window that is actually
+    // generated.
+    const context = { account: { id: 'account-a', ctx_metadata: {} } };
     const tehran = zonedFixture('Asia/Tehran', { accountResolved: true });
     const origin = reportingScheduleOriginV1('source_timezone', 'Asia/Tehran');
-    const target = Date.parse('2021-01-15T00:00:00.000Z');
-    const anchorMs = origin + Math.ceil((target - origin) / 86_400_000) * 86_400_000;
+    const historic = origin + Math.ceil((Date.parse('2021-01-15T00:00:00.000Z') - origin) / 86_400_000) * 86_400_000;
+    const installed = await tehran.service.installConfiguration(
+      configuration({
+        expectedSourceTimezone: 'Asia/Tehran',
+        schedule: {
+          anchor: new Date(historic).toISOString(),
+          periodMilliseconds: 86_400_000,
+          deliverySlaMilliseconds: 0,
+          recoveryWindowMilliseconds: 86_400_000,
+        },
+      }),
+      context
+    );
+    assert.equal(installed.sourceTimezone, 'Asia/Tehran', 'history the planner never reaches must not refuse');
+
+    // A zone whose offset moves inside the operational window is still refused.
+    const dst = zonedFixture('America/New_York', { accountResolved: true });
+    const nyOrigin = reportingScheduleOriginV1('source_timezone', 'America/New_York');
+    const recent = nyOrigin + Math.ceil((Date.now() - nyOrigin) / 86_400_000) * 86_400_000;
     await assert.rejects(
-      tehran.service.installConfiguration(
+      dst.service.installConfiguration(
         configuration({
-          expectedSourceTimezone: 'Asia/Tehran',
+          expectedSourceTimezone: 'America/New_York',
           schedule: {
-            anchor: new Date(anchorMs).toISOString(),
+            anchor: new Date(recent).toISOString(),
             periodMilliseconds: 86_400_000,
             deliverySlaMilliseconds: 0,
             recoveryWindowMilliseconds: 86_400_000,
           },
         }),
-        { account: { id: 'account-a', ctx_metadata: {} } }
+        context
       ),
-      /changes its UTC offset/,
-      'a change-and-return inside the span must not pass'
+      /UTC offset|schedule-origin offset/,
+      'an offset change inside the generated window must still refuse'
     );
   });
 
@@ -1893,22 +1914,32 @@ describe('ReliableReportingService', () => {
         timezone,
         `${timezone} is stable today and must remain advertisable`
       );
+      // The protocol's own origin is the canonical anchor. Scanning from it
+      // walked straight into the 1980s DST era these zones have long left,
+      // refusing the exact schedule the same offering accepts at a recent
+      // anchor — obligations begin at max(anchor, installedAt), so none of
+      // that history is ever generated.
       const origin = reportingScheduleOriginV1('source_timezone', timezone);
-      const target = Date.now();
-      const anchorMs = origin + Math.ceil((target - origin) / 86_400_000) * 86_400_000;
-      const installed = await stable.service.installConfiguration(
-        configuration({
-          expectedSourceTimezone: timezone,
-          schedule: {
-            anchor: new Date(anchorMs).toISOString(),
-            periodMilliseconds: 86_400_000,
-            deliverySlaMilliseconds: 0,
-            recoveryWindowMilliseconds: 86_400_000,
-          },
-        }),
-        { account: { id: 'account-a', ctx_metadata: {} } }
-      );
-      assert.equal(installed.sourceTimezone, timezone, `${timezone} must also install`);
+      for (const anchorMs of [origin, origin + Math.ceil((Date.now() - origin) / 86_400_000) * 86_400_000]) {
+        const installed = await stable.service.installConfiguration(
+          configuration({
+            delivery_config_id: `dc-${timezone}-${anchorMs}`,
+            expectedSourceTimezone: timezone,
+            schedule: {
+              anchor: new Date(anchorMs).toISOString(),
+              periodMilliseconds: 86_400_000,
+              deliverySlaMilliseconds: 0,
+              recoveryWindowMilliseconds: 86_400_000,
+            },
+          }),
+          { account: { id: 'account-a', ctx_metadata: {} } }
+        );
+        assert.equal(
+          installed.sourceTimezone,
+          timezone,
+          `${timezone} must install at ${new Date(anchorMs).toISOString()}`
+        );
+      }
     }
   });
 
@@ -2707,6 +2738,142 @@ describe('ReliableReportingService', () => {
       /per-slice metric availability bound/,
       '501 constituents x 2 metrics exceeds the bound and must not install'
     );
+  });
+
+  test('a stale admission cannot delete a claim that was revoked and re-taken', async t => {
+    // A reserves V; a replay revokes it; B re-reserves V; A commits. With a
+    // bare reserved flag A saw "reserved" and deleted B's victim — evidence a
+    // replay had already been served from.
+    //
+    // Every wait below is bounded, so a build without the fix fails on the
+    // assertion or the budget rather than hanging the suite.
+    const budget = async (promise, label, ms = 10_000) => {
+      let timer;
+      try {
+        return await Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), ms);
+            timer.unref?.();
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const waitUntil = async (predicate, label, ms = 10_000) => {
+      const deadline = Date.now() + ms;
+      while (!predicate()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+    };
+
+    let stall = false;
+    let entered = 0;
+    const gates = [];
+    const retained = createInlineReportingSourceExecutor(
+      async () => {
+        if (stall) {
+          entered += 1;
+          await new Promise(resolve => gates.push(resolve));
+        }
+        return [{ media_buy_id: 'fixture-media-buy', impressions: 1, spend: '0.10' }];
+      },
+      structuredClone(redactedReportingSourceOfferingV1),
+      { replayRetention: { evictSettled: true } }
+    );
+    const ctx = () => ({ signal: new AbortController().signal });
+    const key = index => `aba-slice-${String(index).padStart(4, '0')}`;
+
+    // Whatever the outcome, every held fetch is released and awaited, so a
+    // build without the fix fails on its assertion instead of leaving the
+    // runner waiting on work nobody will unblock.
+    const inFlight = [];
+    t.after(async () => {
+      stall = false;
+      while (gates.length > 0) gates.shift()();
+      await Promise.allSettled(inFlight);
+    });
+
+    const oldest = redactedReportingSourceRequestV1({ sourceExecutionKey: key(0) });
+    const sealed = await retained.execute(oldest, ctx());
+    assert.equal(sealed.ok, true);
+    const object = (JSON.parse(Buffer.from(Object.values(sealed.manifestBytes)).toString('utf8')).objects ?? [])[0];
+    for (let index = 1; index < 100; index += 1) {
+      assert.equal(
+        (await retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(index) }), ctx())).ok,
+        true,
+        `slice ${index}`
+      );
+    }
+
+    // A reserves the oldest and is held inside its fetch.
+    stall = true;
+    const admissionA = retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(100) }), ctx());
+    inFlight.push(admissionA);
+    await waitUntil(() => entered === 1, 'admission A to enter its fetch');
+
+    // A replay revokes A's claim on the oldest entry.
+    assert.equal((await retained.execute(oldest, ctx())).ok, true, 'a claimed entry stays replayable');
+
+    // B re-reserves that same entry and is held too.
+    const admissionB = retained.execute(redactedReportingSourceRequestV1({ sourceExecutionKey: key(101) }), ctx());
+    inFlight.push(admissionB);
+    await waitUntil(() => entered === 2, 'admission B to enter its fetch');
+
+    // A commits first. Its claim was revoked and re-taken, so it must leave
+    // the entry alone — B still holds the claim and has not committed.
+    gates.shift()();
+    assert.equal((await budget(admissionA, 'admission A')).ok, true);
+
+    const readOldest = () =>
+      retained.read({
+        objectRef: object.objectRef,
+        objectGeneration: object.objectGeneration,
+        sourceScope: oldest.sourceScope,
+        account: oldest.account,
+        delivery_config_id: oldest.delivery_config_id,
+        delivery_config_version: oldest.delivery_config_version,
+        report_definition_id: oldest.report_definition_id,
+        reporting_obligation_id: oldest.reporting_obligation_id,
+        maxBytes: 1024 * 1024,
+        signal: new AbortController().signal,
+      });
+    const bytes = await budget(readOldest(), 'read after A committed');
+    assert.ok(bytes.byteLength > 0, "a stale commit must not delete another transaction's claim");
+
+    gates.shift()();
+    assert.equal((await budget(admissionB, 'admission B')).ok, true);
+  });
+
+  test('installs the recovery window it advertises, so pending matches the promise', async () => {
+    // recoveryDeadlineAt drives the buyer-facing consumer_status_pending
+    // signal, and it is computed from the configured window. A configuration
+    // undercutting the advertised value marked buyers pending hours before the
+    // deadline the capability promised.
+    const { service } = serviceFixture();
+    assert.equal(service.capabilities.automated_recovery_window_seconds, 86_400);
+    await assert.rejects(
+      service.installConfiguration(
+        configuration({
+          schedule: {
+            anchor: '2026-09-01T00:00:00.000Z',
+            periodMilliseconds: 86_400_000,
+            deliverySlaMilliseconds: 0,
+            recoveryWindowMilliseconds: 3_600_000,
+          },
+        }),
+        { account: { id: 'account-a', ctx_metadata: {} } }
+      ),
+      /must equal the advertised automated recovery window/,
+      'a shorter window would page buyers before the advertised deadline'
+    );
+
+    const installed = await service.installConfiguration(configuration(), {
+      account: { id: 'account-a', ctx_metadata: {} },
+    });
+    assert.equal(installed.schedule.recoveryWindowMilliseconds, 86_400_000);
   });
 
   test('refuses to widen a tenant cycle into a deployment-wide scan without the explicit opt-in', async () => {

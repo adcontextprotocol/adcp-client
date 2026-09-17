@@ -92,11 +92,12 @@ type ExecutionEntry = {
   waiters: number;
   /**
    * Claimed by an in-flight admission transaction. The entry stays fully
-   * replayable while reserved — only `commit()` removes it — but no other
+   * replayable while claimed — only the claiming transaction's `commit()`
+   * removes it — but no other
    * admission may plan it, so concurrent admissions cannot both count the same
    * victim toward their own ceiling.
    */
-  reserved?: boolean;
+  reservation?: object;
 };
 
 type StoredObject = {
@@ -253,7 +254,7 @@ export function createInlineReportingSourceExecutor(
         // keeps the entry replayable on purpose, so once a replay has been
         // handed its evidence that evidence must survive — the admission that
         // reserved it commits everything else and simply leaves this one.
-        existing.reserved = false;
+        existing.reservation = undefined;
         return awaitInlineExecution(existing, context.signal, request.deadline.deadlineAt);
       }
 
@@ -999,7 +1000,7 @@ function planReclaim(
   scopeKey?: string
 ): string | undefined {
   for (const [key, entry] of executions) {
-    if (entry.pending || entry.waiters > 0 || entry.reserved) continue;
+    if (entry.pending || entry.waiters > 0 || entry.reservation !== undefined) continue;
     if (scopeKey !== undefined && entry.scopeKey !== scopeKey) continue;
     if (planned.includes(key)) continue;
     return key;
@@ -1040,6 +1041,10 @@ function createAdmissionReclaimer(
   storage: { objects: Map<string, StoredObject>; totalBytes: number; scopeBytes: Map<string, number> }
 ): InlineAdmissionReclaimerV1 {
   const planned: string[] = [];
+  // Identity for this transaction's claims. A bare boolean let a stale
+  // transaction commit a claim that had been revoked and re-taken, deleting
+  // evidence a replay had been served and another admission was counting on.
+  const token: object = {};
   let settled = false;
   return {
     plan(scopeKey, scopeOnly) {
@@ -1050,7 +1055,7 @@ function createAdmissionReclaimer(
       if (victim === undefined) return undefined;
       planned.push(victim);
       const entry = executions.get(victim);
-      if (entry) entry.reserved = true;
+      if (entry) entry.reservation = token;
       return {
         bytes: storage.objects.get(stagedObjectRef(victim))?.bytes.byteLength ?? 0,
         sameScope: entry?.scopeKey === scopeKey,
@@ -1072,26 +1077,41 @@ function createAdmissionReclaimer(
     commit() {
       if (settled) return;
       settled = true;
+      const spared: string[] = [];
       for (const victim of planned) {
         const entry = executions.get(victim);
-        // Commit only victims whose claim still stands. A replay served between
-        // planning and here revoked it, and a joiner still in flight holds it
-        // open; either way the evidence stays. Its bytes stay accounted, so the
-        // next admission sees the real usage and reclaims again.
-        if (entry && (entry.reserved !== true || entry.pending || entry.waiters > 0)) {
-          entry.reserved = false;
+        if (entry === undefined) continue;
+        // Commit only claims this transaction still holds. A replay served
+        // between planning and here revoked the claim, and another admission
+        // may since have taken it; deleting either would destroy evidence that
+        // was handed out or that someone else is counting on.
+        if (entry.reservation !== token || entry.pending || entry.waiters > 0) {
+          spared.push(victim);
           continue;
         }
+        entry.reservation = undefined;
         commitReclaim(executions, storage, victim);
       }
       planned.length = 0;
+      // Every revoked claim was credited toward a ceiling this admission has
+      // already cleared, so replace it where one is available. Without this the
+      // executor sits one entry over its limit until the next admission.
+      // The spared victims are excluded: they are exactly the entries a replay
+      // was served from or another admission now holds.
+      for (let attempt = 0; attempt < spared.length; attempt += 1) {
+        const replacement = planReclaim(executions, spared);
+        if (replacement === undefined) break;
+        spared.push(replacement);
+        commitReclaim(executions, storage, replacement);
+      }
     },
     release() {
       if (settled) return;
       settled = true;
       for (const victim of planned) {
         const entry = executions.get(victim);
-        if (entry) entry.reserved = false;
+        // Never clear a claim this transaction no longer holds.
+        if (entry?.reservation === token) entry.reservation = undefined;
       }
       planned.length = 0;
     },
