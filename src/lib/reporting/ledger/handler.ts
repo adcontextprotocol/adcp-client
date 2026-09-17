@@ -14,6 +14,7 @@ import {
 import {
   aggregateReportingHealthV1,
   assertReportingConsumerMismatchEscalation,
+  reportingEffectiveConsumerMismatchEscalationV1,
   projectReportingConsumerStatusMismatchV1,
   projectReportingObligationHealthV1,
 } from './health';
@@ -56,7 +57,11 @@ export function createReportingStatusHandler<TContext = unknown>(
   // snapshot and the handler projects severity afterwards, so two different
   // windows would make a filtered periods read contradict the summary.
   const consumerMismatchEscalation = assertReportingConsumerMismatchEscalation(
-    resolveConsumerMismatchEscalation(options?.consumerMismatchEscalation, store)
+    reportingEffectiveConsumerMismatchEscalationV1(
+      options?.consumerMismatchEscalation,
+      store,
+      'createReportingStatusHandler'
+    )
   );
   const activeReadsByAccount = new Map<string, number>();
   return async (request, context) => {
@@ -378,32 +383,6 @@ export function createReportingStatusHandler<TContext = unknown>(
       releaseReadSlot();
     }
   };
-}
-
-/**
- * One escalation commitment for both the snapshot pre-filter and the
- * projection. Throws when the handler and the store were configured with
- * different windows rather than letting the two views silently diverge.
- */
-function resolveConsumerMismatchEscalation(
-  fromOptions: ReportingConsumerMismatchEscalationV1 | undefined,
-  store: ReportingLedgerStore
-): ReportingConsumerMismatchEscalationV1 | undefined {
-  const fromStore = (store as { consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1 })
-    .consumerMismatchEscalation;
-  if (!fromOptions) return fromStore;
-  if (!fromStore) return fromOptions;
-  if (
-    fromOptions.escalationSeconds !== fromStore.escalationSeconds ||
-    fromOptions.operationsContact.url !== fromStore.operationsContact.url ||
-    fromOptions.operationsContact.email !== fromStore.operationsContact.email
-  ) {
-    throw new TypeError(
-      'consumerMismatchEscalation differs between createReportingStatusHandler and the reporting ledger store; ' +
-        'configure one value so a health-filtered periods read cannot disagree with the summary'
-    );
-  }
-  return fromOptions;
 }
 
 /** Exact revision reader for createAdcpServer's getMediaBuyDelivery slot. */

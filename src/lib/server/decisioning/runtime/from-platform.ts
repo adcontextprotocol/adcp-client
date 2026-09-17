@@ -3184,6 +3184,19 @@ export function createAdcpServerFromPlatform<P extends DecisioningPlatform<any, 
     // cross-credential collisions without reopening a duplicate-buy window
     // on create_media_buy/update_media_buy. Explicit adopter resolvers still
     // win for every tool.
+    // A service-installed reporting platform names the consumer a receipt is
+    // deposited for; scope that tool's replay by the same value rather than by
+    // the caller's credential, which two operator seats can share.
+    ...((opts.resolveReportingConsumerId ?? platform.reporting?.resolveConsumerId)
+      ? {
+          resolveReportingConsumerId:
+            opts.resolveReportingConsumerId ??
+            ((ctx, params) =>
+              platform.reporting!.resolveConsumerId!(
+                ctxFor(ctx as HandlerContext<Account>, params) as RequestContext<Account>
+              )),
+        }
+      : {}),
     resolveIdempotencyPrincipal:
       opts.resolveIdempotencyPrincipal ??
       ((ctx, _params, toolName) =>

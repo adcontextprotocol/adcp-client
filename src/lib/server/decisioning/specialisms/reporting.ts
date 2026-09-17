@@ -37,4 +37,16 @@ export interface ReliableReportingPlatform<TCtxMeta = Record<string, unknown>> {
     request: AdcpToolMap['sync_reporting_status']['params'],
     context: Ctx<TCtxMeta>
   ): Promise<AdcpToolMap['sync_reporting_status']['result']>;
+
+  /**
+   * The identity `syncReportingStatus` deposits a receipt for, exposed so the
+   * framework can scope `sync_reporting_status` replay by the same value the
+   * receipt is recorded under. Present exactly when `syncReportingStatus` is.
+   *
+   * Without it the framework falls back to the caller's credential identity,
+   * which is wrong whenever an adopter maps two operator seats sharing one
+   * OAuth `client_id` to different reporting consumers: the second seat would
+   * be served the first's cached response and deposit nothing.
+   */
+  readonly resolveConsumerId?: (context: Ctx<TCtxMeta>) => string | Promise<string>;
 }

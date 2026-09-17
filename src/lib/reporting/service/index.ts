@@ -8,6 +8,9 @@ import type { ReportingDeliveryCapabilities, ReportingDeliveryOffering } from '.
 import { ReportingDeliveryOfferingSchema } from '../../types/schemas.generated';
 import {
   REPORTING_LEDGER_MIGRATION,
+  assertReportingConsumerMismatchEscalation,
+  reportingConsumerStatusCapabilityV1,
+  reportingEffectiveConsumerMismatchEscalationV1,
   createReportingDeliveryHandler,
   createReportingProducer,
   createReportingStatusHandler,
@@ -291,6 +294,20 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
   if (options.consumerMismatchEscalation && !hasConsumerStatus) {
     throw new TypeError('consumerMismatchEscalation requires resolveConsumerId');
   }
+  // The store can carry the escalation window on its own, and the status
+  // handler honours it. Advertising only what was passed here published nothing
+  // for a store-only deployment while still enforcing the store's clock, so
+  // buyers aged issues against a window the capability document denied.
+  // Resolve once and use the same value for enforcement and advertisement; two
+  // disagreeing values are refused here rather than at the first read.
+  const effectiveConsumerMismatchEscalation = assertReportingConsumerMismatchEscalation(
+    reportingEffectiveConsumerMismatchEscalationV1(
+      options.consumerMismatchEscalation,
+      options.store,
+      'createReliableReportingService'
+    )
+  );
+  const advertisedConsumerMismatchEscalation = hasConsumerStatus ? effectiveConsumerMismatchEscalation : undefined;
   if (hasConsumerStatus) assertConsumerStatusStore(options.store);
   const retentionDays = options.statusRetentionDays;
   positiveInteger(retentionDays, 'statusRetentionDays');
@@ -305,19 +322,16 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     offerings: deliveryOfferings as [ReportingDeliveryOffering, ...ReportingDeliveryOffering[]],
     automated_recovery_window_seconds: options.automatedRecoveryWindowSeconds,
     status_retention_days: retentionDays,
-    ...(options.consumerMismatchEscalation
-      ? {
-          consumer_mismatch_escalation_seconds: options.consumerMismatchEscalation.escalationSeconds,
-          operations_contact: structuredClone(options.consumerMismatchEscalation.operationsContact),
-        }
+    ...(advertisedConsumerMismatchEscalation
+      ? reportingConsumerStatusCapabilityV1(advertisedConsumerMismatchEscalation)
       : {}),
   }) satisfies ReportingDeliveryCapabilities;
 
   const getReportingStatus = options.resolveConsumerId
     ? createReportingStatusHandler(options.store, {
         resolveConsumerId: options.resolveConsumerId,
-        ...(options.consumerMismatchEscalation
-          ? { consumerMismatchEscalation: options.consumerMismatchEscalation }
+        ...(effectiveConsumerMismatchEscalation
+          ? { consumerMismatchEscalation: effectiveConsumerMismatchEscalation }
           : {}),
       })
     : createReportingStatusHandler(options.store);
@@ -334,6 +348,10 @@ export function createReliableReportingService<TCtxMeta = Record<string, unknown
     getMediaBuyDelivery: (request, context) => getMediaBuyDelivery(request, context as never),
     ...(syncReportingStatus && {
       syncReportingStatus: (request, context) => syncReportingStatus(request, context),
+      // Published so `createAdcpServerFromPlatform` can scope replay by the
+      // identity the receipt is actually recorded under, rather than by the
+      // caller's credential.
+      resolveConsumerId: options.resolveConsumerId!,
     }),
   };
 

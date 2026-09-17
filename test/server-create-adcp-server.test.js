@@ -1206,6 +1206,102 @@ describe('createAdcpServer', () => {
       assert.strictEqual(handled, 1, 'the same consumer repeating its own key replays');
     });
 
+    it('scopes replay by the resolved reporting consumer, not the credential', async () => {
+      // Two operator seats inside one buyer agent present the same OAuth
+      // client_id and resolve to the same account, but the deployment maps
+      // them to different reporting consumers. Keying replay by
+      // `oauth:<client_id>` put both in one cache entry, so the second seat
+      // was served the first's response and its receipt was never deposited.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const consumers = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        // The identity the receipt handler records under.
+        resolveReportingConsumerId: ctx => `consumer-${ctx.authInfo.operator}`,
+        // Shared across both seats, exactly as the credential is: only the
+        // resolved consumer separates them.
+        resolveSessionKey: () => 'shared-oauth-client',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            consumers.push(ctx.authInfo?.operator);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-operator-shared' },
+        idempotency_key: 'reporting-status-operator-key-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-operator-0001' }],
+      };
+      const seat = operator => ({
+        authInfo: {
+          operator,
+          credential: { kind: 'oauth', client_id: 'shared-oauth-client', scopes: [], expires_at: null },
+        },
+      });
+
+      for (const operator of ['seat-a', 'seat-b']) {
+        const response = await callToolRaw(server, 'sync_reporting_status', params, seat(operator));
+        assert.notStrictEqual(response.isError, true, JSON.stringify(response.structuredContent));
+      }
+      assert.deepStrictEqual(
+        consumers,
+        ['seat-a', 'seat-b'],
+        'one OAuth client_id mapped to two reporting consumers must not share a receipt namespace'
+      );
+
+      // The same consumer repeating its own key still replays, so the
+      // namespace is narrowed by consumer rather than simply disabled.
+      const replay = await callToolRaw(server, 'sync_reporting_status', params, seat('seat-a'));
+      assert.notStrictEqual(replay.isError, true, JSON.stringify(replay.structuredContent));
+      assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
+    });
+
+    it('refuses the tool when the reporting consumer cannot be resolved', async () => {
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      let handled = 0;
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveReportingConsumerId: () => {
+          throw new Error('consumer directory is unreachable');
+        },
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async () => {
+            handled += 1;
+            return { status: 'completed', results: [] };
+          },
+        },
+      });
+
+      const response = await callToolRaw(
+        server,
+        'sync_reporting_status',
+        {
+          account: { account_id: 'account-unresolvable' },
+          idempotency_key: 'reporting-status-unresolvable-0001',
+          statuses: [{ reporting_status_id: 'reporting-status-unresolvable-0001' }],
+        },
+        { authInfo: { credential: { kind: 'api_key', key_id: 'consumer-a' } } }
+      );
+      assert.strictEqual(response.isError, true);
+      assert.strictEqual(response.structuredContent.adcp_error.code, 'SERVICE_UNAVAILABLE');
+      assert.strictEqual(handled, 0, 'an unresolvable consumer must not reach the handler');
+    });
+
     it('does not collapse two consumers behind one registered buyer agent', async () => {
       // A registry resolves every caller on this deployment to the same
       // buyer agent, and the canonical principal preferred `agent:<url>` over

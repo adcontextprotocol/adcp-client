@@ -151,6 +151,39 @@ export function assertReportingConsumerMismatchEscalation(
 }
 
 /**
+ * Resolve the one escalation commitment in force.
+ *
+ * The window can be configured on the ledger store, on the status handler, or
+ * both, and the store's value is honoured when the handler is given none. A
+ * caller that advertises only what it was handed directly therefore publishes
+ * nothing for a store-only deployment while still enforcing the store's
+ * window — buyers age issues against a clock the capability document denies.
+ * Resolve through here for both enforcement and advertisement, and refuse two
+ * disagreeing values rather than letting the views diverge.
+ */
+export function reportingEffectiveConsumerMismatchEscalationV1(
+  fromOptions: ReportingConsumerMismatchEscalationV1 | undefined,
+  store: unknown,
+  configuredBy: string
+): ReportingConsumerMismatchEscalationV1 | undefined {
+  const fromStore = (store as { consumerMismatchEscalation?: ReportingConsumerMismatchEscalationV1 } | undefined)
+    ?.consumerMismatchEscalation;
+  if (!fromOptions) return fromStore;
+  if (!fromStore) return fromOptions;
+  if (
+    fromOptions.escalationSeconds !== fromStore.escalationSeconds ||
+    fromOptions.operationsContact.url !== fromStore.operationsContact.url ||
+    fromOptions.operationsContact.email !== fromStore.operationsContact.email
+  ) {
+    throw new TypeError(
+      `consumerMismatchEscalation differs between ${configuredBy} and the reporting ledger store; ` +
+        'configure one value so a health-filtered periods read cannot disagree with the summary'
+    );
+  }
+  return fromOptions;
+}
+
+/**
  * Project an escalation commitment into the wire fields of the seller's
  * `media_buy.reporting_delivery` capability block.
  *

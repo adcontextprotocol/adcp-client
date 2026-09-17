@@ -484,6 +484,130 @@ describe('ReliableReportingService', () => {
     );
   });
 
+  test('advertises the escalation window the store enforces, not only the one it was handed', () => {
+    // The status handler honours a window configured on the ledger store when
+    // it is given none of its own. Advertising only the option published
+    // nothing for a store-only deployment while still enforcing the store's
+    // clock, so buyers aged issues against a window the capability document
+    // denied.
+    const escalation = {
+      escalationSeconds: 3_600,
+      operationsContact: { email: 'reporting-ops@example.com', url: 'https://example.com/ops' },
+    };
+    const storeOnly = new MemoryLedgerStore();
+    storeOnly.consumerMismatchEscalation = escalation;
+    const { service } = serviceFixture({
+      store: storeOnly,
+      resolveConsumerId: context => context.agent.agent_url,
+    });
+    assert.equal(service.capabilities.consumer_mismatch_escalation_seconds, 3_600);
+    assert.deepEqual(service.capabilities.operations_contact, {
+      url: 'https://example.com/ops',
+      email: 'reporting-ops@example.com',
+    });
+
+    // An option-only deployment is unchanged, and the two configured together
+    // must agree rather than letting the views diverge.
+    const optionOnly = serviceFixture({
+      resolveConsumerId: context => context.agent.agent_url,
+      consumerMismatchEscalation: escalation,
+    }).service;
+    assert.equal(optionOnly.capabilities.consumer_mismatch_escalation_seconds, 3_600);
+
+    const disagreeing = new MemoryLedgerStore();
+    disagreeing.consumerMismatchEscalation = { ...escalation, escalationSeconds: 7_200 };
+    assert.throws(
+      () =>
+        serviceFixture({
+          store: disagreeing,
+          resolveConsumerId: context => context.agent.agent_url,
+          consumerMismatchEscalation: escalation,
+        }),
+      /consumerMismatchEscalation differs between createReliableReportingService and the reporting ledger store/
+    );
+
+    // A store window with no consumer-status handler advertises nothing: the
+    // escalation clock only exists for consumer receipts.
+    const inert = new MemoryLedgerStore();
+    inert.consumerMismatchEscalation = escalation;
+    const noConsumer = serviceFixture({ store: inert }).service;
+    assert.equal(noConsumer.capabilities.consumer_status_task, undefined);
+    assert.equal(noConsumer.capabilities.consumer_mismatch_escalation_seconds, undefined);
+  });
+
+  test('scopes reporting receipt replay by the resolved consumer, end to end', async () => {
+    // The framework must learn the receipt identity from the platform, not
+    // guess it from the credential: two operator seats sharing one OAuth
+    // client_id are distinct reporting consumers, and the service knows it.
+    const { service } = serviceFixture({ resolveConsumerId: context => `consumer-${context.authInfo.operator}` });
+    assert.equal(typeof service.platform.resolveConsumerId, 'function');
+
+    const seen = [];
+    const platform = service.install({
+      capabilities: { specialisms: [], config: {} },
+      accounts: {
+        resolution: 'explicit',
+        resolve: async ref => ({ id: ref?.account_id ?? 'account-a', ctx_metadata: {} }),
+        upsert: async () => [],
+      },
+      sales: { getMediaBuyDelivery: async () => ({ media_buys: [] }) },
+    });
+    // Wrapped rather than mutated: the installed reporting surface is frozen.
+    const observed = {
+      ...platform,
+      reporting: {
+        ...platform.reporting,
+        syncReportingStatus: async (request, context) => {
+          seen.push(context.authInfo.operator);
+          return {
+            status: 'completed',
+            results: request.statuses.map(status => ({
+              result: 'created',
+              reporting_status_id: status.reporting_status_id,
+            })),
+          };
+        },
+      },
+    };
+    const { createIdempotencyStore, memoryBackend } = require('../../dist/lib/server/idempotency/index.js');
+    const server = createAdcpServerFromPlatform(observed, {
+      name: 'consumer-scope-test',
+      version: '1.0.0',
+      adcpVersion: '3.2.0-rc.3',
+      validation: { requests: 'off', responses: 'off' },
+      idempotency: createIdempotencyStore({ backend: memoryBackend({ sweepIntervalMs: 0 }) }),
+      // Shared by both seats, exactly as the credential is.
+      resolveSessionKey: () => 'shared-oauth-client',
+    });
+
+    const call = operator =>
+      server.dispatchTestRequest(
+        {
+          method: 'tools/call',
+          params: {
+            name: 'sync_reporting_status',
+            arguments: {
+              account: { account_id: 'account-a' },
+              idempotency_key: 'reporting-status-e2e-operator-0001',
+              statuses: [{ reporting_status_id: 'reporting-status-e2e-0001' }],
+            },
+          },
+        },
+        {
+          authInfo: {
+            operator,
+            credential: { kind: 'oauth', client_id: 'shared-oauth-client', scopes: [], expires_at: null },
+          },
+        }
+      );
+
+    for (const operator of ['seat-a', 'seat-b']) {
+      const result = await call(operator);
+      assert.notEqual(result.isError, true, JSON.stringify(result.structuredContent));
+    }
+    assert.deepEqual(seen, ['seat-a', 'seat-b'], 'each resolved consumer must deposit its own receipt');
+  });
+
   test('rejects adapter declarations for uninstalled reporting tiers', () => {
     for (const mutate of [
       offering => {
@@ -2685,17 +2809,30 @@ describe('ReliableReportingService', () => {
   test('reclaims global byte pressure from whichever scope holds it', async () => {
     // A fresh scope has no victims of its own, so searching only its own scope
     // left it STAGING_FAILED while other scopes held the global budget.
-    // Each slice is roughly a quarter of the tightened per-scope ceiling, so four
-    // fill a scope and twelve scopes overrun the global one.
+    //
+    // This has to run against tightened ceilings to mean anything: at the
+    // shipped 256 MiB global budget these four dozen small slices were three
+    // orders of magnitude short of it, no scope ever came under global
+    // pressure, and the fresh scope staged without reclaiming at all. The
+    // observer makes that non-vacuity explicit -- the fresh scope must
+    // actually ask for capacity, and the ask must be answered from another
+    // scope's evidence.
     const rows = Array.from({ length: 100 }, (_, index) => ({
       media_buy_id: 'fixture-media-buy',
       impressions: index,
       spend: '0.10',
     }));
-    const retained = createInlineReportingSourceExecutor(
+    let requests = 0;
+    const retained = tightExecutor(
       () => rows,
       structuredClone(redactedReportingSourceOfferingV1),
-      { replayRetention: { evictSettled: true } }
+      { replayRetention: { evictSettled: true } },
+      {},
+      {
+        onCapacityRequest: () => {
+          requests += 1;
+        },
+      }
     );
     const ctx = () => ({ signal: new AbortController().signal });
     const scoped = (scope, index) => {
@@ -2707,19 +2844,57 @@ describe('ReliableReportingService', () => {
     };
 
     // Consume the global budget across other scopes, each staying under its
-    // own per-scope ceiling.
-    let staged = 0;
+    // own per-scope ceiling: four slices of roughly a quarter of the scope
+    // ceiling each, across twelve scopes, overruns the global one.
+    const staged = [];
     for (let scope = 0; scope < 12; scope += 1) {
       for (let index = 0; index < 4; index += 1) {
-        const result = await retained.execute(scoped(scope, index), ctx());
-        if (result.ok) staged += 1;
+        const request = scoped(scope, index);
+        const result = await retained.execute(request, ctx());
+        if (!result.ok) continue;
+        const object = (JSON.parse(Buffer.from(Object.values(result.manifestBytes)).toString('utf8')).objects ?? [])[0];
+        staged.push({
+          objectRef: object.objectRef,
+          objectGeneration: object.objectGeneration,
+          sourceScope: request.sourceScope,
+          account: request.account,
+          delivery_config_id: request.delivery_config_id,
+          delivery_config_version: request.delivery_config_version,
+          report_definition_id: request.report_definition_id,
+          reporting_obligation_id: request.reporting_obligation_id,
+          maxBytes: 8 * 1024 * 1024,
+        });
       }
     }
-    assert.ok(staged > 0, 'the other scopes must hold staged evidence');
+    assert.ok(staged.length > 0, 'the other scopes must hold staged evidence');
+    const readable = async () => {
+      let count = 0;
+      for (const input of staged) {
+        try {
+          await retained.read({ ...input, signal: new AbortController().signal });
+          count += 1;
+        } catch {
+          /* reclaimed */
+        }
+      }
+      return count;
+    };
+    const before = await readable();
+    assert.ok(before > 0, 'other scopes must still hold evidence when the fresh scope arrives');
+    const asksDuringFill = requests;
+    assert.ok(asksDuringFill > 0, 'the fill itself must reach global pressure');
 
     // A fresh scope must still be able to stage, by reclaiming globally.
     const fresh = await retained.execute(scoped(99, 0), ctx());
     assert.equal(fresh.ok, true, `a fresh scope must reclaim globally, got ${fresh.ok ? '' : fresh.error.code}`);
+    assert.ok(
+      requests > asksDuringFill,
+      'the fresh scope has no victims of its own, so it must have asked for capacity'
+    );
+    assert.ok(
+      (await readable()) < before,
+      'and the ask must have been answered from another scope, which is the whole point'
+    );
   });
 
   test('advances past a zero-byte victim when reclaiming for capacity', async () => {
