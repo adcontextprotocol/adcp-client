@@ -627,6 +627,44 @@ describe('seller managed reporting runtime', () => {
     );
   });
 
+  test('does not overflow long resource-read deadlines and rejects values beyond the API bound', async () => {
+    const selected = { materialization: outcome(), binding: lease().binding };
+    const store = {
+      getReadableResource: async () => selected,
+      isAuthorizationCurrent: async () => true,
+    };
+    let observedSignal;
+    const adapter = {
+      read: async (_input, { signal }) => {
+        observedSignal = signal;
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return new Uint8Array([1, 2, 3]);
+      },
+    };
+
+    // Node clamps MAX+1 to 1 ms. The operation therefore failed immediately
+    // under the old direct setTimeout even though its API deadline was valid.
+    for (const deadlineMilliseconds of [2_147_483_647, 2_147_483_648, Number.MAX_SAFE_INTEGER]) {
+      const bytes = await ledger.readManagedReportingResource(store, adapter, {
+        account_id: 'account-1',
+        resource_ref: 'resource-1',
+        deadlineMilliseconds,
+      });
+      assert.deepEqual(bytes, new Uint8Array([1, 2, 3]));
+      assert.equal(observedSignal.aborted, false);
+    }
+
+    await assert.rejects(
+      () =>
+        ledger.readManagedReportingResource(store, adapter, {
+          account_id: 'account-1',
+          resource_ref: 'resource-1',
+          deadlineMilliseconds: Number.MAX_SAFE_INTEGER + 1,
+        }),
+      /positive safe integer/
+    );
+  });
+
   test('requires retained exact canonical evidence', () => {
     assert.doesNotThrow(() => ledger.assertMaterializationOutcome(lease(), outcome(), '2026-08-27T04:00:00.000Z'));
     assert.throws(

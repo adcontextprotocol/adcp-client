@@ -34,6 +34,8 @@ const DEFAULT_DELIVERY_DEADLINE_MILLISECONDS = 60_000;
 const MINIMUM_SETTLEMENT_GRACE_MILLISECONDS = 5_000;
 const DEFAULT_RESOURCE_MAX_BYTES = 64 * 1024 * 1024;
 const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
+const MAX_NODE_TIMER_DELAY_MILLISECONDS = 2_147_483_647;
+const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
 /** RC3 `maxItems` on `receipts` and on `adjustment_receipts`, applied separately. */
 const MAX_RECEIPTS_PER_ARRAY = 100;
 /** RC3 `maxItems` on the response `results` array. */
@@ -1152,21 +1154,53 @@ async function withinDeadline<T>(
   outerSignal?.throwIfAborted();
   const controller = new AbortController();
   const signal = outerSignal ? AbortSignal.any([outerSignal, controller.signal]) : controller.signal;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelTimer: (() => void) | undefined;
   try {
     return await Promise.race([
       operation(signal),
       new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
+        cancelTimer = scheduleDeadline(milliseconds, () => {
           const error = new Error(message);
           controller.abort(error);
           reject(error);
-        }, milliseconds);
+        });
       }),
     ]);
   } finally {
-    if (timer) clearTimeout(timer);
+    cancelTimer?.();
   }
+}
+
+/**
+ * Schedules the complete safe-integer deadline without passing an overflowing
+ * delay to Node, which clamps values above 2^31 - 1 and fires them immediately.
+ */
+function scheduleDeadline(milliseconds: number, onElapsed: () => void): () => void {
+  const expiresAt = process.hrtime.bigint() + BigInt(milliseconds) * NANOSECONDS_PER_MILLISECOND;
+  let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const scheduleRemaining = () => {
+    if (cancelled) return;
+    const remainingNanoseconds = expiresAt - process.hrtime.bigint();
+    // Equality is elapsed: firing only while positive would defer an exact
+    // deadline by another timer turn.
+    if (remainingNanoseconds <= 0n) {
+      onElapsed();
+      return;
+    }
+    // Round up a partial millisecond so no chunk can fire the deadline early.
+    const remainingMilliseconds = Number(
+      (remainingNanoseconds + NANOSECONDS_PER_MILLISECOND - 1n) / NANOSECONDS_PER_MILLISECOND
+    );
+    timer = setTimeout(scheduleRemaining, Math.min(remainingMilliseconds, MAX_NODE_TIMER_DELAY_MILLISECONDS));
+  };
+
+  scheduleRemaining();
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+  };
 }
 
 /** Stable helper for immutable binding creation. */
