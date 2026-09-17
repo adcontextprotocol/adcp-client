@@ -2891,6 +2891,45 @@ The store freezes configuration lineage and period-end denominators, retains imm
 
 `ReportingLedgerNotificationActivityPortV1<TTransaction>` is the custom-store seam. Invoke it inside the authoritative transition transaction and fence both predecessor health and finality. The bundled PostgreSQL runtime persists exactly-once intent plus paginatable account activity, then projects health changes through `PersistentNotificationRuntime`; finality-only changes remain internal activity. It never owns subscriber credentials or sends webhooks itself. `listActivity()` is adopter-facing only because no public AdCP account-activity read task exists.
 
+## Reliable Reporting Service
+
+Import from `@adcp/sdk/reporting/service`. This is the adapter-first lifecycle owner over the source and ledger primitives; it does not introduce another store or transport.
+
+```typescript
+interface ReliableReportingAdapterV1 {
+  readonly sourceOffering: ReportingSourceOfferingV1;
+  readonly deliveryOffering: ReportingDeliveryOffering;
+  // Exactly one of fetchSlice or executor.
+  readonly fetchSlice?: InlineReportingDeliveryFetchV1;
+  readonly executor?: ReportingSourceWithReaderV1;
+  // Opt-in bounded replay window for the inline executor; never applied
+  // silently. A feed that outlives its replay ceiling needs this or a
+  // durable executor.
+  readonly inlineReplayRetention?: InlineReportingReplayRetentionV1;
+}
+
+const reporting = createReliableReportingService({
+  store,
+  adapters,
+  contact,
+  automatedRecoveryWindowSeconds,
+  statusRetentionDays, // enforce this commitment in the ledger database
+  resolveSource: account => ({ adapterId, sourceScope, sourceTimezone }),
+  resolveCurrency: account => currency,
+  resolveCoverage: account => ({ constituents }), // authorized media-buy/package denominator
+  resolveConsumerId, // optional; controls consumer-status handler/capability
+});
+
+await pool.query(reporting.setup.migrations[0]);
+const installedPlatform = reporting.install(platform);
+await reporting.installConfiguration(configuration, { account: ctx.account });
+await reporting.runCycle({ accountId }); // tenant-partitioned
+reporting.start({ intervalMilliseconds, deploymentWide: true }); // explicit full-ledger scan
+await reporting.stop();
+```
+
+Account identity comes only from the framework-resolved context. Trusted host callbacks derive adapter routing, credential-free `sourceScope`, source timezone, currency, and the authorized constituent denominator. A declaration cannot supply `account`, `sourceScope`, `sourceTimezone`, `contract`, `currency`, `constituents`, or `mediaBuyIds`; `mediaBuyIds` is derived from `resolveCoverage`, so a buyer cannot name another buyer's media buys on a shared upstream network. Currency is frozen into configuration and obligation lineage. Capabilities are Core-only and derived from installed adapters and handlers; managed delivery, reconciled billing, receipts, webhook activity, and notifications are not advertised. Installation requires `platform.accounts.upsert`, which owns the advertised `sync_accounts` configuration path.
+
 ## Key Enums
 
 | Enum | Values |

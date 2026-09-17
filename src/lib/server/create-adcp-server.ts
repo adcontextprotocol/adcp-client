@@ -1964,6 +1964,27 @@ export interface AdcpServerConfig<TAccount = unknown> {
     toolName: AdcpServerToolName
   ) => string | undefined;
   /**
+   * Resolve the reporting consumer identity a `sync_reporting_status` receipt
+   * is deposited for — the same identity the receipt handler records under.
+   *
+   * When present it is the replay namespace for that tool. The credential is
+   * not a safe substitute: an adopter may map two operator seats sharing one
+   * OAuth `client_id` to different reporting consumers, and keying replay by
+   * `oauth:<client_id>` then let the second seat be served the first's cached
+   * response and never record its own receipt. Absent this resolver the
+   * framework falls back to the canonical credential identity, which is
+   * correct exactly when the credential *is* the consumer.
+   *
+   * `createAdcpServerFromPlatform` wires this from the reporting platform's
+   * own `resolveConsumerId`, so a service-installed deployment gets it for
+   * free. Called once per dispatched `sync_reporting_status`, in addition to
+   * the receipt handler's own call.
+   */
+  resolveReportingConsumerId?: (
+    ctx: HandlerContext<TAccount>,
+    params: Record<string, unknown>
+  ) => string | Promise<string>;
+  /**
    * Server-level prose surfaced on MCP `initialize`. Two forms:
    *
    * 1. **Static string** (the historical form) — captured at construction,
@@ -2632,7 +2653,8 @@ function resolveExtraScope(
   account?: unknown,
   sessionKey?: string,
   proposalScope?: Readonly<ProposalRefinementScope>,
-  callerMutationScope?: Readonly<CallerMutationScope>
+  callerMutationScope?: Readonly<CallerMutationScope>,
+  callerPrincipal?: string
 ): string | undefined {
   const accountLike = account as
     | { id?: unknown; account_id?: unknown; tenant_id?: unknown; tenantId?: unknown }
@@ -2655,6 +2677,20 @@ function resolveExtraScope(
       callerMutationScope.principal_id,
       callerMutationScope.account_id ?? null,
     ]);
+  }
+  // `sync_reporting_status` deposits a receipt for the calling consumer, and a
+  // registry resolves several callers onto one account. Sharing an account-only
+  // namespace let the second caller's identical request replay the first's
+  // cached response before its own consumer was resolved, so its receipt was
+  // never written. This tool keeps a scope resolver of its own — the caller is
+  // already authenticated here — so it is namespaced directly rather than
+  // joining CALLER_SCOPED_MUTATION_TOOLS, whose resolution path is specific to
+  // the two tools that declare one.
+  if (toolName === 'sync_reporting_status') {
+    // Dispatch refuses the call before this point when no canonical principal
+    // is derivable, so the namespace can never collapse to a shared null.
+    if (callerPrincipal === undefined) return undefined;
+    return JSON.stringify([tenantId ?? null, accountId ?? null, callerPrincipal]);
   }
   if (toolName === 'si_send_message') {
     const sessionId = params.session_id;
@@ -2871,6 +2907,30 @@ function authenticatedPrincipalForContext(
   if (credential?.kind === 'oauth') return `oauth:${credential.client_id}`;
   if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
   if (typeof authInfo?.clientId === 'string' && authInfo.clientId.length > 0) return `client:${authInfo.clientId}`;
+  return undefined;
+}
+
+/**
+ * Canonical identity of the consumer depositing a reporting receipt.
+ *
+ * The presented credential comes first, unlike
+ * {@link authenticatedPrincipalForContext}. Several consumers can arrive
+ * through one registered buyer agent — a registry resolves them all to the same
+ * `agent_url` — so preferring the agent put distinct credentials in a single
+ * replay namespace, and the second consumer was served the first's cached
+ * response without ever recording its own receipt. The agent remains the last
+ * resort for a signed caller the registry resolved without a credential kind.
+ */
+function reportingConsumerPrincipalForContext(
+  authInfo: ResolvedAuthInfo | undefined,
+  agent: BuyerAgent | undefined
+): string | undefined {
+  const credential = authInfo?.credential;
+  if (credential?.kind === 'http_sig') return `http_sig:${credential.agent_url}`;
+  if (credential?.kind === 'oauth') return `oauth:${credential.client_id}`;
+  if (credential?.kind === 'api_key') return `api_key:${credential.key_id}`;
+  if (typeof authInfo?.clientId === 'string' && authInfo.clientId.length > 0) return `client:${authInfo.clientId}`;
+  if (agent?.agent_url) return `agent:${agent.agent_url}`;
   return undefined;
 }
 
@@ -4874,6 +4934,7 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
     capabilities: capConfig,
     idempotency: idempotencyConfig,
     resolveIdempotencyPrincipal,
+    resolveReportingConsumerId,
     instructions: instructionsOption,
     onInstructionsError = 'skip',
     taskStore,
@@ -6681,6 +6742,69 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
           }
         }
 
+        // `sync_reporting_status` deposits a receipt for the calling consumer and
+        // is namespaced by that identity in `resolveExtraScope`. Without a
+        // derivable canonical principal every such caller would collapse into
+        // one namespace, so a second caller's identical request would be served
+        // the first's cached response and never record its own receipt. Refuse
+        // before the idempotency lookup rather than scope on nothing.
+        //
+        // The requirement holds whatever resolves the *idempotency* principal. An
+        // earlier revision skipped the gate when a `resolveIdempotencyPrincipal`
+        // was configured, which disabled it everywhere:
+        // `createAdcpServerFromPlatform` always installs a default resolver, and
+        // that default falls back to `sessionKey` and then `account.id` --
+        // values several consumers on one account share, and which are absent
+        // entirely for an anonymous caller. Only a live replay store can serve
+        // one caller's response to another, so a deployment with idempotency
+        // disabled keeps its existing dispatch.
+        //
+        // What is required depends on who names the consumer. A configured
+        // `resolveReportingConsumerId` *is* the authoritative mapping, so an
+        // authenticated caller only has to be authenticated: a custom
+        // authenticator may identify its consumer entirely through
+        // `authInfo.operator` or `authInfo.extra` and carry no credential kind,
+        // client id or registered agent, and demanding a canonical credential
+        // identity rejected exactly the deployments that had told the framework
+        // how to name the consumer. Without that resolver the canonical
+        // credential identity is the namespace, so it is required.
+        if (toolName === 'sync_reporting_status' && idempotency !== undefined) {
+          const namedByResolver = resolveReportingConsumerId !== undefined;
+          const unidentified = namedByResolver
+            ? ctx.authInfo === undefined && ctx.agent === undefined
+            : reportingConsumerPrincipalForContext(ctx.authInfo, ctx.agent) === undefined;
+          if (unidentified) {
+            return finalize(
+              adcpError('AUTH_MISSING', {
+                message: 'sync_reporting_status requires an authenticated caller principal',
+              })
+            );
+          }
+        }
+        // The receipt is deposited for the resolved reporting consumer, so that
+        // is the identity the replay namespace has to carry. The credential is
+        // only a proxy for it: two operator seats can share one OAuth
+        // client_id and still be distinct consumers.
+        let reportingConsumerIdentity: string | undefined;
+        if (toolName === 'sync_reporting_status' && idempotency !== undefined && resolveReportingConsumerId) {
+          try {
+            const resolved = await resolveReportingConsumerId(ctx, params);
+            if (typeof resolved !== 'string' || resolved.length === 0 || resolved.length > 255) {
+              throw new Error('resolveReportingConsumerId must return a durable id of 1-255 characters');
+            }
+            reportingConsumerIdentity = resolved;
+          } catch (err) {
+            if (err instanceof AdcpError) return finalize(projectThrownAdcpError(err));
+            const reason = err instanceof Error ? err.message : String(err);
+            logger.error('Reporting consumer resolution failed', { tool: toolName, error: reason });
+            return finalize(
+              adcpError('SERVICE_UNAVAILABLE', {
+                message: 'Reporting consumer resolution failed',
+                ...(exposeErrorDetails && { details: { reason: redactCredentialPatterns(reason) } }),
+              })
+            );
+          }
+        }
         if (CALLER_SCOPED_MUTATION_TOOLS.has(toolName)) {
           if (ctx.authInfo === undefined && ctx.agent === undefined) {
             return finalize(
@@ -6842,7 +6966,14 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
             ctx.account,
             ctx.sessionKey,
             ctx.proposalRefinementScope,
-            ctx.callerMutationScope
+            ctx.callerMutationScope,
+            // The resolved reporting consumer when the deployment can name it,
+            // and otherwise the canonical credential identity, so callers
+            // differing only by credential -- including two behind one
+            // registered buyer agent -- do not share a replay namespace.
+            reportingConsumerIdentity !== undefined
+              ? `consumer:${reportingConsumerIdentity}`
+              : reportingConsumerPrincipalForContext(ctx.authInfo, ctx.agent)
           );
           const idempotencyPayload = buildIdempotencyPayload(toolName, params, ctx.account, ctx.sessionKey);
 

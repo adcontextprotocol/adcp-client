@@ -6,6 +6,7 @@ import type {
 } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
 import type { ErrorRecovery } from '../../types/error-codes';
+import type { ReportingScheduleAlignment } from '../../types/core.generated';
 import type {
   ReportingSourceExecutorV1,
   ReportingSourceOfferingV1,
@@ -81,6 +82,20 @@ export interface ReportingLedgerConfigurationV1 {
     recoveryWindowMilliseconds: number;
     officialAfterMilliseconds?: number;
     restatementMilliseconds?: number[];
+    /**
+     * The exact schedule identity the offering advertised, echoed verbatim.
+     *
+     * `installed_schedule_match` requires period_duration, alignment, and the
+     * applicable period_timezone to equal the installed configuration, so these
+     * are preserved rather than re-derived: `P1D` must not come back as
+     * `PT86400S`, and a `source_timezone` schedule must not be reported as
+     * `utc` merely because its boundaries also sit on the UTC origin. Optional
+     * so generations installed before this field keep their fingerprint.
+     */
+    periodDuration?: string;
+    alignment?: ReportingScheduleAlignment;
+    periodTimezone?: string;
+    deliverySlaDuration?: string;
   };
   sourceSettings: ReportingSourceSliceRequestV1['sourceSettings'];
   contract: ReportingSourceSliceRequestV1['contract'];

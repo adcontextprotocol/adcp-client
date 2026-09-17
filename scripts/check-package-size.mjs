@@ -51,7 +51,13 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // not published. Retiring the v3.1 beta type bundle removes eight artifacts;
 // its current legacy-view wholesale type replacement adds four, for 6,107
 // published files. Byte budgets stay fixed.
-const MAX_PACKED_FILE_COUNT = 6_111;
+// Reliable Reporting Core adds three module sets (CJS + ESM + both declaration
+// flavours) and one packaged setup guide, bringing the clean package to 6,120
+// published files. Byte budgets stay fixed.
+// Transactional reporting notification activity adds one module set (CJS + ESM
+// + both declaration flavours), for 6,124 published files. Byte budgets stay
+// fixed.
+const MAX_PACKED_FILE_COUNT = 6_124;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

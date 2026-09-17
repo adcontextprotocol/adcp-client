@@ -2,6 +2,110 @@
 
 `@adcp/sdk/reporting/ledger` turns a conforming reporting source into durable seller-side Reliable Reporting Core. It is separate from the buyer-side `reconcileReporting` API.
 
+## Recommended: install the lifecycle service
+
+`createReliableReportingService` is the adapter-first production path. A
+provider adapter supplies one bounded slice fetch and two immutable offering
+descriptions; the service reuses the PostgreSQL ledger, source executor,
+producer, handlers, and decisioning-platform account resolver.
+
+```ts
+import { Pool } from 'pg';
+import { PostgresReportingLedgerStore } from '@adcp/sdk/reporting/ledger';
+import { createReliableReportingService } from '@adcp/sdk/reporting/service';
+import { createAdcpServerFromPlatform } from '@adcp/sdk/server';
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const store = new PostgresReportingLedgerStore(pool, {
+  acknowledgeIsolatedDatabase: true,
+});
+
+const reporting = createReliableReportingService({
+  store,
+  adapters: {
+    // These descriptions are immutable declarations owned by your adapter.
+    gam: { sourceOffering: gamSourceOffering, deliveryOffering: gamDeliveryOffering,
+      fetchSlice: (slice, ctx) => gam.fetchDeliverySlice(slice, ctx) },
+  },
+  contact: { name: 'Reporting operations', email: 'reporting@example.com' },
+  automatedRecoveryWindowSeconds: 86_400,
+  statusRetentionDays: 90,
+
+  // `account` is the framework-resolved account, not request.account.
+  resolveSource: account => ({
+    adapterId: 'gam',
+    sourceScope: { network_id: account.ctx_metadata.gam.networkId },
+    sourceTimezone: account.ctx_metadata.gam.reportingTimezone,
+  }),
+  // Resolve from trusted commercial/account state. The result is frozen into
+  // the generation and every obligation; no request-body fallback exists.
+  resolveCurrency: account => account.ctx_metadata.gam.currency,
+  // The authorization boundary for shared upstream networks: return only the
+  // constituents this account may report on. Never echo the declaration.
+  resolveCoverage: async account => ({
+    constituents: await bookings.authorizedReportingConstituents(account.id),
+  }),
+  resolveConsumerId: ctx => {
+    if (!ctx.agent) throw new Error('Authenticated buyer-agent registry required');
+    return ctx.agent.agent_url;
+  },
+});
+
+await pool.query(reporting.setup.migrations[0]);
+const installedPlatform = reporting.install(platform);
+const server = createAdcpServerFromPlatform(installedPlatform, serverOptions);
+
+reporting.start({ intervalMilliseconds: 60_000, deploymentWide: true });
+process.once('SIGTERM', () => void reporting.stop());
+```
+
+The service advertises Reliable Reporting Core only. An inline adapter cannot
+turn on Managed Delivery, Reconciled Billing, receipts, webhook activity, or
+reporting notifications. `sync_reporting_status` is advertised only when
+`resolveConsumerId` is installed and the supplied ledger implements its
+atomic consumer-status methods. Follow-up work adds those higher tiers; do not
+place them in a manual capability override.
+
+Install a buyer declaration after the account and its media-buy scope have
+been authorized and resolved. `installConfiguration` intentionally accepts no
+account, `sourceScope`, contract, timezone, currency, `constituents`, or
+`mediaBuyIds` fields from the declaration. Pass the framework-resolved
+`ctx.account`; trusted callbacks derive the remaining lineage. `resolveCoverage`
+is the media-buy/package authorization boundary and must derive the denominator
+from the resolved account: `sourceScope` may legitimately name a shared upstream
+network, in which case the constituent list is the only thing keeping one
+buyer's orders out of another buyer's report. `mediaBuyIds` is always derived
+from the returned constituents, so a buyer-named order ID can never reach
+`fetchSlice`. `expectedCurrency`, `expectedSourceTimezone`, and
+`expectedMediaBuyIds` are optional assertions and fail closed on conflict.
+The service rejects credential-shaped keys and `ctx_metadata` anywhere in the
+returned `sourceScope`, then applies the source contract and existing ledger
+immutability checks. Return the resulting secret-free configuration state from
+your `sync_accounts` implementation.
+
+For tenant-partitioned jobs, call `runCycle({ accountId })`, or configure
+`start({ accountIds: [...] })`. Every planner and worker call receives that
+same account boundary. A deployment-owned worker must explicitly pass
+`deploymentWide: true`; use that form only when one trusted service instance is
+authorized for every account in the store. Widening is reachable only through
+that opt-in: a cycle with a missing, empty, or overlong `accountId` is refused
+rather than silently promoted to a deployment-wide scan. Under `accountIds`,
+one account's failed cycle is reported to `onError` and the remaining accounts
+still run, so a persistently failing tenant cannot starve the tenants behind
+it. Planning is resumable and bounded;
+set `maxObligationsPerAccount` and `maxWorkerIterationsPerAccount` for tighter
+operational limits. `stop()` aborts current source work, waits for settlement,
+and wakes a sleeping scheduler immediately. Planning is a bounded ledger
+operation rather than abortable source I/O, so shutdown waits for an in-flight
+planning pass to settle and does not begin its worker afterward.
+
+Run `runReliableReportingServiceConformanceV1` against an isolated test ledger
+before deployment. It covers source replay, two-account isolation,
+configuration replay/frozen currency, lifecycle start/stop, and Core
+capability truthfulness.
+
+## Advanced: assemble the primitives directly
+
 ```ts
 import { Pool } from 'pg';
 import {
@@ -39,7 +143,42 @@ Pass `getReportingStatus` and `getMediaBuyDelivery` directly to the matching `cr
 
 The planner uses fixed millisecond periods and an explicitly frozen IANA source timezone. Calendar or billing-cycle schedules should be expanded by the seller into immutable period boundaries before installation; the SDK intentionally has no Temporal dependency. At period end, the obligation freezes the constituent denominator and coverage. A zero-row source object commits like any other revision. Absence remains an empty revision association. A deployment with per-tenant workers should pass the resolved `account_id` to both `planObligations()` and `runWorker()`; omitting it intentionally runs a deployment-wide worker.
 
-Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline.
+### Migrating an existing manual lifecycle
+
+Keep the same `PostgresReportingLedgerStore` and run the same
+`REPORTING_LEDGER_MIGRATION`; there is no second store and no data migration.
+Move each inline fetch plus its source/delivery offering into an entry in
+`adapters`, move account routing and currency lookup into the two trusted
+resolvers, and replace manual producer/handler/capability assembly with
+`reporting.install(platform)`. Replace cron calls to `planObligations` and
+`runWorker` with `runCycle` or `start`. Remove manual reporting capability
+overrides so discovery has one owner. Existing configuration IDs and semantic
+fingerprints remain compatible because the service delegates installation to
+the existing producer: replaying a generation that predates the reserved
+adapter route key reuses its stored `sourceScope` verbatim, so the fingerprint
+still matches and the replay does not trip generation immutability. Only new
+generations carry the reserved key. With one installed adapter, pre-service
+obligations without the reserved adapter route continue through that sole
+adapter. A
+multi-adapter migration must create a new immutable configuration generation
+with an explicit route. An adapter supplies exactly one of `fetchSlice` or
+`executor`: `fetchSlice` is the inline boundary, and `executor` accepts any
+`ReportingSourceWithReaderV1` — including a paginated, asynchronous, or
+externally staged one — so a custom executor that needs those capabilities
+runs under the service today rather than waiting for a future extension. The
+inline-only knob `inlineReplayRetention` applies to `fetchSlice` adapters and
+is ignored by an adapter that brings its own executor.
+
+`reporting.install(platform)` mutates that platform object in place and
+requires it to be extensible; this preserves class instances and private-field
+methods that a shallow wrapper would break. It also requires the platform's
+native `accounts.upsert` seam. The service cannot truthfully advertise `configuration_task:
+sync_accounts` without it. That account method remains responsible for mapping
+an authorized wire reporting configuration to the service's resolved input and
+calling `installConfiguration`; the service does not claim a generic mapping
+that the current protocol does not define.
+
+Official configurations also pin a `finalityPolicy` (`policyId` plus `source_final` or `contractual_cutoff`). For `source_final`, set `sourceSignal` to the exact opaque signal identifier the adapter places in the manifest finality evidence's `evidenceRef`; the worker requires an exact match before irreversible official publication. `expected_at` and the wire delivery SLA use the same official deadline: the service refuses a configuration whose `officialAfterMilliseconds` disagrees with the `schedule.delivery_sla` its offering advertises, and omitting the field derives that same advertised value.
 
 Every revision stores its rows together with an RFC 8785 JCS SHA-256 binding and exact decimal control totals for requested numeric metrics. A revision number and obligation are immutable. Official revisions are terminal; later source corrections are immutable adjustments bound to the official revision, never superseding revisions. Status snapshots omit row payloads, are capped at 8 MiB, expire after 15 minutes, and keep cursor pages stable over the flat obligation/revision/adjustment union. A periods response returns an opaque `changes_checkpoint`; echo that value verbatim as `changes_after` rather than supplying a timestamp. Account-scoped write/snapshot locks make those checkpoints gap-free for SDK store writes. The default table set is deployment-wide; use a dedicated database/schema and acknowledge that boundary explicitly. `sourceScope` must contain opaque routing identities only—never credentials or bearer tokens—because it is retained with the obligation.
 
