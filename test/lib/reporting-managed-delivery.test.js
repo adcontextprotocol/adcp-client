@@ -319,6 +319,51 @@ describe('seller managed reporting runtime', () => {
     assert.equal(result.revocationsCompleted, 1);
   });
 
+  test('completes a revocation when the store returns fractional remaining milliseconds', async () => {
+    let claimed = false;
+    let completeRevocationCalled = false;
+    const store = {
+      planMaterializations: async () => 0,
+      claimRevocation: async () => {
+        if (claimed) return null;
+        claimed = true;
+        return {
+          authorization: {
+            account_id: 'account-1',
+            destination_ref: 'destination-generation-1',
+            generation: 1,
+            authorized_at: '2026-08-27T03:00:00.000Z',
+            revoked_at: '2026-08-27T04:00:00.000Z',
+          },
+          owner: 'worker-1',
+          generation: 1,
+          expires_at: '2026-08-27T04:01:00.000Z',
+          remaining_milliseconds: 500.25,
+        };
+      },
+      releaseRevocation: async () => true,
+      completeRevocation: async () => {
+        completeRevocationCalled = true;
+        return true;
+      },
+      claimMaterialization: async () => null,
+    };
+    const adapter = {
+      revoke: async () => {
+        await new Promise(resolve => setImmediate(resolve));
+      },
+    };
+
+    const result = await ledger.runManagedDeliveryWorker(store, adapter, {
+      maxIterations: 2,
+      deliveryDeadlineMilliseconds: 1000,
+      leaseMilliseconds: 6000,
+    });
+
+    assert.equal(result.revocationsCompleted, 1);
+    assert.equal(completeRevocationCalled, true);
+  });
+
   test('buffers a resource and rechecks authorization before returning bytes', async () => {
     const claimed = lease();
     const completed = { ...claimed.materialization, ...outcome(), ready_at: '2026-08-27T04:00:01.000Z' };

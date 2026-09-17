@@ -1176,7 +1176,16 @@ async function withinDeadline<T>(
  * delay to Node, which clamps values above 2^31 - 1 and fires them immediately.
  */
 function scheduleDeadline(milliseconds: number, onElapsed: () => void): () => void {
-  const expiresAt = process.hrtime.bigint() + BigInt(milliseconds) * NANOSECONDS_PER_MILLISECOND;
+  // PostgreSQL interval arithmetic can return a fractional number of
+  // milliseconds. Round up before converting to BigInt so the scheduler both
+  // accepts that store-authoritative value and never fires before its stated
+  // deadline. Keep the normalized value inside the exact integer range: an
+  // imprecise or non-finite delay cannot define a trustworthy deadline.
+  const normalizedMilliseconds = Math.ceil(milliseconds);
+  if (milliseconds < 0 || !Number.isSafeInteger(normalizedMilliseconds)) {
+    throw new RangeError('Reporting deadline must be a finite non-negative safe number of milliseconds');
+  }
+  const expiresAt = process.hrtime.bigint() + BigInt(normalizedMilliseconds) * NANOSECONDS_PER_MILLISECOND;
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
