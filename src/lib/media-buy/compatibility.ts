@@ -860,6 +860,9 @@ function snapshotCompatibilityTaskOptions<T extends TaskOptions | undefined>(opt
     ...(options.delegatedOperatorAuthorization !== undefined && {
       delegatedOperatorAuthorization: { ...options.delegatedOperatorAuthorization },
     }),
+    ...(options.durableContinuationRecovery !== undefined && {
+      durableContinuationRecovery: { ...options.durableContinuationRecovery },
+    }),
   } as T;
 }
 

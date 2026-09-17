@@ -27,10 +27,10 @@ import { MAX_JSON_DEPTH } from './json-depth';
  * Canonical secret-key pattern from the AdCP runner-output contract. Mirrors
  * the spec block: `Authorization`, `Credentials`, tokens, API keys,
  * passwords, secrets, OAuth refresh / access bearers, session tokens,
- * cookies. Case-insensitive.
+ * direct-continuation recovery keys, cookies. Case-insensitive.
  */
 export const SECRET_KEY_PATTERN =
-  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|cookie|set[_-]cookie)$/i;
+  /^(authorization|credentials?|token|api[_-]?key|password|secret|client[_-]secret|refresh[_-]token|access[_-]token|bearer|session[_-]token|session[_-]id|offering[_-]token|recovery[_-]?key|cookie|set[_-]cookie)$/i;
 
 export function normalizeSecretKeyPattern(pattern: RegExp): RegExp {
   if (!/[gy]/.test(pattern.flags)) return pattern;

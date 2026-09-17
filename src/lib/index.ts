@@ -425,7 +425,12 @@ export {
   type CreativeAgentClientConfig,
   type LegacyCreativeFormat,
 } from './core/CreativeAgentClient';
-export { TaskExecutor } from './core/TaskExecutor';
+export {
+  TaskExecutor,
+  DeferredSettlementOwnershipError,
+  DirectContinuationRecoveryError,
+  type DirectContinuationRecoveryFailure,
+} from './core/TaskExecutor';
 export { match, attachMatch } from './core/match';
 export type { MatchHandlers, PartialMatchHandlers } from './core/match';
 export { ProtocolResponseParser, responseParser, ADCP_STATUS, type ADCPStatus } from './core/ProtocolResponseParser';
@@ -450,6 +455,8 @@ export type {
   TaskResultIntermediate,
   TaskResultFailure,
   TaskResultMetadata,
+  DeferredContinuation,
+  DirectPauseRecoveryRequest,
   TaskState,
   TaskStatus,
   ConversationConfig,
