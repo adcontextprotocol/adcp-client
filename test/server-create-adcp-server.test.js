@@ -1267,6 +1267,79 @@ describe('createAdcpServer', () => {
       assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
     });
 
+    it('lets a custom authenticator name the consumer without a canonical credential', async () => {
+      // A custom `authenticate` callback may identify its consumer entirely
+      // through `authInfo.operator` or `authInfo.extra`, carrying no credential
+      // kind, no clientId and no registered agent. Requiring the canonical
+      // credential identity before the resolver ran rejected exactly the
+      // deployments that had told the framework how to name the consumer --
+      // AUTH_MISSING for an authenticated caller. The resolver is the
+      // authoritative mapping, so an authenticated caller is enough; an
+      // anonymous one is still refused.
+      const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
+      const consumers = [];
+      const resolved = [];
+      const server = createAdcpServer({
+        name: 'Test',
+        version: '1.0.0',
+        validation: { requests: 'strict' },
+        idempotency: createStore({ backend: backend({ sweepIntervalMs: 0 }) }),
+        resolveReportingConsumerId: ctx => {
+          const id = `consumer-${ctx.authInfo.operator}-${ctx.authInfo.extra.tenant}`;
+          resolved.push(id);
+          return id;
+        },
+        resolveSessionKey: () => 'custom-auth-session',
+        resolveAccount: async ref => ({ id: ref.account_id }),
+        mediaBuy: {
+          syncReportingStatus: async (params, ctx) => {
+            consumers.push(`${ctx.authInfo.operator}/${ctx.authInfo.extra.tenant}`);
+            return {
+              status: 'completed',
+              results: params.statuses.map(status => ({
+                result: 'created',
+                reporting_status_id: status.reporting_status_id,
+              })),
+            };
+          },
+        },
+      });
+      const params = {
+        account: { account_id: 'account-custom-auth' },
+        idempotency_key: 'reporting-status-custom-auth-0001',
+        statuses: [{ reporting_status_id: 'reporting-status-custom-0001' }],
+      };
+      // No credential, no clientId, no agent: nothing the canonical identity
+      // reads, and yet unambiguously authenticated.
+      const caller = (operator, tenant) => ({ authInfo: { operator, extra: { tenant } } });
+
+      const first = await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-1'));
+      assert.notStrictEqual(first.isError, true, JSON.stringify(first.structuredContent));
+      assert.deepStrictEqual(resolved, ['consumer-seat-a-tenant-1'], 'the resolver must run for a custom identity');
+      assert.deepStrictEqual(consumers, ['seat-a/tenant-1'], 'the receipt must reach the handler');
+
+      // A second custom identity is a distinct consumer, not a cache hit.
+      const second = await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-2'));
+      assert.notStrictEqual(second.isError, true, JSON.stringify(second.structuredContent));
+      assert.deepStrictEqual(
+        consumers,
+        ['seat-a/tenant-1', 'seat-a/tenant-2'],
+        'two custom identities must not share a receipt namespace'
+      );
+
+      // The same custom identity repeating its own key still replays.
+      await callToolRaw(server, 'sync_reporting_status', params, caller('seat-a', 'tenant-1'));
+      assert.strictEqual(consumers.length, 2, 'a consumer replaying its own key must not re-run');
+
+      // Anonymous is still refused before the resolver is consulted.
+      const asked = resolved.length;
+      const anonymous = await callToolRaw(server, 'sync_reporting_status', params);
+      assert.strictEqual(anonymous.isError, true);
+      assert.strictEqual(anonymous.structuredContent.adcp_error.code, 'AUTH_MISSING');
+      assert.strictEqual(resolved.length, asked, 'an anonymous caller must not reach the resolver');
+      assert.strictEqual(consumers.length, 2, 'an anonymous caller must not reach the handler');
+    });
+
     it('refuses the tool when the reporting consumer cannot be resolved', async () => {
       const { createIdempotencyStore: createStore, memoryBackend: backend } = require('../dist/lib/server/idempotency');
       let handled = 0;

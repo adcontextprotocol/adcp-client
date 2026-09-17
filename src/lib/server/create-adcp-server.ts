@@ -6749,24 +6749,37 @@ export function createAdcpServer<TAccount = unknown>(config: AdcpServerConfig<TA
         // the first's cached response and never record its own receipt. Refuse
         // before the idempotency lookup rather than scope on nothing.
         //
-        // The requirement holds whatever resolves the principal. An earlier
-        // revision skipped the gate when a `resolveIdempotencyPrincipal` was
-        // configured, which disabled it everywhere: `createAdcpServerFromPlatform`
-        // always installs a default resolver, and that default falls back to
-        // `sessionKey` and then `account.id` -- values several consumers on one
-        // account share, and which are absent entirely for an anonymous caller.
-        // Only a live replay store can serve one caller's response to another,
-        // so a deployment with idempotency disabled keeps its existing dispatch.
-        if (
-          toolName === 'sync_reporting_status' &&
-          idempotency !== undefined &&
-          reportingConsumerPrincipalForContext(ctx.authInfo, ctx.agent) === undefined
-        ) {
-          return finalize(
-            adcpError('AUTH_MISSING', {
-              message: 'sync_reporting_status requires an authenticated caller principal',
-            })
-          );
+        // The requirement holds whatever resolves the *idempotency* principal. An
+        // earlier revision skipped the gate when a `resolveIdempotencyPrincipal`
+        // was configured, which disabled it everywhere:
+        // `createAdcpServerFromPlatform` always installs a default resolver, and
+        // that default falls back to `sessionKey` and then `account.id` --
+        // values several consumers on one account share, and which are absent
+        // entirely for an anonymous caller. Only a live replay store can serve
+        // one caller's response to another, so a deployment with idempotency
+        // disabled keeps its existing dispatch.
+        //
+        // What is required depends on who names the consumer. A configured
+        // `resolveReportingConsumerId` *is* the authoritative mapping, so an
+        // authenticated caller only has to be authenticated: a custom
+        // authenticator may identify its consumer entirely through
+        // `authInfo.operator` or `authInfo.extra` and carry no credential kind,
+        // client id or registered agent, and demanding a canonical credential
+        // identity rejected exactly the deployments that had told the framework
+        // how to name the consumer. Without that resolver the canonical
+        // credential identity is the namespace, so it is required.
+        if (toolName === 'sync_reporting_status' && idempotency !== undefined) {
+          const namedByResolver = resolveReportingConsumerId !== undefined;
+          const unidentified = namedByResolver
+            ? ctx.authInfo === undefined && ctx.agent === undefined
+            : reportingConsumerPrincipalForContext(ctx.authInfo, ctx.agent) === undefined;
+          if (unidentified) {
+            return finalize(
+              adcpError('AUTH_MISSING', {
+                message: 'sync_reporting_status requires an authenticated caller principal',
+              })
+            );
+          }
         }
         // The receipt is deposited for the resolved reporting consumer, so that
         // is the identity the replay namespace has to carry. The credential is
