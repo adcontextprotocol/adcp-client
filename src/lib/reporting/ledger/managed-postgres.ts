@@ -1349,8 +1349,14 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
             -- own clock and publish a resource the database already considers
             -- expired, or under-retain one — leaving a delivered
             -- materialization whose bytes no reader can fetch.
-            AND ($7::timestamptz IS NULL
-                 OR $7::timestamptz >= clock_timestamp() + ($8::bigint * INTERVAL '1 day'))`,
+            -- Exempt only a failed outcome, which retains nothing. Treating
+            -- a NULL expiry as exempt let a direct caller settle a
+            -- successful materialization with no expiry at all: permanently
+            -- readable to the projection, permanently unreadable in fact,
+            -- and never revisited because it is not pending.
+            AND ($5 = 'failed'
+                 OR ($7::timestamptz IS NOT NULL
+                     AND $7::timestamptz >= clock_timestamp() + ($8::bigint * INTERVAL '1 day')))`,
         [
           lease.materialization.reporting_materialization_id,
           lease.owner,
@@ -1797,7 +1803,8 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
         semantic_fingerprint: string;
       }
     >(
-      `SELECT reporting_receipt_id, subject_id, status, was_current, semantic_fingerprint
+      `SELECT reporting_receipt_id, subject_id, status, was_current, semantic_fingerprint,
+              ${rfc3339Micro('COALESCE(subject_recorded_at, pruned_at)')} AS recorded_at
          FROM adcp_reporting_receipt_tombstones
         WHERE account_id = $1 AND consumer_id = $2
           AND (reporting_receipt_id = $3 OR (receipt_kind = $4 AND subject_id = $5))
@@ -1812,7 +1819,13 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
     for (const tombstone of tombstones.rows) {
       if (tombstone.reporting_receipt_id === entry.receipt.reporting_receipt_id) {
         if (tombstone.semantic_fingerprint !== fingerprint) return failed(entry.receipt.reporting_receipt_id);
-        continue;
+        // Byte-identical to a receipt whose body was deliberately aged out.
+        // Falling through re-created the row with a fresh instant: the
+        // retention clock restarted, the storage the prune reclaimed came
+        // back, and the receipt's published `received_at` moved to a moment
+        // the consumer never filed anything at. Nothing changed, so answer
+        // `unchanged` with the instant the tombstone kept.
+        return unchanged(entry.kind, { ...entry.receipt, received_at: tombstone.recorded_at } as never);
       }
       if (tombstone.status === 'accepted' && tombstone.was_current) {
         return failed(entry.receipt.reporting_receipt_id);

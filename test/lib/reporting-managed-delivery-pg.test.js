@@ -5383,17 +5383,30 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
                 clock_timestamp(), clock_timestamp()
            FROM generate_series(1, 40000) AS i`
       );
+      await planPool.query(
+        `INSERT INTO adcp_reporting_consumer_statuses
+          (account_id, consumer_id, consumer_status_id, obligation_id, revision_id, chain_key,
+           is_current, semantic_fingerprint, data, created_at)
+         SELECT 'account-plan-noise', 'https://plan-noise.example', 'status-plan-noise-' || i,
+                NULL, NULL, 'chain-plan-noise-' || i, false, 'noise', '{}'::jsonb, clock_timestamp()
+           FROM generate_series(1, 40000) AS i`
+      );
       await planPool.query('ANALYZE adcp_reporting_receipts');
+      await planPool.query('ANALYZE adcp_reporting_consumer_statuses');
 
       // Capture the statement the store actually issues and explain that,
       // rather than a hand-written approximation of it.
       let captured;
+      let capturedDigest;
       const capturingPool = {
         connect: async () => {
           const client = await planPool.connect();
           const query = client.query.bind(client);
           client.query = async (sql, values) => {
             if (typeof sql === 'string' && sql.includes('WITH subject AS')) captured = { sql, values };
+            if (typeof sql === 'string' && sql.includes('md5(COALESCE(string_agg(marker')) {
+              capturedDigest = { sql, values };
+            }
             return query(sql, values);
           };
           const release = client.release.bind(client);
@@ -5450,6 +5463,40 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
         JSON.stringify(previous.rows[0]['QUERY PLAN']),
         /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_receipts"/,
         'sanity: the shape this replaced really did scan the whole receipt table'
+      );
+
+      // The managed state digest runs inside applyLifecycleProjection, which
+      // holds the account lock. A scan here is not merely slow: it is a scan
+      // with that lock held, which is what pushed concurrent Core writes past
+      // their lock timeout and failed them with 55P03.
+      assert.ok(capturedDigest, 'the projection read its managed state digest');
+      const digestPlan = JSON.stringify(
+        (await planPool.query(`EXPLAIN (FORMAT JSON) ${capturedDigest.sql}`, capturedDigest.values)).rows[0][
+          'QUERY PLAN'
+        ]
+      );
+      for (const relation of ['adcp_reporting_receipts', 'adcp_reporting_consumer_statuses']) {
+        assert.equal(
+          new RegExp(`"Node Type":"Seq Scan"[^}]*"Relation Name":"${relation}"`).test(digestPlan),
+          false,
+          `the digest does not scan ${relation} under the account lock: ${digestPlan}`
+        );
+      }
+      const previousDigest = await planPool.query(
+        `EXPLAIN (FORMAT JSON)
+         SELECT COUNT(*) FROM adcp_reporting_receipts receipt
+          WHERE (receipt.receipt_kind = 'revision' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_revisions revision
+                    WHERE revision.revision_id = receipt.subject_id AND revision.obligation_id = $1))
+             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
+                   SELECT 1 FROM adcp_reporting_adjustments adjustment
+                    WHERE adjustment.adjustment_id = receipt.subject_id AND adjustment.obligation_id = $1))`,
+        [planned.obligation.reporting_obligation_id]
+      );
+      assert.match(
+        JSON.stringify(previousDigest.rows[0]['QUERY PLAN']),
+        /"Node Type":"Seq Scan"[^}]*"Relation Name":"adcp_reporting_receipts"/,
+        'sanity: the digest shape this replaced scanned the whole receipt table too'
       );
     } finally {
       await planPool.end();
@@ -5594,6 +5641,160 @@ describe('PostgresReportingManagedDeliveryStore', { skip: !DATABASE_URL && 'Post
     );
     assert.equal(refused.rows[0].status, 'failed');
     assert.equal(refused.rows[0].failure_code, 'RESOURCE_RETENTION_INSUFFICIENT');
+  });
+
+  test('does not demand a receipt for a revision the cutoff predates', async () => {
+    const early = await deliverOnce(await seedSkewLedger('earlycutoff', 'consumer_receipt'));
+    const consumerId = 'https://earlycutoff-buyer.example';
+    const context = { account: { id: early.accountId }, agent: { agent_url: consumerId } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    assert.equal(
+      (
+        await sync(
+          {
+            idempotency_key: 'receipt-earlycutoff-batch-0001',
+            receipts: [receipt(early, { reporting_receipt_id: 'receipt-earlycutoff-0001' })],
+          },
+          context
+        )
+      ).results[0].result,
+      'recorded'
+    );
+
+    // After the obligation was due, before anything was published. Managed
+    // evidence is cutoff-bounded, so leaving the revision set unbounded put a
+    // revision into the fold with no materialization and no receipt in scope
+    // — an unmet consumer obligation for a revision that did not exist at the
+    // instant being described.
+    const cutoff = (
+      await pool.query(
+        `SELECT to_char((clock_timestamp() - INTERVAL '60 seconds') AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value`
+      )
+    ).rows[0].value;
+    const projection = await core.getManagedLifecycleProjection({
+      reporting_obligation_id: early.obligation.reporting_obligation_id,
+      ledgerAsOf: cutoff,
+    });
+    assert.deepEqual(projection.visibleRevisionIds, [], 'the ledger held no revision at that cutoff');
+
+    const rosterStore = new ledger.PostgresReportingLedgerStore(pool, {
+      acknowledgeIsolatedDatabase: true,
+      managedDelivery: true,
+      obligatedConsumers: async () => ({ ids: [consumerId], complete: true, version: 'e1' }),
+    });
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: early.obligation.reporting_obligation_id,
+      ledgerAsOf: cutoff,
+    });
+    const issues = await pool.query(
+      `SELECT data ->> 'code' AS code FROM adcp_reporting_issues
+        WHERE obligation_id = $1 AND resolved_at IS NULL`,
+      [early.obligation.reporting_obligation_id]
+    );
+    assert.equal(
+      issues.rows.some(row => row.code === 'RECEIPT_REQUIRED'),
+      false,
+      'no receipt is owed for a revision the cutoff predates'
+    );
+    // And reconciling now, where the revision and its receipt both exist,
+    // settles rather than escalating.
+    await ledger.reconcileReportingStatusLifecycleV1({
+      store: rosterStore,
+      reporting_obligation_id: early.obligation.reporting_obligation_id,
+    });
+    const settled = await pool.query(
+      `SELECT data ->> 'code' AS code FROM adcp_reporting_issues
+        WHERE obligation_id = $1 AND resolved_at IS NULL`,
+      [early.obligation.reporting_obligation_id]
+    );
+    assert.deepEqual(settled.rows, [], 'sanity: the present state has nothing outstanding');
+  });
+
+  test('answers a re-presented pruned receipt without recreating its row', async () => {
+    const gone = await deliverOnce(await seedSkewLedger('norecreate', 'consumer_receipt'));
+    const context = { account: { id: gone.accountId }, agent: { agent_url: 'https://norecreate-buyer.example' } };
+    const sync = ledger.createSyncReportingReceiptsHandler(managed, value => value.agent.agent_url);
+    const body = receipt(gone, { reporting_receipt_id: 'receipt-norecreate-0001' });
+    assert.equal(
+      (await sync({ idempotency_key: 'receipt-norecreate-batch-0001', receipts: [body] }, context)).results[0].result,
+      'recorded'
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipts SET recorded_at = clock_timestamp() - INTERVAL '200 days'
+        WHERE account_id = $1`,
+      [gone.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_receipt_batches SET recorded_at = clock_timestamp() - INTERVAL '31 days'
+        WHERE account_id = $1`,
+      [gone.accountId]
+    );
+    await pool.query(
+      `UPDATE adcp_reporting_materializations
+          SET data = jsonb_set(data, '{resource,expires_at}', to_jsonb(to_char(clock_timestamp() - INTERVAL '1 day', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')))
+        WHERE account_id = $1`,
+      [gone.accountId]
+    );
+    const retaining = new ledger.PostgresReportingManagedDeliveryStore(pool, { evidenceRetentionDays: 90 });
+    assert.equal((await retaining.pruneExpiredEvidence({ account_id: gone.accountId })).receipts, 1);
+    const tombstone = await pool.query(
+      `SELECT to_char(COALESCE(subject_recorded_at, pruned_at) AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS recorded_at
+         FROM adcp_reporting_receipt_tombstones
+        WHERE account_id = $1 AND reporting_receipt_id = 'receipt-norecreate-0001'`,
+      [gone.accountId]
+    );
+
+    // Byte-identical, under a new idempotency key so it walks the record path
+    // rather than replaying a batch. Falling through the matching tombstone
+    // re-created the row with a fresh instant: the retention clock restarted,
+    // the reclaimed storage came back, and the published `received_at` moved
+    // to a moment the consumer never filed anything at.
+    const again = await sync({ idempotency_key: 'receipt-norecreate-batch-0002', receipts: [body] }, context);
+    assert.equal(again.results[0].result, 'unchanged');
+    assert.equal(again.results[0].receipt.received_at, tombstone.rows[0].recorded_at);
+    const rows = await pool.query(`SELECT COUNT(*)::int AS live FROM adcp_reporting_receipts WHERE account_id = $1`, [
+      gone.accountId,
+    ]);
+    assert.equal(rows.rows[0].live, 0, 'the pruned body is not recreated');
+    assert.equal(
+      validateResponse('sync_reporting_receipts', again, '3.2.0-rc.3').valid,
+      true,
+      JSON.stringify(validateResponse('sync_reporting_receipts', again, '3.2.0-rc.3').issues)
+    );
+  });
+
+  test('refuses a successful settlement that retains nothing at all', async () => {
+    const unbounded = await seedSkewLedger('noexpiry');
+    assert.equal(await managed.planMaterializations({ account_id: unbounded.accountId }), 1);
+    const claimed = await managed.claimMaterialization({
+      owner: 'noexpiry-worker',
+      now: new Date().toISOString(),
+      lease_milliseconds: 120_000,
+      account_id: unbounded.accountId,
+    });
+    assert.ok(claimed);
+    const outcome = materializationOutcome(unbounded);
+    // A direct store caller, which does not pass through the worker's shape
+    // assertion. A NULL expiry was treated as exempt from the retention
+    // window, so this persisted as a permanently successful materialization
+    // whose bytes no reader can ever fetch — and nothing revisits it, because
+    // it is not pending.
+    delete outcome.resource.expires_at;
+    assert.equal(
+      await managed.settleMaterialization({ lease: claimed, now: new Date().toISOString(), outcome }),
+      false,
+      'a successful outcome must name an expiry the database can check'
+    );
+    const row = await pool.query(
+      `SELECT status, data ->> 'failure_code' AS failure_code FROM adcp_reporting_materializations
+        WHERE account_id = $1`,
+      [unbounded.accountId]
+    );
+    assert.equal(row.rows[0].status, 'failed');
+    assert.equal(row.rows[0].failure_code, 'RESOURCE_RETENTION_INSUFFICIENT');
   });
 
   test('defaults settlement retention to the binding promise and refuses nonsense', async () => {

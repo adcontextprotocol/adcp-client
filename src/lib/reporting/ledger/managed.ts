@@ -1054,9 +1054,20 @@ function assertCredentialFreeResourceLocation(location: string): void {
   if (/\r|\n|-----BEGIN|\bbearer\s|(?:token|password|secret|signature)=/i.test(location)) {
     throw new Error('Managed reporting resource locations must not contain credentials');
   }
+  // URL query, fragment and userinfo syntax, refused on the raw string rather
+  // than on a parse. A location that did not parse as a URL used to be waved
+  // through entirely, so a relative path carrying a presigning query —
+  // `report.csv?sig=...`, which the keyword test above does not match — was
+  // stored and handed to buyers; and `user:secret@bucket/report.csv` does
+  // parse, as an opaque `user:` scheme whose userinfo the parser never
+  // exposes. A provider-native identifier has no use for any of these
+  // delimiters, and a retained resource URL must not carry them either.
+  if (/[?#@]/.test(location)) {
+    throw new Error('Managed reporting resource locations must not contain credentials');
+  }
   try {
     const parsed = new URL(location);
-    if (parsed.username || parsed.password || parsed.search) {
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
       throw new Error('Managed reporting resource locations must not contain credentials');
     }
   } catch (error) {

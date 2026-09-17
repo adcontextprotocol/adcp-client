@@ -741,7 +741,11 @@ export function projectManagedDelivery(
   let projection = base;
   if (requiredRevision && !readable.length) {
     const afterExpected = compareReportingInstants(ledgerAsOf, obligation.expectedAt) >= 0;
-    const afterRecovery = compareReportingInstants(ledgerAsOf, obligation.recoveryDeadlineAt) > 0;
+    // At the deadline, not after it. Core escalates on `now >= recoveryDeadline`,
+    // so a strict comparison here left the managed issue `delayed` and
+    // `wait_for_retry` at the exact instant the Core projection called the
+    // same obligation `action_required`.
+    const afterRecovery = compareReportingInstants(ledgerAsOf, obligation.recoveryDeadlineAt) >= 0;
     const issue: ReportingLedgerIssueV1 = {
       issueId: `reporting-issue.managed-delivery.${obligation.reporting_obligation_id}`,
       reporting_obligation_id: obligation.reporting_obligation_id,

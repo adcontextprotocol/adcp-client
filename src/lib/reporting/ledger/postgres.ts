@@ -219,6 +219,12 @@ CREATE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_scope
   ON adcp_reporting_consumer_statuses (account_id, consumer_id, created_at, consumer_status_id);
 CREATE UNIQUE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_current
   ON adcp_reporting_consumer_statuses (account_id, consumer_id, chain_key) WHERE is_current;
+-- The managed state digest is read inside the apply transaction, under the
+-- account lock. Filtering this table by obligation alone matched no index, so
+-- every apply scanned every consumer status in the deployment while holding
+-- that lock and pushed concurrent Core writes past their lock timeout.
+CREATE INDEX IF NOT EXISTS adcp_reporting_consumer_statuses_obligation
+  ON adcp_reporting_consumer_statuses (obligation_id, created_at, consumer_status_id);
 
 CREATE TABLE IF NOT EXISTS adcp_reporting_consumer_status_batches (
   account_id TEXT NOT NULL,
@@ -2416,6 +2422,19 @@ ${managedDueArm}       )
         );
         if (visible.rows.length > MAX_SNAPSHOT_ITEMS) receiptEvidenceComplete = false;
         const visibleAdjustmentIds = visible.rows.slice(0, MAX_SNAPSHOT_ITEMS).map(row => row.adjustment_id);
+        // Revisions are cutoff-bounded for exactly the same reason. The
+        // managed evidence beside them already is, so a revision committed
+        // after the cutoff arrived with no materialization and no receipt in
+        // scope and read as an unmet obligation — a RECEIPT_REQUIRED for a
+        // revision that did not exist at the instant being described.
+        const visibleRevisions = await client.query<QueryResultRow & { revision_id: string }>(
+          `SELECT revision_id FROM adcp_reporting_revisions
+            WHERE obligation_id = $1 AND recorded_at <= $2::timestamptz
+            ORDER BY revision_number, revision_id LIMIT $3`,
+          [input.reporting_obligation_id, resolvedLedgerAsOf, MAX_SNAPSHOT_ITEMS + 1]
+        );
+        if (visibleRevisions.rows.length > MAX_SNAPSHOT_ITEMS) receiptEvidenceComplete = false;
+        const visibleRevisionIds = visibleRevisions.rows.slice(0, MAX_SNAPSHOT_ITEMS).map(row => row.revision_id);
         const tombstonedAcceptedSubjects = tombstoned.subjects;
         const delivered = await client.query<QueryResultRow & { revision_id: string }>(
           `SELECT revision_id FROM adcp_reporting_materialization_tombstones
@@ -2437,6 +2456,7 @@ ${managedDueArm}       )
           obligatedConsumerRosterComplete: false,
           receiptEvidenceComplete,
           visibleAdjustmentIds,
+          visibleRevisionIds,
           managedStateVersion,
           resolvedLedgerAsOf,
           tombstonedAcceptedSubjects,
@@ -2508,15 +2528,25 @@ ${managedDueArm}       )
                 || EXTRACT(EPOCH FROM changed_at)::text AS marker
            FROM adcp_reporting_materializations WHERE obligation_id = $1
          UNION ALL
+         -- Driven from this obligation's subjects into the receipt subject
+         -- index. This digest is read while the apply holds the account
+         -- lock, so asking the global receipt table which of its rows belong
+         -- to an obligation -- a question supplying neither account nor
+         -- consumer -- turned every apply into a full scan with that lock
+         -- held, and concurrent Core writes failed with 55P03.
          SELECT 'r:' || receipt.reporting_receipt_id || ':' || receipt.is_current::text || ':'
                 || EXTRACT(EPOCH FROM receipt.recorded_at)::text
-           FROM adcp_reporting_receipts receipt
-          WHERE (receipt.receipt_kind = 'revision' AND EXISTS (
-                   SELECT 1 FROM adcp_reporting_revisions revision
-                    WHERE revision.revision_id = receipt.subject_id AND revision.obligation_id = $1))
-             OR (receipt.receipt_kind = 'adjustment' AND EXISTS (
-                   SELECT 1 FROM adcp_reporting_adjustments adjustment
-                    WHERE adjustment.adjustment_id = receipt.subject_id AND adjustment.obligation_id = $1))
+           FROM adcp_reporting_revisions revision
+           JOIN adcp_reporting_receipts receipt
+             ON receipt.receipt_kind = 'revision' AND receipt.subject_id = revision.revision_id
+          WHERE revision.obligation_id = $1
+         UNION ALL
+         SELECT 'r:' || receipt.reporting_receipt_id || ':' || receipt.is_current::text || ':'
+                || EXTRACT(EPOCH FROM receipt.recorded_at)::text
+           FROM adcp_reporting_adjustments adjustment
+           JOIN adcp_reporting_receipts receipt
+             ON receipt.receipt_kind = 'adjustment' AND receipt.subject_id = adjustment.adjustment_id
+          WHERE adjustment.obligation_id = $1
          UNION ALL
          SELECT 'a:' || adjustment_id || ':' || EXTRACT(EPOCH FROM recorded_at)::text
            FROM adcp_reporting_adjustments WHERE obligation_id = $1

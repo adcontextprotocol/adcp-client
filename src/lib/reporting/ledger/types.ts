@@ -596,6 +596,16 @@ export interface ReportingManagedLifecycleProjectionV1 {
    */
   visibleAdjustmentIds?: readonly string[];
   /**
+   * Revisions this obligation had at the projection's cutoff.
+   *
+   * The managed evidence beside a revision is cutoff-bounded, so the revision
+   * set has to be too: one committed after the cutoff arrives with no
+   * materialization and no receipt in scope and reads as an unmet obligation.
+   * The CAS still fences on the full set — that is a concurrency check, not a
+   * statement about the moment being described.
+   */
+  visibleRevisionIds?: readonly string[];
+  /**
    * Opaque token over the managed state this projection was computed from.
    *
    * The lifecycle CAS fences Core evidence — revision set, obligation state,

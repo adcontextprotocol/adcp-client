@@ -369,6 +369,105 @@ describe('seller managed reporting runtime', () => {
     );
   });
 
+  test('refuses a resource location whose query survives because it is not a URL', () => {
+    const presigned = outcome();
+    // Not an absolute URL, so `new URL` threw and the whole check was skipped
+    // — and `sig=` is not one of the keywords the string test looks for. A
+    // presigned path therefore reached storage and then buyers.
+    presigned.resource.location = 'reports/revision-1/report.csv?sig=AKIA%2Fexample%2Fsignature';
+    assert.throws(
+      () => ledger.assertMaterializationOutcome(lease(), presigned, '2026-08-27T04:00:00.000Z'),
+      /must not contain credentials/
+    );
+    for (const location of ['report.csv#token=abc', 'user:secret@bucket/report.csv']) {
+      const carrying = outcome();
+      carrying.resource.location = location;
+      assert.throws(
+        () => ledger.assertMaterializationOutcome(lease(), carrying, '2026-08-27T04:00:00.000Z'),
+        /must not contain credentials/,
+        location
+      );
+    }
+    // A URL fragment is refused on a parseable URL too.
+    const fragment = outcome();
+    fragment.resource.location = 'https://files.example/reports/manifest.json#sig=abc';
+    assert.throws(
+      () => ledger.assertMaterializationOutcome(lease(), fragment, '2026-08-27T04:00:00.000Z'),
+      /must not contain credentials/
+    );
+    // Provider-native identifiers are still accepted: the rule refuses URL
+    // credential syntax, not non-URL locations.
+    for (const location of [
+      'reports/revision-1/manifest.json',
+      's3://bucket/reports/revision-1/manifest.json',
+      'warehouse.schema.table$20260827',
+    ]) {
+      const plain = outcome();
+      plain.resource.location = location;
+      assert.doesNotThrow(
+        () => ledger.assertMaterializationOutcome(lease(), plain, '2026-08-27T04:00:00.000Z'),
+        location
+      );
+    }
+  });
+
+  test('escalates managed delivery at the recovery deadline, not after it', () => {
+    const claimed = lease();
+    const obligation = {
+      ...claimed.obligation,
+      account: { account_id: 'account-1' },
+      requiredFinality: 'official',
+      expectedAt: '2026-08-27T06:00:00.000Z',
+      recoveryDeadlineAt: '2026-08-27T07:00:00.000Z',
+      state: 'pending',
+      attemptCount: 0,
+      coverage: { status: 'full' },
+      period: { start: '2026-08-26T00:00:00.000Z', end: '2026-08-27T00:00:00.000Z' },
+    };
+    const revisions = [{ reporting_revision_id: 'revision-1', finality: 'official', revisionNumber: 1 }];
+    const base = { health: 'action_required', productionStatus: 'published', issues: [], satisfied: false };
+    // Exactly at the deadline. Core escalates on `now >= recoveryDeadline`, so
+    // a strict comparison here left the managed issue `delayed` while the Core
+    // projection of the same obligation was already `action_required`.
+    const atDeadline = ledger.projectManagedDelivery(
+      obligation,
+      claimed.binding,
+      revisions,
+      [],
+      [],
+      [],
+      [],
+      [],
+      base,
+      obligation.recoveryDeadlineAt,
+      [],
+      []
+    );
+    const issue = atDeadline.projection.issues.find(value => value.issueId.includes('managed-delivery'));
+    assert.ok(issue, 'the managed delivery issue is raised');
+    assert.equal(issue.severity, 'action_required');
+    assert.equal(issue.recommendedAction, 'contact_seller');
+    // A moment before it, it is still a retry.
+    const before = ledger.projectManagedDelivery(
+      obligation,
+      claimed.binding,
+      revisions,
+      [],
+      [],
+      [],
+      [],
+      [],
+      base,
+      '2026-08-27T06:59:59.999Z',
+      [],
+      []
+    );
+    assert.equal(
+      before.projection.issues.find(value => value.issueId.includes('managed-delivery')).severity,
+      'delayed'
+    );
+  });
+
   test('refuses a receipt that carries the server-assigned received_at', async () => {
     const handler = ledger.createSyncReportingReceiptsHandler(
       { syncReceiptBatch: async () => assert.fail('a request the schema forbids must never reach the store') },

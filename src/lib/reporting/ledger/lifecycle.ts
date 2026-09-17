@@ -168,11 +168,17 @@ export async function reconcileReportingStatusLifecycleV1(
   // a fresh one: the previous attempt lost a race, so re-evaluating at the
   // instant it already failed at can only fail again or apply a stale health.
   let ledgerAsOf = await resolveLedgerAsOf(input, attempt);
+  // Two revision sets, deliberately. `revisions` is everything the store
+  // holds and is what the compare-and-set fences on — that is a concurrency
+  // check about the row set, not a statement about an instant. `projected` is
+  // what the obligation had AT the cutoff, and is what the health and the
+  // managed fold are computed from.
   const revisions = await input.store.listRevisions(obligation.reporting_obligation_id);
+  let projected = revisions;
   const projectCore = (at: string) =>
     projectReportingObligationHealthV1(
       obligation,
-      revisions,
+      projected,
       at,
       compareReportingInstants(obligation.period.end, at) <= 0
     );
@@ -187,7 +193,7 @@ export async function reconcileReportingStatusLifecycleV1(
   let composed = await composeManagedLifecycleProjection(
     { store: input.store, ledgerAsOf },
     obligation,
-    revisions,
+    projected,
     coreProjection
   );
   // The store may resolve a different instant than the one asked for — a
@@ -197,16 +203,28 @@ export async function reconcileReportingStatusLifecycleV1(
   // the host value in place watermarked a moment later than the projection
   // read, and every change in between was buried. Re-project once against it;
   // pinning it is idempotent, so this converges rather than looping.
+  //
+  // The same pass reports which revisions the cutoff actually held. Managed
+  // evidence is cutoff-bounded, so a revision committed after the cutoff
+  // arrived with no materialization and no receipt in scope and read as an
+  // unmet obligation — a premature RECEIPT_REQUIRED for a revision that did
+  // not exist at the instant being described.
+  const visibleRevisionIds = composed.visibleRevisionIds;
+  const scoped = visibleRevisionIds
+    ? revisions.filter(value => visibleRevisionIds.includes(value.reporting_revision_id))
+    : revisions;
   if (
-    composed.resolvedLedgerAsOf !== undefined &&
-    compareReportingInstants(composed.resolvedLedgerAsOf, ledgerAsOf) !== 0
+    (composed.resolvedLedgerAsOf !== undefined &&
+      compareReportingInstants(composed.resolvedLedgerAsOf, ledgerAsOf) !== 0) ||
+    scoped.length !== projected.length
   ) {
-    ledgerAsOf = composed.resolvedLedgerAsOf;
+    ledgerAsOf = composed.resolvedLedgerAsOf ?? ledgerAsOf;
+    projected = scoped;
     coreProjection = projectCore(ledgerAsOf);
     composed = await composeManagedLifecycleProjection(
       { store: input.store, ledgerAsOf },
       obligation,
-      revisions,
+      projected,
       coreProjection
     );
   }
@@ -326,6 +344,7 @@ async function composeManagedLifecycleProjection(
   managedStateVersion?: string;
   obligatedConsumerRosterVersion?: string;
   resolvedLedgerAsOf?: string;
+  visibleRevisionIds?: readonly string[];
 }> {
   if (!input.store.getManagedLifecycleProjection) return { projection: coreProjection };
   const managed = await input.store.getManagedLifecycleProjection({
@@ -462,6 +481,7 @@ async function composeManagedLifecycleProjection(
       ? { obligatedConsumerRosterVersion: managed.obligatedConsumerRosterVersion }
       : {}),
     ...(managed.resolvedLedgerAsOf !== undefined ? { resolvedLedgerAsOf: managed.resolvedLedgerAsOf } : {}),
+    ...(managed.visibleRevisionIds !== undefined ? { visibleRevisionIds: managed.visibleRevisionIds } : {}),
   };
 }
 
