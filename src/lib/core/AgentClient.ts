@@ -28,7 +28,14 @@ import {
   type WebhookParseResult,
   type WebhookRequestContext,
 } from './SingleAgentClient';
-import type { InputHandler, TaskOptions, TaskResult, TaskInfo, Message } from './ConversationTypes';
+import type {
+  InputHandler,
+  TaskOptions,
+  TaskResult,
+  TaskInfo,
+  Message,
+  DirectPauseRecoveryRequest,
+} from './ConversationTypes';
 import type {
   BeforeProtocolDispatchHook,
   ExternalTaskSettlementObservation,
@@ -494,6 +501,16 @@ export class AgentClient {
     publishTerminalTaskStatus = true
   ): Promise<{ token: string; result: TaskResult<T> } | undefined> {
     return this.client.recoverDeferredTaskForOperation(operationId, recoveryKey, publishTerminalTaskStatus);
+  }
+
+  /**
+   * Recover the current A2A pause generation for a direct mutation that opted
+   * into `TaskOptions.durableContinuationRecovery`.
+   */
+  async recoverDirectPauseContinuation<T>(request: DirectPauseRecoveryRequest): Promise<TaskResult<T>> {
+    const result = await this.client.recoverDirectPauseContinuation<T>(request);
+    this.retainSession(result);
+    return result;
   }
 
   /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */

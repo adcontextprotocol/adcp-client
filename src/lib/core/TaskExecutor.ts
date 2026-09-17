@@ -1,7 +1,7 @@
 // Core task execution engine for ADCP conversation flow
 // Implements PR #78 async patterns: working/submitted/input-required/completed
 
-import { createHmac, randomBytes, randomUUID } from 'crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import type { AgentConfig } from '../types';
 import {
   ProtocolClient,
@@ -48,6 +48,7 @@ import type {
   TaskStatus,
   TaskInfo,
   DeferredContinuation,
+  DirectPauseRecoveryRequest,
   SubmittedContinuation,
   WebhookUrlTemplate,
 } from './ConversationTypes';
@@ -117,6 +118,19 @@ export class DeferredSettlementOwnershipError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = 'DeferredSettlementOwnershipError';
+  }
+}
+
+export type DirectContinuationRecoveryFailure = 'not_authorized' | 'in_progress' | 'superseded';
+
+/** Typed failure from the public direct-continuation recovery boundary. */
+export class DirectContinuationRecoveryError extends DeferredSettlementOwnershipError {
+  constructor(
+    message: string,
+    readonly reason: DirectContinuationRecoveryFailure
+  ) {
+    super(message);
+    this.name = 'DirectContinuationRecoveryError';
   }
 }
 
@@ -677,7 +691,80 @@ function snapshotTaskOptions(options: TaskOptions): TaskOptions {
     ...(options.delegatedOperatorAuthorization !== undefined && {
       delegatedOperatorAuthorization: { ...options.delegatedOperatorAuthorization },
     }),
+    ...(options.durableContinuationRecovery !== undefined && {
+      durableContinuationRecovery: { ...options.durableContinuationRecovery },
+    }),
   };
+}
+
+const DIRECT_CONTINUATION_RECOVERY_KEY_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const MAX_DIRECT_CONTINUATION_OWNER_SCOPE_BYTES = 1_024;
+
+function directContinuationRecoveryDigest(key: string): string {
+  return createHash('sha256').update(key, 'utf8').digest('base64url');
+}
+
+function directContinuationDigestMatches(expectedDigest: string, actualDigest: string): boolean {
+  try {
+    const expected = Buffer.from(expectedDigest, 'base64url');
+    const actual = Buffer.from(actualDigest, 'base64url');
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
+}
+
+function directContinuationRecoveryKeyMatches(expectedDigest: string, recoveryKey: string): boolean {
+  return directContinuationDigestMatches(expectedDigest, directContinuationRecoveryDigest(recoveryKey));
+}
+
+function assertDirectContinuationOwnerScope(ownerScope: unknown): asserts ownerScope is string {
+  if (
+    typeof ownerScope !== 'string' ||
+    ownerScope.trim().length === 0 ||
+    /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(ownerScope) ||
+    Buffer.byteLength(ownerScope, 'utf8') > MAX_DIRECT_CONTINUATION_OWNER_SCOPE_BYTES
+  ) {
+    throw new ConfigurationError(
+      'durableContinuationRecovery.ownerScope must be a non-empty authenticated owner/account scope of at most 1024 UTF-8 bytes.'
+    );
+  }
+}
+
+function directContinuationSellerOrigin(agent: AgentConfig): string {
+  let sellerOrigin = agent.agent_uri;
+  try {
+    sellerOrigin = new URL(agent.agent_uri).origin;
+  } catch {
+    // Agent URL validation reports malformed endpoints at the public boundary.
+    // Keeping the raw value here preserves a deterministic fail-closed binding.
+  }
+  return sellerOrigin;
+}
+
+function directContinuationOwnerBindingDigest(agent: AgentConfig, ownerScope: string): string {
+  return directContinuationRecoveryDigest(
+    canonicalize({
+      ownerScope,
+      seller: { id: agent.id, origin: directContinuationSellerOrigin(agent), protocol: agent.protocol },
+    })
+  );
+}
+
+function directContinuationRecoveryDenied(): DirectContinuationRecoveryError {
+  return new DirectContinuationRecoveryError('Direct continuation recovery is not authorized.', 'not_authorized');
+}
+
+function attachDirectContinuationRecovery<T>(
+  result: TaskResult<T>,
+  recovery: NonNullable<DeferredContinuation<T>['recovery']>
+): TaskResult<T> {
+  const deferred = result.deferred;
+  if (!deferred) return result;
+  const resume = deferred.resume;
+  deferred.recovery = { ...recovery };
+  deferred.resume = async input => attachDirectContinuationRecovery(await resume(input), recovery);
+  return result;
 }
 
 function snapshotTransportOptions(
@@ -1222,6 +1309,19 @@ export class TaskExecutor {
     // boundary. This executor is internal, but direct callers and higher
     // layers may still retain the original nested objects.
     params = structuredClone(params);
+    if (options.durableContinuationRecovery !== undefined) {
+      assertDirectContinuationOwnerScope(options.durableContinuationRecovery.ownerScope);
+      if (agent.protocol !== 'a2a') {
+        throw new ConfigurationError('durableContinuationRecovery is supported only for resumable A2A mutations.');
+      }
+      if (!requestUsesIdempotency(taskName, params)) {
+        throw new ConfigurationError('durableContinuationRecovery is supported only for mutating AdCP requests.');
+      }
+      if (!this.config.deferredStorage) {
+        throw new ConfigurationError('durableContinuationRecovery requires deferredStorage.');
+      }
+      this.requireDeferredSettlementOperationRouting(this.config.deferredStorage, true);
+    }
     // The client-minted `taskId` is a local correlation id for tracking this
     // call's lifecycle (activeTasks map, metadata, webhook URL macros). It is
     // NOT the same thing as the A2A `taskId` that the server assigns — that
@@ -2742,7 +2842,9 @@ export class TaskExecutor {
     const inputRequest = this.responseParser.parseInputRequest(response);
     const serverContextId = this.responseParser.getContextId(response) ?? response.contextId;
     const a2aTaskId = this.responseParser.getA2AContinuationTaskId(response);
-    const settlementServerTaskId = deferTerminalTaskStatus ? this.responseParser.getTaskId(response) : undefined;
+    const directContinuationRecovery = !deferTerminalTaskStatus && options.durableContinuationRecovery !== undefined;
+    const operationRoutedContinuation = deferTerminalTaskStatus || directContinuationRecovery;
+    const settlementServerTaskId = operationRoutedContinuation ? this.responseParser.getTaskId(response) : undefined;
 
     // MCP has no standard continuation after a returned pause. A2A can resume
     // only when the seller supplied an official task ID; without one, a same-
@@ -2793,6 +2895,8 @@ export class TaskExecutor {
       const token = randomUUID();
       const deferredStorage = this.config.deferredStorage;
       const usesDurableStorage = deferredStorage !== undefined && persistPausedContinuation;
+      const directRecoveryKey =
+        directContinuationRecovery && usesDurableStorage ? randomBytes(32).toString('base64url') : undefined;
       if (usesDurableStorage) {
         const createdAt = Date.now();
         const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
@@ -2816,9 +2920,17 @@ export class TaskExecutor {
           ...(deferredClientContext !== undefined && {
             clientContext: durableDeferredSnapshot(deferredClientContext),
           }),
-          ...(deferTerminalTaskStatus && {
+          ...(operationRoutedContinuation && {
             settlementOperationId: taskId,
             settlementOperationRouteRequired: true as const,
+          }),
+          ...(directContinuationRecovery && {
+            directContinuationRecovery: true as const,
+            directContinuationRecoveryKeyDigest: directContinuationRecoveryDigest(directRecoveryKey!),
+            directContinuationOwnerBindingDigest: directContinuationOwnerBindingDigest(
+              agent,
+              options.durableContinuationRecovery!.ownerScope
+            ),
           }),
           ...(deferTerminalTaskStatus &&
             requireDeferredSettlementResumeAuthorization && {
@@ -2828,8 +2940,10 @@ export class TaskExecutor {
           createdAt,
           expiresAt: createdAt + ttlSeconds * 1000,
         };
-        if (deferTerminalTaskStatus) this.requireDeferredSettlementOperationRouting(deferredStorage);
-        const stored = deferTerminalTaskStatus
+        if (operationRoutedContinuation) {
+          this.requireDeferredSettlementOperationRouting(deferredStorage, directContinuationRecovery);
+        }
+        const stored = operationRoutedContinuation
           ? await deferredStorage.putForSettlementOperationIfAbsent(taskId, token, deferredState, ttlSeconds)
           : await deferredStorage.putIfAbsent(token, deferredState, ttlSeconds);
         if (!stored) {
@@ -2874,6 +2988,12 @@ export class TaskExecutor {
           ? input => this.resumeDeferredTaskFromLiveClosure<T>(token, input, !deferTerminalTaskStatus)
           : resumeInProcess,
       };
+      if (directRecoveryKey !== undefined) {
+        const recovery = { operationId: taskId, recoveryKey: directRecoveryKey };
+        deferred.recovery = recovery;
+        const resume = deferred.resume;
+        deferred.resume = async input => attachDirectContinuationRecovery(await resume(input), recovery);
+      }
 
       return {
         success: true, // The task is progressing, not failed
@@ -2934,6 +3054,8 @@ export class TaskExecutor {
       const token = handlerResponse.token;
       const deferredStorage = this.config.deferredStorage;
       const usesDurableStorage = deferredStorage !== undefined && persistPausedContinuation;
+      const directRecoveryKey =
+        directContinuationRecovery && usesDurableStorage ? randomBytes(32).toString('base64url') : undefined;
 
       // Save deferred state for later resumption
       if (usesDurableStorage) {
@@ -2960,9 +3082,17 @@ export class TaskExecutor {
           ...(deferredClientContext !== undefined && {
             clientContext: durableDeferredSnapshot(deferredClientContext),
           }),
-          ...(deferTerminalTaskStatus && {
+          ...(operationRoutedContinuation && {
             settlementOperationId: taskId,
             settlementOperationRouteRequired: true as const,
+          }),
+          ...(directContinuationRecovery && {
+            directContinuationRecovery: true as const,
+            directContinuationRecoveryKeyDigest: directContinuationRecoveryDigest(directRecoveryKey!),
+            directContinuationOwnerBindingDigest: directContinuationOwnerBindingDigest(
+              agent,
+              options.durableContinuationRecovery!.ownerScope
+            ),
           }),
           ...(deferTerminalTaskStatus &&
             requireDeferredSettlementResumeAuthorization && {
@@ -2972,8 +3102,10 @@ export class TaskExecutor {
           createdAt,
           expiresAt: createdAt + ttlSeconds * 1000,
         };
-        if (deferTerminalTaskStatus) this.requireDeferredSettlementOperationRouting(deferredStorage);
-        const stored = deferTerminalTaskStatus
+        if (operationRoutedContinuation) {
+          this.requireDeferredSettlementOperationRouting(deferredStorage, directContinuationRecovery);
+        }
+        const stored = operationRoutedContinuation
           ? await deferredStorage.putForSettlementOperationIfAbsent(taskId, token, deferredState, ttlSeconds)
           : await deferredStorage.putIfAbsent(token, deferredState, ttlSeconds);
         if (!stored) {
@@ -3025,6 +3157,12 @@ export class TaskExecutor {
           ? input => this.resumeDeferredTaskFromLiveClosure<T>(token, input, !deferTerminalTaskStatus)
           : resumeInProcess,
       };
+      if (directRecoveryKey !== undefined) {
+        const recovery = { operationId: taskId, recoveryKey: directRecoveryKey };
+        deferred.recovery = recovery;
+        const resume = deferred.resume;
+        deferred.resume = async input => attachDirectContinuationRecovery(await resume(input), recovery);
+      }
 
       return {
         success: true, // The task is progressing, not failed
@@ -3544,15 +3682,17 @@ export class TaskExecutor {
     return (await this.config.deferredStorage.has(token)) === true;
   }
 
-  private requireDeferredSettlementOperationRouting(storage: DeferredTaskStorage): void {
+  private requireDeferredSettlementOperationRouting(storage: DeferredTaskStorage, direct = false): void {
     if (
       typeof storage.putForSettlementOperationIfAbsent !== 'function' ||
       typeof storage.getBySettlementOperationId !== 'function' ||
       typeof storage.replaceForSettlementOperationIfVersion !== 'function'
     ) {
       throw new ConfigurationError(
-        'Committed deferred settlement requires atomic operation routing so paused mutations remain discoverable across crashes. ' +
-          'Use MemoryStorage or implement the DeferredTaskStorage operation-route contract.'
+        direct
+          ? 'durableContinuationRecovery requires atomic DeferredTaskStorage operation routing. Use MemoryStorage or implement putForSettlementOperationIfAbsent(), getBySettlementOperationId(), and replaceForSettlementOperationIfVersion().'
+          : 'Committed deferred settlement requires atomic operation routing so paused mutations remain discoverable across crashes. ' +
+              'Use MemoryStorage or implement the DeferredTaskStorage operation-route contract.'
       );
     }
   }
@@ -3581,7 +3721,7 @@ export class TaskExecutor {
     if (state.settlementOperationId === undefined || state.settlementOperationRouteRequired !== true) {
       return storage.replaceIfVersion(token, expectedVersion, state, ttlSeconds);
     }
-    this.requireDeferredSettlementOperationRouting(storage);
+    this.requireDeferredSettlementOperationRouting(storage, state.directContinuationRecovery === true);
     return storage.replaceForSettlementOperationIfVersion(
       state.settlementOperationId,
       token,
@@ -3620,7 +3760,80 @@ export class TaskExecutor {
     }
     const routed = await this.loadDeferredSettlementOperationRoute(storage, operationId);
     if (!routed) return undefined;
+    if (routed.state.directContinuationRecovery === true) {
+      throw new DeferredSettlementOwnershipError(
+        'A direct continuation route cannot be recovered through committed settlement authorization.'
+      );
+    }
     return this.recoverRoutedDeferredTask<T>(operationId, routed, publishTerminalTaskStatus);
+  }
+
+  /** Recover an opt-in direct continuation through its secret operation capability. */
+  async recoverDirectPauseContinuation<T>(
+    request: DirectPauseRecoveryRequest,
+    publishTerminalTaskStatus = true
+  ): Promise<{ token: string; result: TaskResult<T>; clientContext?: unknown }> {
+    const storage = this.config.deferredStorage;
+    if (!storage) throw new ConfigurationError('Direct continuation recovery requires deferredStorage.');
+    this.requireDeferredSettlementOperationRouting(storage, true);
+    const operationId = typeof request?.operationId === 'string' ? request.operationId : '';
+    const recoveryKey = typeof request?.recoveryKey === 'string' ? request.recoveryKey : '';
+    const ownerScope = typeof request?.ownerScope === 'string' ? request.ownerScope : '';
+    if (
+      !operationId ||
+      !DIRECT_CONTINUATION_RECOVERY_KEY_PATTERN.test(recoveryKey) ||
+      ownerScope.trim().length === 0 ||
+      /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(ownerScope) ||
+      Buffer.byteLength(ownerScope, 'utf8') > MAX_DIRECT_CONTINUATION_OWNER_SCOPE_BYTES
+    ) {
+      throw directContinuationRecoveryDenied();
+    }
+    const routed = await this.loadDeferredSettlementOperationRoute(storage, operationId);
+    const digest = routed?.state.directContinuationRecoveryKeyDigest;
+    if (
+      !routed ||
+      routed.state.directContinuationRecovery !== true ||
+      typeof digest !== 'string' ||
+      !directContinuationRecoveryKeyMatches(digest, recoveryKey)
+    ) {
+      throw directContinuationRecoveryDenied();
+    }
+    let agent: AgentConfig | undefined;
+    try {
+      agent =
+        this.deferredAgents.get(routed.state.agentId) ??
+        (await this.config.resolveDeferredAgent?.(routed.state.agentId));
+    } catch {
+      throw directContinuationRecoveryDenied();
+    }
+    const expectedOwnerBinding = routed.state.directContinuationOwnerBindingDigest;
+    if (
+      !agent ||
+      agent.id !== routed.state.agentId ||
+      agent.protocol !== 'a2a' ||
+      typeof expectedOwnerBinding !== 'string' ||
+      !directContinuationDigestMatches(expectedOwnerBinding, directContinuationOwnerBindingDigest(agent, ownerScope))
+    ) {
+      throw directContinuationRecoveryDenied();
+    }
+    this.deferredAgents.set(agent.id, agent);
+    const recovered = await this.recoverRoutedDeferredTask<T>(operationId, routed, publishTerminalTaskStatus);
+    if (!recovered) {
+      if (routed.state.continuationClaimed === true) {
+        throw new DirectContinuationRecoveryError(
+          'The direct continuation is already being resumed; do not redispatch the mutation.',
+          'in_progress'
+        );
+      }
+      throw directContinuationRecoveryDenied();
+    }
+    return {
+      ...recovered,
+      result: attachDirectContinuationRecovery(recovered.result, { operationId, recoveryKey }),
+      ...(routed.state.clientContext !== undefined && {
+        clientContext: structuredClone(routed.state.clientContext),
+      }),
+    };
   }
 
   private async recoverRoutedDeferredTask<T>(
@@ -3650,7 +3863,13 @@ export class TaskExecutor {
       };
     }
     if (state.continuationClaimed) {
-      return undefined;
+      const lease = state.settlementResumeDispatchLease;
+      const reclaimableAdmission =
+        state.directContinuationRecovery === true &&
+        lease?.phase === 'admission' &&
+        Number.isFinite(lease.expiresAt) &&
+        lease.expiresAt <= Date.now();
+      if (!reclaimableAdmission) return undefined;
     }
     if (!state.pauseStatus || !state.pauseQuestion) {
       throw new DeferredSettlementOwnershipError(
@@ -3713,6 +3932,11 @@ export class TaskExecutor {
       });
     }
     if (!state) throw new Error('The linked deferred callback checkpoint is unavailable.');
+    if (state.directContinuationRecovery === true) {
+      throw new DeferredSettlementOwnershipError(
+        'A direct continuation route cannot be checkpointed through committed settlement authorization.'
+      );
+    }
     if (state.settlementOperationId !== operationId) {
       throw new Error('The deferred callback token is bound to a different committed operation.');
     }
@@ -3805,6 +4029,11 @@ export class TaskExecutor {
     }
     const currentRoute = await this.loadDeferredSettlementOperationRoute(storage, operationId);
     if (!currentRoute) return undefined;
+    if (currentRoute.state.directContinuationRecovery === true) {
+      throw new DeferredSettlementOwnershipError(
+        'A direct continuation route cannot be checkpointed through committed settlement authorization.'
+      );
+    }
     if (currentRoute.state.settlementOperationRouteRequired !== true) {
       throw new DeferredSettlementOwnershipError('The callback operation route is not a current-format checkpoint.');
     }
@@ -3883,9 +4112,31 @@ export class TaskExecutor {
     }
 
     const committedOperationId = state.settlementOperationId;
-    const requiresSettlement = committedOperationId !== undefined;
+    const operationRouteRequired =
+      committedOperationId !== undefined && state.settlementOperationRouteRequired === true;
+    const requiresSettlement = committedOperationId !== undefined && state.directContinuationRecovery !== true;
+    const requiresRoutedAdmission = requiresSettlement || operationRouteRequired;
     const requiresRecoveredSettlement = requiresSettlement && !liveSettlementOwner;
-    if (requiresSettlement && state.settlementOperationRouteRequired === true) {
+    if (
+      operationRouteRequired &&
+      state.directContinuationRecovery !== true &&
+      (state.directContinuationRecoveryKeyDigest !== undefined ||
+        state.directContinuationOwnerBindingDigest !== undefined)
+    ) {
+      throw new DeferredSettlementOwnershipError(
+        'The direct continuation route lost its route-kind discriminator in durable storage.'
+      );
+    }
+    if (
+      state.directContinuationRecovery === true &&
+      (typeof state.directContinuationRecoveryKeyDigest !== 'string' ||
+        typeof state.directContinuationOwnerBindingDigest !== 'string')
+    ) {
+      throw new DeferredSettlementOwnershipError(
+        'The direct continuation route is missing its recovery ownership binding.'
+      );
+    }
+    if (operationRouteRequired) {
       this.requireDeferredSettlementOperationRouting(this.config.deferredStorage);
     }
     // Once durable settlement and public-client finalization both succeeded,
@@ -3932,7 +4183,7 @@ export class TaskExecutor {
     // SDK operation route moved to pause B, but before the coordinator CAS or
     // caller response completed. Possession of A plus the matching committed
     // operation is sufficient to recover B; never redispatch A's input.
-    if (requiresSettlement && state.settlementOperationRouteRequired === true) {
+    if (operationRouteRequired) {
       const currentRoute = await this.loadDeferredSettlementOperationRoute(
         this.config.deferredStorage,
         committedOperationId
@@ -3941,6 +4192,12 @@ export class TaskExecutor {
         if (currentRoute.state.settlementOperationId !== committedOperationId) {
           throw new DeferredSettlementOwnershipError(
             'The committed continuation operation route does not match its stored generation.'
+          );
+        }
+        if (state.directContinuationRecovery === true) {
+          throw new DirectContinuationRecoveryError(
+            'The direct continuation advanced to a newer generation; use owner-bound operation recovery.',
+            'superseded'
           );
         }
         if (state.settlementResumeAuthorizationRequired === true) {
@@ -4088,7 +4345,7 @@ export class TaskExecutor {
     if (state.continuationClaimed) {
       const dispatchLease = state.settlementResumeDispatchLease;
       const reclaimableAdmission =
-        requiresSettlement &&
+        requiresRoutedAdmission &&
         dispatchLease?.phase === 'admission' &&
         Number.isFinite(dispatchLease.expiresAt) &&
         dispatchLease.expiresAt <= Date.now();
@@ -4108,7 +4365,7 @@ export class TaskExecutor {
     const claimTtlSeconds = this.deferredSafetyRetentionSeconds();
     const claimedVersion = randomUUID();
     const claimedAt = Date.now();
-    const dispatchOwnerId = requiresSettlement ? randomUUID() : undefined;
+    const dispatchOwnerId = requiresRoutedAdmission ? randomUUID() : undefined;
     // MemoryStorage retains object references. Keep the durable claim and the
     // mutable in-flight conversation on independent sanitized graphs so a
     // transport failure cannot leave raw resume input in the retained fence.
@@ -4299,7 +4556,7 @@ export class TaskExecutor {
         assertDeferredContinuationToken(nextToken);
         const replacementServerTaskId = requiresSettlement
           ? reconcileDeferredServerTaskId(trustedDeferredServerTaskId(state), [resumed.metadata.serverTaskId])
-          : resumed.metadata.serverTaskId;
+          : (resumed.metadata.serverTaskId ?? state.settlementServerTaskId);
         const createdAt = Date.now();
         const ttlSeconds = this.config.deferredTaskTtlSeconds ?? DEFAULT_DEFERRED_TASK_TTL_SECONDS;
         const replacementState: DeferredTaskState = {
@@ -4332,6 +4589,11 @@ export class TaskExecutor {
           ...(state.settlementOperationRouteRequired === true && {
             settlementOperationRouteRequired: true as const,
           }),
+          ...(state.directContinuationRecovery === true && {
+            directContinuationRecovery: true as const,
+            directContinuationRecoveryKeyDigest: state.directContinuationRecoveryKeyDigest!,
+            directContinuationOwnerBindingDigest: state.directContinuationOwnerBindingDigest!,
+          }),
           ...(state.settlementResumeAuthorizationRequired === true && {
             settlementResumeAuthorizationRequired: true,
           }),
@@ -4341,17 +4603,16 @@ export class TaskExecutor {
           createdAt,
           expiresAt: createdAt + ttlSeconds * 1000,
         };
-        const stored =
-          requiresSettlement && state.settlementOperationRouteRequired === true
-            ? await this.config.deferredStorage.replaceForSettlementOperationIfVersion(
-                committedOperationId,
-                token,
-                dispatchVersion,
-                nextToken,
-                replacementState,
-                ttlSeconds
-              )
-            : await this.config.deferredStorage.putIfAbsent(nextToken, replacementState, ttlSeconds);
+        const stored = operationRouteRequired
+          ? await this.config.deferredStorage.replaceForSettlementOperationIfVersion(
+              committedOperationId!,
+              token,
+              dispatchVersion,
+              nextToken,
+              replacementState,
+              ttlSeconds
+            )
+          : await this.config.deferredStorage.putIfAbsent(nextToken, replacementState, ttlSeconds);
         if (!stored) {
           if (requiresSettlement) {
             const winner = await this.resumeExactDeferredSettlementWinner<T>(

@@ -202,16 +202,22 @@ and renews the claim while the resume call is active. If renewal is lost, it
 refuses to commit that worker's observation and lets callback or polling
 reconciliation choose the terminal winner.
 
-The current direct-mutation API has one narrower crash gap: when a resumed A2A
-task pauses again, the SDK durably stores replacement token B before consuming
-token A, but the public direct path has no operation-indexed lookup by which a
-fresh host can discover B if the worker dies before `observe()` records it.
-Terminal resumes remain recoverable by polling the retained seller task ID;
-nested pauses require operator reconciliation and must not redispatch the same
-human input. Track operation-routed direct continuation recovery in
-[#2952](https://github.com/adcontextprotocol/adcp-client/issues/2952). The
-legacy compatibility coordinator's committed-settlement path already has the
-stronger routed handoff described above.
+Direct A2A mutations can close the nested-pause handoff window with
+`TaskOptions.durableContinuationRecovery`. Supply an `ownerScope` derived from
+the authenticated principal and seller account, then persist the initial
+`result.deferred.recovery` operation ID and host-only recovery key. If a worker
+dies after atomically moving the SDK route from token A to token B but before
+the host observes B, a fresh `AgentClient` calls
+`recoverDirectPauseContinuation({ operationId, recoveryKey, ownerScope })` to
+reconstruct B without seller I/O. The SDK stores only a key digest, also binds
+the route to the supplied owner scope and trusted seller identity, and keeps this
+direct route separate from the legacy compatibility coordinator's committed
+settlement path. A claimed uncertain-dispatch fence fails with an explicit
+"do not redispatch" error. Persist the initial recovery pair before treating
+the first pause as restart-safe. The route ends when continuation leaves a
+resumable pause; a missing route after possible dispatch is never evidence
+that redispatch is safe. Reconcile terminal uncertainty by polling the saved
+seller task ID.
 
 ## Terminal settlement and host publication
 
@@ -273,7 +279,7 @@ and continuation fencing. The host still owns:
 | Restart after observation, before host publication | Terminal winner and one outbox row commit together; a publisher lease is recoverable | The example's PostgreSQL rollback and expired-lease recovery are exercised in [`durable-buyer-writes.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/examples/durable-buyer-writes.test.js#L91) and [line 128](https://github.com/adcontextprotocol/adcp-client/blob/main/test/examples/durable-buyer-writes.test.js#L128). Downstream idempotency on `logicalOperationId` closes the post-send/pre-ACK window. |
 | Repeated identical terminal observations | Acknowledge without another handler/publication | Host transaction race: [`durable-buyer-writes.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/examples/durable-buyer-writes.test.js#L59). SDK delivery-key and cross-key terminal dedup: [`async-handler-webhook-dedup.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/async-handler-webhook-dedup.test.js#L194) and [`task-executor-pre-dispatch-boundary.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/task-executor-pre-dispatch-boundary.test.js#L2505). |
 | Conflicting terminal observations | Preserve first winner and return conflict | Host winner preservation: [`durable-buyer-writes.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/examples/durable-buyer-writes.test.js#L59). SDK dedup and deferred winner protection: [`async-handler-webhook-dedup.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/async-handler-webhook-dedup.test.js#L288) and [`single-agent-deferred-recovery.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L3006). |
-| Pending input or authorization | A fresh authorized process resumes the persisted current A2A token once; callbacks and the host lease fence competing settlement | SDK generation fencing and restart settlement are covered by [`single-agent-deferred-recovery.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L155), [line 411](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L411), and [line 2136](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L2136). The host reauthorization/lease is in `resumePendingInput()`. A crash during a second-pause token handoff is the bounded direct-path gap in [#2952](https://github.com/adcontextprotocol/adcp-client/issues/2952); do not redispatch that input. |
+| Pending input or authorization | A fresh authorized process resumes the persisted current A2A token once; callbacks and the host lease fence competing settlement | SDK generation fencing and restart settlement are covered by [`single-agent-deferred-recovery.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L155), [line 411](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L411), and [line 2136](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L2136). The host reauthorization/lease is in `resumePendingInput()`. Direct A→B route recovery at the store-B/host-observation crash boundary is covered by [`direct-pause-recovery.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/direct-pause-recovery.test.js). |
 | No callback; polling recovery | Poll exact seller `task_id`; callback and poll race to the same terminal winner | Poll-first closure and competing callback fencing: [`task-executor-pre-dispatch-boundary.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/task-executor-pre-dispatch-boundary.test.js#L1104). Restarted pending polling without redispatch: [`single-agent-deferred-recovery.test.js`](https://github.com/adcontextprotocol/adcp-client/blob/main/test/lib/single-agent-deferred-recovery.test.js#L2524). |
 
 ## Task completion is not delivery completion
@@ -325,7 +331,7 @@ resolution, and the actual mutation retain those responsibilities.
 - [ ] Persist `metadata.serverTaskId` for polling. Never poll with SDK `operation_id`, request key, A2A `Task.id`, or continuation token.
 - [ ] Make terminal settlement first-writer-wins, fingerprint canonical task value, insert the host outbox in the same transaction, and make the downstream consumer idempotent by logical operation ID.
 - [ ] Configure and contract-test a durable `DeferredTaskStorage` before accepting restart-sensitive A2A pauses; never fabricate MCP continuation identity.
-- [ ] Alert and reconcile rather than redispatch when a direct continuation worker dies during a nested-pause handoff; follow [#2952](https://github.com/adcontextprotocol/adcp-client/issues/2952).
+- [ ] For direct A2A mutations, enable `durableContinuationRecovery`, persist the first `deferred.recovery` pair before treating the pause as restart-safe, and recover the current pause route after a crash; a missing route after possible dispatch never authorizes redispatch.
 - [ ] Alert on aged reconciliation rows, unpublished outbox rows, and repeated publisher failures; apply a host-owned retry/dead-letter policy.
 - [ ] Keep MediaBuy/delivery reconciliation alive after create-task completion.
 - [ ] Run `npm run ci:doc-links` and `npm run ci:quick`; the linked focused suites are the acceptance evidence for the SDK-owned boundaries.
