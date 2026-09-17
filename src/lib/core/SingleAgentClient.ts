@@ -149,6 +149,7 @@ import type {
   TaskInfo,
   TaskState,
   WebhookUrlTemplate,
+  DirectPauseRecoveryRequest,
 } from './ConversationTypes';
 import type { AdcpTaskName, TaskRequestFor, TaskResponseTypeMap } from './AgentClient';
 import type { DeferredTaskStorage } from '../storage/interfaces';
@@ -952,6 +953,9 @@ function snapshotTaskOptions<T extends TaskOptions | undefined>(options: T): T {
     ...(options.metadata !== undefined && { metadata: structuredClone(options.metadata) }),
     ...(options.delegatedOperatorAuthorization !== undefined && {
       delegatedOperatorAuthorization: { ...options.delegatedOperatorAuthorization },
+    }),
+    ...(options.durableContinuationRecovery !== undefined && {
+      durableContinuationRecovery: { ...options.durableContinuationRecovery },
     }),
   } as T;
 }
@@ -2530,6 +2534,14 @@ export class SingleAgentClient {
     publishTerminalTaskStatus = true
   ): Promise<{ token: string; result: TaskResult<T> } | undefined> {
     return this.executor.recoverDeferredTaskForOperation(operationId, recoveryKey, publishTerminalTaskStatus);
+  }
+
+  /** Recover the current generation of an opt-in direct mutation pause. */
+  async recoverDirectPauseContinuation<T>(request: DirectPauseRecoveryRequest): Promise<TaskResult<T>> {
+    const recovered = await this.executor.recoverDirectPauseContinuation<T>(request);
+    return isDeferredClientFinalizationContext(recovered.clientContext)
+      ? this.finalizeTaskResult(recovered.result, recovered.clientContext)
+      : recovered.result;
   }
 
   /** Bridge a store-recovered callback into the deferred terminal checkpoint. @internal */
@@ -7495,6 +7507,7 @@ export class SingleAgentClient {
         error instanceof TaskTimeoutError ||
         error instanceof VersionUnsupportedError ||
         error instanceof FeatureUnsupportedError ||
+        (error instanceof ConfigurationError && options?.durableContinuationRecovery !== undefined) ||
         isAbortOrTimeoutError(error)
       ) {
         throw error;

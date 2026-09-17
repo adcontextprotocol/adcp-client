@@ -55,11 +55,23 @@ interface TransportOptions {
 interface TaskOptions {
   timeout?: number;             // Absolute whole-task deadline
   signal?: AbortSignal;         // Caller cancellation
+  // Direct A2A mutation route, bound to authenticated principal + account scope.
+  durableContinuationRecovery?: { ownerScope: string };
   // Trusted local receiver policy; snapshotted and persisted with generated
   // webhook registrations, never inferred from or sent in task arguments.
   delegatedOperatorAuthorization?: DelegatedOperatorAuthorizationContext;
   // ...deadline, cancellation, transport, and conversation options...
 }
+
+interface DeferredContinuation<T> {
+  token: string;
+  question?: string;
+  resume(input: unknown): Promise<TaskResult<T>>;
+  recovery?: { operationId: string; recoveryKey: string }; // Host-only, persist once
+}
+
+// AgentClient public direct-mutation route recovery
+agent.recoverDirectPauseContinuation<T>({ operationId, recoveryKey, ownerScope });
 
 interface ValidateAdAgentsOptions {
   timeoutMs?: number;           // Per-request ceiling

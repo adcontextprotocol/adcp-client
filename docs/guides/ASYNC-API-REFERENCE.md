@@ -251,6 +251,11 @@ interface TaskOptions {
   contextId?: string;
   /** Enable debug logging for this task */
   debug?: boolean;
+  /** Operation-routed crash recovery for direct A2A mutations */
+  durableContinuationRecovery?: {
+    /** Stable host authorization scope for the authenticated principal + account */
+    ownerScope: string;
+  };
   /** Additional metadata to include */
   metadata?: Record<string, any>;
 }
@@ -571,6 +576,11 @@ interface DeferredContinuation<T> {
   question?: string;
   /** Resume the task with user input */
   resume: (input: any) => Promise<TaskResult<T>>;
+  /** Host-only route capability; present for opted-in direct mutations */
+  recovery?: {
+    operationId: string;
+    recoveryKey: string;
+  };
 }
 ```
 
@@ -878,6 +888,9 @@ interface DeferredTaskState {
   clientContext?: unknown; // Opaque SDK context; round-trip unchanged
   settlementOperationId?: string; // Trusted committed-mutation recovery route
   settlementOperationRouteRequired?: true; // New-format routed record; preserve on every successor
+  directContinuationRecovery?: true; // Routed direct pause, not committed settlement
+  directContinuationRecoveryKeyDigest?: string; // SHA-256; raw capability is never stored
+  directContinuationOwnerBindingDigest?: string; // Authenticated owner/account + trusted seller binding
   settlementResumeAuthorizationRequired?: boolean; // Owning coordinator must authorize seller-input dispatch
   settlementServerTaskId?: string; // Durably bound seller work handle
   settlementPendingTaskId?: string; // Nonterminal seller work retained for restart polling
@@ -919,6 +932,12 @@ interface DeferredTaskStorage extends Storage<DeferredTaskState> {
 ```
 
 `putIfAbsent()` must atomically reject an existing unexpired key.
+Custom adapters MUST round-trip every `DeferredTaskState` field opaquely,
+including fields introduced by newer SDK versions. When A→B moves an
+operation route but retains A as a dispatch fence, later deletion or expiry of
+A MUST clear the route only if it still points at A; it must never delete the
+route that now points at B. Deploy readers that preserve new fields before
+enabling new routed writers in a shared store.
 For ordinary and marker-absent legacy records, `replaceIfVersion()` is the
 exclusive seller-dispatch claim: it must replace only the exact generation and
 keep the key present under the SDK-supplied internal safety TTL. New
@@ -939,7 +958,7 @@ dispatch, the SDK generation-conditionally restores the original state with
 its remaining human-input TTL.
 
 The three settlement-operation methods form a second atomic index over
-committed continuations. Initial pause creation writes the opaque token and
+committed continuations and opted-in direct mutation pauses. Initial pause creation writes the opaque token and
 operation route together. A nested pause writes B and moves the route from the
 exact dispatch-committed generation A in one transaction while retaining A as
 a dispatch fence. `getBySettlementOperationId()` returns that exact current
@@ -958,6 +977,48 @@ When a pause crossed a committed mutation boundary, the SDK persists its
 trusted settlement operation identity. A terminal restart resume is returned
 only after a reconstructed durable coordinator settles it; without a matching
 recoverer, the resume fails closed.
+
+Direct A2A mutations opt in per call with an authenticated owner/account scope:
+
+```typescript
+const paused = await agent.buyProducts(request, undefined, {
+  durableContinuationRecovery: {
+    ownerScope: `principal:${principalId}/account:${accountId}`,
+  },
+});
+
+// Persist this pair once in host-only storage. The recovery key is distinct
+// from the human-facing resume token and must never be sent to the seller.
+const route = paused.deferred?.recovery;
+if (!route) throw new Error('Seller did not return a recoverable A2A pause');
+
+const recovered = await restartedAgent.recoverDirectPauseContinuation({
+  operationId: route.operationId,
+  recoveryKey: route.recoveryKey,
+  ownerScope: `principal:${principalId}/account:${accountId}`,
+});
+```
+
+The SDK stores only the recovery-key digest, binds it to the supplied stable
+principal/account owner scope and trusted seller ID/origin, and validates the route
+store before seller dispatch. Unknown routes, wrong capabilities, owner drift,
+and seller drift fail without revealing a token. The host must authenticate
+the caller before constructing `ownerScope`; request fields are not an
+authentication source. Keep the scope byte-stable for the operation lifetime;
+do not use a mutable display name, seller-supplied value, seller task ID, or
+request idempotency key. Custom stores must round-trip all three
+`directContinuation*` fields and implement the operation-route methods as one
+linearizable index. Direct routes do not enter committed-settlement recovery,
+so the existing callback and terminal settlement fences remain unchanged.
+The operation route covers resumable pause generations. If resume instead
+reaches `submitted` or a terminal result, persist the returned seller task ID
+and result through the normal host operation record; terminal uncertainty is
+reconciled by polling that seller task ID, never by redispatching the mutation.
+Persist the first returned recovery pair before considering the initial pause
+restart-safe. After any possible continuation dispatch, an absent pause route
+does not authorize redispatch.
+
+### Committed coordinator checkpoints
 
 If seller continuation reaches a terminal result, the SDK replaces the human
 input record with an opaque terminal checkpoint using the same independent
