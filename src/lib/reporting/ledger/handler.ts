@@ -778,7 +778,6 @@ export function projectManagedDelivery(
   );
   let reconciliationStatus: 'not_required' | 'pending' | 'accepted' | 'rejected' = 'not_required';
   if (binding.reconciliation_mode === 'consumer_receipt' && requiredRevision) {
-    const missingAdjustment = adjustmentLeaves.some(value => value === undefined);
     // A tombstoned acceptance is the later, terminal word on its subject. A
     // rejection it superseded can become the live leaf again once the
     // acceptance body is pruned — nothing live supersedes it any more — and

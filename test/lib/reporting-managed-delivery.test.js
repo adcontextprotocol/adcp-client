@@ -441,7 +441,6 @@ describe('seller managed reporting runtime', () => {
     const completed = [];
     const store = {
       planMaterializations: async () => 0,
-      releaseRevocation: async () => true,
       claimRevocation: async () => leases.shift() ?? null,
       releaseRevocation: async () => true,
       completeRevocation: async ({ lease: value }) => {

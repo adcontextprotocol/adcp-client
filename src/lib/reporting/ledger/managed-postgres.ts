@@ -2102,13 +2102,11 @@ export class PostgresReportingManagedDeliveryStore implements ReportingManagedDe
       transactionStarted = true;
       const value = await body(client);
       await client.query('COMMIT');
-      transactionStarted = false;
       return value;
     } catch (cause) {
       if (transactionStarted) {
         try {
           await client.query('ROLLBACK');
-          transactionStarted = false;
         } catch (rollbackCause) {
           releaseError =
             rollbackCause instanceof Error ? rollbackCause : new Error('Managed reporting rollback failed');
