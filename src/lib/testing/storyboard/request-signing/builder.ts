@@ -54,6 +54,15 @@ export interface BuildOptions {
    */
   transport?: 'raw' | 'mcp' | 'a2a';
   /**
+   * A2A protocol version the AGENT CARD declares for the resolved interface,
+   * passed through verbatim and never defaulted here: it selects the
+   * `A2A-Version` header, the JSON-RPC method and the invocation's payload
+   * key, so a literal in this file would pin the framing to one version
+   * regardless of what the agent published. Absent when the card declares
+   * none, in which case no version header is sent.
+   */
+  a2aProtocolVersion?: string;
+  /**
    * JSON-RPC `id` for the MCP envelope. Defaults to `crypto.randomUUID()`
    * so concurrent runs never collide. Override for tests that need a stable
    * id — JSON-RPC 2.0 permits number, string, or null.
@@ -426,12 +435,6 @@ interface TransportShapedRequest {
  * so every mutation path produces MCP-shaped requests when requested.
  */
 /**
- * A2A wire version this transport speaks, and the version whose invocation
- * shape {@link buildAdcpA2aInvocation} selects.
- */
-export const A2A_WIRE_VERSION = '1.0';
-
-/**
  * Proto-JSON serializer for `SendMessage`, loaded from `@a2a-js/sdk`.
  *
  * Held here rather than imported at module top because `@a2a-js/sdk` is a PEER
@@ -449,6 +452,16 @@ export async function loadA2aEnvelopeCodec(): Promise<void> {
 }
 
 /**
+ * The 0.x legacy wire, by the same test `callA2ATool` applies to the version it
+ * read off the card (`client.protocolVersion?.startsWith('0.')`,
+ * `protocols/a2a.ts`). A card declaring no version is treated as 1.x, which is
+ * what that call site does with an undefined `protocolVersion`.
+ */
+function isLegacyA2aWire(protocolVersion: string | undefined): boolean {
+  return protocolVersion?.startsWith('0.') ?? false;
+}
+
+/**
  * The AdCP invocation carried in the message's data part, in the same shape
  * `callA2ATool` sends (`src/lib/protocols/a2a.ts`).
  *
@@ -460,9 +473,9 @@ export async function loadA2aEnvelopeCodec(): Promise<void> {
 export function buildAdcpA2aInvocation(
   operation: string,
   args: Record<string, unknown>,
-  protocolVersion: string = A2A_WIRE_VERSION
+  protocolVersion: string | undefined
 ): Record<string, unknown> {
-  return protocolVersion.startsWith('0.') ? { skill: operation, parameters: args } : { skill: operation, input: args };
+  return isLegacyA2aWire(protocolVersion) ? { skill: operation, parameters: args } : { skill: operation, input: args };
 }
 
 /**
@@ -475,7 +488,22 @@ export function buildAdcpA2aInvocation(
  * string `"ROLE_USER"`, so a plain `JSON.stringify` of the request object
  * would put `"role":1` on the wire.
  */
-function wrapA2aEnvelope(operation: string, rawBody: string | undefined, idOverride?: number | string): string {
+function wrapA2aEnvelope(
+  operation: string,
+  rawBody: string | undefined,
+  protocolVersion: string | undefined,
+  idOverride?: number | string
+): string {
+  // The JSON-RPC method is version-selected too: 1.x names the RPC
+  // `SendMessage`, the 0.x family names it `message/send` and gives it a
+  // different params shape.
+  if (isLegacyA2aWire(protocolVersion)) {
+    throw new Error(
+      `agent card declares protocolVersion "${protocolVersion}"; this transport serializes the 1.x ` +
+        `SendMessage binding only. Sending a 1.x frame to an agent that published 0.x would be exactly ` +
+        `the assumption this transport exists to remove.`
+    );
+  }
   if (!a2aEnvelopeCodec) {
     throw new Error(
       `transport: 'a2a' requires loadA2aEnvelopeCodec() to have been awaited (the grader's A2A precondition does this)`
@@ -489,7 +517,7 @@ function wrapA2aEnvelope(operation: string, rawBody: string | undefined, idOverr
       role: 1, // Role.ROLE_USER — proto-JSON'd to "ROLE_USER" by the codec below
       parts: [
         {
-          content: { $case: 'data' as const, value: buildAdcpA2aInvocation(operation, args) },
+          content: { $case: 'data' as const, value: buildAdcpA2aInvocation(operation, args, protocolVersion) },
           metadata: undefined,
           filename: '',
           mediaType: 'application/json',
@@ -519,12 +547,17 @@ function applyTransport(vector: PositiveVector | NegativeVector, options: BuildO
     // and the signature base covers the headers, so a version header added
     // after signing would sit outside the base on a request the verifier
     // reconstructs with it.
-    headers['A2A-Version'] = A2A_WIRE_VERSION;
+    // Set only when the card declared one. An agent that publishes no version
+    // gets no version claim from us, and `isLegacyA2aWire` reads the absence as
+    // 1.x exactly as `callA2ATool` does.
+    if (options.a2aProtocolVersion !== undefined) {
+      headers['A2A-Version'] = options.a2aProtocolVersion;
+    }
     return {
       method: vector.request.method,
       url: options.baseUrl,
       headers,
-      body: wrapA2aEnvelope(operation, vector.request.body, options.mcpJsonRpcId),
+      body: wrapA2aEnvelope(operation, vector.request.body, options.a2aProtocolVersion, options.mcpJsonRpcId),
     };
   }
   if (options.transport === 'mcp') {

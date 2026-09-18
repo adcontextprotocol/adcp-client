@@ -246,12 +246,18 @@ export interface GradeReport {
  * Memoized per agent URL because the storyboard dispatch calls
  * `gradeOneVector` once per VECTOR.
  */
-const a2aInterfaceCache = new Map<string, { url: string; protocolVersion: string }>();
+const a2aInterfaceCache = new Map<string, A2aInterface>();
+
+export interface A2aInterface {
+  url: string;
+  /** Absent when the card declares none — never substituted. */
+  protocolVersion?: string;
+}
 
 export async function resolveA2aInterface(
   agentUrl: string,
   options: { allowPrivateIp?: boolean; timeoutMs?: number } = {}
-): Promise<{ url: string; protocolVersion: string }> {
+): Promise<A2aInterface> {
   const cached = a2aInterfaceCache.get(agentUrl);
   if (cached) return cached;
   const errors: string[] = [];
@@ -274,9 +280,12 @@ export async function resolveA2aInterface(
       errors.push(`${cardUrl}: no supportedInterfaces entry with protocolBinding JSONRPC`);
       continue;
     }
+    // Verbatim from the card, including its absence. Substituting a version the
+    // agent did not publish would put a claim on the wire that the card never
+    // made — the same invention as guessing the endpoint.
     const resolved = {
       url: match['url'] as string,
-      protocolVersion: typeof match['protocolVersion'] === 'string' ? match['protocolVersion'] : '1.0',
+      ...(typeof match['protocolVersion'] === 'string' && { protocolVersion: match['protocolVersion'] }),
     };
     a2aInterfaceCache.set(agentUrl, resolved);
     return resolved;
@@ -288,12 +297,15 @@ export async function resolveA2aInterface(
  * A2A precondition: resolve the card-named RPC endpoint and load the envelope
  * codec, so `applyTransport` can stay synchronous.
  */
-async function prepareA2aTransport(agentUrl: string, options: GradeOptions): Promise<string> {
+async function prepareA2aTransport(agentUrl: string, options: GradeOptions): Promise<A2aInterface> {
   const [iface] = await Promise.all([
     resolveA2aInterface(agentUrl, { allowPrivateIp: options.allowPrivateIp, timeoutMs: options.timeoutMs }),
     loadA2aEnvelopeCodec(),
   ]);
-  return iface.url;
+  // BOTH values travel: the endpoint and the version the card declared for it.
+  // Dropping the version here would pin the framing to one literal in the
+  // builder, which is the assumption this transport exists to remove.
+  return iface;
 }
 
 export async function gradeRequestSigning(agentUrl: string, options: GradeOptions = {}): Promise<GradeReport> {
@@ -338,9 +350,11 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
 
+  const a2a = transport === 'a2a' ? await prepareA2aTransport(agentUrl, options) : undefined;
   const buildOpts: BuildOptions = {
-    baseUrl: transport === 'a2a' ? await prepareA2aTransport(agentUrl, options) : agentUrl,
+    baseUrl: a2a?.url ?? agentUrl,
     transport,
+    ...(a2a?.protocolVersion !== undefined && { a2aProtocolVersion: a2a.protocolVersion }),
   };
 
   const positive: VectorGradeResult[] = [];
@@ -588,9 +602,11 @@ export async function gradeOneVector(
     mcpSessionId,
     mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
+  const a2a = transport === 'a2a' ? await prepareA2aTransport(agentUrl, options) : undefined;
   const buildOpts: BuildOptions = {
-    baseUrl: transport === 'a2a' ? await prepareA2aTransport(agentUrl, options) : agentUrl,
+    baseUrl: a2a?.url ?? agentUrl,
     transport,
+    ...(a2a?.protocolVersion !== undefined && { a2aProtocolVersion: a2a.protocolVersion }),
   };
 
   if (kind === 'positive') {

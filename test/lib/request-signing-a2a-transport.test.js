@@ -7,7 +7,6 @@ const {
   buildAdcpA2aInvocation,
   loadA2aEnvelopeCodec,
   buildPositiveRequest,
-  A2A_WIRE_VERSION,
 } = require('../../dist/lib/testing/storyboard/request-signing/builder.js');
 const {
   resolveA2aInterface,
@@ -38,6 +37,10 @@ test('the payload key follows the declared protocol version', () => {
     skill: 'create_media_buy',
     parameters: { a: 1 },
   });
+  assert.deepStrictEqual(buildAdcpA2aInvocation('create_media_buy', { a: 1 }, undefined), {
+    skill: 'create_media_buy',
+    input: { a: 1 },
+  });
 });
 
 // ── the envelope is proto JSON, serialized by the SDK ───────────────────────
@@ -51,11 +54,13 @@ test('the SendMessage envelope is proto JSON and carries the version header', as
   const signed = buildPositiveRequest(vector, loadRequestSigningVectors().keys, {
     transport: 'a2a',
     baseUrl: 'https://agent.example/rpc',
+    a2aProtocolVersion: '1.3',
     mcpJsonRpcId: 'fixed-id',
   });
 
   assert.strictEqual(signed.url, 'https://agent.example/rpc', 'posts to the card-named endpoint verbatim');
-  assert.strictEqual(signed.headers['A2A-Version'], A2A_WIRE_VERSION);
+  // The card's declared version, not a constant this file carries.
+  assert.strictEqual(signed.headers['A2A-Version'], '1.3');
 
   const body = JSON.parse(signed.body);
   assert.strictEqual(body.method, 'SendMessage');
@@ -72,6 +77,36 @@ test('the A2A transport refuses to invent an endpoint', () => {
   const { positive, keys } = loadRequestSigningVectors();
   const vector = positive.find(v => v.id.includes('001'));
   assert.throws(() => buildPositiveRequest(vector, keys, { transport: 'a2a' }), /requires a baseUrl/);
+});
+
+test('a card declaring no version gets no version claim from us', async () => {
+  await loadA2aEnvelopeCodec();
+  const { positive, keys } = loadRequestSigningVectors();
+  const vector = positive.find(v => v.id.includes('001'));
+  const signed = buildPositiveRequest(vector, keys, {
+    transport: 'a2a',
+    baseUrl: 'https://agent.example/rpc',
+  });
+  assert.strictEqual(signed.headers['A2A-Version'], undefined, 'no header when the card declared none');
+  // Absence reads as 1.x, the same way `callA2ATool` treats an undefined
+  // `client.protocolVersion`.
+  const part = JSON.parse(signed.body).params.message.parts[0];
+  assert.ok('input' in part.data);
+});
+
+test('a card declaring the 0.x wire is refused, not framed as 1.x', async () => {
+  await loadA2aEnvelopeCodec();
+  const { positive, keys } = loadRequestSigningVectors();
+  const vector = positive.find(v => v.id.includes('001'));
+  assert.throws(
+    () =>
+      buildPositiveRequest(vector, keys, {
+        transport: 'a2a',
+        baseUrl: 'https://agent.example/rpc',
+        a2aProtocolVersion: '0.3',
+      }),
+    /serializes the 1.x SendMessage binding only/
+  );
 });
 
 // ── the endpoint comes off the card ─────────────────────────────────────────
