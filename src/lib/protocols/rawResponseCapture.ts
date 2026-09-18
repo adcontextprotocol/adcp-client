@@ -30,6 +30,13 @@ export interface RawHttpCapture {
 interface CaptureSlot {
   captures: RawHttpCapture[];
   maxBodyBytes: number;
+  /** Optional ceiling on recorded exchanges; overflow is marked, not silent. */
+  maxCaptures?: number;
+  /** Optional ceiling on total recorded body bytes across all exchanges. */
+  maxTotalBodyBytes?: number;
+  totalBodyBytes: number;
+  /** Set when a ceiling was hit, so callers can fail closed. */
+  overflowed?: 'captures' | 'bytes';
 }
 
 // Counted as UTF-16 code units (string.length), not UTF-8 bytes. Close
@@ -52,15 +59,18 @@ export const rawResponseCaptureStorage = globalAsyncLocalStorage<CaptureSlot>('r
  */
 export async function withRawResponseCapture<T>(
   fn: () => Promise<T>,
-  options: { maxBodyBytes?: number } = {}
-): Promise<{ result: T; captures: RawHttpCapture[] }> {
+  options: { maxBodyBytes?: number; maxCaptures?: number; maxTotalBodyBytes?: number } = {}
+): Promise<{ result: T; captures: RawHttpCapture[]; overflowed?: 'captures' | 'bytes' }> {
   const slot: CaptureSlot = {
     captures: [],
     maxBodyBytes: options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+    ...(options.maxCaptures !== undefined ? { maxCaptures: options.maxCaptures } : {}),
+    ...(options.maxTotalBodyBytes !== undefined ? { maxTotalBodyBytes: options.maxTotalBodyBytes } : {}),
+    totalBodyBytes: 0,
   };
   try {
     const result = await rawResponseCaptureStorage.run(slot, fn);
-    return { result, captures: slot.captures };
+    return { result, captures: slot.captures, ...(slot.overflowed ? { overflowed: slot.overflowed } : {}) };
   } catch (err) {
     if (err && typeof err === 'object') {
       try {
@@ -70,6 +80,14 @@ export async function withRawResponseCapture<T>(
           configurable: true,
           writable: true,
         });
+        if (slot.overflowed) {
+          Object.defineProperty(err, 'capturesOverflowed', {
+            value: slot.overflowed,
+            enumerable: false,
+            configurable: true,
+            writable: true,
+          });
+        }
       } catch {
         // Frozen / sealed errors won't accept the property — drop the
         // captures rather than crash on a defineProperty TypeError.
@@ -77,6 +95,15 @@ export async function withRawResponseCapture<T>(
     }
     throw err;
   }
+}
+
+/** Read the capture-overflow marker attached to a thrown error, if any. */
+export function getCaptureOverflowFromError(err: unknown): 'captures' | 'bytes' | undefined {
+  if (err && typeof err === 'object') {
+    const marker = (err as { capturesOverflowed?: unknown }).capturesOverflowed;
+    if (marker === 'captures' || marker === 'bytes') return marker;
+  }
+  return undefined;
 }
 
 /** Type guard for errors carrying partial captures from `withRawResponseCapture`. */
@@ -132,13 +159,28 @@ export function wrapFetchWithCapture(upstream: typeof fetch): typeof fetch {
       headers[key] = REDACTED_HEADER_NAMES.has(lower) ? REDACTED_PLACEHOLDER : value;
     });
 
+    // Ceilings are opt-in: without them this stays the historical unbounded
+    // recorder, so ordinary MCP behaviour is unchanged unless a caller asked
+    // for a bound. When one is hit the slot is marked so the caller can fail
+    // closed rather than reason about a silently truncated log.
+    if (slot.maxCaptures !== undefined && slot.captures.length >= slot.maxCaptures) {
+      slot.overflowed ??= 'captures';
+      return response;
+    }
+    const redactedBody = redactBearerInBody(body);
+    if (slot.maxTotalBodyBytes !== undefined && slot.totalBodyBytes + redactedBody.length > slot.maxTotalBodyBytes) {
+      slot.overflowed ??= 'bytes';
+      return response;
+    }
+    slot.totalBodyBytes += redactedBody.length;
+
     slot.captures.push({
       url,
       method,
       ...requestMetadata,
       status: response.status,
       headers,
-      body: redactBearerInBody(body),
+      body: redactedBody,
       latencyMs,
       timestamp: new Date(startedAt).toISOString(),
       bodyTruncated,

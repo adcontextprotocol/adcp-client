@@ -1618,6 +1618,14 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
   return await withExternalSchemaRoot(complianceIndex.adcp_version, scopedSchemaRoot, async () => {
     let effectiveOptions: TestOptions = applyAdcpVersionRunOptions(complianceIndex.adcp_version, {
       ...testOptions,
+      // `comply()` has always defaulted an unset transport to MCP when it built
+      // its clients (`effectiveOptions.protocol ?? 'mcp'`, below). Resolve it
+      // here instead of at each call site so the storyboard runner sees the
+      // same transport the requests actually use: probe selection is
+      // explicit-MCP-only by design, and leaving `protocol` unset would deny
+      // the MCP session sentinel to the default `comply()` caller while still
+      // speaking MCP on the wire.
+      protocol: testOptions.protocol ?? 'mcp',
       sandbox: testOptions.sandbox !== false,
       test_session_id: testOptions.test_session_id || `comply-${Date.now()}`,
     });

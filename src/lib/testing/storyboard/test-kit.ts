@@ -15,9 +15,21 @@
  *      a task with required parameters would make the security_baseline
  *      runner misreport "agent failed auth" when the root cause is that
  *      schema validation rejected the probe before the auth layer ran.
+ *
+ * An agent that advertises none of the allowlist can still have its auth
+ * verified: {@link selectProbeTask} falls back to the MCP session probe, which
+ * calls a *canonical* AdCP read task the agent does advertise. An agent whose
+ * whole surface is its own invented tool names has nothing the runner will
+ * trust as a protected AdCP operation, and is reported
+ * `session_probe_ungradable` with a remedy rather than certified. That sentinel
+ * is intentionally absent from {@link PROBE_TASK_ALLOWLIST} so a kit cannot
+ * name it via `probe_task`; the runner resolves it, or a storyboard may name it
+ * directly, and either way `planMcpSessionSentinel` grades it honestly — and
+ * only on an explicit `protocol: 'mcp'`.
  */
 
 import type { TestOptions } from '../types';
+import { MCP_SESSION_PROBE_TASK } from './types';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { parse } from 'yaml';
@@ -48,19 +60,60 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * Human-readable rendering of {@link PROBE_TASK_ALLOWLIST}, so probe, runner
+ * and operator-facing remedies all name the same tools and cannot drift.
+ *
+ * Internal to the runner: exported for sibling modules, deliberately **not**
+ * re-exported from `@adcp/sdk/testing`. Report consumers should read
+ * {@link PROBE_TASK_ALLOWLIST} (which is public) and render it themselves.
+ *
+ * @internal
+ */
+export const PROBE_TASK_ALLOWLIST_SUMMARY: string = PROBE_TASK_ALLOWLIST.join(', ');
+
+/**
  * Select an advertised auth probe without dispatching an inapplicable tool.
  * The configured task is a preference, not permission to call a tool the
- * agent did not advertise. Returns undefined when the agent has no safe,
- * empty-body read probe (currently true for SI-only agents).
+ * agent did not advertise.
+ *
+ * Resolution order:
+ *   1. Discovery unavailable (`advertisedTools === undefined`) → the caller's
+ *      preference, unchanged. The runner has no tool list to vet it against.
+ *   2. The preference, when it is allowlisted AND advertised.
+ *   3. The first allowlisted task the agent advertises.
+ *   4. **MCP only**: the {@link MCP_SESSION_PROBE_TASK} sentinel
+ *      (adcp-client#2940). An agent whose entire read surface sits outside the
+ *      allowlist may still expose a canonical protected read
+ *      (`get_principal`, `list_tasks`, …), and the sentinel drives a complete
+ *      session lifecycle (`initialize` → `notifications/initialized` →
+ *      `tools/call`) against one — so `security_baseline` can verify a
+ *      correctly configured agent instead of reporting
+ *      `auth_mechanism_verified: []`. The chosen tool is called with empty
+ *      arguments; when the agent refuses that shape the probe reports
+ *      *inconclusive* rather than guessing, which is the hazard the allowlist
+ *      exists to avoid.
+ *   5. Anything other than an explicit `protocol: 'mcp'` → `undefined`
+ *      (unchanged). A2A's `message/send` requires `params.message` and has no
+ *      equivalent parameter-free protected operation, and an unset protocol
+ *      means the caller never declared a transport — neither is a safe place
+ *      to substitute an MCP probe.
  */
 export function selectProbeTask(
   preferred: string | undefined,
-  advertisedTools: readonly string[] | undefined
+  advertisedTools: readonly string[] | undefined,
+  options: { protocol?: 'mcp' | 'a2a' } = {}
 ): string | undefined {
   if (!advertisedTools) return preferred;
   const advertised = new Set(advertisedTools);
   if (preferred && PROBE_TASK_ALLOWLIST.includes(preferred) && advertised.has(preferred)) return preferred;
-  return PROBE_TASK_ALLOWLIST.find(task => advertised.has(task));
+  const advertisedProbe = PROBE_TASK_ALLOWLIST.find(task => advertised.has(task));
+  if (advertisedProbe !== undefined) return advertisedProbe;
+  // Only an *explicit* `protocol: 'mcp'` selects the sentinel. An unset
+  // protocol means the caller never told the runner which transport it is
+  // driving, and an A2A run has no equivalent parameter-free protected
+  // operation; both keep the historical `undefined` resolution so the step
+  // grades `not_applicable` instead of hard-failing on a substituted probe.
+  return options.protocol === 'mcp' ? MCP_SESSION_PROBE_TASK : undefined;
 }
 
 /**

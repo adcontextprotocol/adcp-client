@@ -10,14 +10,63 @@ import type { StoryboardResult, StoryboardStepResult, StoryboardStepHint } from 
 import { collectDetachedAssertionFailures } from '../compliance/storyboard-tracks';
 import { randomBytes } from 'node:crypto';
 
+/**
+ * Escape a value for XML **and** neutralise what XML 1.0 cannot represent.
+ *
+ * Markup-significant characters are entity-encoded as usual. C0/C1 controls
+ * (other than tab/LF/CR) and the XML 1.0 noncharacters U+FDD0–FDEF, U+FFFE and
+ * U+FFFF are illegal in an XML 1.0 document *even as numeric references*, so
+ * emitting one produces a report a strict CI parser rejects outright. Every
+ * attribute and body in this formatter carries runner- or agent-supplied text
+ * (failure messages, skip details, advisory findings, assertion details), so
+ * the sanitisation lives here rather than at twelve call sites.
+ */
 function xmlEscape(s: unknown): string {
-  return String(s ?? '')
+  return xmlSafeText(String(s ?? ''))
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 }
+
+/** Replace characters XML 1.0 cannot represent with a printable escape. */
+function xmlSafeText(value: string): string {
+  return (
+    value
+      // C0/C1 controls other than tab, LF and CR.
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, escapeCodeUnit)
+      // XML 1.0 noncharacters.
+      .replace(/[\uFDD0-\uFDEF\uFFFE\uFFFF]/g, escapeCodeUnit)
+  );
+}
+
+function escapeCodeUnit(char: string): string {
+  return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+}
+
+/**
+ * Trust boundary for a skip detail.
+ *
+ * Only runner-authored reasons carry their detail into the report; other
+ * details can contain raw seller diagnostics, and JUnit is a shared CI
+ * artifact that gets archived, diffed and re-parsed long after the run.
+ *
+ * The terminal is intentionally more permissive: `formatStepSkipLines`
+ * (`bin/adcp-storyboard-summary.js`) prefers the probe's own remedy and will
+ * print a seller-authored `skip.detail` when that is all there is, because an
+ * operator reading their own run wants the detail and the CLI escapes control
+ * characters at print time. This gate is the stricter of the two, not a
+ * mirror of it. Length is capped so one long remedy cannot dominate the
+ * document.
+ */
+const RUNNER_AUTHORED_SKIP_REASONS: ReadonlySet<string> = new Set([
+  'capability_prerequisite_unavailable',
+  'session_probe_ungradable',
+  'fixture_unsatisfied',
+]);
+
+const MAX_SKIP_DETAIL_CHARS = 400;
 
 function hintLines(hints: readonly StoryboardStepHint[] | undefined): string[] {
   if (!hints || hints.length === 0) return [];
@@ -62,6 +111,20 @@ function formatAdvisoryFinding(validation: { description: string; error?: string
  * `.d.ts`; the runtime module is still present in `dist/` for the CLI
  * (`bin/adcp.js`) to `require()` directly.
  */
+/**
+ * Skip message for a per-step `<skipped>` element. The detailed reason alone is
+ * often not actionable (`session_probe_ungradable`, `fixture_unsatisfied`), so
+ * the runner-authored detail is appended when present — JUnit consumers are
+ * frequently the only surface a CI reviewer reads.
+ */
+function stepSkipMessage(step: { skip_reason?: string; skip?: { detail?: string } }): string {
+  const reason = step.skip_reason || 'skipped';
+  const raw = step.skip?.detail;
+  if (raw === undefined || !RUNNER_AUTHORED_SKIP_REASONS.has(step.skip_reason ?? '')) return reason;
+  const clipped = raw.length > MAX_SKIP_DETAIL_CHARS ? `${raw.slice(0, MAX_SKIP_DETAIL_CHARS)}…` : raw;
+  return `${reason}: ${clipped}`;
+}
+
 export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
   let totalTests = 0;
   let totalFailures = 0;
@@ -87,7 +150,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             totalSkipped += 1;
             suiteCases.push(
               `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
-                `      <skipped message="${xmlEscape(step.skip_reason || 'skipped')}"/>\n` +
+                `      <skipped message="${xmlEscape(stepSkipMessage(step))}"/>\n` +
                 `    </testcase>`
             );
             continue;

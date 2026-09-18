@@ -85,7 +85,9 @@ export function resolveTaskName(step: StoryboardStep, options: StoryboardRunOpti
   }
   const configured = typeof value === 'string' && value.length > 0 ? value : step.task_default;
   if (step.task === '$test_kit.auth.probe_task') {
-    return selectProbeTask(configured, options.agentTools);
+    // Transport matters: the no-allowlist fallback is the MCP session probe,
+    // and there is no A2A equivalent (see `selectProbeTask`).
+    return selectProbeTask(configured, options.agentTools, { protocol: options.protocol });
   }
   return configured;
 }
