@@ -44,8 +44,15 @@ export interface BuildOptions {
    * MCP mode trades the canonicalization-edge coverage for reach: vectors
    * 005–008 fold into plain POSTs against the MCP endpoint, but the grader
    * works against any MCP agent that wires a verifier at the HTTP layer.
+   *
+   * `'a2a'` wraps the vector body in a native `SendMessage` JSON-RPC envelope
+   * and posts it to `baseUrl`, which must be the RPC endpoint the agent card
+   * names — the grader resolves it (see `resolveA2aInterface`) rather than
+   * deriving it, because scheme, host, port and path are all the card's to
+   * declare. It trades the same canonicalization-edge coverage as MCP mode
+   * and for the same reason: both route every vector to one endpoint.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
   /**
    * JSON-RPC `id` for the MCP envelope. Defaults to `crypto.randomUUID()`
    * so concurrent runs never collide. Override for tests that need a stable
@@ -418,8 +425,108 @@ interface TransportShapedRequest {
  * Shared call site for `sign`, `signWithParamOverride`, `signWithComponents`
  * so every mutation path produces MCP-shaped requests when requested.
  */
+/**
+ * A2A wire version this transport speaks, and the version whose invocation
+ * shape {@link buildAdcpA2aInvocation} selects.
+ */
+export const A2A_WIRE_VERSION = '1.0';
+
+/**
+ * Proto-JSON serializer for `SendMessage`, loaded from `@a2a-js/sdk`.
+ *
+ * Held here rather than imported at module top because `@a2a-js/sdk` is a PEER
+ * dependency: an adopter grading an MCP agent through this entry point must not
+ * be required to install it. {@link loadA2aEnvelopeCodec} is awaited by the
+ * grader's A2A precondition, so by the time any vector is framed the codec is
+ * present, and `applyTransport` stays synchronous.
+ */
+let a2aEnvelopeCodec: { toJSON(request: unknown): unknown } | undefined;
+
+export async function loadA2aEnvelopeCodec(): Promise<void> {
+  if (a2aEnvelopeCodec) return;
+  const mod = await import('@a2a-js/sdk');
+  a2aEnvelopeCodec = { toJSON: request => mod.SendMessageRequest.toJSON(request as never) };
+}
+
+/**
+ * The AdCP invocation carried in the message's data part, in the same shape
+ * `callA2ATool` sends (`src/lib/protocols/a2a.ts`).
+ *
+ * The payload key is SELECTED BY THE DECLARED PROTOCOL VERSION — `input` on
+ * 1.x, `parameters` on the 0.x legacy wire — which is why no call site may fix
+ * it. A 1.0 envelope carrying the 0.x spelling is accepted only by receivers
+ * lenient enough to read both.
+ */
+export function buildAdcpA2aInvocation(
+  operation: string,
+  args: Record<string, unknown>,
+  protocolVersion: string = A2A_WIRE_VERSION
+): Record<string, unknown> {
+  return protocolVersion.startsWith('0.') ? { skill: operation, parameters: args } : { skill: operation, input: args };
+}
+
+/**
+ * The native `SendMessage` JSON-RPC envelope.
+ *
+ * The params are built as a typed `SendMessageRequest` and serialized by the
+ * SDK's own `SendMessageRequest.toJSON`, so the proto-JSON encoding is never
+ * hand-written here. That matters beyond tidiness: `Role.ROLE_USER` is the
+ * numeric `1` in the generated TypeScript enum while the wire form is the
+ * string `"ROLE_USER"`, so a plain `JSON.stringify` of the request object
+ * would put `"role":1` on the wire.
+ */
+function wrapA2aEnvelope(operation: string, rawBody: string | undefined, idOverride?: number | string): string {
+  if (!a2aEnvelopeCodec) {
+    throw new Error(
+      `transport: 'a2a' requires loadA2aEnvelopeCodec() to have been awaited (the grader's A2A precondition does this)`
+    );
+  }
+  const args = rawBody && rawBody.length > 0 ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+  const request = {
+    tenant: '',
+    message: {
+      messageId: randomUUID(),
+      role: 1, // Role.ROLE_USER — proto-JSON'd to "ROLE_USER" by the codec below
+      parts: [
+        {
+          content: { $case: 'data' as const, value: buildAdcpA2aInvocation(operation, args) },
+          metadata: undefined,
+          filename: '',
+          mediaType: 'application/json',
+        },
+      ],
+    },
+  };
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id: idOverride ?? randomUUID(),
+    method: 'SendMessage',
+    params: a2aEnvelopeCodec.toJSON(request),
+  });
+}
+
 function applyTransport(vector: PositiveVector | NegativeVector, options: BuildOptions): TransportShapedRequest {
   const headers = { ...vector.request.headers };
+  if (options.transport === 'a2a') {
+    if (!options.baseUrl) {
+      throw new Error(
+        `transport: 'a2a' requires a baseUrl — the RPC endpoint named by the agent card's ` +
+          `supportedInterfaces entry. Nothing is appended to it and no mount is assumed.`
+      );
+    }
+    const operation = extractOperationFromVectorUrl(vector.request.url);
+    // Merged BEFORE the signature is computed. Content-Digest covers the body
+    // and the signature base covers the headers, so a version header added
+    // after signing would sit outside the base on a request the verifier
+    // reconstructs with it.
+    headers['A2A-Version'] = A2A_WIRE_VERSION;
+    return {
+      method: vector.request.method,
+      url: options.baseUrl,
+      headers,
+      body: wrapA2aEnvelope(operation, vector.request.body, options.mcpJsonRpcId),
+    };
+  }
   if (options.transport === 'mcp') {
     if (!options.baseUrl) {
       throw new Error(`transport: 'mcp' requires a baseUrl (the MCP endpoint, e.g. http://agent/mcp)`);

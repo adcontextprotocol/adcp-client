@@ -1,5 +1,13 @@
 import { randomBytes } from 'crypto';
-import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
+import {
+  buildNegativeRequest,
+  buildPositiveRequest,
+  loadA2aEnvelopeCodec,
+  type BuildOptions,
+  type SignedHttpRequest,
+} from './builder';
+import { buildCardUrls } from '../../../utils/a2a-discovery';
+import { fetchProbe } from '../probes';
 import { initializeMcpSession, probeSignedRequest, type ProbeOptions, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
@@ -103,9 +111,14 @@ export interface GradeOptions extends LoadVectorsOptions {
    * mount path (`agentUrl`) — use when grading an MCP agent whose verifier
    * sits as transport-layer middleware ahead of MCP dispatch.
    *
+   * `'a2a'` sends a native `SendMessage` JSON-RPC envelope to the RPC
+   * endpoint named by the agent card — resolved by
+   * {@link resolveA2aInterface} before any vector is framed, never derived
+   * from the agent URL.
+   *
    * See adcontextprotocol/adcp-client#612 for the MCP-mode rationale.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
   /**
    * MCP session ID to attach as `Mcp-Session-Id` on every probe after
    * signing. When `transport` is `'mcp'` and this field is `undefined`,
@@ -217,6 +230,72 @@ export interface GradeReport {
  *     a live valid request that will be accepted before the second (rejected)
  *     copy fires.
  */
+/**
+ * Resolve the A2A RPC endpoint from the agent card.
+ *
+ * The A2A analogue of the MCP `initialize` precondition: before a vector can be
+ * framed the run has to learn WHERE to send it, and on A2A that is the card's
+ * business. `/.well-known/agent-card.json` — reached through the SDK's own
+ * {@link buildCardUrls} — names the interface, and this picks the `JSONRPC`
+ * one. Scheme, host, port and path all come from the card; none is derived.
+ *
+ * An agent whose card names no JSONRPC interface is an agent this transport
+ * cannot reach, and it throws rather than falling back to a conventional mount:
+ * a guessed endpoint produces a grade about a URL the agent never published.
+ *
+ * Memoized per agent URL because the storyboard dispatch calls
+ * `gradeOneVector` once per VECTOR.
+ */
+const a2aInterfaceCache = new Map<string, { url: string; protocolVersion: string }>();
+
+export async function resolveA2aInterface(
+  agentUrl: string,
+  options: { allowPrivateIp?: boolean; timeoutMs?: number } = {}
+): Promise<{ url: string; protocolVersion: string }> {
+  const cached = a2aInterfaceCache.get(agentUrl);
+  if (cached) return cached;
+  const errors: string[] = [];
+  for (const cardUrl of buildCardUrls(agentUrl)) {
+    const card = await fetchProbe(cardUrl, {
+      allowPrivateIp: options.allowPrivateIp === true,
+      timeoutMs: options.timeoutMs,
+    });
+    if (card.error) {
+      errors.push(`${cardUrl}: ${card.error}`);
+      continue;
+    }
+    const interfaces = (card.body as { supportedInterfaces?: unknown } | null)?.supportedInterfaces;
+    const match = Array.isArray(interfaces)
+      ? (interfaces as Array<Record<string, unknown>>).find(
+          entry => typeof entry?.url === 'string' && String(entry?.protocolBinding ?? '').toUpperCase() === 'JSONRPC'
+        )
+      : undefined;
+    if (!match) {
+      errors.push(`${cardUrl}: no supportedInterfaces entry with protocolBinding JSONRPC`);
+      continue;
+    }
+    const resolved = {
+      url: match['url'] as string,
+      protocolVersion: typeof match['protocolVersion'] === 'string' ? match['protocolVersion'] : '1.0',
+    };
+    a2aInterfaceCache.set(agentUrl, resolved);
+    return resolved;
+  }
+  throw new Error(`A2A card precondition failed: ${errors.join('; ')}`);
+}
+
+/**
+ * A2A precondition: resolve the card-named RPC endpoint and load the envelope
+ * codec, so `applyTransport` can stay synchronous.
+ */
+async function prepareA2aTransport(agentUrl: string, options: GradeOptions): Promise<string> {
+  const [iface] = await Promise.all([
+    resolveA2aInterface(agentUrl, { allowPrivateIp: options.allowPrivateIp, timeoutMs: options.timeoutMs }),
+    loadA2aEnvelopeCodec(),
+  ]);
+  return iface.url;
+}
+
 export async function gradeRequestSigning(agentUrl: string, options: GradeOptions = {}): Promise<GradeReport> {
   const start = Date.now();
   const loaded = loadRequestSigningVectors(options);
@@ -259,7 +338,10 @@ export async function gradeRequestSigning(agentUrl: string, options: GradeOption
     mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
 
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
+  const buildOpts: BuildOptions = {
+    baseUrl: transport === 'a2a' ? await prepareA2aTransport(agentUrl, options) : agentUrl,
+    transport,
+  };
 
   const positive: VectorGradeResult[] = [];
   for (const vector of loaded.positive) {
@@ -404,7 +486,11 @@ function preflightSkip(
   // indistinguishable from vector 001 — passing under MCP is not evidence
   // the edge was tested. Skip with a distinct reason so the report doesn't
   // claim coverage it didn't deliver.
-  if (kind === 'positive' && (options.transport ?? 'mcp') === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
+  // Both ENVELOPED transports flatten these edges, not just MCP: A2A routes
+  // every vector to the one JSON-RPC endpoint exactly as MCP does, so the
+  // port/path/query/encoding the vector exists to grade never reaches the wire.
+  const envelopedTransport = ['mcp', 'a2a'].includes(options.transport ?? 'mcp');
+  if (kind === 'positive' && envelopedTransport && MCP_FLATTENED_VECTORS.has(vector.id)) {
     return {
       ...base,
       skipped: true,
@@ -502,7 +588,10 @@ export async function gradeOneVector(
     mcpSessionId,
     mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
+  const buildOpts: BuildOptions = {
+    baseUrl: transport === 'a2a' ? await prepareA2aTransport(agentUrl, options) : agentUrl,
+    transport,
+  };
 
   if (kind === 'positive') {
     const signed = buildPositiveRequest(vector as PositiveVector, loaded.keys, buildOpts);

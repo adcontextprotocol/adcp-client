@@ -33,6 +33,7 @@
 export {
   gradeRequestSigning,
   gradeOneVector,
+  resolveA2aInterface,
   type GradeOptions,
   type GradeReport,
   type VectorGradeResult,

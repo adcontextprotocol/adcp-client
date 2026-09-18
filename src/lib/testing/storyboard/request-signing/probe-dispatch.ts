@@ -12,9 +12,19 @@ import { loadRequestSigningVectors } from './vector-loader';
  * before its verifier can run (adcontextprotocol/adcp#6548). Operators
  * grading a REST-binding agent opt back in with
  * `request_signing.transport: 'raw'`.
+ *
+ * On an A2A run the vectors are framed as A2A: dispatching them as MCP sends
+ * an `initialize` with MCP framing and MCP version headers to an A2A endpoint,
+ * which answers 405, so every vector errors in the precondition before one is
+ * graded. An explicit `transport` still wins — that is the escape hatch for an
+ * agent whose MCP or REST binding answers on the same URL as its A2A card.
  */
-export function resolveVectorTransport(rsOpts: { transport?: 'raw' | 'mcp' }): 'raw' | 'mcp' {
-  return rsOpts.transport ?? 'mcp';
+export function resolveVectorTransport(
+  rsOpts: { transport?: 'raw' | 'mcp' | 'a2a' },
+  protocol?: 'mcp' | 'a2a'
+): 'raw' | 'mcp' | 'a2a' {
+  if (rsOpts.transport) return rsOpts.transport;
+  return protocol === 'a2a' ? 'a2a' : 'mcp';
 }
 
 /**
@@ -69,7 +79,7 @@ export async function probeRequestSigningVector(
       onlyVectors: rsOpts.onlyVectors,
       skipVectors: rsOpts.skipVectors,
       skipRateAbuse: rsOpts.skipRateAbuse,
-      transport: resolveVectorTransport(rsOpts),
+      transport: resolveVectorTransport(rsOpts, options.protocol),
       // The auto-initialize handshake authenticates like any MCP client;
       // agents commonly require auth on `initialize` (the signed vectors
       // themselves stay bearer-less — the signature is their auth).
