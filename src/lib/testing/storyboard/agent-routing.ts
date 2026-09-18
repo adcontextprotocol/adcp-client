@@ -17,6 +17,9 @@
  * relying on that protocol lacks an explicit `agent:` override) fail-fast
  * at routing-context build time, BEFORE any non-discovery network calls.
  *
+ * Every `RoutingError` is a failure; routing never treats an unresolved route
+ * as inapplicability.
+ *
  * ## Webhook receiver topology in routed mode
  *
  * When `StoryboardRunOptions.webhook_receiver` is set alongside `agents`,
@@ -493,11 +496,24 @@ export function resolveAgentForStep(
       ctx.discoveryFailures.length > 0
         ? ` Discovery failed for: ${ctx.discoveryFailures.map(f => `${f.agentKey} (${redactOAuthUrlForOutput(f.url)})`).join(', ')}.`
         : '';
+    // An agent that advertises the tool without claiming its protocol is a
+    // declaration bug the operator can fix on the agent (or with an
+    // `agent:` annotation) — the topology CAN serve the step. Name those
+    // agents in the message so the error points at the fix. The step is still
+    // a routing failure either way; the names are operator guidance, not a
+    // field on the error (adcp-client#2945).
+    const toolAdvertisedBy = [...ctx.profiles]
+      .filter(([, profile]) => (normalizeAgentToolNames(profile.tools) ?? []).includes(step.task))
+      .map(([key]) => key);
+    const advertisedHint = toolAdvertisedBy.length
+      ? ` Agent(s) [${toolAdvertisedBy.join(', ')}] advertise "${step.task}" but do not declare ` +
+        `"${protocol}" in supported_protocols — fix that declaration, or pin the step with \`agent:\`.`
+      : '';
     throw new RoutingError(
       `No agent in the map claims protocol "${protocol}" required by tool ` +
         `"${step.task}" (step "${step.id}"). Available agents: ` +
         `${[...ctx.profiles.keys()].join(', ') || '(none — every agent failed discovery)'}.${failedHint} ` +
-        `Add an agent that supports ${protocol}, or set \`default_agent\` to fall back.`,
+        `Add an agent that supports ${protocol}, or set \`default_agent\` to fall back.${advertisedHint}`,
       step.task,
       `protocol ${protocol} unclaimed`
     );

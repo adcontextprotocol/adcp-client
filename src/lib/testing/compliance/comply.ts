@@ -11,7 +11,7 @@
 import { createTestClient, discoverAgentProfile, seedTestClientSigningCapability } from '../client';
 import type { TestOptions, TestResult, AgentProfile, TestStepResult } from '../types';
 import { collectDetachedAssertionFailures, mapStoryboardResultsToTrackResult, TRACK_LABELS } from './storyboard-tracks';
-import { applyAdcpVersionRunOptions, runStoryboard } from '../storyboard/runner';
+import { applyAdcpVersionRunOptions, runStoryboard, storyboardCapabilityPredicates } from '../storyboard/runner';
 import { validateTestKit } from '../storyboard/test-kit';
 import { checkAccountDiscoveryGate, isAccountBearingSpecialism } from './spec-conformance';
 
@@ -787,6 +787,202 @@ const NEUTRAL_BUNDLE_SKIP_REASONS = new Set<string>([
 ]);
 
 /**
+ * A storyboard skipped because the agent's **own capability declaration** says
+ * the scenario is not its surface carries no verdict about the agent, so it
+ * must not be aggregated as missing coverage.
+ *
+ * `capability_unsupported` is the detailed reason `buildCapabilityUnsupportedResult`
+ * emits when a root `requires_capability` / `requires_all_capabilities`
+ * predicate evaluated false against the discovered profile — e.g. a pure
+ * seller that never declares `adcp.governance_enforcement.tasks` against
+ * `media_buy_seller/governance_approved`. It canonicalizes to
+ * `not_applicable`, whose contract text is exactly this case: "the agent not
+ * declaring the protocol or specialism this storyboard targets".
+ *
+ * Agent-declaration-driven is the whole point, and it is what keeps the rule
+ * sound (adcp-client#2945 review):
+ *
+ *   - A seller that does NOT claim governance-aware capability gets the
+ *     scenario graded not-applicable and can reach `passing` on its own
+ *     seller surface.
+ *   - A seller that DOES claim it passes the capability gate, so the scenario
+ *     proceeds and any later gate — `requires: [multi_agent]` with no second
+ *     tenant, a missing controller, absent runner infrastructure — caps the
+ *     bundle. A claimant is never credited for a capability that was never
+ *     exercised.
+ *
+ * Every other skip still caps: all `requirement_unmet` values including
+ * `multi_agent` (an unmet gate means evidence was never collected and the
+ * operator can supply what was missing), the `required_any_of_tools` family
+ * gate, step-scope coverage skips, zero-observation evidence, and
+ * ungradable validations.
+ */
+/** AdCP release that introduced the normative "Applicability order" rule. */
+const CAPABILITY_ROLLUP_MIN_ADCP_VERSION = '3.2';
+
+/** Phase id, step id and detailed skip reason of the root applicability row. */
+const CAPABILITY_UNSUPPORTED_ROW_ID = 'capability_unsupported';
+
+/**
+ * Every key `buildCapabilityUnsupportedResult` emits, plus `notices`, which
+ * its call sites spread in. A result carrying anything else is not the root
+ * applicability skip.
+ */
+const CAPABILITY_UNSUPPORTED_RESULT_KEYS: ReadonlySet<string> = new Set([
+  'storyboard_id',
+  'storyboard_title',
+  'agent_url',
+  'overall_passed',
+  'phases',
+  'context',
+  'total_duration_ms',
+  'passed_count',
+  'failed_count',
+  'skipped_count',
+  'runner_capability_version',
+  'tested_at',
+  'strict_validation_summary',
+  'notices',
+]);
+
+/** Every key the builder's single synthetic phase emits. */
+const CAPABILITY_UNSUPPORTED_PHASE_KEYS: ReadonlySet<string> = new Set([
+  'phase_id',
+  'phase_title',
+  'passed',
+  'steps',
+  'duration_ms',
+]);
+
+/** Every key the builder's single synthetic step row emits. */
+const CAPABILITY_UNSUPPORTED_STEP_KEYS: ReadonlySet<string> = new Set([
+  'storyboard_id',
+  'step_id',
+  'phase_id',
+  'title',
+  'task',
+  'passed',
+  'skipped',
+  'skip_reason',
+  'skip',
+  'duration_ms',
+  'validations',
+  'context',
+  'error',
+  'extraction',
+]);
+
+/**
+ * Normalized dotted-path segments of a capability predicate. Segment matching
+ * rather than a prefix test, so ` Compliance_Testing.scenarios ` and
+ * `adcp.compliance_testing.scenarios` are both recognised as the
+ * test-harness namespace and neither slips past the guard.
+ */
+function capabilityPathSegments(path: unknown): string[] {
+  return String(path ?? '')
+    .trim()
+    .toLowerCase()
+    .split('.')
+    .map(segment => segment.trim())
+    .filter(segment => segment.length > 0);
+}
+
+function isCapabilityUnsupportedSkip(storyboard: Storyboard, result: StoryboardResult): boolean {
+  // Anchor on a capability predicate the storyboard actually declares. Without
+  // this the rule would rest on which emitter happens to use the
+  // `capability_unsupported` token, and a future synthesized use of it would
+  // silently inherit neutrality.
+  const predicates = storyboardCapabilityPredicates(storyboard);
+  if (predicates.length === 0) return false;
+  // Version-scoped, fail closed. The "Applicability order" paragraph that
+  // makes this grade normative — capability predicates evaluated before
+  // `requires`, an unsatisfied predicate keeping the storyboard "out of the
+  // coverage totals of agents that never claimed the capability" — arrived in
+  // AdCP 3.2. `adcp_version` is stamped onto every cache-loaded storyboard by
+  // `annotateStoryboardVersion`; a storyboard without it is hand-built or
+  // caller-supplied, and a pre-3.2 bundle predates the rule. Both keep capping
+  // the bundle exactly as before (adcp-client#2945 review).
+  //
+  // Typed `string | undefined`, but this is an exported grading boundary a
+  // JavaScript caller can reach with anything at all. `null`, a number, or a
+  // `{}` would throw inside `compareAdcpVersionStrings` (`.startsWith` on a
+  // non-string) and take the whole rollup down; a non-string is also not a
+  // version this rule can read, so it fails closed like an absent one
+  // (adcp-client#2945 review).
+  if (typeof storyboard.adcp_version !== 'string') return false;
+  if (compareAdcpVersionStrings(storyboard.adcp_version, CAPABILITY_ROLLUP_MIN_ADCP_VERSION) < 0) return false;
+  // A `compliance_testing.*` gate declares which deterministic-test scenarios
+  // the agent's own controller implements — test-harness scope, not product
+  // surface. Neutralizing it would let an agent drop one scenario string from
+  // its own list and flip the bundle to `passing` at no cost, which is the
+  // asymmetry this rule exists to avoid. Those storyboards stay coverage gaps.
+  if (predicates.some(predicate => capabilityPathSegments(predicate.path).includes('compliance_testing'))) {
+    return false;
+  }
+
+  // `buildComplianceBundleResults` is exported, so the shape check is a public
+  // grading boundary rather than an internal invariant. Rather than chase the
+  // fields that can carry execution evidence — `response_record`,
+  // `strict_validation_summary.failed`, and whatever a future release adds —
+  // this is a POSITIVE whitelist of exactly what
+  // `buildCapabilityUnsupportedResult` emits, plus the harmless metadata its
+  // call sites spread in. Any other key means the caller is describing
+  // something richer than "this storyboard was never attempted", and the
+  // ordinary cap checks must run (adcp-client#2945 review).
+  for (const key of Object.keys(result)) {
+    if (!CAPABILITY_UNSUPPORTED_RESULT_KEYS.has(key)) return false;
+  }
+  if (result.overall_passed !== true) return false;
+  if (result.passed_count !== 0 || result.failed_count !== 0 || result.skipped_count !== 1) return false;
+  // The builder emits an unobservable, all-zero strict-validation summary.
+  // Anything else is a record of validation work that did happen.
+  const strict = result.strict_validation_summary;
+  if (strict !== undefined) {
+    if (
+      strict.observable !== false ||
+      strict.checked !== 0 ||
+      strict.passed !== 0 ||
+      strict.failed !== 0 ||
+      strict.strict_only_failures !== 0 ||
+      strict.lenient_also_failed !== 0
+    ) {
+      return false;
+    }
+  }
+  if (result.phases.length !== 1) return false;
+  const phase = result.phases[0]!;
+  // Same positive whitelist at phase scope. Without it the phase was the one
+  // level of the synthetic result a caller could hang extra evidence off —
+  // branch/assertion rollups, a future per-phase field — and still be
+  // neutralized (adcp-client#2945 review).
+  for (const key of Object.keys(phase)) {
+    if (!CAPABILITY_UNSUPPORTED_PHASE_KEYS.has(key)) return false;
+  }
+  if (phase.phase_id !== CAPABILITY_UNSUPPORTED_ROW_ID || phase.passed !== true) return false;
+  const steps = phase.steps ?? [];
+  if (steps.length !== 1) return false;
+  const step = steps[0]!;
+  for (const key of Object.keys(step)) {
+    if (!CAPABILITY_UNSUPPORTED_STEP_KEYS.has(key)) return false;
+  }
+  return (
+    step.step_id === CAPABILITY_UNSUPPORTED_ROW_ID &&
+    step.skipped === true &&
+    step.passed === true &&
+    step.skip_reason === CAPABILITY_UNSUPPORTED_ROW_ID &&
+    // Canonical reason and a non-blank detail, per the output contract.
+    step.skip?.reason === 'not_applicable' &&
+    typeof step.skip.detail === 'string' &&
+    step.skip.detail.trim().length > 0 &&
+    // A row that names a runtime requirement is reporting an unmet gate, not
+    // an unclaimed capability.
+    step.skip.requirement === undefined &&
+    // No execution evidence on the row itself.
+    (step.validations?.length ?? 0) === 0
+  );
+}
+
+/**
  * Aggregate the exact cache bundles selected for a capability-driven run.
  * A bundle passes only when every storyboard satisfies its required
  * conformance checks. Required failures take precedence, while every form of
@@ -814,6 +1010,11 @@ export function buildComplianceBundleResults(
       if (!result.overall_passed && (result.failed_count > 0 || collectDetachedAssertionFailures(result).length > 0)) {
         return 'failing' as const;
       }
+      // Checked after `failing` so a real failure always wins: a scenario the
+      // agent's own declaration puts outside its surface carries no verdict.
+      // Unmet requirements and every coverage gap fall through and still cap
+      // the bundle below.
+      if (isCapabilityUnsupportedSkip(storyboard, result)) return 'not_applicable' as const;
       const branchSetPhaseIds = new Set(
         storyboard.phases.filter(phase => phase.branch_set !== undefined).map(phase => phase.id)
       );
@@ -876,9 +1077,31 @@ export function buildComplianceBundleResults(
       return 'passing' as const;
     });
 
+    // Storyboards that do not apply to this agent or run carry no verdict, so
+    // they neither grant nor withhold the bundle's. `graded` must be non-empty
+    // for `passing` — an all-not-applicable bundle still reports
+    // `not_applicable` below rather than passing vacuously. Every other
+    // status (`untested`, `partial`, `failing`) still blocks `passing`.
+    // Version-excluded storyboards (`options.notApplicable`, derived from the
+    // agent's declared `major_versions`) are deliberately NOT forgiven here:
+    // that is a separate pre-existing path on an input the agent controls, so
+    // it keeps capping the bundle exactly as it did before.
+    const graded = statuses.filter(
+      (candidate, index) => candidate !== 'not_applicable' || notApplicableIds.has(storyboardIds[index]!)
+    );
+    // A version-excluded entry survives into `graded`, and it must keep
+    // capping. Without this branch a bundle whose every executed storyboard
+    // was capability-neutralized would fall through to the
+    // all-statuses-not_applicable case and report `not_applicable`, when the
+    // version-excluded sibling means real coverage is still missing — base
+    // reports `partial` there. A bundle that is *wholly* version-excluded has
+    // nothing neutralized (`statuses.length === graded.length`) and still
+    // reports `not_applicable`, as it did before (adcp-client#2945 review).
+    const hasNeutralizedStoryboard = statuses.length > graded.length;
     let status: ComplianceBundleResult['status'];
     if (failingBundleIds.has(bundle.ref.id) || statuses.includes('failing')) status = 'failing';
-    else if (statuses.length > 0 && statuses.every(candidate => candidate === 'passing')) status = 'passing';
+    else if (graded.length > 0 && graded.every(candidate => candidate === 'passing')) status = 'passing';
+    else if (hasNeutralizedStoryboard && graded.includes('not_applicable')) status = 'partial';
     else if (statuses.length > 0 && statuses.every(candidate => candidate === 'not_applicable')) {
       status = 'not_applicable';
     } else if (statuses.length === 0 || statuses.every(candidate => candidate === 'untested')) {

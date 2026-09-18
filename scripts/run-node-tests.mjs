@@ -39,6 +39,10 @@ export const SLOW_NODE_TESTS = new Set([
   'test/lib/media-buy-lifecycle-release-gate.test.js',
   'test/lib/storyboard-notices.test.js',
   'test/lib/storyboard-requires-gate.test.js',
+  // Boots live MCP agents and loads two real compliance bundles; ~25s standing
+  // alone, which leaves no margin under the fast suite's 60s per-test ceiling
+  // once a shard runs files concurrently.
+  'test/lib/storyboard-capability-rollup.test.js',
 ]);
 
 function normalizeTestPath(testPath) {

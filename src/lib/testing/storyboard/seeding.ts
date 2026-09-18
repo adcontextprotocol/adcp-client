@@ -348,7 +348,20 @@ export async function runControllerSeeding(
   // a setup break. `options.agentTools` is discovered from the agent profile
   // or passed explicitly by the caller; we don't enforce when it's absent
   // because some harnesses skip tool discovery.
-  if (options.agentTools && !options.agentTools.includes('comply_test_controller')) {
+  //
+  // Take the provenance from the route that would actually receive the seed
+  // call, never from a run-level tool union: a peer tenant's controller cannot
+  // seed this storyboard's state, so it must not decide this storyboard's
+  // applicability either (adcp-client#2945 review). This is defence in depth
+  // rather than a live fix — a routed run cannot reach this line today,
+  // because routed + `prerequisites.controller_seeding: true` fail-fasts in
+  // `runStoryboard`, `skip_controller_seeding` returns above, and a storyboard
+  // without `controller_seeding` returns above too. It keeps the provenance
+  // correct by construction for the per-tenant seed dispatch tracked there.
+  const controllerRouteTools = resolveFixtureAgent
+    ? resolveFixtureAgent('comply_test_controller').options.agentTools
+    : options.agentTools;
+  if (controllerRouteTools && !controllerRouteTools.includes('comply_test_controller')) {
     return buildMissingControllerResult(storyboard, calls, context);
   }
 

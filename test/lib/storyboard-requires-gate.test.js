@@ -181,6 +181,13 @@ describe('Storyboard.requires gate (#1626)', () => {
   });
 
   test('requires: [multi_agent] stays unmet when routes resolve to one distinct key', async () => {
+    // Topology is statically determined from the `agents` map plus the
+    // storyboard's declared route keys, so this storyboard — which authors no
+    // root capability predicate — is gated BEFORE discovery and reports the
+    // requirement rather than an unreachable-route failure. Storyboards that
+    // do author a capability predicate defer the gate until after discovery,
+    // per AdCP 3.2's applicability order; that case is covered in
+    // `storyboard-capability-rollup.test.js`.
     const sb = buildStoryboard({
       requires: ['multi_agent'],
       phases: [
@@ -206,6 +213,25 @@ describe('Storyboard.requires gate (#1626)', () => {
     assert.equal(step.skip.requirement, 'multi_agent');
     assert.match(step.skip.detail, /Resolved route keys: \[sales\]/);
     assert.match(step.skip.detail, /Available agents: \[sales, signals\]/);
+    // Unreachable routes are never dialed: the gate precedes discovery.
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.overall_passed, true);
+  });
+
+  test('requires: [multi_agent] with a one-agent map and an unreachable route stays a neutral skip', async () => {
+    const sb = buildStoryboard({ requires: ['multi_agent'] });
+    const result = await runStoryboard('', sb, {
+      allow_http: true,
+      agents: { sales: { url: 'http://127.0.0.1:1/sales/mcp' } },
+      default_agent: 'sales',
+    });
+
+    const step = result.phases[0].steps[0];
+    assert.equal(step.skipped, true);
+    assert.equal(step.skip_reason, 'requirement_unmet');
+    assert.equal(step.skip.requirement, 'multi_agent');
+    assert.equal(result.failed_count, 0);
+    assert.equal(result.overall_passed, true);
   });
 
   test('multiple requires: first unmet wins', async () => {
