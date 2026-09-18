@@ -63,23 +63,33 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           ? { supersededAt: new Date(instant(input.supersededAt, 'supersededAt')).toISOString() }
           : {}),
       };
-      const offering = requiredOffering(offeringById, normalizedInput.offeringId);
-      validateConfigurationAgainstOffering(normalizedInput, offering);
+      // Resolve stored generations before the offering. An offering can be
+      // withdrawn, and an installed generation is immutable — looking the
+      // offering up first made reinstalling one throw "Unknown reporting
+      // source offering" without ever reading the ledger.
       const existing = (await options.store.listConfigurations(normalizedInput.account.account_id)).filter(
         value => value.delivery_config_id === normalizedInput.delivery_config_id
       );
-      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
-        throw new Error('Reporting configuration version cannot regress');
-      }
       const semantic = { ...normalizedInput };
       const semanticFingerprint = prefixedDigest(semantic);
       const predecessorFingerprint = prefixedDigest({ ...input });
+      // Resolve an exact replay before validating. A generation is immutable,
+      // so reinstalling one that predates a rule we have since added must
+      // return the stored generation rather than throw — validating first made
+      // an idempotent reinstall of a legacy billing configuration fail, with
+      // no way to express the row that already exists.
       const replay = existing.find(value => value.delivery_config_version === normalizedInput.delivery_config_version);
       if (replay) {
         if (![semanticFingerprint, predecessorFingerprint].includes(replay.semanticFingerprint)) {
           throw new Error('Reporting configuration generation is immutable');
         }
         return replay;
+      }
+      // Only a genuinely new generation is held to current rules, and only a
+      // new generation needs a live offering.
+      validateConfigurationAgainstOffering(normalizedInput, requiredOffering(offeringById, normalizedInput.offeringId));
+      if (existing.some(value => value.delivery_config_version > normalizedInput.delivery_config_version)) {
+        throw new Error('Reporting configuration version cannot regress');
       }
       const installedAt = new Date().toISOString();
       const configuration: ReportingLedgerConfigurationV1 = {
@@ -138,7 +148,14 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await reconcileReportingStatusLifecycleV1({
               store: options.store,
               reporting_obligation_id: written.value.reporting_obligation_id,
-              ledgerAsOf: now,
+              // A fallback clock, never a pinned cutoff. `now` is this host's
+              // instant: a host running fast pinned a cutoff ahead of the
+              // database, the watermark was stamped with it, and every
+              // database-timestamped change inside that skew — a revocation,
+              // a receipt — landed behind the watermark and never made the
+              // obligation due again, so a `complete` transition and its
+              // webhook stood over state that had already contradicted it.
+              now: () => new Date(now),
               subscribers: options.subscribers,
             });
           }
@@ -165,16 +182,47 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
         throw new RangeError(`settlementGraceMilliseconds must not exceed ${MAX_SETTLEMENT_GRACE_MS}`);
       }
       const owner = `reporting-worker-${randomUUID()}`;
-      const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0 };
+      const counts = { claimed: 0, revisionsCommitted: 0, notReady: 0, failed: 0, reconcilesDeferred: 0 };
+      // Publishing a projection is downstream of the durable write, and it
+      // must not take the sweep down with it. An obligation whose projection
+      // cannot be computed — one that has outgrown a projection bound, a
+      // subscriber that throws — aborted every tenant queued behind it, and
+      // the recovery path then rethrew the same failure, so the worker could
+      // not make progress at all. Containing it leaves the obligation due:
+      // this writes no watermark, so the deadline sweep, which isolates per
+      // obligation and records a backoff, owns the retry.
+      const reconcileQuietly = async (reporting_obligation_id: string, nowAt: Date) => {
+        try {
+          await reconcileReportingStatusLifecycleV1({
+            store: options.store,
+            reporting_obligation_id,
+            // Fallback clock, not a pin; see planObligations.
+            now: () => nowAt,
+            subscribers: options.subscribers,
+          });
+        } catch (error) {
+          if (workerOptions.signal?.aborted) workerOptions.signal.throwIfAborted();
+          if (isLeaseLost(error)) throw error;
+          counts.reconcilesDeferred += 1;
+        }
+      };
+      // No host cutoff. The sweeps resolve the ledger's own instant, which is
+      // what lands in each obligation's watermark — a worker host running
+      // fast would otherwise permanently bury database-timestamped work
+      // committed inside the skew.
       await retryReportingStatusNotificationsV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
       await reconcileReportingStatusDeadlinesV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
@@ -214,12 +262,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               obligation.state = nextExisting ? 'pending' : 'terminal';
               obligation.nextAttemptAt = nextExisting ?? nowValue.toISOString();
               await options.store.updateObligation(obligation, lease);
-              await reconcileReportingStatusLifecycleV1({
-                store: options.store,
-                reporting_obligation_id: obligation.reporting_obligation_id,
-                ledgerAsOf: nowValue.toISOString(),
-                subscribers: options.subscribers,
-              });
+              await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
               continue;
             }
           }
@@ -253,12 +296,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
             await options.store.updateObligation(obligation, lease);
             if (result.error.code === 'NOT_READY' || result.error.code === 'PARTIAL_RESULT') counts.notReady += 1;
             else counts.failed += 1;
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: obligation.reporting_obligation_id,
-              ledgerAsOf: nowValue.toISOString(),
-              subscribers: options.subscribers,
-            });
+            await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
             continue;
           }
           const manifest = await validateReportingSourceExecutionV1({
@@ -306,12 +344,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
           obligation.attemptCount += 1;
           await options.store.updateObligation(obligation, lease);
           await options.store.resolveIssue(sourceExecutionIssueId(obligation), nowValue.toISOString());
-          await reconcileReportingStatusLifecycleV1({
-            store: options.store,
-            reporting_obligation_id: obligation.reporting_obligation_id,
-            ledgerAsOf: nowValue.toISOString(),
-            subscribers: options.subscribers,
-          });
+          await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
         } catch (error) {
           if (workerOptions.signal?.aborted) workerOptions.signal.throwIfAborted();
           if (isLeaseLost(error)) continue;
@@ -329,12 +362,7 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
               lease,
               sourceExecutionIssue(obligation, nowValue.toISOString())
             );
-            await reconcileReportingStatusLifecycleV1({
-              store: options.store,
-              reporting_obligation_id: obligation.reporting_obligation_id,
-              ledgerAsOf: nowValue.toISOString(),
-              subscribers: options.subscribers,
-            });
+            await reconcileQuietly(obligation.reporting_obligation_id, nowValue);
           } catch (recoveryError) {
             if (!isLeaseLost(recoveryError)) throw recoveryError;
           }
@@ -345,13 +373,17 @@ export function createReportingProducer(options: CreateReportingProducerOptionsV
       }
       await retryReportingStatusNotificationsV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
       await reconcileReportingStatusDeadlinesV1({
         store: options.store,
-        ledgerAsOf: now().toISOString(),
+        // A fallback, not a pin: a database-backed store uses its own clock,
+        // while a simulated-time driver still gets the instant it is advancing.
+        fallbackLedgerAsOf: now().toISOString(),
         ...(workerOptions.account_id ? { account_id: workerOptions.account_id } : {}),
         subscribers: options.subscribers,
       });
@@ -672,7 +704,7 @@ function buildRevision(
     ...(previous.at(-1) ? { supersedes_reporting_revision_id: previous.at(-1)!.reporting_revision_id } : {}),
     row_count: rows.length,
     control_totals: controlTotals,
-    ...(obligation.feedPurpose === 'billing'
+    ...(obligation.canonicalization
       ? {
           canonical_content_digest: {
             algorithm: 'sha256',
@@ -739,6 +771,17 @@ function validateManifestFinalityForObligation(
   ) {
     throw new Error('Authoritative source evidence predates the pinned contractual cutoff');
   }
+}
+
+/**
+ * SHA-256 of the RFC 8785 JCS serialization of an adjustment with
+ * `canonical_adjustment_sha256` omitted, per RC3 `core/reporting-adjustment`.
+ *
+ * Exported so the durable store can recognise a pre-upgrade adjustment row that
+ * predates the digest and replay it without a false immutability conflict.
+ */
+export function reportingCanonicalAdjustmentSha256V1(wireAdjustmentWithoutDigest: unknown): string {
+  return createHash('sha256').update(canonicalize(wireAdjustmentWithoutDigest), 'utf8').digest('hex');
 }
 
 function canonicalRowsSha256(rows: readonly Record<string, unknown>[], primaryKeys: readonly string[]): string {
@@ -811,6 +854,22 @@ function buildAdjustment(
         ]
       : [];
   });
+  const wireAdjustmentWithoutDigest = {
+    reporting_adjustment_id: adjustmentId,
+    adjusts_reporting_revision_id: official.reporting_revision_id,
+    reason_code: 'source_correction' as const,
+    accounting_period: { start: obligation.period.start, end: obligation.period.end },
+    control_total_deltas: [
+      {
+        name: 'row_count',
+        value: String(rows.length - effectiveRowCount(official.binding.rowCount, previous)),
+        value_type: 'integer' as const,
+      },
+      ...controlTotalDeltas,
+    ],
+    correction_observed_at: manifest.period.observedAt,
+    created_at: createdAt,
+  };
   return {
     reporting_adjustment_id: adjustmentId,
     reporting_obligation_id: obligation.reporting_obligation_id,
@@ -824,21 +883,19 @@ function buildAdjustment(
     dataThrough: manifest.period.dataThrough,
     sourceReadCutoffAt: manifest.period.sourceReadCutoffAt,
     createdAt,
+    // `canonical_adjustment_sha256` is optional in RC3 and exists so Reconciled
+    // Billing consumers can recompute the digest before accepting or rejecting
+    // an adjustment. Emitting it unconditionally changed the wire content — and
+    // therefore `adjustmentIdentityFingerprint` — for every Core adopter,
+    // including delivery-only feeds that never read it. Gate it on the same
+    // pinned canonicalization contract that gates the revision's
+    // `canonical_content_digest`, so obligations without one keep byte-identical
+    // output across the upgrade.
     wireAdjustment: ReportingAdjustmentSchema.parse({
-      reporting_adjustment_id: adjustmentId,
-      adjusts_reporting_revision_id: official.reporting_revision_id,
-      reason_code: 'source_correction',
-      accounting_period: { start: obligation.period.start, end: obligation.period.end },
-      control_total_deltas: [
-        {
-          name: 'row_count',
-          value: String(rows.length - effectiveRowCount(official.binding.rowCount, previous)),
-          value_type: 'integer',
-        },
-        ...controlTotalDeltas,
-      ],
-      correction_observed_at: manifest.period.observedAt,
-      created_at: createdAt,
+      ...wireAdjustmentWithoutDigest,
+      ...(obligation.canonicalization
+        ? { canonical_adjustment_sha256: reportingCanonicalAdjustmentSha256V1(wireAdjustmentWithoutDigest) }
+        : {}),
     }) as unknown as ReportingAdjustment,
   };
 }
@@ -1290,6 +1347,16 @@ function validateConfigurationAgainstOffering(
     throw new Error('Authoritative source offerings require official ledger finality');
   }
   if (configuration.feedPurpose === 'billing') {
+    // RC3 states this unconditionally in `core/reporting-delivery-config`:
+    // "feed_purpose billing still requires required_finality official". It was
+    // never enforced here, and until the receipt store stopped hard-coding
+    // official finality nothing else enforced it either. Without it a billing
+    // configuration can accept a terminal accepted receipt against a
+    // provisional snapshot revision that a later revision supersedes, and an
+    // accepted leaf cannot be repaired.
+    if (configuration.requiredFinality !== 'official') {
+      throw new Error('Billing reporting requires official ledger finality');
+    }
     if (
       !configuration.canonicalization ||
       !/^[A-Za-z0-9_.:-]{1,128}$/.test(configuration.canonicalization.id) ||

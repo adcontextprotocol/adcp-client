@@ -14,6 +14,7 @@ const {
   evaluateReportingLedgerCoverageV1,
   projectReportingObligationHealthV1,
   reconcileReportingStatusLifecycleV1,
+  reportingManagedDeliveryBindingV1,
   reconcileReportingStatusDeadlinesV1,
   relevantReportingLedgerConfigurations,
   reportingLedgerScopeClosed,
@@ -147,7 +148,7 @@ describe('seller reporting ledger', () => {
     );
   });
 
-  test('does not regress lifecycle health when revision evidence changes during projection', async () => {
+  test('keeps lifecycle health stable and records finality when revision evidence changes during projection', async () => {
     const store = new MemoryLedgerStore();
     const obligation = healthObligation();
     store.obligations.set(obligation.reporting_obligation_id, obligation);
@@ -180,8 +181,82 @@ describe('seller reporting ledger', () => {
       reporting_obligation_id: obligation.reporting_obligation_id,
       ledgerAsOf: '2026-09-02T01:30:00.000Z',
     });
-    assert.equal(result, null);
+    assert.deepEqual(
+      [result.previousHealth, result.health, result.previousFinality, result.finality],
+      ['complete', 'complete', 'none', 'snapshot'],
+      'the CAS retry observes finality without regressing the concurrently committed health'
+    );
     assert.equal((await listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'complete');
+  });
+
+  test('honours a backdated cutoff on a store that has no clock of its own', async () => {
+    const store = new MemoryLedgerStore();
+    assert.equal(store.readLedgerInstant, undefined, 'sanity: this store has no authoritative clock');
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    // The caller is replaying a moment inside the recovery window while the
+    // host clock has already passed the recovery deadline. Clamping the pin
+    // against the host clock reconciled a moment the caller never asked
+    // about, persisting `action_required` at 03:00 where the obligation was
+    // `delayed` at 01:30. There is nothing to clamp against here: `now` is
+    // precisely what a pinned cutoff overrides.
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.000Z',
+      now: () => new Date('2026-09-02T03:00:00.000Z'),
+    });
+    assert.equal(transition.health, 'delayed');
+    assert.equal(transition.occurredAt, '2026-09-02T01:30:00.000Z');
+    assert.equal((await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'delayed');
+  });
+
+  test('reconciles at the instant the store resolved, not the one it was asked for', async () => {
+    const store = new MemoryLedgerStore();
+    assert.equal(store.readLedgerInstant, undefined, 'sanity: this store has no authoritative clock');
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    // A store that resolves its own cutoff at a precision the caller cannot
+    // express. The contract says that resolved instant is what the projection
+    // was computed at, so the transition and the watermark have to use it —
+    // leaving the caller's value in place stamped a moment later than the
+    // read and buried everything in between.
+    const resolved = '2026-09-02T01:30:00.499900Z';
+    store.getManagedLifecycleProjection = async () => ({
+      binding: reportingManagedDeliveryBindingV1({
+        configurationId: obligation.configurationId,
+        account_id: obligation.account.account_id,
+        delivery_config_id: obligation.delivery_config_id,
+        delivery_config_version: obligation.delivery_config_version,
+        destination_ref: 'destination-resolved-1',
+        authorization_generation: 1,
+        feed_purpose: 'analytics',
+        method: 'file_transfer',
+        verification_profile: 'canonical_digest',
+        reconciliation_mode: 'delivery_only',
+        resource_retention_days: 30,
+        created_at: obligation.period.end,
+      }),
+      materializations: [],
+      materializationHistory: [],
+      consumers: [],
+      obligatedConsumerIds: [],
+      obligatedConsumerRosterComplete: true,
+      resolvedLedgerAsOf: resolved,
+    });
+    const applied = [];
+    const apply = store.applyLifecycleProjection.bind(store);
+    store.applyLifecycleProjection = async input => {
+      applied.push(input.ledgerAsOf);
+      return apply(input);
+    };
+    const transition = await reconcileReportingStatusLifecycleV1({
+      store,
+      reporting_obligation_id: obligation.reporting_obligation_id,
+      ledgerAsOf: '2026-09-02T01:30:00.500000Z',
+    });
+    assert.equal(transition.occurredAt, resolved);
+    assert.deepEqual(applied, [resolved], 'the watermark is the instant the projection read at');
   });
 
   test('does not overwrite a concurrent terminal obligation update with a stale lifecycle projection', async () => {
@@ -502,6 +577,73 @@ describe('seller reporting ledger', () => {
     );
   });
 
+  test('deadline sweeps back off legacy pending residue without starving a clean sibling account', async () => {
+    const store = new MemoryLedgerStore();
+    const residue = {
+      ...healthObligation(),
+      reporting_obligation_id: 'obligation-a-residue',
+      configurationId: 'configuration-a-residue',
+      account: { account_id: 'account-a-residue' },
+    };
+    const clean = {
+      ...healthObligation(),
+      reporting_obligation_id: 'obligation-b-clean',
+      configurationId: 'configuration-b-clean',
+      account: { account_id: 'account-b-clean' },
+    };
+    store.obligations.set(residue.reporting_obligation_id, residue);
+    store.obligations.set(clean.reporting_obligation_id, clean);
+    store.transitions.set('legacy-pending-transition', {
+      transitionId: 'legacy-pending-transition',
+      reporting_obligation_id: residue.reporting_obligation_id,
+      previousHealth: 'waiting',
+      health: 'delayed',
+      issueIds: [],
+      occurredAt: '2026-09-02T01:15:00.000Z',
+    });
+    store.transactionalNotificationActivity = true;
+    const failures = [];
+    store.recordLifecycleFailure = async input => void failures.push(input.reporting_obligation_id);
+
+    assert.equal(
+      await reconcileReportingStatusDeadlinesV1({
+        store,
+        ledgerAsOf: '2026-09-02T02:30:00.000Z',
+      }),
+      2
+    );
+    assert.deepEqual(failures, [residue.reporting_obligation_id], 'only the poisoned obligation is backed off');
+    assert.equal((await store.listTransitions(residue.reporting_obligation_id)).length, 1);
+    assert.equal((await store.listTransitions(clean.reporting_obligation_id)).at(-1).health, 'action_required');
+  });
+
+  test('deadline sweeps fail loud when transactional notification activity conflicts with legacy subscribers', async () => {
+    const store = new MemoryLedgerStore();
+    const obligation = healthObligation();
+    store.obligations.set(obligation.reporting_obligation_id, obligation);
+    store.transactionalNotificationActivity = true;
+    const failures = [];
+    store.recordLifecycleFailure = async input => void failures.push(input.reporting_obligation_id);
+    let obligationReads = 0;
+    const getObligation = store.getObligation.bind(store);
+    store.getObligation = async id => {
+      obligationReads += 1;
+      return getObligation(id);
+    };
+
+    await assert.rejects(
+      () =>
+        reconcileReportingStatusDeadlinesV1({
+          store,
+          ledgerAsOf: '2026-09-02T01:30:00.000Z',
+          subscribers: [{ account_id: obligation.account.account_id, notify: async () => {} }],
+        }),
+      /mutually exclusive/
+    );
+    assert.deepEqual(failures, [], 'a deployment invariant is not recorded as an isolated tenant failure');
+    assert.equal(obligationReads, 0, 'the deployment-wide conflict fails before obligation work starts');
+  });
+
   test('does not freeze a superseded generation until its straddling period closes', async () => {
     const store = new MemoryLedgerStore();
     const request = redactedReportingSourceRequestV1();
@@ -703,6 +845,24 @@ describe('seller reporting ledger', () => {
       () => producer.installConfiguration({ ...valid, contract: { ...valid.contract, schemaVersion: 'other' } }),
       /contract does not match/
     );
+    // RC3 core/reporting-delivery-config states this unconditionally: "feed_purpose
+    // billing still requires required_finality official". A provisional snapshot
+    // revision would otherwise be able to take a terminal accepted billing receipt.
+    await assert.rejects(
+      () =>
+        producer.installConfiguration({
+          ...valid,
+          feedPurpose: 'billing',
+          requiredFinality: 'snapshot',
+          canonicalization: {
+            id: 'billing-rows-v1',
+            uri: 'https://schemas.fixture.example/canonicalization.json',
+            sha256: 'c'.repeat(64),
+            primaryKeys: valid.requestedDimensions.slice(0, 1),
+          },
+        }),
+      /Billing reporting requires official ledger finality/
+    );
     await assert.rejects(
       () =>
         producer.installConfiguration({
@@ -747,6 +907,83 @@ describe('seller reporting ledger', () => {
       /Unsupported reporting dimension/
     );
     assert.equal(store.configurations.size, 0);
+  });
+
+  test('replays an immutable pre-rule billing generation instead of revalidating it', async () => {
+    const store = new MemoryLedgerStore();
+    const request = redactedReportingSourceRequestV1();
+    const producer = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+      offerings: [redactedReportingSourceOfferingV1],
+      contact: { name: 'Reporting operations' },
+    });
+    const legacyBilling = {
+      account: request.account,
+      sourceScope: request.sourceScope,
+      delivery_config_id: request.delivery_config_id,
+      delivery_config_version: request.delivery_config_version,
+      offeringId: request.offeringId,
+      report_definition_id: request.report_definition_id,
+      // billing with snapshot finality: installable before the rule existed,
+      // refused by installConfiguration today.
+      feedPurpose: 'billing',
+      requiredFinality: 'snapshot',
+      canonicalization: {
+        id: 'billing-rows-v1',
+        uri: 'https://schemas.fixture.example/canonicalization.json',
+        sha256: 'c'.repeat(64),
+        primaryKeys: request.requestedDimensions.slice(0, 1),
+      },
+      requestedMetrics: request.requestedMetrics,
+      requestedDimensions: request.requestedDimensions,
+      constituents: request.coverage.constituents,
+      mediaBuyIds: request.coverage.mediaBuyIds,
+      sourceTimezone: 'UTC',
+      schedule: {
+        anchor: new Date(Date.parse(request.period.start)).toISOString(),
+        periodMilliseconds: 86_400_000,
+        deliverySlaMilliseconds: 0,
+        recoveryWindowMilliseconds: 86_400_000,
+      },
+      sourceSettings: request.sourceSettings,
+      contract: request.contract,
+    };
+    // A fresh generation is still held to the current rule.
+    await assert.rejects(
+      () => producer.installConfiguration(legacyBilling),
+      /Billing reporting requires official ledger finality/
+    );
+    // The row that predates the rule is immutable, so reinstalling it must
+    // return the stored generation. Validating before resolving the replay
+    // made an idempotent reinstall impossible and left no way to name it.
+    await store.putConfiguration({
+      ...legacyBilling,
+      configurationId: 'configuration-legacy-billing',
+      installedAt: legacyBilling.schedule.anchor,
+      semanticFingerprint: `sha256:${sha(legacyBilling)}`,
+    });
+    const replayed = await producer.installConfiguration(legacyBilling);
+    assert.equal(replayed.configurationId, 'configuration-legacy-billing');
+    assert.equal(store.configurations.size, 1, 'no second generation is written');
+
+    // The offering can also be withdrawn. A stored generation is immutable,
+    // so reinstalling it must still return the stored row — resolving the
+    // offering before reading the ledger made it throw "Unknown reporting
+    // source offering" without ever looking.
+    const withdrawn = createReportingProducer({
+      store,
+      source: createInlineReportingSourceExecutor(() => [], redactedReportingSourceOfferingV1),
+      offerings: [],
+      contact: { name: 'Reporting operations' },
+    });
+    const replayedWithoutOffering = await withdrawn.installConfiguration(legacyBilling);
+    assert.equal(replayedWithoutOffering.configurationId, 'configuration-legacy-billing');
+    // A genuinely new generation still needs a live offering.
+    await assert.rejects(
+      () => withdrawn.installConfiguration({ ...legacyBilling, delivery_config_version: 99 }),
+      /Unknown reporting source offering/
+    );
   });
 
   test('replays a configuration fingerprinted before instant normalization', async () => {
@@ -1188,11 +1425,25 @@ describe('seller reporting ledger', () => {
       if (store.revisions.size > 0) throw new Error('fixture lifecycle interruption');
       return applyLifecycleProjection(input);
     };
-    await assert.rejects(
-      () => producer.runWorker({ now: () => new Date(anchor + 2 * 86_400_000 + 1), maxIterations: 1 }),
-      /lifecycle interruption/
-    );
+    // The durable revision commits and the projection does not. That must not
+    // abort the worker: every tenant queued behind this one would be stranded
+    // by an obligation whose projection cannot be computed, and the recovery
+    // path would rethrow the same failure on the next pass forever. It is
+    // reported instead, and the obligation stays due.
+    const transitionsBefore = (await store.listTransitions(obligation.reporting_obligation_id)).length;
+    const interrupted = await producer.runWorker({
+      now: () => new Date(anchor + 2 * 86_400_000 + 1),
+      maxIterations: 1,
+    });
+    assert.equal(interrupted.revisionsCommitted, 1, 'the durable write still happened');
+    assert.equal(interrupted.reconcilesDeferred, 1, 'and the unpublished projection is reported, not swallowed');
     assert.equal((await store.listRevisions(obligation.reporting_obligation_id)).length, 1);
+    assert.notEqual(
+      (await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health,
+      'complete',
+      'the projection that failed published nothing'
+    );
+    assert.ok(transitionsBefore >= 1);
     store.applyLifecycleProjection = applyLifecycleProjection;
     await producer.runWorker({ now: () => new Date(anchor + 2 * 86_400_000 + 2), maxIterations: 1 });
     assert.equal((await store.listTransitions(obligation.reporting_obligation_id)).at(-1).health, 'complete');
@@ -1383,6 +1634,8 @@ describe('seller reporting ledger', () => {
     assert.equal(adjustments.length, 1);
     assert.equal(adjustments[0].adjusts_reporting_revision_id, revisions[0].reporting_revision_id);
     assert.equal(adjustments[0].binding.rowCount, 1);
+    const { canonical_adjustment_sha256: adjustmentDigest, ...unsignedAdjustment } = adjustments[0].wireAdjustment;
+    assert.equal(adjustmentDigest, sha(unsignedAdjustment));
     assert.equal(
       adjustments[0].wireAdjustment.control_total_deltas.find(value => value.name === 'impressions').value,
       '1'

@@ -726,6 +726,7 @@ jobs:
           test/lib/postgres-proposal-store.test.js
           test/examples/durable-buyer-writes.test.js
           test/lib/reporting-ledger-pg.test.js
+          test/lib/reporting-managed-delivery-pg.test.js
           test/lib/reporting-ledger-writer-fence-pg.test.js
           test/lib/reporting-notification-activity-pg.test.js
           test/lib/reporting-status-ingest-pg.test.js

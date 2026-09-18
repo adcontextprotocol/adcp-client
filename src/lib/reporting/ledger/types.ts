@@ -1,7 +1,10 @@
 import type {
   GetReportingStatusResponse,
   ReportingAdjustment,
+  ReportingAdjustmentReceipt,
   ReportingConsumerStatus,
+  ReportingMaterialization,
+  ReportingReceipt,
   ReportingRevision,
 } from '../../types';
 import type { AdcpToolMap, HandlerContext } from '../../server/create-adcp-server';
@@ -14,6 +17,19 @@ import type {
   ReportingSourceStagedObjectReaderV1,
   SourceBatchManifestReferenceV1,
 } from '../source';
+
+/**
+ * Private-by-convention identity used to prove Core and Managed stores share
+ * one reporting authority. Store implementations may expose their own stable
+ * authority identity through this symbol; it is never serialized.
+ */
+export const REPORTING_LEDGER_AUTHORITY = Symbol.for('@adcp/sdk/reporting-ledger-authority');
+
+/** Shared identity used by separately constructed Core and opt-in reporting stores. */
+export interface ReportingLedgerAuthorityV1 {
+  readonly substrate: unknown;
+  readonly managedDelivery: boolean;
+}
 
 export type ReportingHealthV1 = 'waiting' | 'healthy' | 'delayed' | 'action_required' | 'complete';
 export type ReportingFinalityV1 = 'snapshot' | 'official';
@@ -490,6 +506,27 @@ export interface ReportingLedgerSnapshotV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  /** Present only when the opt-in Managed Delivery migration is installed. */
+  managedBindings?: ReportingManagedDeliveryBindingV1[];
+  materializations?: ReportingMaterialization[];
+  /** Full immutable history; separate from authorization-aware health projection. */
+  materializationHistoryProjection?: ReportingMaterialization[];
+  materializationProjection?: ReportingMaterialization[];
+  /** Authenticated caller's receipts only; another consumer is never projected. */
+  receipts?: ReportingReceipt[];
+  receiptProjection?: ReportingReceipt[];
+  adjustmentReceipts?: ReportingAdjustmentReceipt[];
+  adjustmentReceiptProjection?: ReportingAdjustmentReceipt[];
+  /**
+   * Subjects whose accepted receipt body has been pruned.
+   *
+   * Retention removes bodies past the advertised horizon, but an accepted
+   * leaf is terminal forever. Without this the projection stops seeing the
+   * acceptance and reopens a settled subject.
+   */
+  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>;
+  /** Revisions whose successful materialization row has been pruned. */
+  tombstonedDeliveredRevisionIds?: readonly string[];
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   /** Full scoped histories retained across changes_after for complete counts and current-leaf projection. */
   consumerStatusProjection?: ReportingLedgerConsumerStatementV1[];
@@ -501,12 +538,159 @@ export interface ReportingLedgerPageV1 {
   obligations: ReportingLedgerObligationV1[];
   revisions: ReportingLedgerRevisionSnapshotV1[];
   adjustments: ReportingLedgerAdjustmentSnapshotV1[];
+  materializations?: ReportingMaterialization[];
+  receipts?: ReportingReceipt[];
+  adjustmentReceipts?: ReportingAdjustmentReceipt[];
   consumerStatuses?: ReportingLedgerConsumerStatementV1[];
   totalCount: number;
   offset: number;
   limit: number;
   hasMore: boolean;
   nextCursor?: string;
+}
+
+/**
+ * Immutable opt-in binding between one Core configuration generation and one
+ * caller-owned destination authorization generation. Core configurations do
+ * not carry this shape and remain API-delivered.
+ */
+export interface ReportingManagedDeliveryBindingV1 {
+  configurationId: string;
+  account_id: string;
+  delivery_config_id: string;
+  delivery_config_version: number;
+  destination_ref: string;
+  authorization_generation: number;
+  feed_purpose: 'pacing' | 'analytics' | 'billing';
+  method: ReportingMaterialization['method'];
+  transport?: string;
+  verification_profile: NonNullable<ReportingMaterialization['verification']>['verification_profile'];
+  reconciliation_mode: 'delivery_only' | 'consumer_receipt';
+  resource_retention_days: number;
+  created_at: string;
+  semantic_fingerprint: string;
+}
+
+/**
+ * Managed Delivery inputs the lifecycle reconciler needs to project the same
+ * health the read path projects.
+ *
+ * Reads are scoped to one authenticated consumer; a persisted transition is
+ * account-level, so receipts arrive grouped per consumer and the reconciler
+ * folds the per-consumer projections with `moreSevereReportingHealthV1`. The
+ * seller's obligation is only reconciled once every consumer that owes a
+ * receipt has accepted, so the most severe consumer is the truthful one.
+ */
+export interface ReportingManagedLifecycleProjectionV1 {
+  binding: ReportingManagedDeliveryBindingV1;
+  /** Authorization-aware view: a revoked destination reads as `failed`. */
+  materializations: ReportingMaterialization[];
+  /** Full immutable history, independent of current authorization. */
+  materializationHistory: ReportingMaterialization[];
+  /** One entry per consumer that has submitted receipts; empty when none has. */
+  consumers: Array<{
+    consumer_id: string;
+    receipts: ReportingReceipt[];
+    adjustmentReceipts: ReportingAdjustmentReceipt[];
+  }>;
+  /**
+   * Principals that owe a receipt for this obligation, from trusted state.
+   *
+   * `consumers` alone is not a roster: it is only who has already submitted
+   * something. Aggregating it would let an authorized consumer that owes a
+   * receipt and has stayed silent vanish the moment another consumer accepts,
+   * so the account-level transition could report the obligation reconciled
+   * while that consumer's own read still says `action_required`. Entries here
+   * that have submitted nothing are projected with empty receipts.
+   */
+  obligatedConsumerIds?: readonly string[];
+  /**
+   * Set only when `obligatedConsumerIds` is provably the complete roster.
+   *
+   * The managed tables key destination authorizations and bindings by
+   * `(account_id, destination_ref, generation)` with no consumer dimension, so
+   * the SDK's own PostgreSQL store cannot prove completeness and leaves this
+   * false. While it is false the reconciler keeps projecting one additional
+   * zero-receipt consumer for a `consumer_receipt` binding, so the obligation
+   * is never reported reconciled on the strength of the consumers that
+   * happened to be observed. A seller whose authorization layer knows the
+   * roster should supply it and set this true to get accurate reconciled
+   * transitions.
+   */
+  obligatedConsumerRosterComplete?: boolean;
+  /**
+   * False when the store could not project every consumer's receipt evidence.
+   *
+   * A store bounds what it will hold in memory at once. Crossing that bound
+   * must not fail the reconcile — nothing about a retry makes a large tenant
+   * smaller — so the store truncates at a deterministic consumer boundary and
+   * says so here. An incomplete projection can never prove reconciliation, so
+   * the fold treats it exactly as it treats an unproven roster.
+   */
+  receiptEvidenceComplete?: boolean;
+  /**
+   * Adjustments this obligation had at the projection's cutoff.
+   *
+   * Adjustment bodies carry a producer-authored `createdAt`, which is a host
+   * clock; the cutoff is compared against the store's own ordering column. A
+   * store that can tell the two apart reports the cutoff-visible set here, and
+   * the reconciler folds only those — otherwise a fast producer clock hid a
+   * correction from the lifecycle while the public status still demanded a
+   * receipt for it.
+   */
+  visibleAdjustmentIds?: readonly string[];
+  /**
+   * Revisions this obligation had at the projection's cutoff.
+   *
+   * The managed evidence beside a revision is cutoff-bounded, so the revision
+   * set has to be too: one committed after the cutoff arrives with no
+   * materialization and no receipt in scope and reads as an unmet obligation.
+   * The CAS still fences on the full set — that is a concurrency check, not a
+   * statement about the moment being described.
+   */
+  visibleRevisionIds?: readonly string[];
+  /**
+   * Opaque token over the managed state this projection was computed from.
+   *
+   * The lifecycle CAS fences Core evidence — revision set, obligation state,
+   * attempt count, predecessor health — but managed state is read in a
+   * separate transaction, so a revocation, receipt, adjustment or
+   * materialization landing between projection and apply would be written over
+   * by a health computed before it existed. Pass it back through
+   * `applyLifecycleProjection` so a store that supplies one can refuse a stale
+   * apply.
+   */
+  managedStateVersion?: string;
+  /**
+   * Subjects whose accepted receipt body has been pruned, and revisions whose
+   * successful materialization has been pruned.
+   *
+   * Retention removes bodies; it must not remove conclusions. Without these
+   * the lifecycle recomputes an accepted subject as outstanding and a
+   * delivered revision as never delivered.
+   */
+  tombstonedAcceptedSubjects?: Array<{ kind: 'revision' | 'adjustment'; subjectId: string; consumerId: string }>;
+  tombstonedDeliveredRevisionIds?: readonly string[];
+  /**
+   * The cutoff this projection actually used, at full database precision.
+   *
+   * A host `toISOString()` is millisecond-truncated while the underlying
+   * columns are microsecond timestamps, so a caller-taken "now" can sort
+   * before a row written in the same millisecond. A store that resolves its
+   * own instant reports it here, and the reconciler uses it for everything
+   * downstream so the projection, its token and the transition all describe
+   * one instant.
+   */
+  resolvedLedgerAsOf?: string;
+  /**
+   * Version of the externally supplied obligated-consumer roster.
+   *
+   * The roster is fetched outside the store's transaction, so it cannot be
+   * re-read inside the apply. It is versioned separately and re-checked just
+   * before the apply instead, which is what keeps a concurrent roster change
+   * from passing the CAS.
+   */
+  obligatedConsumerRosterVersion?: string;
 }
 
 export interface ReportingLedgerLeaseV1 {
@@ -535,6 +719,8 @@ export class ReportingConsumerStatusConflictError extends Error {
 }
 
 export interface ReportingLedgerStore {
+  /** Optional substrate identity for an add-on store that must prove shared authority. */
+  readonly [REPORTING_LEDGER_AUTHORITY]?: ReportingLedgerAuthorityV1;
   /**
    * True when durable notification/activity intent is committed with transitions.
    * Such stores must atomically stamp `notifiedAt` as the durable handoff marker.
@@ -642,8 +828,79 @@ export interface ReportingLedgerStore {
     projectedIssues: ReportingLedgerIssueV1[];
     ledgerAsOf: string;
     transition?: ReportingLedgerStatusTransitionV1;
+    /**
+     * Managed-state token from the projection this apply was computed from.
+     * A store that produces `managedStateVersion` MUST re-read it inside the
+     * apply transaction and return `applied: false` when it has moved, so a
+     * concurrent managed write cannot be overwritten by a stale health.
+     */
+    expectedManagedStateVersion?: string;
+    /**
+     * Watermark to record for this obligation, even when health did not move.
+     *
+     * Without it a managed change with no health effect leaves the obligation
+     * due forever, and a fair-ordered sweep keeps returning it ahead of work
+     * that has waited less.
+     */
+    processedManagedStateVersion?: string;
+    processedObligatedConsumerRosterVersion?: string;
+    /**
+     * Roster version this reconcile observed, for the same compare-and-set
+     * treatment as `expectedManagedStateVersion`.
+     *
+     * The roster lives outside the store, so the apply cannot re-read it.
+     * A store that records what readers observed MUST NOT overwrite a newer
+     * observation with this one: the due query compares the observed version
+     * with the processed one, so clobbering it drops the re-arm.
+     */
+    expectedObligatedConsumerRosterVersion?: string;
   }): Promise<{ applied: boolean; transitionInserted: boolean }>;
   markTransitionNotified(transitionId: string, notifiedAt: string): Promise<void>;
+  /**
+   * Managed Delivery projection inputs for one obligation.
+   *
+   * Optional on purpose: a Core-only ledger omits it and the lifecycle stays
+   * Core-only, exactly as before. A store that has the Managed Delivery
+   * migration installed must implement it, otherwise persisted transitions and
+   * webhooks would keep reporting Core health while `get_reporting_status`
+   * reports the composed managed health — the divergence this exists to close.
+   * Return `null` for an obligation whose configuration has no managed binding.
+   */
+  getManagedLifecycleProjection?(input: {
+    reporting_obligation_id: string;
+    /** Omit to let the store resolve an authoritative instant at full precision. */
+    ledgerAsOf?: string;
+  }): Promise<ReportingManagedLifecycleProjectionV1 | null>;
+  /**
+   * Re-reads the external obligated-consumer roster version immediately
+   * before an apply, outside any transaction.
+   */
+  readObligatedConsumerRosterVersion?(input: { reporting_obligation_id: string }): Promise<string | undefined>;
+  /**
+   * An authoritative instant from the ledger's own clock, at full precision.
+   *
+   * Lifecycle cutoffs taken from a caller's `Date` are millisecond-truncated
+   * and may lag the database, which silently drops rows written in the same
+   * millisecond. Reconciliation prefers this when the caller has not pinned a
+   * cutoff, and always takes a fresh one before a retry.
+   */
+  readLedgerInstant?(): Promise<string>;
+  /**
+   * Records a failed reconcile so the obligation backs off rather than
+   * re-occupying the head of every sweep. It must not advance the
+   * reconciliation watermark: the work is still unresolved.
+   */
+  recordLifecycleFailure?(input: { reporting_obligation_id: string }): Promise<void>;
+  /**
+   * Refreshes the recorded roster version for obligations that have one.
+   *
+   * The roster lives outside the database, so nothing here changes when it
+   * does. Publishing the version only during a reconcile is circular — a
+   * reconcile happens because the obligation is due, and a roster change is
+   * what should have made it due. A sweep calls this first so a change made
+   * while nothing was scheduled can still schedule something.
+   */
+  refreshObligatedConsumerRosterVersions?(input: { account_id?: string; limit: number }): Promise<number>;
   listTransitions(reporting_obligation_id: string): Promise<ReportingLedgerStatusTransitionV1[]>;
   listPendingTransitions(input?: { account_id?: string; limit?: number }): Promise<ReportingLedgerStatusTransitionV1[]>;
   createSnapshot(query: ReportingLedgerSnapshotQueryV1): Promise<ReportingLedgerSnapshotV1>;
@@ -729,7 +986,19 @@ export interface ReportingProducerV1 {
     executionDeadlineMilliseconds?: number;
     settlementGraceMilliseconds?: number;
     account_id?: string;
-  }): Promise<{ claimed: number; revisionsCommitted: number; notReady: number; failed: number }>;
+  }): Promise<{
+    claimed: number;
+    revisionsCommitted: number;
+    notReady: number;
+    failed: number;
+    /**
+     * Obligations whose durable work committed but whose projection could not
+     * be published on this pass. They stay due for the deadline sweep, which
+     * isolates and backs off per obligation; a non-zero count that does not
+     * clear is an operational signal, not a lost write.
+     */
+    reconcilesDeferred: number;
+  }>;
 }
 
 export type ReportingSourceWithReaderV1 = ReportingSourceExecutorV1 & ReportingSourceStagedObjectReaderV1;
