@@ -65,7 +65,9 @@ async function startAgent(
               ? { signals: [] }
               : name === 'get_products'
                 ? { products, cache_scope: 'public' }
-                : {};
+                : name === 'comply_test_controller'
+                  ? { success: true }
+                  : {};
         return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data };
       });
     }
@@ -131,6 +133,29 @@ async function run(topology, sb, options = {}, entryOptions = {}) {
     await Promise.all(Object.values(agents).map(a => a.close()));
   }
 }
+
+test('resets every routed agent that advertises reset_state before dispatch', async () => {
+  const controllerCapabilities = { compliance_testing: { scenarios: ['reset_state'] } };
+  const { result, calls } = await run(
+    {
+      sales: [['comply_test_controller'], controllerCapabilities],
+      signals: [['comply_test_controller'], controllerCapabilities],
+    },
+    storyboard([], []),
+    { adcpVersion: ADCP_VERSION }
+  );
+
+  assert.equal(result.overall_passed, true);
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.entries(calls).map(([key, agentCalls]) => [
+        key,
+        agentCalls.filter(call => call === 'comply_test_controller').length,
+      ])
+    ),
+    { sales: 1, signals: 1 }
+  );
+});
 
 for (const adcpVersion of ['3.1.20', '3.1.23', ADCP_VERSION]) {
   describe(`routed applicability (${adcpVersion})`, () => {
