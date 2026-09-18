@@ -93,6 +93,7 @@ import {
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
 import { PROBE_TASK_ALLOWLIST, resolveDeclaredTestKit, validateTestKit } from './test-kit';
+import { MUTATING_TASKS } from '../../utils/idempotency';
 import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
@@ -1304,6 +1305,27 @@ export function __filterResponseHeadersForTest(
   headers: Record<string, string> | undefined
 ): Record<string, string> | undefined {
   return filterResponseHeaders(headers);
+}
+
+/**
+ * Test seam for the session probe's mechanism-matched control resolution.
+ * Exercised against the real `createTestClient` shape so the live-token
+ * lookup cannot silently regress to a structure no client actually returns.
+ */
+/**
+ * Test seam for protected-target selection. Exercised directly so the
+ * public-tier and mutating-task exclusions cannot regress silently.
+ */
+export function __selectProtectedToolTargetForTest(tools: readonly string[] | undefined): string | undefined {
+  return selectProtectedToolTarget(tools);
+}
+
+export function __sessionControlCredentialsForTest(
+  mechanism: SessionControlMechanism,
+  options: StoryboardRunOptions,
+  client: unknown
+): SessionControlResolution {
+  return sessionControlCredentials(mechanism, options, client);
 }
 
 export function __defaultAuthHeadersForRawProbeForTest(
@@ -7360,6 +7382,7 @@ async function executeProbeStep(
       const probe = await rawMcpSessionProbe({
         agentUrl: runState.agentUrl,
         headers: plan.headers,
+        toolName: plan.toolName,
         control: plan.control,
         allowPrivateIp: options.allow_http === true,
         // Up to eight requests per step (two lifecycles x initialize /
@@ -8888,17 +8911,36 @@ function effectiveOAuthAccessToken(client: unknown, options: StoryboardRunOption
   return typeof configured === 'string' && configured.length > 0 ? configured : undefined;
 }
 
-/** Best-effort read of the client's live `oauth_tokens.access_token`. */
+/**
+ * Best-effort read of the client's live `oauth_tokens.access_token`.
+ *
+ * Two shapes are accepted because the runner is handed both:
+ * `createTestClient`'s client returns the `AgentConfig` **directly** from
+ * `getAgent('test')`, while a raw `ADCPMultiAgentClient` returns an
+ * `AgentClient` whose own `getAgent()` yields the config. Requiring the
+ * nested call made a valid OAuth / client-credentials run report "no OAuth
+ * access token" and denied a conformant agent its contribution.
+ *
+ * Read live rather than from `options.auth` on purpose:
+ * `MCPOAuthProvider.saveTokens` mutates this same config object, so a token
+ * acquired during discovery or refreshed mid-run is visible here and nowhere
+ * else.
+ */
 function liveAgentOAuthAccessToken(client: unknown): string | undefined {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow probe of a structural client
-    const candidate = (client as any)?.getAgent?.('test')?.getAgent?.();
-    const token = candidate?.oauth_tokens?.access_token;
-    return typeof token === 'string' && token.length > 0 ? (token as string) : undefined;
+    const resolved = (client as any)?.getAgent?.('test');
+    if (resolved == null) return undefined;
+    const candidates = [resolved];
+    if (typeof resolved.getAgent === 'function') candidates.push(resolved.getAgent());
+    for (const candidate of candidates) {
+      const token = candidate?.oauth_tokens?.access_token;
+      if (typeof token === 'string' && token.length > 0) return token;
+    }
   } catch {
     // Test doubles and non-MCP clients do not expose an agent config.
-    return undefined;
   }
+  return undefined;
 }
 
 /**
@@ -9074,6 +9116,34 @@ function escapeControlChars(value: string): string {
   );
 }
 
+/**
+ * AdCP tools that are public by protocol and therefore useless as a protected
+ * probe target. `get_adcp_capabilities` is mandatory-public;
+ * `get_products` (without pricing) and `list_creative_formats` are discovery.
+ */
+const SESSION_PROBE_PUBLIC_TIER: ReadonlySet<string> = new Set([
+  'get_adcp_capabilities',
+  'get_products',
+  'list_creative_formats',
+]);
+
+/**
+ * Choose the protected operation the MCP session probe will call.
+ *
+ * Read-shaped (`list_*` / `get_*`) so an empty-argument call has no side
+ * effects, never a mutating task, and never a public-tier tool — calling one
+ * of those would grade a surface every agent serves unauthenticated.
+ *
+ * Returns `undefined` when the agent advertises nothing suitable, which the
+ * caller turns into `session_probe_ungradable` rather than inventing a target.
+ */
+function selectProtectedToolTarget(tools: readonly string[] | undefined): string | undefined {
+  if (!tools) return undefined;
+  return tools.find(
+    tool => /^(list|get)_/.test(tool) && !SESSION_PROBE_PUBLIC_TIER.has(tool) && !MUTATING_TASKS.has(tool)
+  );
+}
+
 /** Mechanism a step's auth directive exercises. */
 function sessionControlMechanismFor(auth: StepAuthDirective): SessionControlMechanism {
   if (auth === 'none') return 'any';
@@ -9111,7 +9181,7 @@ function sessionControlMechanismFor(auth: StepAuthDirective): SessionControlMech
 type McpSessionSentinelPlan =
   | { kind: 'error'; error: string }
   | { kind: 'skip'; reason: RunnerDetailedSkipReason; detail: string }
-  | { kind: 'probe'; headers: Record<string, string>; control: McpSessionProbeControl };
+  | { kind: 'probe'; headers: Record<string, string>; toolName: string; control: McpSessionProbeControl };
 
 function planMcpSessionSentinel(
   step: StoryboardStep,
@@ -9143,6 +9213,22 @@ function planMcpSessionSentinel(
     };
   }
 
+  const toolName = selectProtectedToolTarget(options.agentTools);
+  if (toolName === undefined) {
+    return {
+      kind: 'skip',
+      reason: 'session_probe_ungradable',
+      detail: redactOAuthUrlsInText(
+        `Agent advertises no auth-required, read-only AdCP tool the probe can call with an empty request ` +
+          `body, so there is no protected operation to grade. MCP discovery (\`tools/list\`) is not a ` +
+          `protected task and public-tier tools (${[...SESSION_PROBE_PUBLIC_TIER].join(', ')}) are served ` +
+          `unauthenticated by design. Remedy: advertise one allowlisted read tool ` +
+          `(${PROBE_TASK_ALLOWLIST.slice(0, 4).join(', ')}, …). ` +
+          `Advertised tools: [${summarizeAdvertisedTools(options.agentTools)}].`
+      ),
+    };
+  }
+
   const routing = sessionProbeRoutingHeaders(options);
   let headers: Record<string, string>;
   try {
@@ -9159,16 +9245,17 @@ function planMcpSessionSentinel(
   if ('unavailable' in control) {
     // The probe still runs — its response is useful evidence — but grades
     // inconclusive rather than certifying an auth mechanism.
-    return { kind: 'probe', headers, control: { kind: 'unavailable', ...control.unavailable } };
+    return { kind: 'probe', headers, toolName, control: { kind: 'unavailable', ...control.unavailable } };
   }
   // An identical control would re-send the credential under test and prove
   // nothing; that shape is a positive probe, graded on its own acceptance.
   if (headers.authorization !== undefined && control.headers.authorization === headers.authorization) {
-    return { kind: 'probe', headers, control: { kind: 'probe_is_valid_credential' } };
+    return { kind: 'probe', headers, toolName, control: { kind: 'probe_is_valid_credential' } };
   }
   return {
     kind: 'probe',
     headers,
+    toolName,
     control: { kind: 'credential', headers: { ...routing, ...control.headers } },
   };
 }

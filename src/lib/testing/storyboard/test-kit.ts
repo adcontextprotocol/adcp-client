@@ -76,10 +76,11 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
  *      probed directly: their parameter surfaces are agent-authored and may
  *      400 on schema validation before auth runs, which would misreport as an
  *      auth failure.
- *   5. A2A → `undefined` (unchanged). `message/send` requires
- *      `params.message`, and A2A has no equivalent parameter-free protected
- *      operation, so there is no honest substitute; that gap is tracked
- *      separately.
+ *   5. Anything other than an explicit `protocol: 'mcp'` → `undefined`
+ *      (unchanged). A2A's `message/send` requires `params.message` and has no
+ *      equivalent parameter-free protected operation, and an unset protocol
+ *      means the caller never declared a transport — neither is a safe place
+ *      to substitute an MCP probe.
  */
 export function selectProbeTask(
   preferred: string | undefined,
@@ -91,8 +92,12 @@ export function selectProbeTask(
   if (preferred && PROBE_TASK_ALLOWLIST.includes(preferred) && advertised.has(preferred)) return preferred;
   const advertisedProbe = PROBE_TASK_ALLOWLIST.find(task => advertised.has(task));
   if (advertisedProbe !== undefined) return advertisedProbe;
-  // `protocol` defaults to MCP across the runner; mirror that default here.
-  return (options.protocol ?? 'mcp') === 'mcp' ? MCP_SESSION_PROBE_TASK : undefined;
+  // Only an *explicit* `protocol: 'mcp'` selects the sentinel. An unset
+  // protocol means the caller never told the runner which transport it is
+  // driving, and an A2A run has no equivalent parameter-free protected
+  // operation; both keep the historical `undefined` resolution so the step
+  // grades `not_applicable` instead of hard-failing on a substituted probe.
+  return options.protocol === 'mcp' ? MCP_SESSION_PROBE_TASK : undefined;
 }
 
 /**

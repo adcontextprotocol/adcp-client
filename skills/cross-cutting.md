@@ -1,4 +1,4 @@
-# Cross-cutting rules for every build-*-agent skill
+# Cross-cutting rules for every build-\*-agent skill
 
 Every `build-*-agent` skill points here. These rules apply regardless of which specialism you're building. The hello-adapter fork targets in `examples/hello_*_adapter_*.ts` wire all of them — read this section once if you're forking, every time if you're building from scratch.
 
@@ -17,15 +17,15 @@ Every `build-*-agent` skill points here. These rules apply regardless of which s
 
 Every mutating tool requires a client-supplied `idempotency_key`. The full list (authoritative — derived at runtime from `MUTATING_TASKS` in `src/lib/utils/idempotency.ts`, 28 tools grouped by skill domain):
 
-| Skill domain | Mutating tools |
-| --- | --- |
-| account (cross-cutting — used by every adopter that registers buyer accounts or reports usage) | `sync_accounts`, `report_usage` |
-| media-buy (sales) | `create_media_buy`, `update_media_buy`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `log_event`, `provide_performance_feedback` |
-| creative | `sync_creatives`, `build_creative` |
-| signals | `activate_signal` |
-| governance | `sync_plans`, `sync_governance`, `report_plan_outcome`, `create_property_list`, `update_property_list`, `delete_property_list`, `create_collection_list`, `update_collection_list`, `delete_collection_list`, `create_content_standards`, `update_content_standards`, `calibrate_content` |
-| brand-rights | `acquire_rights`, `update_rights` |
-| sponsored-intelligence | `si_initiate_session`, `si_send_message` |
+| Skill domain                                                                                   | Mutating tools                                                                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| account (cross-cutting — used by every adopter that registers buyer accounts or reports usage) | `sync_accounts`, `report_usage`                                                                                                                                                                                                                                                           |
+| media-buy (sales)                                                                              | `create_media_buy`, `update_media_buy`, `sync_audiences`, `sync_catalogs`, `sync_event_sources`, `log_event`, `provide_performance_feedback`                                                                                                                                              |
+| creative                                                                                       | `sync_creatives`, `build_creative`                                                                                                                                                                                                                                                        |
+| signals                                                                                        | `activate_signal`                                                                                                                                                                                                                                                                         |
+| governance                                                                                     | `sync_plans`, `sync_governance`, `report_plan_outcome`, `create_property_list`, `update_property_list`, `delete_property_list`, `create_collection_list`, `update_collection_list`, `delete_collection_list`, `create_content_standards`, `update_content_standards`, `calibrate_content` |
+| brand-rights                                                                                   | `acquire_rights`, `update_rights`                                                                                                                                                                                                                                                         |
+| sponsored-intelligence                                                                         | `si_initiate_session`, `si_send_message`                                                                                                                                                                                                                                                  |
 
 Wire `createIdempotencyStore({ ... })` once and pass it to `createAdcpServerFromPlatform(platform, { idempotency })`. The framework handles replay detection, payload-hash conflict (`IDEMPOTENCY_CONFLICT`), expiry (`IDEMPOTENCY_EXPIRED`), and in-flight parallelism. Don't reimplement in handlers.
 
@@ -49,6 +49,20 @@ How to get it right:
 
 An agent that accepts unauthenticated requests is non-compliant — the universal `security_baseline` storyboard fails it. Wire `serve({ authenticate })` with `verifyApiKey`, `verifyBearer`, or `anyOf(...)` from `@adcp/sdk/server` before you claim any specialism.
 
+### Advertise one allowlisted read tool, or auth cannot be graded
+
+`security_baseline` proves authentication by calling a **protected AdCP tool** with an empty request body. It picks that target from `test_kit.auth.probe_task` when you advertise one of `list_creatives`, `get_media_buy_delivery`, `list_authorized_properties`, `get_signals`, `list_property_lists`, `list_collection_lists`, `list_content_standards`, `list_accounts`.
+
+Advertise none of them and the runner falls back to an MCP session probe that selects any read-shaped (`list_*` / `get_*`) auth-required tool you do advertise. It will never use:
+
+- **public-tier tools** — `get_adcp_capabilities` (mandatory-public), `get_products`, `list_creative_formats`;
+- **mutating tools** — an empty-argument write is not a read probe;
+- **`tools/list`** — MCP discovery is not an AdCP protected task, so it is never the evidence.
+
+If nothing qualifies, the step grades `session_probe_ungradable` and **no auth mechanism can be certified**. Static-credential-only agents are affected most: the positive API-key/Basic probe asserts an AdCP response body that no protocol operation produces, so that branch cannot contribute on session evidence alone. The durable fix is to advertise one allowlisted read tool; serving RFC 9728 metadata and running with `--oauth` verifies the OAuth branch instead.
+
+If your tool refuses an empty-argument call on shape (`INVALID_REQUEST`, a missing required field), the probe reports **inconclusive** rather than a pass or a fail — it cannot tell a credential decision from a schema decision.
+
 ## Don't break when RFC 9421 Signature headers arrive
 
 Even if you don't claim `signed-requests`, a buyer may send `Signature-Input` / `Signature` headers. Your transport must pass through without rejecting. If you do claim the specialism, verify per the signed-requests delta in your skill.
@@ -70,7 +84,7 @@ The hello adapters use simple in-memory `accounts.resolution: 'lookup'` against 
 
 `createTenantStore` is the right default for any adopter handling more than one advertiser. It refuses inline `{account_id}` references unless your store explicitly lists them — that's a hard security gate, not a soft warning.
 
-Its `refAccess` field is required and has no default: `'auth-scoped'` makes a ref naming another tenant fail closed, `'ref-routed'` lets one credential span tenants on purpose. The sync-tool isolation gate is always on and is a *separate* decision — `refAccess` governs `accounts.resolve`, which is the account path for `create_media_buy` / `update_media_buy`. See `skills/build-holdco-agent/SKILL.md`.
+Its `refAccess` field is required and has no default: `'auth-scoped'` makes a ref naming another tenant fail closed, `'ref-routed'` lets one credential span tenants on purpose. The sync-tool isolation gate is always on and is a _separate_ decision — `refAccess` governs `accounts.resolve`, which is the account path for `create_media_buy` / `update_media_buy`. See `skills/build-holdco-agent/SKILL.md`.
 
 ## Webhooks: stable `operation_id` across retries
 

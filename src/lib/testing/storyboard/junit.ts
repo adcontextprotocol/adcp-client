@@ -69,9 +69,27 @@ function formatAdvisoryFinding(validation: { description: string; error?: string
  * frequently the only surface a CI reviewer reads.
  */
 function stepSkipMessage(step: { skip_reason?: string; skip?: { detail?: string } }): string {
-  const reason = step.skip_reason || 'skipped';
-  const detail = step.skip?.detail;
+  const reason = xmlSafeText(step.skip_reason || 'skipped');
+  const detail = step.skip?.detail === undefined ? undefined : xmlSafeText(step.skip.detail);
   return detail ? `${reason}: ${detail}` : reason;
+}
+
+/**
+ * Escape characters XML 1.0 cannot represent at all.
+ *
+ * `xmlEscape` handles the markup-significant five, but C0 controls other than
+ * tab/LF/CR are **illegal in XML 1.0 even as numeric references** — emitting
+ * one produces a document that strict CI parsers reject outright, turning an
+ * agent-supplied string into a broken report. Skip details carry
+ * agent-supplied fragments (advertised tool names, seller diagnostics), so
+ * neutralise them here rather than trusting every producer upstream.
+ */
+function xmlSafeText(value: string): string {
+  // eslint-disable-next-line no-control-regex -- escaping control chars is the point
+  return value.replace(
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
 }
 
 export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
