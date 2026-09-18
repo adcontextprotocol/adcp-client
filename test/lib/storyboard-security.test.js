@@ -11,7 +11,9 @@ const {
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
   rawMcpProbe,
+  rawMcpSessionProbe,
   rawA2aProbe,
+  MCP_SESSION_PROBE_TASK,
 } = require('../../dist/lib/testing/storyboard/probes');
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
@@ -1547,9 +1549,64 @@ describe('storyboard runner: auth-override dispatch', () => {
     }
   });
 
-  it('grades SI-only auth probes not_applicable instead of calling a nonexistent session-list tool', async () => {
+  // SI-only agents advertise no allowlisted probe tool, so the runner resolves
+  // the `mcp_session_probe` sentinel (#2940) and grades the unauthenticated
+  // probe through MCP protocol operations. The invariant this test protects is
+  // unchanged: no nonexistent AdCP tool is ever called.
+  it('probes SI-only agents through MCP protocol operations, never a nonexistent session-list tool', async () => {
+    const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      if (req.method === 'DELETE') {
+        seen.push({ method: 'DELETE' });
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push({ method: rpc.method, name: rpc.params?.name });
+      if (req.headers.authorization !== 'Bearer sk_test') {
+        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="mcp"' });
+        res.end(
+          JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: -32001, message: 'unauthorized' } })
+        );
+        return;
+      }
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'si-session' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id,
+            result: {
+              protocolVersion: '2025-11-25',
+              capabilities: {},
+              serverInfo: { name: 'si', version: '1.0.0' },
+            },
+          })
+        );
+        return;
+      }
+      if (rpc.method === 'notifications/initialized') {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { tools: siTools.map(name => ({ name, inputSchema: { type: 'object' } })) },
+        })
+      );
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     const storyboard = {
-      id: 'si_probe_not_applicable',
+      id: 'si_probe_session',
       version: '1.0.0',
       title: 'SI probe selection',
       category: 'security',
@@ -1575,18 +1632,24 @@ describe('storyboard runner: auth-override dispatch', () => {
         },
       ],
     };
-    const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
-    const result = await runStoryboard('https://si.example/mcp', storyboard, {
-      protocol: 'mcp',
-      agentTools: siTools,
-      test_kit: { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } },
-      _profile: { name: 'SI', tools: siTools },
-      _client: { getAgentInfo: async () => ({ name: 'SI', tools: siTools.map(name => ({ name })) }) },
-    });
-    const step = result.phases[0].steps[0];
-    assert.strictEqual(step.passed, true);
-    assert.strictEqual(step.skipped, true);
-    assert.strictEqual(step.skip.reason, 'not_applicable');
+    try {
+      const result = await runStoryboard(agentUrl, storyboard, {
+        protocol: 'mcp',
+        allow_http: true,
+        agentTools: siTools,
+        test_kit: { auth: { api_key: 'sk_test', probe_task: 'list_creatives' } },
+        _profile: { name: 'SI', tools: siTools },
+        _client: { getAgentInfo: async () => ({ name: 'SI', tools: siTools.map(name => ({ name })) }) },
+      });
+      const step = result.phases[0].steps[0];
+      assert.strictEqual(step.passed, true, JSON.stringify(step, null, 2));
+      assert.strictEqual(step.skipped, undefined);
+      assert.strictEqual(step.response.status, 401);
+      assert.ok(!seen.some(r => r.method === 'tools/call'), 'no AdCP tool was called');
+      assert.ok(!seen.some(r => r.name !== undefined), 'no tool name was ever dispatched');
+    } finally {
+      server.close();
+    }
   });
 
   it('auth: none sends no Authorization header; value_strategy: random_invalid sends a random key', async () => {
@@ -3258,5 +3321,802 @@ describe('validateTestKit: enforced at runStoryboard / runStoryboardStep entry',
       // And the echoed value is length-bounded.
       assert.ok(err.message.length < 1000, `message too long: ${err.message.length}`);
     }
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// mcp_session_probe sentinel — no-allowlist auth probe (#2940)
+// ────────────────────────────────────────────────────────────
+
+const ORCHESTRATOR_TOOLS = ['get_adcp_capabilities', 'list_creative_status', 'list_plans', 'list_sellers'];
+
+describe('selectProbeTask: mcp_session_probe fallback', () => {
+  it('falls back to the session-probe sentinel when no allowlisted tool is advertised', () => {
+    assert.strictEqual(selectProbeTask('list_creatives', ORCHESTRATOR_TOOLS), MCP_SESSION_PROBE_TASK);
+    assert.strictEqual(selectProbeTask(undefined, ORCHESTRATOR_TOOLS), MCP_SESSION_PROBE_TASK);
+    assert.strictEqual(
+      selectProbeTask('list_creatives', ORCHESTRATOR_TOOLS, { protocol: 'mcp' }),
+      MCP_SESSION_PROBE_TASK
+    );
+  });
+
+  it('prefers an advertised allowlisted tool over the sentinel', () => {
+    assert.strictEqual(selectProbeTask('list_creatives', ['list_creatives', ...ORCHESTRATOR_TOOLS]), 'list_creatives');
+    assert.strictEqual(selectProbeTask('list_creatives', ['get_signals', ...ORCHESTRATOR_TOOLS]), 'get_signals');
+    assert.strictEqual(selectProbeTask(undefined, ['list_accounts', ...ORCHESTRATOR_TOOLS]), 'list_accounts');
+  });
+
+  it('preserves the preference verbatim when discovery is unavailable', () => {
+    assert.strictEqual(selectProbeTask('list_creatives', undefined), 'list_creatives');
+    assert.strictEqual(selectProbeTask(undefined, undefined), undefined);
+    // Discovery that returned an empty list is still "no allowlisted tool".
+    assert.strictEqual(selectProbeTask('list_creatives', []), MCP_SESSION_PROBE_TASK);
+  });
+
+  it('does not invent an A2A fallback', () => {
+    assert.strictEqual(selectProbeTask('list_creatives', ORCHESTRATOR_TOOLS, { protocol: 'a2a' }), undefined);
+    assert.strictEqual(selectProbeTask('list_creatives', ['get_signals'], { protocol: 'a2a' }), 'get_signals');
+  });
+
+  it('keeps the sentinel out of the operator-selectable allowlist', () => {
+    assert.ok(!PROBE_TASK_ALLOWLIST.includes(MCP_SESSION_PROBE_TASK));
+    assert.ok(PROBE_TASKS.has(MCP_SESSION_PROBE_TASK));
+    assert.throws(
+      () => validateTestKit({ auth: { api_key: 'sk', probe_task: MCP_SESSION_PROBE_TASK } }),
+      err => err instanceof TestKitValidationError && /not in the allowlist/.test(err.message)
+    );
+  });
+});
+
+/**
+ * MCP endpoint that records every request and can enforce auth at either
+ * boundary — or nowhere at all.
+ *
+ * `enforce: 'session'`  → rejects `initialize` without the expected bearer.
+ * `enforce: 'operation'`→ accepts any `initialize`, rejects `tools/list`.
+ * `enforce: 'none'`     → fail-open: serves everything unauthenticated.
+ * `enforce: 'all'`      → rejects every request, valid credential included.
+ *
+ * `servePrm` mounts RFC 9728 + RFC 8414 metadata for the storyboard's
+ * `oauth_discovery` phase. `supportsDelete: false` answers 405 to the
+ * session-termination DELETE, like a server without explicit termination.
+ */
+async function startProbeAgent(opts = {}) {
+  const enforce = opts.enforce ?? 'session';
+  const expected = opts.expectedBearer ?? 'Bearer sk_valid';
+  const seen = [];
+  const server = http.createServer(async (req, res) => {
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    const url = new URL(req.url, origin);
+    const authorization = req.headers.authorization ?? null;
+
+    if (req.method === 'GET') {
+      if (opts.servePrm && url.pathname === '/.well-known/oauth-protected-resource/mcp') {
+        seen.push({ method: 'GET prm', authorization });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            resource: `${origin}/mcp`,
+            authorization_servers: [origin],
+            bearer_methods_supported: ['header'],
+          })
+        );
+        return;
+      }
+      if (opts.servePrm && url.pathname === '/.well-known/oauth-authorization-server') {
+        seen.push({ method: 'GET as', authorization });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            issuer: origin,
+            token_endpoint: `${origin}/token`,
+            grant_types_supported: ['client_credentials'],
+          })
+        );
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{}');
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      seen.push({ method: 'DELETE', authorization, sessionId: req.headers['mcp-session-id'] ?? null });
+      res.writeHead(opts.supportsDelete === false ? 405 : 204);
+      res.end();
+      return;
+    }
+
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    let rpc;
+    try {
+      rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end('{}');
+      return;
+    }
+    seen.push({
+      method: rpc.method,
+      authorization,
+      params: rpc.params,
+      sessionId: req.headers['mcp-session-id'] ?? null,
+      protocolVersion: req.headers['mcp-protocol-version'] ?? null,
+    });
+
+    const authorized = authorization === expected;
+    const reject =
+      enforce === 'all'
+        ? true
+        : enforce === 'none'
+          ? false
+          : enforce === 'session'
+            ? !authorized
+            : // 'operation': the handshake is open, tools/list is not.
+              rpc.method === 'tools/list' && !authorized;
+    if (reject) {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="mcp", error="invalid_token", error_description="Missing bearer token."',
+      });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: -32001, message: 'unauthorized' } }));
+      return;
+    }
+
+    if (rpc.method === 'initialize') {
+      res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'probe-session' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: {
+            protocolVersion: '2025-11-25',
+            capabilities: {},
+            serverInfo: { name: 'orchestrator', version: '1.0.0' },
+          },
+        })
+      );
+      return;
+    }
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    if (rpc.method === 'tools/list') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { tools: ORCHESTRATOR_TOOLS.map(name => ({ name, inputSchema: { type: 'object' } })) },
+        })
+      );
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { structuredContent: {} } }));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  return {
+    seen,
+    rpc: () => seen.filter(r => ['initialize', 'notifications/initialized', 'tools/list'].includes(r.method)),
+    origin: `http://127.0.0.1:${port}`,
+    agentUrl: `http://127.0.0.1:${port}/mcp`,
+    close: () => server.close(),
+  };
+}
+
+const VALID_CONTROL = { kind: 'credential', headers: { authorization: 'Bearer sk_valid' } };
+
+describe('rawMcpSessionProbe', () => {
+  it('drives the full lifecycle and cleans up when the credential is accepted', async () => {
+    const agent = await startProbeAgent();
+    try {
+      const { httpResult, taskResult, stage } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: 'Bearer sk_valid' },
+        control: { kind: 'probe_is_valid_credential' },
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(stage, 'tools/list');
+      assert.strictEqual(httpResult.status, 200);
+      assert.strictEqual(httpResult.error, undefined);
+      assert.strictEqual(taskResult.success, true);
+      assert.deepStrictEqual(
+        agent.seen.map(r => r.method),
+        ['initialize', 'notifications/initialized', 'tools/list', 'DELETE'],
+        'complete session lifecycle including explicit termination'
+      );
+      const list = agent.seen.find(r => r.method === 'tools/list');
+      assert.strictEqual(list.sessionId, 'probe-session');
+      assert.strictEqual(list.protocolVersion, '2025-11-25');
+      // Protocol-defined parameters only.
+      assert.deepStrictEqual(list.params, {});
+      assert.deepStrictEqual(agent.seen[0].params.capabilities, {});
+      assert.strictEqual(typeof agent.seen[0].params.protocolVersion, 'string');
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('grades a session-boundary rejection at initialize', async () => {
+    const agent = await startProbeAgent({ enforce: 'session' });
+    try {
+      const { httpResult, stage } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(stage, 'initialize');
+      assert.strictEqual(httpResult.status, 401);
+      assert.match(httpResult.headers['www-authenticate'] ?? '', /invalid_token/);
+      assert.strictEqual(httpResult.error, undefined, 'control accepted → conclusive');
+      // Graded attempt stopped at the rejection; control ran the full lifecycle.
+      assert.deepStrictEqual(
+        agent.seen.map(r => r.method),
+        ['initialize', 'initialize', 'notifications/initialized', 'tools/list', 'DELETE']
+      );
+      assert.notStrictEqual(agent.seen[0].authorization, 'Bearer sk_valid');
+      assert.strictEqual(agent.seen[1].authorization, 'Bearer sk_valid');
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('grades a per-operation rejection at tools/list', async () => {
+    const agent = await startProbeAgent({ enforce: 'operation' });
+    try {
+      const { httpResult, stage } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: {},
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+      });
+      // The handshake is open, so stopping at `initialize` would have reported
+      // this agent as serving protected operations unauthenticated.
+      assert.strictEqual(stage, 'tools/list');
+      assert.strictEqual(httpResult.status, 401);
+      assert.strictEqual(httpResult.error, undefined);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('reports a fail-open agent as accepted so its authored assertion fails', async () => {
+    const agent = await startProbeAgent({ enforce: 'none' });
+    try {
+      const { httpResult, stage } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: {},
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(stage, 'tools/list');
+      assert.strictEqual(httpResult.status, 200);
+      assert.strictEqual(httpResult.error, undefined);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('grades inconclusive when the valid credential is also refused', async () => {
+    const agent = await startProbeAgent({ enforce: 'all' });
+    try {
+      const { httpResult, taskResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 401, 'probe evidence is preserved');
+      assert.match(httpResult.error ?? '', /inconclusive/);
+      assert.match(httpResult.error ?? '', /rejected at initialize: HTTP 401/);
+      assert.strictEqual(taskResult.success, false);
+      assert.ok(!(httpResult.error ?? '').includes('sk_valid'));
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('grades inconclusive when no credential of the required kind is configured', async () => {
+    const agent = await startProbeAgent();
+    try {
+      const { httpResult, taskResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
+        control: { kind: 'unavailable', reason: 'this run holds no OAuth access token', remedy: 'Run with --oauth.' },
+        allowPrivateIp: true,
+      });
+      assert.strictEqual(httpResult.status, 401);
+      assert.match(httpResult.error ?? '', /inconclusive/);
+      assert.match(httpResult.error ?? '', /no OAuth access token/);
+      assert.match(httpResult.error ?? '', /Run with --oauth\./);
+      assert.strictEqual(taskResult.success, false);
+      assert.deepStrictEqual(
+        agent.rpc().map(r => r.method),
+        ['initialize'],
+        'no control lifecycle without a control credential'
+      );
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('tolerates a server without explicit session termination', async () => {
+    const agent = await startProbeAgent({ supportsDelete: false });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: 'Bearer sk_valid' },
+        control: { kind: 'probe_is_valid_credential' },
+        allowPrivateIp: true,
+      });
+      // A 405 on DELETE must not turn cleanup into a verdict.
+      assert.strictEqual(httpResult.status, 200);
+      assert.strictEqual(httpResult.error, undefined);
+      assert.ok(agent.seen.some(r => r.method === 'DELETE'));
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('never routes an agent-echoed credential into the control diagnostics', async () => {
+    // A hostile agent echoes the Authorization header it received into every
+    // field the probe might interpolate: error.message, a non-numeric
+    // error.code, the negotiated protocolVersion, and serverInfo.
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const echoed = req.headers.authorization ?? 'none';
+      seen.push(echoed);
+      if (seen.length === 1) {
+        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="mcp"' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: echoed, message: echoed } }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id,
+          result: { protocolVersion: echoed, capabilities: {}, serverInfo: { name: echoed, version: echoed } },
+        })
+      );
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const { httpResult, taskResult } = await rawMcpSessionProbe({
+        agentUrl,
+        headers: { authorization: 'Bearer probe_secret_value' },
+        control: { kind: 'credential', headers: { authorization: 'Bearer control_secret_value' } },
+        allowPrivateIp: true,
+      });
+      assert.match(httpResult.error ?? '', /inconclusive/);
+      for (const surface of [httpResult.error ?? '', taskResult.error ?? '']) {
+        assert.ok(!surface.includes('control_secret_value'), 'control credential must not be echoed back');
+        assert.ok(!surface.includes('probe_secret_value'), 'probe credential must not be echoed back');
+      }
+    } finally {
+      server.close();
+    }
+  });
+
+  it('rejects a control response that is not a conformant InitializeResult', async () => {
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seen.push(rpc.method);
+      if (seen.length === 1) {
+        res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="mcp"' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, error: { code: -32001, message: 'unauthorized' } }));
+        return;
+      }
+      // Supported protocolVersion but no capabilities / serverInfo.
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { protocolVersion: '2025-11-25' } }));
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl,
+        headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+      });
+      assert.match(httpResult.error ?? '', /InitializeResult schema/);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+/**
+ * The shape reported in #2940 — an MCP orchestrator serving valid RFC 9728
+ * PRM, enforcing auth, and advertising none of `PROBE_TASK_ALLOWLIST` — run
+ * against the authoritative storyboard's phase structure: the **required**
+ * `unauth_rejection` phase, the optional `oauth_discovery` branch, and the
+ * `mechanism_required` assertion.
+ */
+function securityBaselineStoryboard() {
+  return {
+    id: 'security_baseline_sentinel',
+    version: '1.0.0',
+    title: 'Authentication baseline (sentinel)',
+    category: 'security',
+    summary: '',
+    narrative: '',
+    agent: { interaction_model: '*', capabilities: [] },
+    caller: { role: 'buyer_agent' },
+    phases: [
+      {
+        id: 'unauth_rejection',
+        title: 'Unauthenticated requests on protected operations are rejected',
+        steps: [
+          {
+            id: 'probe_unauth',
+            title: 'Call the protected probe task with no credentials',
+            task: '$test_kit.auth.probe_task',
+            task_default: 'list_creatives',
+            stateful: false,
+            auth: 'none',
+            expect_error: true,
+            validations: [
+              { check: 'http_status_in', allowed_values: [401, 403], description: 'rejects unauth' },
+              { check: 'on_401_require_header', value: 'www-authenticate', description: 'RFC 6750 §3' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'oauth_discovery',
+        title: 'OAuth discovery and audience binding',
+        optional: true,
+        steps: [
+          {
+            id: 'probe_protected_resource',
+            title: 'GET /.well-known/oauth-protected-resource/<path>',
+            task: 'protected_resource_metadata',
+            stateful: false,
+            validations: [
+              { check: 'http_status', value: 200, description: 'PRM served per RFC 9728 §3' },
+              { check: 'field_present', path: 'resource', description: 'declares the protected resource' },
+              { check: 'field_present', path: 'authorization_servers', description: 'declares an issuer' },
+              { check: 'resource_equals_agent_url', description: 'resource equals the agent URL' },
+            ],
+          },
+          {
+            id: 'probe_auth_server_metadata',
+            title: 'Verify authorization_servers[0] resolves (RFC 8414)',
+            task: 'oauth_auth_server_metadata',
+            stateful: false,
+            validations: [
+              { check: 'http_status', value: 200, description: 'AS metadata reachable' },
+              { check: 'field_present', path: 'issuer', description: 'declares its issuer' },
+              { check: 'field_present', path: 'token_endpoint', description: 'exposes a token endpoint' },
+            ],
+          },
+          {
+            id: 'probe_invalid_oauth_token',
+            title: 'Reject a bogus Bearer token on the protected task',
+            task: '$test_kit.auth.probe_task',
+            task_default: 'list_creatives',
+            stateful: false,
+            auth: { type: 'oauth_bearer', value_strategy: 'random_invalid_jwt' },
+            contributes_to: 'auth_mechanism_verified',
+            contributes_if: 'prior_step.probe_protected_resource.passed',
+            expect_error: true,
+            validations: [
+              { check: 'http_status_in', allowed_values: [400, 401, 403], description: 'rejects a bogus Bearer' },
+              { check: 'on_401_require_header', value: 'www-authenticate', description: 'RFC 6750 §3' },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'mechanism_required',
+        title: 'At least one mechanism must be verified',
+        steps: [
+          {
+            id: 'assert_mechanism',
+            title: 'Require auth_mechanism_verified from at least one path',
+            task: 'assert_contribution',
+            stateful: false,
+            validations: [
+              {
+                check: 'any_of',
+                allowed_values: ['auth_mechanism_verified'],
+                description: 'No auth mechanism was verified.',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+/** Run options for a no-allowlist orchestrator, with OAuth-typed credentials. */
+function runOptionsFor(agent, extra = {}) {
+  return {
+    protocol: 'mcp',
+    allow_http: true,
+    agentTools: ORCHESTRATOR_TOOLS,
+    auth: { type: 'oauth', tokens: { access_token: 'sk_valid' } },
+    test_kit: { auth: { probe_task: 'list_creatives' } },
+    _profile: { name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS },
+    _client: {
+      getAgentInfo: async () => ({ name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+    },
+    ...extra,
+  };
+}
+
+function stepsById(result) {
+  return Object.fromEntries(result.phases.flatMap(p => p.steps).map(s => [s.step_id, s]));
+}
+
+describe('security_baseline: no-allowlist MCP agent', () => {
+  it('verifies auth from PRM + accepted OAuth token + rejected bogus token + rejected unauth', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(agent.agentUrl, securityBaselineStoryboard(), runOptionsFor(agent));
+      const byId = stepsById(result);
+
+      // The required unauth phase is exercised, not vacuous.
+      assert.strictEqual(byId.probe_unauth.skipped, undefined, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_unauth.passed, true);
+      assert.strictEqual(byId.probe_unauth.response.status, 401);
+
+      assert.strictEqual(byId.probe_invalid_oauth_token.task, MCP_SESSION_PROBE_TASK);
+      assert.strictEqual(byId.probe_invalid_oauth_token.request.operation, MCP_SESSION_PROBE_TASK);
+      assert.strictEqual(
+        byId.probe_invalid_oauth_token.passed,
+        true,
+        JSON.stringify(byId.probe_invalid_oauth_token, null, 2)
+      );
+      assert.match(byId.probe_invalid_oauth_token.extraction.note, /graded at initialize/);
+      assert.strictEqual(byId.assert_mechanism.passed, true, JSON.stringify(byId.assert_mechanism, null, 2));
+      assert.strictEqual(result.overall_passed, true, JSON.stringify(result.phases, null, 2));
+
+      // All three credential states reached the agent, and the valid one
+      // completed a full lifecycle each time it was used as a control.
+      const credentials = agent.rpc().map(r => r.authorization);
+      assert.ok(credentials.includes(null), 'unauthenticated attempt');
+      assert.ok(
+        credentials.some(c => c !== null && c !== 'Bearer sk_valid'),
+        'invalid-credential attempt'
+      );
+      assert.ok(credentials.includes('Bearer sk_valid'), 'valid-credential control');
+      assert.ok(
+        agent.seen.some(r => r.method === 'tools/list'),
+        'a protected operation was probed'
+      );
+      assert.ok(
+        agent.seen.some(r => r.method === 'DELETE'),
+        'sessions were terminated'
+      );
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('verifies an agent that enforces auth per operation rather than per session', async () => {
+    const agent = await startProbeAgent({ enforce: 'operation', servePrm: true });
+    try {
+      const result = await runStoryboard(agent.agentUrl, securityBaselineStoryboard(), runOptionsFor(agent));
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.passed, true, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_invalid_oauth_token.passed, true);
+      assert.match(byId.probe_invalid_oauth_token.extraction.note, /graded at tools\/list/);
+      assert.strictEqual(result.overall_passed, true);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('fails a fail-open agent instead of certifying it', async () => {
+    const agent = await startProbeAgent({ enforce: 'none', servePrm: true });
+    try {
+      const result = await runStoryboard(agent.agentUrl, securityBaselineStoryboard(), runOptionsFor(agent));
+      const byId = stepsById(result);
+      // Correct metadata must not rescue an agent that serves protected
+      // operations to anyone.
+      assert.strictEqual(byId.probe_protected_resource.passed, true);
+      assert.strictEqual(byId.probe_unauth.passed, false, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_unauth.response.status, 200);
+      assert.strictEqual(byId.probe_invalid_oauth_token.passed, false);
+      assert.strictEqual(byId.assert_mechanism.passed, false);
+      assert.strictEqual(result.overall_passed, false);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('withholds verification when the valid credential is also refused', async () => {
+    const agent = await startProbeAgent({ enforce: 'all', servePrm: true });
+    try {
+      const result = await runStoryboard(agent.agentUrl, securityBaselineStoryboard(), runOptionsFor(agent));
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_protected_resource.passed, true);
+      assert.strictEqual(byId.probe_invalid_oauth_token.passed, false);
+      assert.match(byId.probe_invalid_oauth_token.error ?? '', /inconclusive/);
+      assert.strictEqual(byId.assert_mechanism.passed, false);
+      assert.strictEqual(result.overall_passed, false);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('refuses to certify OAuth on the strength of a static API key', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      // Valid PRM + a working static key. The bogus-JWT rejection is real, but
+      // it does not show that the advertised issuer gates this resource.
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, {
+          auth: undefined,
+          test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
+        })
+      );
+      const byId = stepsById(result);
+      // The unauth probe is mechanism-agnostic, so the static key controls it.
+      assert.strictEqual(byId.probe_unauth.passed, true, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_invalid_oauth_token.passed, false);
+      assert.match(byId.probe_invalid_oauth_token.error ?? '', /no OAuth access token/);
+      assert.match(byId.probe_invalid_oauth_token.error ?? '', /--oauth/);
+      assert.strictEqual(byId.assert_mechanism.passed, false);
+      assert.strictEqual(result.overall_passed, false);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('keeps calling an advertised allowlisted tool when the agent has one', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const tools = [...ORCHESTRATOR_TOOLS, 'get_signals'];
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, {
+          agentTools: tools,
+          _profile: { name: 'Orchestrator', tools },
+          _client: { getAgentInfo: async () => ({ name: 'Orchestrator', tools: tools.map(name => ({ name })) }) },
+        })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_invalid_oauth_token.request.operation, 'get_signals');
+      assert.strictEqual(byId.probe_unauth.request.operation, 'get_signals');
+      assert.ok(!agent.seen.some(r => r.method === 'DELETE'), 'the allowlisted-tool path is unchanged');
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('grades a positive static-credential step not_applicable rather than inventing a body', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    const storyboard = securityBaselineStoryboard();
+    // `probe_api_key` shape: no auth override, asserts an AdCP response body.
+    storyboard.phases.splice(1, 0, {
+      id: 'api_key_path',
+      title: 'API key mechanism',
+      optional: true,
+      steps: [
+        {
+          id: 'probe_api_key',
+          title: 'Call the protected probe task with the provided API key',
+          task: '$test_kit.auth.probe_task',
+          task_default: 'list_creatives',
+          stateful: false,
+          validations: [{ check: 'field_present', path: 'context', description: 'echoes context' }],
+        },
+        {
+          id: 'probe_invalid_api_key',
+          title: 'Reject a deliberately invalid API key',
+          task: '$test_kit.auth.probe_task',
+          task_default: 'list_creatives',
+          stateful: false,
+          auth: { type: 'api_key', value_strategy: 'random_invalid' },
+          contributes_to: 'auth_mechanism_verified',
+          contributes_if: 'prior_step.probe_api_key.passed',
+          expect_error: true,
+          validations: [{ check: 'http_status_in', allowed_values: [400, 401, 403], description: 'rejects bad key' }],
+        },
+      ],
+    });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        storyboard,
+        runOptionsFor(agent, {
+          auth: undefined,
+          test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
+        })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_api_key.skipped, true);
+      assert.strictEqual(byId.probe_api_key.skip.reason, 'not_applicable');
+      assert.match(byId.probe_api_key.skip.detail, /AdCP task response body/);
+      // The invalid-key probe is real evidence, but its contribution gate stays
+      // closed because the positive step could not be graded.
+      assert.strictEqual(byId.probe_invalid_api_key.passed, true);
+      assert.strictEqual(byId.assert_mechanism.passed, false);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('refuses to substitute the MCP session probe on an A2A run', async () => {
+    const storyboard = securityBaselineStoryboard();
+    storyboard.phases[0].steps[0].task = MCP_SESSION_PROBE_TASK;
+    const result = await runStoryboard('https://a2a.example/a2a', storyboard, {
+      protocol: 'a2a',
+      agentTools: ORCHESTRATOR_TOOLS,
+      test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
+      _profile: { name: 'A2A', tools: ORCHESTRATOR_TOOLS },
+      _client: { getAgentInfo: async () => ({ name: 'A2A', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }) },
+    });
+    const byId = stepsById(result);
+    assert.strictEqual(byId.probe_unauth.passed, false);
+    assert.match(byId.probe_unauth.error ?? '', /MCP session probe/);
+  });
+
+  it('keeps the A2A no-allowlist path on its existing not_applicable skip', async () => {
+    const result = await runStoryboard('https://a2a.example/a2a', securityBaselineStoryboard(), {
+      protocol: 'a2a',
+      agentTools: ORCHESTRATOR_TOOLS,
+      test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
+      _profile: { name: 'A2A', tools: ORCHESTRATOR_TOOLS },
+      _client: { getAgentInfo: async () => ({ name: 'A2A', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }) },
+    });
+    const byId = stepsById(result);
+    assert.strictEqual(byId.probe_unauth.skipped, true);
+    assert.strictEqual(byId.probe_unauth.skip.reason, 'not_applicable');
+  });
+
+  it('does not let a free-form test-kit task reference reach a runner-native probe', async () => {
+    // `validateTestKit` constrains only `auth.*`; other kit fields are
+    // free-form, so a kit must not be able to steer a step onto
+    // `assert_contribution`'s no-network path and mint its contribution.
+    const storyboard = securityBaselineStoryboard();
+    storyboard.phases[0].steps = [
+      {
+        id: 'probe_unauth',
+        title: 'Free-form kit task reference',
+        task: '$test_kit.operations.primary_webhook_emitter',
+        stateful: false,
+        contributes_to: 'auth_mechanism_verified',
+        validations: [],
+      },
+    ];
+    const result = await runStoryboard('https://agent.example/mcp', storyboard, {
+      protocol: 'mcp',
+      agentTools: ORCHESTRATOR_TOOLS,
+      test_kit: {
+        auth: { api_key: 'sk_valid', probe_task: 'list_creatives' },
+        operations: { primary_webhook_emitter: 'assert_contribution' },
+      },
+      _profile: { name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS },
+      _client: {
+        getAgentInfo: async () => ({ name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+      },
+    });
+    const byId = stepsById(result);
+    // Graded as a missing tool, not silently passed by the probe route.
+    assert.strictEqual(byId.probe_unauth.skipped, true);
+    assert.strictEqual(byId.probe_unauth.skip.reason, 'missing_tool');
+    assert.strictEqual(byId.assert_mechanism.passed, false, 'no contribution was minted');
   });
 });

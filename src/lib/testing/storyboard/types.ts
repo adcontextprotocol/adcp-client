@@ -1513,6 +1513,30 @@ export type WebhookAssertionErrorCode =
 export const WEBHOOK_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
 
 /**
+ * Runner-native sentinel task for the MCP session auth probe
+ * (adcp-client#2940).
+ *
+ * `$test_kit.auth.probe_task` normally resolves to an advertised entry of
+ * `PROBE_TASK_ALLOWLIST`. When MCP discovery succeeds but the agent advertises
+ * none of them, `selectProbeTask` resolves to this sentinel instead of
+ * `undefined`, and the runner drives a complete MCP session lifecycle —
+ * `initialize` → `notifications/initialized` → `tools/list`, then `DELETE` to
+ * terminate — instead of a tool call.
+ *
+ * Every step of that lifecycle has a parameter surface defined by the MCP
+ * specification rather than by the agent's own tool schemas, so — unlike an
+ * arbitrary non-allowlisted AdCP tool — it can never 400 on agent-authored
+ * schema validation before the auth layer runs. `tools/list` is the graded
+ * operation: probing through it (rather than stopping at the handshake) is
+ * what makes the verdict independent of whether the agent enforces auth at
+ * the session boundary or per operation.
+ *
+ * Deliberately **not** a member of `PROBE_TASK_ALLOWLIST`: operators cannot
+ * select it via `test_kit.auth.probe_task`, only the runner can resolve to it.
+ */
+export const MCP_SESSION_PROBE_TASK = 'mcp_session_probe';
+
+/**
  * Raw HTTP probe result for tasks like `protected_resource_metadata` that
  * bypass the MCP transport. Carried through the runner alongside
  * `TaskResult` so validations like `http_status` and `on_401_require_header`

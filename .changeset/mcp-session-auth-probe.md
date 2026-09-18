@@ -1,0 +1,24 @@
+---
+'@adcp/sdk': patch
+---
+
+Fix `security_baseline` reporting `auth_mechanism_verified: []` for MCP agents that serve valid RFC 9728 protected-resource metadata but advertise none of `PROBE_TASK_ALLOWLIST` (adcp-client#2940).
+
+`$test_kit.auth.probe_task` previously resolved to `undefined` for those agents, so every credential probe skipped `not_applicable` and no phase could contribute `auth_mechanism_verified` — a conformant OAuth/PRM orchestrator whose read surface is named `list_plans` / `list_sellers` / `list_creative_status` failed the storyboard, and the required `unauth_rejection` phase was never exercised at all.
+
+`selectProbeTask` now resolves an explicit `mcp_session_probe` sentinel on MCP, and the runner drives a complete MCP session lifecycle through `rawMcpSessionProbe`: `initialize` → `notifications/initialized` → `tools/list` → `DELETE` to terminate the session, over the existing SSRF-bounded raw probe transport. Every parameter is MCP-defined and results are validated against the official `@modelcontextprotocol/sdk` schemas (`InitializeResultSchema`, `ListToolsResultSchema`, `SUPPORTED_PROTOCOL_VERSIONS`). Out-of-allowlist AdCP tools still cannot be probed directly — their parameter surfaces are agent-authored and may 400 before auth runs, which would misreport as an auth failure.
+
+Grading `tools/list` rather than stopping at the handshake is what makes the verdict independent of the agent's enforcement point: an agent that authenticates the Streamable HTTP session is graded on its `initialize` rejection, one that authenticates each operation on its `tools/list` rejection, and a fail-open agent is reported as accepted so its authored `http_status_in` assertion fails. The step's `extraction.note` names the stage the verdict landed on.
+
+Fail-closed properties:
+
+- **Valid, invalid and unauthenticated credentials are all exercised.** `auth: none` steps are now graded instead of skipped, so the non-optional `unauth_rejection` phase can no longer stay green while unexercised. Contributing steps additionally run an acceptance control with the run's valid credential: a rejection counts as evidence only when a valid credential completes the same lifecycle on the same endpoint, so an endpoint that refuses everything (down, firewalled, wrong tenant) cannot be certified.
+- **Mechanism-matched controls.** The control must be the same _kind_ of credential as the step under test. `oauth_bearer` steps require an OAuth access token (`options.auth.type` of `oauth` / `oauth_client_credentials`); a static API key or Basic credential cannot stand in, so correct PRM plus an unrelated shared secret can no longer launder into `auth_mechanism_verified` — the advertised-but-unserved failure mode the storyboard exists to catch. Within a mechanism, precedence matches `withTestKitAuthDefaults`: explicit `options.auth` wins over the test kit.
+- **No control, no certification.** With no credential of the required kind configured, the probe runs (its response is still evidence) and reports `inconclusive` with the remedy, rather than grading the rejection as conclusive.
+- **Positive static-credential steps stay `not_applicable`.** `probe_api_key` / `probe_basic` assert an AdCP task response body that no protocol operation produces; grading them from a `tools/list` result would be fabricated evidence. Their `contributes_if: prior_step.<id>.passed` gate therefore stays closed, so the static-credential branches cannot contribute on session evidence alone. Static-credential-only agents with no allowlisted tool remain unverified by design — see the upstream note below.
+- **Scoped to MCP.** A2A keeps its existing `undefined` resolution; a storyboard that routes the sentinel onto an A2A run fails the step rather than substituting a handshake.
+- **Discovery-unavailable behavior preserved**, and `mcp_session_probe` is absent from `PROBE_TASK_ALLOWLIST` so `test_kit.auth.probe_task` cannot name it.
+- Only the sentinel is routed to the runner-native probe path — not any resolved `PROBE_TASKS` member — so a free-form kit field (e.g. `$test_kit.operations.primary_webhook_emitter`) cannot steer a step onto `assert_contribution`'s no-network branch and mint its `contributes_to` flag.
+- Credentials are sent but never written back onto results: probe diagnostics use a fixed vocabulary plus runner-produced values (HTTP status, numeric JSON-RPC code), never `error.message`, `protocolVersion`, `serverInfo` or any other agent-supplied string, so an agent that echoes the `Authorization` header it received cannot route the run's valid credential into a compliance report.
+
+**Upstream follow-up:** making the static-credential branches verifiable for no-allowlist agents needs a session-layer positive step in the `security_baseline` storyboard itself (`adcontextprotocol/adcp`), not an SDK-side reinterpretation of its existing assertions.

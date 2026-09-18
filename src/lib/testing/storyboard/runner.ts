@@ -84,8 +84,11 @@ import {
   probeOauthAuthServerMetadata,
   fetchProbe,
   rawMcpProbe,
+  rawMcpSessionProbe,
   generateRandomInvalidApiKey,
   generateRandomInvalidJwt,
+  type McpSessionProbeControl,
+  type McpSessionStage,
 } from './probes';
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
@@ -195,7 +198,7 @@ import {
   RoutingError,
   type AgentRoutingContext,
 } from './agent-routing';
-import { DETAILED_SKIP_TO_CANONICAL, KNOWN_REQUIREMENTS } from './types';
+import { DETAILED_SKIP_TO_CANONICAL, KNOWN_REQUIREMENTS, MCP_SESSION_PROBE_TASK } from './types';
 import type { AgentProfile, TaskResult, TestStepResult } from '../types';
 import {
   type AssertionContext,
@@ -4191,7 +4194,9 @@ async function executeStoryboardPass(
           selectedOptions.agentTools &&
           (routingContext && step.requires_tool && !selectedOptions.agentTools.includes(step.requires_tool)
             ? step.requires_tool
-            : resolvedTask && !selectedOptions.agentTools.includes(resolvedTask)
+            : resolvedTask &&
+                resolvedTask !== MCP_SESSION_PROBE_TASK &&
+                !selectedOptions.agentTools.includes(resolvedTask)
               ? resolvedTask
               : undefined);
         if (missingTool) {
@@ -5771,6 +5776,23 @@ async function executeStep(
     };
   }
 
+  // The MCP session-probe sentinel is the one `$test_kit.*` resolution that
+  // names a runner-native probe rather than an agent tool (adcp-client#2940).
+  // Routed after `requires_tool` (an explicit tool prerequisite still gates
+  // the step) but before the tool-advertisement checks below — by construction
+  // no agent advertises a tool by this name.
+  //
+  // Deliberately an equality check, NOT `PROBE_TASKS.has(effectiveStep.task)`:
+  // most `$test_kit.*` task references read free-form kit fields that
+  // `validateTestKit` does not constrain (e.g. webhook-emission's
+  // `$test_kit.operations.primary_webhook_emitter`). Routing any resolved
+  // probe name here would let a kit steer a step onto `assert_contribution`'s
+  // no-network path, where an empty validation list grades `passed` and mints
+  // the step's `contributes_to` flag without the agent ever being contacted.
+  if (effectiveStep.task === MCP_SESSION_PROBE_TASK) {
+    return executeProbeStep(client, effectiveStep, phaseId, context, allSteps, options, runState);
+  }
+
   // Account-mode capability gate: when the seller declared an account-id
   // namespace (require_operator_auth: true) and does not advertise sync_accounts,
   // sync_accounts does not apply — grade not_applicable rather than
@@ -7198,6 +7220,10 @@ async function executeProbeStep(
     fetchFn: options.transport?.trustedFetchFn,
   };
   let requestRecordOverride: RunnerRequestRecord | undefined;
+  // Lifecycle stage the MCP session probe's verdict landed on. Surfaced in the
+  // step's extraction note so operators can tell session-boundary enforcement
+  // from per-operation enforcement.
+  let sessionProbeStage: McpSessionStage | undefined;
 
   const contractsInScope = new Set(options.contracts ?? []);
   if (step.requires_contract) {
@@ -7304,6 +7330,38 @@ async function executeProbeStep(
   } else if (step.task === 'assert_contribution') {
     // Synthetic: evaluate only through validations (any_of). No network call.
     httpResult = undefined;
+  } else if (step.task === MCP_SESSION_PROBE_TASK) {
+    // MCP session auth probe: the no-allowlist fallback for
+    // `$test_kit.auth.probe_task` (adcp-client#2940). See
+    // `planMcpSessionSentinel` for which steps it can honestly grade.
+    const plan = planMcpSessionSentinel(step, options);
+    if (plan.kind === 'error') {
+      httpResult = { url: runState.agentUrl, status: 0, headers: {}, body: null, error: plan.error };
+    } else if (plan.kind === 'skip') {
+      httpResult = {
+        url: runState.agentUrl,
+        status: 0,
+        headers: {},
+        body: null,
+        skipped: true,
+        skip_reason: plan.reason,
+        error: plan.detail,
+      };
+    } else {
+      const probe = await rawMcpSessionProbe({
+        agentUrl: runState.agentUrl,
+        headers: plan.headers,
+        control: plan.control,
+        allowPrivateIp: options.allow_http === true,
+        ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
+      });
+      // Left on the default `http` request/response record shape so
+      // `http_status*` validations keep seeing the raw status. Request
+      // payloads are the protocol-defined lifecycle envelopes and the
+      // credential lives in headers, so nothing about them is recorded.
+      httpResult = probe.httpResult;
+      sessionProbeStage = probe.stage;
+    }
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
   } else if (step.task === 'fetch_brand_jwks') {
@@ -7636,10 +7694,14 @@ async function executeProbeStep(
   const fetchOk = httpResult ? !httpResult.error : true;
   const passed = fetchOk && allValidationsPassed;
 
+  const probeNote =
+    sessionProbeStage !== undefined
+      ? `MCP session probe graded at ${sessionProbeStage}`
+      : 'http-probe body parsed as JSON';
   const extraction: RunnerExtractionRecord = httpResult
     ? httpResult.error
       ? { path: 'error' }
-      : { path: 'structured_content', note: 'http-probe body parsed as JSON' }
+      : { path: 'structured_content', note: probeNote }
     : { path: 'none' };
 
   return {
@@ -8702,6 +8764,247 @@ function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<st
     headers['User-Agent'] = options.userAgent;
   }
   return headers;
+}
+
+/**
+ * Credential mechanism a sentinel step is exercising, derived from
+ * `step.auth.type`. The acceptance control must be the *same kind* of
+ * credential, because the storyboard's branches certify different claims:
+ *
+ * - `oauth_bearer` → `oauth_discovery` certifies "the agent validates inbound
+ *   OAuth tokens". A static API key accepted at the endpoint does not show
+ *   that the issuer named in the protected-resource metadata gates the
+ *   resource, so it cannot stand in as the control — otherwise correct PRM
+ *   plus an unrelated shared secret would launder into
+ *   `auth_mechanism_verified`, which is the advertised-but-unserved failure
+ *   mode `security_baseline` exists to catch.
+ * - `api_key` / `basic` → the matching static-credential branch.
+ * - `any` → `auth: none` (the unauthenticated probe), which asserts only that
+ *   *some* credential is required, so any valid credential discriminates.
+ */
+type SessionControlMechanism = 'any' | 'oauth_bearer' | 'api_key' | 'basic';
+
+interface SessionControlUnavailable {
+  reason: string;
+  remedy: string;
+}
+
+type SessionControlResolution = { headers: Record<string, string> } | { unavailable: SessionControlUnavailable };
+
+/** Authorization header from an OAuth access token held by the run, if any. */
+function oauthAccessTokenHeaders(options: StoryboardRunOptions): Record<string, string> | undefined {
+  const auth = options.auth;
+  if (auth?.type !== 'oauth' && auth?.type !== 'oauth_client_credentials') return undefined;
+  const token = auth.tokens?.access_token;
+  if (typeof token !== 'string' || token.length === 0) return undefined;
+  try {
+    assertSafeAuthHeaderPart(token, 'options.auth.tokens.access_token');
+  } catch {
+    return undefined;
+  }
+  return { authorization: `Bearer ${token}` };
+}
+
+/** Authorization header from a static credential, per a step-auth directive. */
+function staticCredentialHeaders(
+  directive: StepAuthDirective,
+  options: StoryboardRunOptions
+): Record<string, string> | undefined {
+  try {
+    const headers = authHeadersForStep(directive, options);
+    return headers.authorization !== undefined ? { authorization: headers.authorization } : undefined;
+  } catch {
+    // A malformed kit credential is already reported by the steps that declare
+    // `from_test_kit`; the control degrades to absent rather than failing an
+    // unrelated step with a duplicate error.
+  }
+  return undefined;
+}
+
+/**
+ * Credentials the run would present on a normally authenticated MCP session,
+ * used as the acceptance control for the `mcp_session_probe` sentinel.
+ *
+ * **Precedence within a mechanism matches `withTestKitAuthDefaults`
+ * (`testing/client.ts`)**, which is what actually authenticates the SDK
+ * transport: an explicit `options.auth` wins outright, and the test kit's
+ * `auth.api_key` / `auth.basic` are only defaults for when it is absent.
+ * Deriving the control in the other order would probe a stale kit key on a run
+ * that authenticates with an explicit bearer — the control would fail, and a
+ * conformant agent would be denied its contribution.
+ *
+ * Returns `{ unavailable }` when the run holds no credential of the required
+ * kind. The caller must then treat the probe as inconclusive, never
+ * conclusive.
+ */
+function sessionControlCredentials(
+  mechanism: SessionControlMechanism,
+  options: StoryboardRunOptions
+): SessionControlResolution {
+  const oauth = oauthAccessTokenHeaders(options);
+  const bearer =
+    options.auth?.type === 'bearer'
+      ? staticCredentialHeaders({ type: 'api_key', value: options.auth.token }, options)
+      : undefined;
+  const basicFromOptions =
+    options.auth?.type === 'basic'
+      ? staticCredentialHeaders(
+          { type: 'basic', username: options.auth.username, password: options.auth.password },
+          options
+        )
+      : undefined;
+  const kitApiKey =
+    typeof options.test_kit?.auth?.api_key === 'string' && options.test_kit.auth.api_key.length > 0
+      ? staticCredentialHeaders({ type: 'api_key', from_test_kit: true }, options)
+      : undefined;
+  const kitBasic =
+    options.test_kit?.auth?.basic !== undefined
+      ? staticCredentialHeaders({ type: 'basic', from_test_kit: true }, options)
+      : undefined;
+
+  switch (mechanism) {
+    case 'oauth_bearer': {
+      if (oauth) return { headers: oauth };
+      return {
+        unavailable: {
+          reason:
+            `this run holds no OAuth access token, and a static API key or Basic credential is not evidence ` +
+            `that the authorization server advertised in your protected-resource metadata gates this resource`,
+          remedy:
+            `Run the storyboard with OAuth so the runner holds a token minted by that issuer ` +
+            `(\`adcp --save-auth <alias> <url> --oauth\`, or pass \`--oauth\` to \`storyboard run\`).`,
+        },
+      };
+    }
+    case 'api_key': {
+      const headers = bearer ?? kitApiKey;
+      if (headers) return { headers };
+      return {
+        unavailable: {
+          reason: `this run holds no valid API key to prove the endpoint accepts one`,
+          remedy: 'Declare `auth.api_key` in the test kit, or pass a bearer `options.auth` (CLI: `--auth`).',
+        },
+      };
+    }
+    case 'basic': {
+      const headers = basicFromOptions ?? kitBasic;
+      if (headers) return { headers };
+      return {
+        unavailable: {
+          reason: `this run holds no valid Basic credential to prove the endpoint accepts one`,
+          remedy: 'Declare `auth.basic` in the test kit, or pass a basic `options.auth`.',
+        },
+      };
+    }
+    case 'any': {
+      const headers = oauth ?? bearer ?? basicFromOptions ?? kitApiKey ?? kitBasic;
+      if (headers) return { headers };
+      return {
+        unavailable: {
+          reason:
+            `this run holds no valid credential, so a rejection cannot be told apart from an endpoint that ` +
+            `refuses every request`,
+          remedy: 'Declare `auth.api_key` or `auth.basic` in the test kit, pass `options.auth`, or run with `--oauth`.',
+        },
+      };
+    }
+  }
+}
+
+/**
+ * Bound an agent-supplied tool list before it enters a compliance report.
+ * `tools/list` names are unbounded in count and length and are not passed
+ * through the runner's URL/secret scrubbers on `skip.detail`.
+ */
+function summarizeAdvertisedTools(tools: readonly string[] | undefined): string {
+  const names = (tools ?? []).slice(0, 20).map(name => name.slice(0, 64));
+  const overflow = (tools?.length ?? 0) - names.length;
+  return overflow > 0 ? `${names.join(', ')}, …${overflow} more` : names.join(', ');
+}
+
+/** Mechanism a step's auth directive exercises. */
+function sessionControlMechanismFor(auth: StepAuthDirective): SessionControlMechanism {
+  if (auth === 'none') return 'any';
+  switch (auth.type) {
+    case 'oauth_bearer':
+      return 'oauth_bearer';
+    case 'basic':
+      return 'basic';
+    case 'api_key':
+      return 'api_key';
+  }
+}
+
+/**
+ * How to dispatch a step that resolved to the `mcp_session_probe` sentinel
+ * (adcp-client#2940).
+ *
+ * The sentinel drives a complete MCP session lifecycle and grades the
+ * `tools/list` (or earlier rejection) response, so it can grade any step whose
+ * assertions are about HTTP status and `WWW-Authenticate` — including
+ * `auth: none`, where leaving the required `unauth_rejection` phase vacuous
+ * would be the worse outcome. Because the probe walks past the handshake, an
+ * agent that authenticates per operation rather than per session is graded on
+ * its `tools/list` rejection, not mistakenly on an open handshake.
+ *
+ * The one shape it cannot grade is a step with **no** `auth` override: those
+ * are the positive static-credential probes (`probe_api_key`, `probe_basic`),
+ * whose authored validations assert an AdCP response body (`context`,
+ * `context.correlation_id`) that no protocol operation produces. Grading them
+ * from a `tools/list` result would be fabricated evidence, so they keep
+ * today's `not_applicable` — which also keeps their
+ * `contributes_if: prior_step.<id>.passed` gate closed, so the static
+ * branches cannot contribute on session evidence alone.
+ */
+type McpSessionSentinelPlan =
+  | { kind: 'error'; error: string }
+  | { kind: 'skip'; reason: RunnerDetailedSkipReason; detail: string }
+  | { kind: 'probe'; headers: Record<string, string>; control: McpSessionProbeControl };
+
+function planMcpSessionSentinel(step: StoryboardStep, options: StoryboardRunOptions): McpSessionSentinelPlan {
+  if (options.protocol === 'a2a') {
+    return {
+      kind: 'error',
+      error:
+        `"${MCP_SESSION_PROBE_TASK}" is an MCP session probe but this run is configured for A2A transport. ` +
+        `A2A has no equivalent parameter-free protected operation, so the runner refuses to substitute one.`,
+    };
+  }
+
+  if (step.auth === undefined) {
+    return {
+      kind: 'skip',
+      reason: 'probe_skipped',
+      detail:
+        `Agent advertises no auth-required, read-only AdCP tool that accepts an empty request body, so the runner ` +
+        `fell back to the MCP "${MCP_SESSION_PROBE_TASK}" session probe. That probe cannot grade a positive ` +
+        `static-credential step: its validations assert an AdCP task response body, which no MCP protocol ` +
+        `operation produces. Advertised tools: [${summarizeAdvertisedTools(options.agentTools)}].`,
+    };
+  }
+
+  let headers: Record<string, string>;
+  try {
+    headers = authHeadersForStep(step.auth, options);
+  } catch (err) {
+    return {
+      kind: 'error',
+      error: `Step auth configuration error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  const control = sessionControlCredentials(sessionControlMechanismFor(step.auth), options);
+  if ('unavailable' in control) {
+    // The probe still runs — its response is useful evidence — but grades
+    // inconclusive rather than certifying an auth mechanism.
+    return { kind: 'probe', headers, control: { kind: 'unavailable', ...control.unavailable } };
+  }
+  // An identical control would re-send the credential under test and prove
+  // nothing; that shape is a positive probe, graded on its own acceptance.
+  if (headers.authorization !== undefined && control.headers.authorization === headers.authorization) {
+    return { kind: 'probe', headers, control: { kind: 'probe_is_valid_credential' } };
+  }
+  return { kind: 'probe', headers, control: { kind: 'credential', headers: control.headers } };
 }
 
 /**
