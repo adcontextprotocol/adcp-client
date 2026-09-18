@@ -975,6 +975,21 @@ export type StoryboardValidationCheck =
   | 'http_status'
   | 'http_status_in'
   | 'on_401_require_header'
+  /**
+   * Assert that the step's probe reported no grading error, without asserting
+   * anything about an HTTP exchange. For probes whose verdict is decided
+   * in-library rather than on the wire — the `jwks_override` request-signing
+   * negatives, which mutate a JWK the agent under test never publishes and so
+   * are graded against the SDK verifier at `http_status: 0` — this is the only
+   * honest assertion: synthesizing a 401 from a library boolean would claim a
+   * wire exchange that never happened (RFC 9421 §3; adcp-client#2955).
+   *
+   * Passes when the probe result carries no `error`; fails with the probe's
+   * own diagnostic otherwise. Like the `http_status` family it requires a
+   * probe result, so authoring it on an ordinary task step fails the step
+   * rather than passing vacuously.
+   */
+  | 'probe_passed'
   // Cross-cutting
   | 'resource_equals_agent_url'
   | 'oauth_metadata_graph'
@@ -1513,6 +1528,18 @@ export interface HttpProbeResult {
   /** Optional error — set when the fetch failed (network, SSRF guard, etc.). */
   error?: string;
   /**
+   * The probe could not complete for a reason the runner owns — a transport
+   * or precondition failure (MCP initialize, DNS, an unreadable fixture
+   * cache), as opposed to a verdict the probe reached.
+   *
+   * Needed because both shapes report `status: 0` with `error` set: an
+   * in-library request-signing grade that failed is a real verdict about the
+   * agent's expected behavior, while a failed MCP handshake says only that
+   * the run never got far enough to ask. Coverage reporting has to tell an
+   * operator which of the two happened, and the remedies are opposites.
+   */
+  probe_error?: boolean;
+  /**
    * Probe was intentionally skipped (e.g. operator opted out of a vector,
    * capability profile mismatch, or test-kit contract not in scope). When
    * set, the runner marks the step `skipped: true` and does NOT run
@@ -1746,15 +1773,35 @@ export interface StoryboardRunOptions extends TestOptions {
      *     operation AdCP endpoint (e.g. `<baseUrl>/create_media_buy`).
      *     Works for agents that expose AdCP tools as discrete HTTP
      *     operations.
-     *   - `mcp` (default) — wraps each vector body in a JSON-RPC `tools/call`
+     *   - `mcp` — wraps each vector body in a JSON-RPC `tools/call`
      *     envelope and POSTs to the agent's single `/mcp` mount. Required
      *     for MCP-only agents that don't expose per-operation endpoints.
      *     The operation name is derived from the last path segment of the
      *     vector's target URL.
      *
-     * Matches the `adcp grade request-signing --transport <mode>` CLI flag.
-     * Agents that only speak MCP JSON-RPC can't grade under `raw`; use
-     * `mcp` to let the runner round-trip every vector through `tools/call`.
+     * Defaults to the shape the run's `protocol` can actually grade: `mcp`
+     * on an MCP run, and neither shape on an A2A run — this runner
+     * implements only those two dispatches, and neither is an A2A request.
+     * Vectors that need a wire exchange then skip as
+     * `signing_transport_unavailable` — and because no vector reached the
+     * agent, the storyboard cannot report a pass and the track grades
+     * `partial` rather than the run being scored against a transport error
+     * (adcp-client#2954). Only the
+     * in-library `jwks_override` negatives still run there: the grader
+     * decides them against the library verifier with no wire exchange at
+     * all, so the run's protocol is irrelevant to them. Every other probed
+     * vector reports the coverage gap, the protocol-method negatives
+     * included — the official `@a2a-js/sdk` client can issue those methods,
+     * but this runner does not yet sign and dispatch a vector through it,
+     * and writing the fixture bytes to the endpoint directly would be a
+     * hand-rolled A2A dispatch. Setting this field explicitly overrides the
+     * inference on any protocol; on an A2A run, do that only when the
+     * agent's MCP or REST binding answers at the same URL.
+     *
+     * Matches the `adcp grade request-signing --transport <mode>` CLI flag,
+     * and `adcp storyboard run --signing-transport <mode>`. Agents that only
+     * speak MCP JSON-RPC can't grade under `raw`; use `mcp` to let the runner
+     * round-trip every vector through `tools/call`.
      */
     transport?: 'raw' | 'mcp';
     /**
@@ -2126,6 +2173,26 @@ export type RunnerDetailedSkipReason =
   | 'capability_profile_mismatch'
   /** Request-signing vector cannot be graded faithfully by the selected transport. */
   | 'transport_ungradable'
+  /**
+   * The run's protocol has no shape the request-signing vectors can be
+   * framed in, so the runner could not grade them at all — a runner-owned
+   * coverage gap, not a property of the agent.
+   *
+   * Canonicalizes to `not_applicable` with `skip.detail` set to this exact
+   * token, the shape `runner-output-contract.yaml` defines for a registered
+   * `canonical_detail_sub_reasons.not_applicable.*` sub-reason (see
+   * `rate_limit_not_triggered`, the shipped precedent). It deliberately does
+   * NOT use `fixture_unavailable`: that reason's contract text mandates a
+   * `creative_asset_fixture_unavailable:` detail prefix and says the
+   * storyboard grades `not_applicable` with no verdict movement, which is
+   * the opposite of what this gap must do.
+   *
+   * The gap is kept visible by coverage, not by the reason: `signingCoverage`
+   * in the runner decides the storyboard verdict, the track rollup, the
+   * report block and the CLI exit from whether any probe reached the agent.
+   * See that function for why a skip reason cannot carry that weight.
+   */
+  | 'signing_transport_unavailable'
   /** Request-signing grader's MCP-transport mode collapses URL-edge vectors (#617). */
   | 'mcp_mode_flattens_url_edges'
   /** RFC 9728 protected-resource metadata returned 404 → agent is not advertising OAuth, cascade-skip oauth_discovery (#677). */
@@ -2190,7 +2257,20 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   not_in_only_vectors: 'not_applicable',
   grader_skipped: 'not_applicable',
   capability_profile_mismatch: 'not_applicable',
+  // Scope note (adcp-client#2954): `transport_ungradable` marks vectors the
+  // grader's own TRANSPORT_UNGRADABLE table carves out on every run because
+  // no HTTP client can put those bytes on the wire — `026-non-ascii-host`
+  // for any storyboard-synthesized run, plus a profile-3.2 entry the
+  // storyboard never synthesizes. It stays `not_applicable`: those vectors
+  // are inapplicable to every binding, and the other ~38 still verify the
+  // agent.
+  //
+  // `signing_transport_unavailable` is also `not_applicable` at the canonical
+  // layer, but for the contract-shape reason documented on the enum member
+  // above — not because the gap is tolerable. Its weight is carried by
+  // `signingCoverage`, which asks whether any vector reached the agent.
   transport_ungradable: 'not_applicable',
+  signing_transport_unavailable: 'not_applicable',
   mcp_mode_flattens_url_edges: 'not_applicable',
   oauth_not_advertised: 'not_applicable',
   rate_limit_not_triggered: 'not_applicable',

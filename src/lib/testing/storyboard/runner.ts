@@ -94,6 +94,7 @@ import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
 import { probeRequestSigningVector } from './request-signing/probe-dispatch';
+import { REQUEST_SIGNING_PROBE_TASK } from './request-signing/synthesize';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
@@ -314,6 +315,8 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
   rate_abuse_opt_out: 'Rate-abuse vector was excluded by request_signing.skipRateAbuse.',
   capability_profile_mismatch: 'Vector is outside the agent capability profile selected for this run.',
   transport_ungradable: 'Vector cannot be graded faithfully by the selected transport.',
+  signing_transport_unavailable:
+    "Request-signing vectors have no shape this run's protocol can carry, so no verifier behavior was graded.",
   rate_limit_not_triggered: 'No RATE_LIMITED response was observed within the configured max_attempts.',
 };
 
@@ -323,6 +326,19 @@ const DETAILED_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> =
  */
 const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> = {
   rate_limit_not_triggered: 'rate_limit_not_triggered',
+  // Same shape as `rate_limit_not_triggered` above, which
+  // runner-output-contract.yaml registers under
+  // `canonical_detail_sub_reasons.not_applicable` with a test-kit
+  // `spec_source`: emit the sub-reason token *exactly* as `skip.detail`,
+  // with empty validations and no pass/fail counter movement. The
+  // operator-facing remedy travels on the probe result (`response.error`),
+  // which is where the renderers read it.
+  //
+  // Upstream ask, tracked as the remaining external blocker: register
+  // `not_applicable.signing_transport_unavailable` with
+  // `spec_source: test-kits/signed-requests-runner.yaml`. Emitting the
+  // registered *shape* now means that registration changes nothing here.
+  signing_transport_unavailable: 'signing_transport_unavailable',
 };
 
 const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
@@ -2043,6 +2059,15 @@ async function checkRequires(
         // `_client` mode). The caller has accepted responsibility for
         // capability compatibility; failing the gate here would surprise
         // them with a skip they can't explain from CLI options alone.
+        //
+        // Deliberately NOT gated on whether this run can frame the signing
+        // vectors: that is a per-step property (a routed `agents` run can
+        // pair a top-level `protocol: 'a2a'` with an MCP seller whose
+        // vectors grade fine), and a whole-storyboard skip would leave the
+        // security_transport track free to roll up green off a sibling
+        // oauth_setup pass. The ungradable case is reported per vector and
+        // caught by `signingCoverage`, which is what holds the storyboard
+        // and the track open.
         if (!profile?.raw_capabilities) break;
         const supported = resolveCapabilityPath(profile.raw_capabilities, 'request_signing.supported');
         if (supported === true) break;
@@ -2218,6 +2243,113 @@ function detectImplicitRequires(
   if (needsTrustedMatchContextRouterRunner) requires.push('trusted_match_context_router_runner');
   if (needsSigner) requires.push('request_signer');
   return requires;
+}
+
+/**
+ * HTTP status of a probe step's recorded response, or 0 when there was no
+ * wire exchange. `StoryboardStepResult.response` is typed `unknown` (a task
+ * result on task steps, an `HttpProbeResult` on probes), so narrow rather
+ * than cast.
+ */
+function probeResponseStatus(response: unknown): number {
+  if (response === null || typeof response !== 'object') return 0;
+  const status = (response as { status?: unknown }).status;
+  return typeof status === 'number' ? status : 0;
+}
+
+/**
+ * What a finished run actually verified about the agent's signing surface.
+ *
+ *   - `not_probed` — the run has no request-signing probe steps.
+ *   - `graded` — at least one vector reached the agent.
+ *   - `probe_errored` — the probes could not complete: a transport or
+ *     precondition failure (MCP initialize, DNS, an unreadable vector cache).
+ *   - `transport_unverified` — the runner has no dispatch shape for this
+ *     run's protocol.
+ *   - `scope_excluded` — every probe was skipped by the run's own selection
+ *     (`onlyVectors`, `skipVectors`, a profile exclusion).
+ *   - `self_check_only` — what ran decided in-library against the SDK
+ *     verifier and never contacted the agent.
+ *
+ * The four unverified states are deliberately distinct: the runner-output
+ * contract keeps caller-scope exclusions (`selection_result`) apart from
+ * coverage gaps, and each one sends the operator somewhere different — fix
+ * the connection, grade another binding, drop a flag, or nothing at all.
+ * Neither may report a pass, though — the question is not why a vector was
+ * skipped but whether any produced evidence. Keying the verdict on one skip
+ * reason left every other exclusion route open: dropping the wire vectors
+ * and keeping the in-library self-check laundered a green `signed_requests`
+ * out of a step that grades the SDK and never contacts the agent
+ * (adcp-client#2954).
+ *
+ * "Reached the agent" is read from the probe's own HTTP status, the dispatch
+ * contract's signal: only a wire exchange yields a non-zero status, and an
+ * in-library grade reports 0 by definition. Deliberately not read from the
+ * step's validations — the runner appends invariant results to steps, so
+ * "its only check is `probe_passed`" silently stops matching the moment an
+ * invariant is registered.
+ *
+ * Exported as the single definition of this rule. The storyboard verdict,
+ * the compliance track rollup, the compliance report and the CLI exit
+ * contract all consume it — the CLI through `dist`, over a view of the
+ * mapped `TestStepResult` shape — because hand-written copies of it drifted
+ * within one revision of this change, one of them into a false CI failure.
+ */
+export type SigningCoverage =
+  | 'not_probed'
+  | 'graded'
+  | 'probe_errored'
+  | 'transport_unverified'
+  | 'scope_excluded'
+  | 'self_check_only';
+
+/**
+ * Minimal step view the coverage rule needs. `StoryboardStepResult` satisfies
+ * it directly; the compliance projection maps `observation_data` onto
+ * `response`.
+ */
+export interface SigningCoverageStepView {
+  task?: string;
+  skipped?: boolean;
+  skip_reason?: string;
+  /** The probe's `HttpProbeResult`, as recorded on the step. */
+  response?: unknown;
+}
+
+export function signingCoverage(steps: readonly SigningCoverageStepView[]): SigningCoverage {
+  const probes = steps.filter(step => step.task === REQUEST_SIGNING_PROBE_TASK);
+  if (probes.length === 0) return 'not_probed';
+  // A response carrying a transport fault is not evidence, even when it also
+  // carries a status: the rate-abuse grader can reach the agent for its
+  // (cap+1) request after a cap-fill request died on the wire, and that
+  // verdict rests on a cap that was never established. Another probe that
+  // completed cleanly still makes the storyboard graded.
+  if (
+    probes.some(step => step.skipped !== true && probeResponseStatus(step.response) > 0 && !isProbeFault(step.response))
+  )
+    return 'graded';
+  // Ordered so the operator is told the thing they have to act on. A failed
+  // handshake or DNS lookup is not an exclusion, and advising someone to
+  // drop `--signing-skip-vectors` when the agent was unreachable sends them
+  // the wrong way.
+  if (probes.some(step => isProbeFault(step.response))) return 'probe_errored';
+  if (probes.some(step => step.skip_reason === 'signing_transport_unavailable')) return 'transport_unverified';
+  if (probes.every(step => step.skipped === true)) return 'scope_excluded';
+  // Nothing skipped, nothing errored, nothing on the wire: what ran decided
+  // in-library against the SDK verifier and never contacted the agent.
+  return 'self_check_only';
+}
+
+function isProbeFault(response: unknown): boolean {
+  return (
+    response !== null && typeof response === 'object' && (response as { probe_error?: unknown }).probe_error === true
+  );
+}
+
+/** True when signing probes ran and none of them reached the agent. */
+export function signingCoverageUnverified(steps: readonly SigningCoverageStepView[]): boolean {
+  const coverage = signingCoverage(steps);
+  return coverage !== 'not_probed' && coverage !== 'graded';
 }
 
 /**
@@ -4650,6 +4782,12 @@ async function executeStoryboardPass(
         (failedCount === 0 && requiredPhasesCoveredByCapabilityGates)));
   const storyboardWideFixtureUnavailable =
     (seedingUnsupported || fixtureUnsatisfied || creativeAssetFixtureGap !== undefined) && failedCount === 0;
+  // A storyboard that never exercised the agent for the coverage it exists to
+  // assert must not report a pass — see `signingCoverageUnverified` for why
+  // this reads the probe's wire status rather than its skip reason. Distinct
+  // from `storyboardWideFixtureUnavailable`, which deliberately preserves a
+  // pass for single missing fixtures inside a run that did exercise the agent.
+  const hasUnverifiedCoverage = signingCoverageUnverified(phaseResults.flatMap(phase => phase.steps));
   // Prepend the pre-flight seeding phase now that every consumer that
   // index-aligns `phaseResults` with `storyboard.phases` has run. Reader
   // order matches execution order.
@@ -4680,7 +4818,10 @@ async function executeStoryboardPass(
       ),
     }),
     overall_passed:
-      failedCount === 0 && (requiredPhasesPassed || storyboardWideFixtureUnavailable) && !assertionsFailed,
+      failedCount === 0 &&
+      (requiredPhasesPassed || storyboardWideFixtureUnavailable) &&
+      !assertionsFailed &&
+      !hasUnverifiedCoverage,
     phases: phaseResults,
     context,
     total_duration_ms: Date.now() - start,
@@ -7358,9 +7499,13 @@ async function executeProbeStep(
   if (httpResult?.skipped) {
     const detailedReason = (httpResult.skip_reason ?? 'probe_skipped') as RunnerDetailedSkipReason;
     const canonicalReason = DETAILED_SKIP_TO_CANONICAL[detailedReason] ?? 'not_applicable';
+    // Read the probe's error from the redacted copy: `skip.detail` is report
+    // surface, and a probe error can carry an agent URL with OAuth params. The
+    // detail strings the dispatch supplies today are constants, but this is
+    // the seam where an adopter-supplied one would land unredacted.
     const detail =
       CANONICAL_SKIP_DETAILS[detailedReason] ??
-      httpResult.error ??
+      redactedHttpResult?.error ??
       DETAILED_SKIP_DETAILS[detailedReason] ??
       SKIP_DETAILS[canonicalReason];
     const selectionResult = selectionForProbeSkip(detailedReason, detail);
@@ -7432,7 +7577,9 @@ async function executeProbeStep(
     response: redactedHttpResult ?? undefined,
     validations,
     context,
-    error: httpResult?.error ?? (passed ? undefined : 'Probe validations failed.'),
+    // Redacted copy on both branches: the sibling skip branch reads the same
+    // seam, and a probe error can carry an agent URL with OAuth params.
+    error: redactedHttpResult?.error ?? (passed ? undefined : 'Probe validations failed.'),
     next: getNextStepPreview(step.id, allSteps, context, runState.runnerVars),
     request: requestRecord,
     ...(responseRecord && { response_record: responseRecord }),

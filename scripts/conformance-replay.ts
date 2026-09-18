@@ -238,6 +238,9 @@ const TRANSPORT_ONLY_CHECKS = new Set([
   'http_status',
   'http_status_in',
   'on_401_require_header',
+  // Reports a probe-layer grade (request-signing vectors); in-process
+  // dispatch never produces a probe result to read.
+  'probe_passed',
   'resource_equals_agent_url',
 ]);
 

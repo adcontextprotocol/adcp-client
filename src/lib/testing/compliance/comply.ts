@@ -34,6 +34,8 @@ import {
   getStoryboardVersionGateReason,
 } from '../storyboard/compliance';
 import type { NotApplicableStoryboard, ResolveOptions, ResolvedBundle } from '../storyboard/compliance';
+import { REQUEST_SIGNING_PROBE_TASK } from '../storyboard/request-signing/synthesize';
+import { signingCoverage, type SigningCoverage, type SigningCoverageStepView } from '../storyboard/runner';
 import type {
   RunnerSelectionReason,
   RunnerSkipReason,
@@ -600,6 +602,15 @@ export interface ComplyOptions extends TestOptions {
    * through to `runStoryboard`; default false.
    */
   allowLiveSideEffects?: StoryboardRunOptions['allowLiveSideEffects'];
+  /**
+   * Request-signing grader knobs for the `signed_requests` storyboard's
+   * synthesized vector steps (transport, skip lists, rate-abuse opt-out).
+   * Passed through to `runStoryboard`. See
+   * `StoryboardRunOptions.request_signing`; the CLI surfaces the same knobs
+   * as `--signing-transport` / `--signing-skip-vectors` /
+   * `--signing-skip-rate-abuse`.
+   */
+  request_signing?: StoryboardRunOptions['request_signing'];
   /** Explicit compliance cache version override. */
   version?: string;
   /** Explicit compliance cache directory override. */
@@ -1562,6 +1573,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
     trusted_match_publisher_auth_runner,
     contracts,
     allowLiveSideEffects,
+    request_signing,
     version,
     complianceDir,
     schemaRoot,
@@ -1849,6 +1861,7 @@ async function complyImpl(agentUrl: string, options: ComplyOptions): Promise<Com
       ...(trusted_match_publisher_auth_runner !== undefined && { trusted_match_publisher_auth_runner }),
       ...(contracts !== undefined && { contracts }),
       ...(allowLiveSideEffects !== undefined && { allowLiveSideEffects }),
+      ...(request_signing !== undefined && { request_signing }),
       ...(signal !== undefined && { signal }),
     };
 
@@ -2229,6 +2242,7 @@ async function runWithDegradedProfile(
     }),
     ...(options.contracts !== undefined && { contracts: options.contracts }),
     ...(options.allowLiveSideEffects !== undefined && { allowLiveSideEffects: options.allowLiveSideEffects }),
+    ...(options.request_signing !== undefined && { request_signing: options.request_signing }),
     ...(signal !== undefined && { signal }),
   };
 
@@ -2648,6 +2662,21 @@ export function formatComplianceResults(result: ComplianceResult): string {
           }
         }
       }
+
+      // Steps the runner could not grade are pass-shaped (`passed: true`,
+      // `skipped: true`), so neither the ❌ block above nor the scenario
+      // count says anything about them: a storyboard whose every vector went
+      // ungraded would print a bare ❌ with no failing step under it, or —
+      // on a track carried by a sibling scenario — nothing at all. Name the
+      // gap once per storyboard, with the remedy its probes carry.
+      const scenariosByStoryboard = new Map<string, TestResult[]>();
+      for (const scenario of track.scenarios) {
+        const storyboardId = String(scenario.scenario).split('/')[0]!;
+        scenariosByStoryboard.set(storyboardId, [...(scenariosByStoryboard.get(storyboardId) ?? []), scenario]);
+      }
+      for (const scenarios of scenariosByStoryboard.values()) {
+        output += formatUnverifiedCoverage(scenarios);
+      }
     }
   }
 
@@ -2739,6 +2768,86 @@ function formatReasonCounts(counts: Partial<Record<string, number>> | undefined)
 /**
  * Format compliance results as JSON.
  */
+/**
+ * What to tell an operator for each way a run can end up with no graded
+ * vector. They are not interchangeable: a failed handshake is not an
+ * exclusion, and telling someone to drop `--signing-skip-vectors` when the
+ * agent was unreachable sends them the wrong way.
+ */
+const SIGNING_COVERAGE_CAUSES: Record<Exclude<SigningCoverage, 'not_probed' | 'graded'>, string> = {
+  probe_errored: 'the probes could not complete — see the step errors above',
+  transport_unverified: 'this run has no dispatch shape for the vectors',
+  scope_excluded: "every vector was excluded by this run's own selection",
+  self_check_only: 'only the in-library SDK self-check ran, which never contacts the agent',
+};
+
+/**
+ * Render a storyboard's ungraded request-signing coverage as an explicit gap.
+ *
+ * Grouped by storyboard, not by scenario: the compliance projection emits one
+ * scenario per phase, so a per-scenario rule reports `positive_vectors`
+ * graded and `negative_vectors` unverified for the same run — and the CLI
+ * exit contract, reading the same projection, would fail a report that prints
+ * all green. The runner decides this storyboard-wide; so does this.
+ *
+ * Returns '' for storyboards that graded a vector, and for every storyboard
+ * that runs no signing probes at all.
+ */
+function formatUnverifiedCoverage(scenarios: readonly TestResult[]): string {
+  const steps = scenarios.flatMap(scenario => (scenario.steps ?? []).map(toSigningCoverageStep));
+  const coverage = signingCoverage(steps);
+  if (coverage === 'not_probed' || coverage === 'graded') return '';
+
+  const probes = steps.filter(step => step.task === REQUEST_SIGNING_PROBE_TASK);
+  const label = String(scenarios[0]?.scenario ?? 'signed_requests').split('/')[0] ?? 'signed_requests';
+  const cause = SIGNING_COVERAGE_CAUSES[coverage];
+  let output = `   ⏭️  COVERAGE UNAVAILABLE — ${sanitizeReportText(label)}: `;
+  output += `none of ${probes.length} request-signing vector(s) reached the agent (${cause})\n`;
+  // The operator-facing remedy rides on the probe result, because
+  // `skip.detail` carries the contract's machine-readable sub-reason token.
+  // One line per distinct remedy: the vectors share a cause, so repeating it
+  // per step would bury the report.
+  const remedies = [
+    ...new Set(
+      probes.map(step => probeRemedy(step.response)).filter((remedy): remedy is string => remedy !== undefined)
+    ),
+  ];
+  for (const remedy of remedies.slice(0, 2)) {
+    output += `      ${sanitizeReportText(remedy)}\n`;
+  }
+  return output;
+}
+
+/** Project a mapped compliance step onto the runner's coverage view. */
+function toSigningCoverageStep(step: TestStepResult): SigningCoverageStepView {
+  return {
+    task: step.task,
+    skipped: step.skipped,
+    skip_reason: step.skip_reason,
+    // `mapStepToTestStep` carries the probe's `HttpProbeResult` here.
+    response: step.observation_data,
+  };
+}
+
+function probeRemedy(response: unknown): string | undefined {
+  if (!response || typeof response !== 'object') return undefined;
+  const error = (response as { error?: unknown }).error;
+  return typeof error === 'string' && error.length > 0 ? error : undefined;
+}
+
+/**
+ * Strip C0/C1 control characters from text bound for the terminal report.
+ * The producers here are library constants today; this is the seam where an
+ * adopter-supplied detail would land, and the CLI-side renderer already
+ * escapes for the same reason.
+ */
+function sanitizeReportText(text: string): string {
+  return text.replace(
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+}
+
 export function formatComplianceResultsJSON(result: ComplianceResult): string {
   // Normalize the reference projection at the serialization boundary too. This
   // keeps output deduplicated when JavaScript callers pass a pre-v13 result

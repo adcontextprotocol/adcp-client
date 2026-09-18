@@ -180,6 +180,13 @@ const ACTIONABLE_CANONICAL_REASONS = new Set<string>([
   'unsatisfied_contract',
   'no_phases',
   'requirement_unmet',
+  // Detailed reason, not canonical: `isActionable` tests the raw reason
+  // before mapping it, so this surfaces the signing coverage gap in the
+  // skip-cause block without making every canonical `not_applicable` skip
+  // actionable. A partial verdict whose cause never appears in the summary
+  // is the "silently missing coverage" failure mode this block exists to
+  // prevent (adcp-client#2954).
+  'signing_transport_unavailable',
 ]);
 
 /**
@@ -257,6 +264,8 @@ function skipCauseDetail(reason: string): string {
       return 'pre-flight controller seeding failed';
     case 'capability_unsupported':
       return 'agent self-declared capability unsupported';
+    case 'signing_transport_unavailable':
+      return 'this runner has no request-signing dispatch for the run protocol — grade the MCP/REST binding';
     default:
       return reason;
   }
