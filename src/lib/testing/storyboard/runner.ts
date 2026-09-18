@@ -8783,24 +8783,35 @@ function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<st
 }
 
 /**
- * Non-credential headers every MCP session-probe request must carry.
+ * Headers every MCP session-probe request must carry, derived from what the
+ * normal SDK transport would send rather than from a name allowlist.
  *
- * A multi-tenant agent routes on headers (`x-tenant-id`, `x-account`, …). The
- * A2A auth-override client already preserves them
- * (`createA2AAuthOverrideClient`); dropping them on the MCP session probe
- * would point the graded attempt and its acceptance control at a *different
- * tenant* than the SDK transport uses — where a rejection says nothing about
- * the tenant under test, and an acceptance by some default tenant would let
+ * A multi-tenant agent routes on headers. `createTestClient` forwards
+ * `options.headers` verbatim to the transport, so the probe must forward the
+ * same set — otherwise the graded attempt and its acceptance control reach a
+ * *different tenant* than the run does, where a rejection says nothing about
+ * the tenant under test and an acceptance by some default tenant would let
  * `security_baseline` pass on evidence from the wrong agent.
  *
- * Credential-looking headers are excluded: the step's own `auth` directive is
- * the only credential the probe may present, and `isCredentialHeaderName`
- * already encodes that boundary for the A2A path.
+ * Exclusion is **by value, not by name**. `isCredentialHeaderName`'s regex
+ * treats any `…-key…` segment as a credential, which drops legitimate routing
+ * headers (`x-routing-key`, `x-partition-key`, `x-idempotency-key`) and
+ * silently reroutes the probe. Instead:
+ *
+ *   - the exact credential-carrying header names this transport injects
+ *     (`AUTH_OVERRIDE_HEADER_NAMES`) are dropped, because the step's own
+ *     `auth` directive is the only credential the probe may present — an
+ *     `auth: none` probe must really be unauthenticated; and
+ *   - any header whose *value* matches a credential the run holds is dropped,
+ *     which catches a secret parked under a custom name (`x-my-token`)
+ *     without guessing from the name.
  */
 function sessionProbeRoutingHeaders(options: StoryboardRunOptions): Record<string, string> {
+  const runSecrets = runCredentialValues(options);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(options.headers ?? {})) {
-    if (isCredentialHeaderName(name)) continue;
+    if (AUTH_OVERRIDE_HEADER_NAMES.has(name.toLowerCase())) continue;
+    if (headerValueCarriesSecret(value, runSecrets)) continue;
     try {
       assertSafeAuthHeaderPart(value, `options.headers.${name}`);
     } catch {
@@ -8826,6 +8837,36 @@ function sessionProbeRoutingHeaders(options: StoryboardRunOptions): Record<strin
     }
   }
   return headers;
+}
+
+/**
+ * Credential values this run holds, for value-based header exclusion. Short
+ * values are ignored so a one-character credential cannot strip every header.
+ */
+function runCredentialValues(options: StoryboardRunOptions): string[] {
+  const values: string[] = [];
+  const auth = options.auth;
+  if (auth?.type === 'bearer' && typeof auth.token === 'string') values.push(auth.token);
+  if (auth?.type === 'basic') {
+    if (typeof auth.username === 'string') values.push(auth.username);
+    if (typeof auth.password === 'string') values.push(auth.password);
+  }
+  if (auth?.type === 'oauth' || auth?.type === 'oauth_client_credentials') {
+    const token = auth.tokens?.access_token;
+    if (typeof token === 'string') values.push(token);
+  }
+  const kit = options.test_kit?.auth;
+  if (typeof kit?.api_key === 'string') values.push(kit.api_key);
+  const basic = kit?.basic;
+  if (typeof basic?.username === 'string') values.push(basic.username);
+  if (typeof basic?.password === 'string') values.push(basic.password);
+  if (typeof basic?.credentials === 'string') values.push(basic.credentials);
+  return values.filter(value => value.trim().length >= 8);
+}
+
+/** True when a header value contains one of the run's credentials. */
+function headerValueCarriesSecret(value: string, secrets: readonly string[]): boolean {
+  return secrets.some(secret => value.includes(secret));
 }
 
 /**
@@ -9013,7 +9054,10 @@ function sessionControlCredentials(
  * `skip.detail` is rendered straight into terminals, CI logs and JUnit XML —
  * so an embedded ESC, CR or NUL could rewrite surrounding output. Control
  * characters are escaped rather than dropped so the original bytes stay
- * diagnosable, matching the CLI's own `printRunnerSkipDetail` treatment.
+ * diagnosable. The CLI escapes again at print time via
+ * `escapeTerminalControlChars`, but JSON reports and JUnit XML are rendered
+ * without it — and C0 controls are not even legal in XML 1.0 — so the bytes
+ * must be neutralised here, at the point the detail is built.
  */
 function summarizeAdvertisedTools(tools: readonly string[] | undefined): string {
   const names = (tools ?? []).slice(0, 20).map(name => escapeControlChars(name.slice(0, 64)));

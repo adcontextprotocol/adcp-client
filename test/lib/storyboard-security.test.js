@@ -13,8 +13,10 @@ const {
   rawMcpProbe,
   rawMcpSessionProbe,
   rawA2aProbe,
-  MCP_SESSION_PROBE_TASK,
 } = require('../../dist/lib/testing/storyboard/probes');
+// Consumer surface: the constant must be reachable from the published
+// `@adcp/sdk/testing` entry, not an internal module path.
+const { MCP_SESSION_PROBE_TASK } = require('../../dist/lib/testing/index.js');
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
 const { comply, detectAuthRejection } = require('../../dist/lib/testing/compliance/comply');
@@ -1555,18 +1557,7 @@ describe('storyboard runner: auth-override dispatch', () => {
   // unchanged: no nonexistent AdCP tool is ever called.
   it('probes SI-only agents through MCP protocol operations, never a nonexistent session-list tool', async () => {
     const siTools = ['si_get_offering', 'si_initiate_session', 'si_send_message', 'si_terminate_session'];
-    const seen = [];
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        seen.push({ method: 'DELETE' });
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ method: rpc.method, name: rpc.params?.name });
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
       if (req.headers.authorization !== 'Bearer sk_test') {
         res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': 'Bearer realm="mcp"' });
         res.end(
@@ -1576,35 +1567,17 @@ describe('storyboard runner: auth-override dispatch', () => {
       }
       if (rpc.method === 'initialize') {
         res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'si-session' });
-        res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: rpc.id,
-            result: {
-              protocolVersion: '2025-11-25',
-              capabilities: {},
-              serverInfo: { name: 'si', version: '1.0.0' },
-            },
-          })
-        );
-        return;
-      }
-      if (rpc.method === 'notifications/initialized') {
-        res.writeHead(202);
-        res.end();
+        res.end(initializeResult(rpc));
         return;
       }
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          result: { tools: siTools.map(name => ({ name, inputSchema: { type: 'object' } })) },
-        })
+        toolsListResult(
+          rpc,
+          siTools.map(name => ({ name, inputSchema: { type: 'object' } }))
+        )
       );
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     const storyboard = {
       id: 'si_probe_session',
       version: '1.0.0',
@@ -1633,7 +1606,7 @@ describe('storyboard runner: auth-override dispatch', () => {
       ],
     };
     try {
-      const result = await runStoryboard(agentUrl, storyboard, {
+      const result = await runStoryboard(agent.agentUrl, storyboard, {
         protocol: 'mcp',
         allow_http: true,
         agentTools: siTools,
@@ -1645,10 +1618,9 @@ describe('storyboard runner: auth-override dispatch', () => {
       assert.strictEqual(step.passed, true, JSON.stringify(step, null, 2));
       assert.strictEqual(step.skipped, undefined);
       assert.strictEqual(step.response.status, 401);
-      assert.ok(!seen.some(r => r.method === 'tools/call'), 'no AdCP tool was called');
-      assert.ok(!seen.some(r => r.name !== undefined), 'no tool name was ever dispatched');
+      assert.ok(!agent.seen.some(r => r.method === 'tools/call'), 'no AdCP tool was called');
     } finally {
-      server.close();
+      agent.close();
     }
   });
 
@@ -3446,17 +3418,22 @@ async function startProbeAgent(opts = {}) {
       return;
     }
     const tenant = req.headers['x-tenant-id'] ?? null;
+    const routingKey = req.headers['x-routing-key'] ?? null;
     seen.push({
       method: rpc.method,
       authorization,
       tenant,
+      routingKey,
+      headers: { ...req.headers },
       params: rpc.params,
       sessionId: req.headers['mcp-session-id'] ?? null,
       protocolVersion: req.headers['mcp-protocol-version'] ?? null,
     });
 
-    // Wrong/absent tenant: nothing is ever authorized here.
-    const tenantOk = requireTenant === undefined || tenant === requireTenant;
+    // Wrong/absent tenant or routing key: nothing is ever authorized here.
+    const tenantOk =
+      (requireTenant === undefined || tenant === requireTenant) &&
+      (opts.requireRoutingKey === undefined || routingKey === opts.requireRoutingKey);
     const authorized = tenantOk && authorization === expected;
     const reject = !tenantOk
       ? true
@@ -3520,6 +3497,80 @@ async function startProbeAgent(opts = {}) {
     agentUrl: `http://127.0.0.1:${port}/mcp`,
     close: () => server.close(),
   };
+}
+
+/**
+ * Minimal Streamable HTTP endpoint for probes driven by the official MCP SDK
+ * client. Handles the non-POST traffic the SDK emits (GET to open the SSE
+ * stream, DELETE to terminate the session), neither of which carries a JSON
+ * body, and hands each JSON-RPC request to `onRpc(rpc, res, ctx)`.
+ */
+async function startStreamableHttpAgent(onRpc, opts = {}) {
+  const seen = [];
+  const server = http.createServer(async (req, res) => {
+    if (req.method === 'GET') {
+      // The SDK opens an optional SSE stream; 405 is a conformant refusal.
+      seen.push({ method: 'GET' });
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+    if (req.method === 'DELETE') {
+      seen.push({ method: 'DELETE', sessionId: req.headers['mcp-session-id'] ?? null });
+      res.writeHead(opts.supportsDelete === false ? 405 : 204);
+      res.end();
+      return;
+    }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const raw = Buffer.concat(chunks).toString('utf8');
+    if (raw.trim().length === 0) {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    let rpc;
+    try {
+      rpc = JSON.parse(raw);
+    } catch {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end('{}');
+      return;
+    }
+    seen.push({ method: rpc.method, authorization: req.headers.authorization ?? null });
+    if (rpc.method === 'notifications/initialized') {
+      res.writeHead(202);
+      res.end();
+      return;
+    }
+    await onRpc(rpc, res, { req, seen });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const port = server.address().port;
+  return {
+    seen,
+    rpc: () => seen.filter(r => r.method === 'initialize' || r.method === 'tools/list'),
+    origin: `http://127.0.0.1:${port}`,
+    agentUrl: `http://127.0.0.1:${port}/mcp`,
+    close: () => server.close(),
+  };
+}
+
+function initializeResult(rpc, overrides = {}) {
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id: rpc.id,
+    result: {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      serverInfo: { name: 'probe-mock', version: '1.0.0' },
+      ...overrides,
+    },
+  });
+}
+
+function toolsListResult(rpc, tools = [{ name: 'list_plans', inputSchema: { type: 'object' } }]) {
+  return JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { tools } });
 }
 
 const VALID_CONTROL = { kind: 'credential', headers: { authorization: 'Bearer sk_valid' } };
@@ -3724,7 +3775,7 @@ describe('rawMcpSessionProbe', () => {
     }
   });
 
-  it('rejects a control response that is not a conformant InitializeResult', async () => {
+  it('rejects a control response the official client will not accept as an InitializeResult', async () => {
     const seen = [];
     const server = http.createServer(async (req, res) => {
       const chunks = [];
@@ -3749,7 +3800,10 @@ describe('rawMcpSessionProbe', () => {
         control: VALID_CONTROL,
         allowPrivateIp: true,
       });
-      assert.match(httpResult.error ?? '', /InitializeResult schema/);
+      // The official client's own InitializeResult schema rejects it, so
+      // there is no usable session and the control cannot be accepted.
+      assert.match(httpResult.error ?? '', /inconclusive/);
+      assert.match(httpResult.error ?? '', /valid credential was also refused/);
     } finally {
       server.close();
     }
@@ -4241,74 +4295,48 @@ describe('rawMcpSessionProbe: primitive-level fail-open refusal (#2940 review)',
 
 describe('rawMcpSessionProbe: session cleanup and cancellation (#2940 review)', () => {
   it('terminates a session issued alongside a schema-invalid initialize result', async () => {
-    const seen = [];
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        seen.push({ method: 'DELETE', sessionId: req.headers['mcp-session-id'] ?? null });
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push({ method: rpc.method });
-      // 200 + session id, but the body is not a conformant InitializeResult.
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
+      // 200 + session id, but the body is not a conformant InitializeResult:
+      // the SDK rejects it after the transport has already taken the session.
       res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'leaked-session' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { protocolVersion: '2025-11-25' } }));
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
       const { httpResult } = await rawMcpSessionProbe({
-        agentUrl,
+        agentUrl: agent.agentUrl,
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
+        timeoutMs: 4000,
       });
       assert.match(httpResult.error ?? '', /inconclusive/);
-      const deletes = seen.filter(r => r.method === 'DELETE');
+      const deletes = agent.seen.filter(r => r.method === 'DELETE');
       assert.strictEqual(deletes.length, 1, 'the issued session is terminated, not abandoned');
       assert.strictEqual(deletes[0].sessionId, 'leaked-session');
     } finally {
-      server.close();
+      agent.close();
     }
   });
 
   it('terminates a session issued alongside an unsupported negotiated protocol version', async () => {
-    const seen = [];
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        seen.push('DELETE');
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      seen.push(rpc.method);
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'old-proto-session' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          result: { protocolVersion: '1999-01-01', capabilities: {}, serverInfo: { name: 'x', version: '1' } },
-        })
-      );
+      res.end(initializeResult(rpc, { protocolVersion: '1999-01-01' }));
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
       await rawMcpSessionProbe({
-        agentUrl,
+        agentUrl: agent.agentUrl,
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
+        timeoutMs: 4000,
       });
-      assert.ok(seen.includes('DELETE'), 'session terminated on the unsupported-version path');
+      assert.ok(
+        agent.seen.some(r => r.method === 'DELETE'),
+        'session terminated on the unsupported-version path'
+      );
     } finally {
-      server.close();
+      agent.close();
     }
   });
 
@@ -4364,63 +4392,34 @@ describe('rawMcpSessionProbe: session cleanup and cancellation (#2940 review)', 
 });
 
 describe('rawMcpSessionProbe: value-based credential redaction at the evidence seam', () => {
-  /** Agent that echoes the Authorization header it received into its tool list. */
+  /**
+   * Agent that echoes the credential it received into its tool list.
+   *
+   * Echoes the **bare** token rather than the whole `Bearer …` span:
+   * `wrapFetchWithCapture` already masks `Bearer <token>`, so a bare echo is
+   * precisely the gap value-based scrubbing has to close.
+   */
   async function startEchoingAgent() {
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      const echoed = req.headers.authorization ?? 'none';
+    return startStreamableHttpAgent(async (rpc, res, { req }) => {
+      const echoed = (req.headers.authorization ?? 'none').replace(/^Bearer /, '');
       if (rpc.method === 'initialize') {
         res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'echo-session' });
-        res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: rpc.id,
-            result: {
-              protocolVersion: '2025-11-25',
-              capabilities: {},
-              serverInfo: { name: 'echo', version: '1.0.0' },
-            },
-          })
-        );
-        return;
-      }
-      if (rpc.method === 'notifications/initialized') {
-        res.writeHead(202);
-        res.end();
+        res.end(initializeResult(rpc));
         return;
       }
       // The leak vector: a credential pasted into a tool description, which
-      // name-based redaction cannot see.
+      // name-based redaction cannot see, plus the challenge header, which is
+      // on the runner's response-header allowlist.
       res.writeHead(200, {
         'content-type': 'application/json',
         'www-authenticate': `Bearer realm="mcp", error_description="saw ${echoed}"`,
       });
       res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          result: {
-            tools: [
-              {
-                name: 'list_plans',
-                description: `Authenticated as ${echoed}`,
-                inputSchema: { type: 'object' },
-              },
-            ],
-          },
-        })
+        toolsListResult(rpc, [
+          { name: 'list_plans', description: `Authenticated as ${echoed}`, inputSchema: { type: 'object' } },
+        ])
       );
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const port = server.address().port;
-    return { agentUrl: `http://127.0.0.1:${port}/mcp`, close: () => server.close() };
   }
 
   it('scrubs an echoed credential out of the probe response body and headers', async () => {
@@ -4452,15 +4451,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
     // the control value is scrubbed as well as the probed one.
     const control = 'sk_live_control_credential_value';
     const everSeen = [];
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
       const authorization = req.headers.authorization;
       if (authorization && !everSeen.includes(authorization)) everSeen.push(authorization);
       if (authorization !== `Bearer ${control}`) {
@@ -4475,41 +4466,18 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       }
       if (rpc.method === 'initialize') {
         res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'stateful-session' });
-        res.end(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: rpc.id,
-            result: {
-              protocolVersion: '2025-11-25',
-              capabilities: {},
-              serverInfo: { name: 'stateful', version: '1.0.0' },
-            },
-          })
-        );
-        return;
-      }
-      if (rpc.method === 'notifications/initialized') {
-        res.writeHead(202);
-        res.end();
+        res.end(initializeResult(rpc));
         return;
       }
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          result: { tools: [{ name: 'list_plans', inputSchema: { type: 'object' } }] },
-        })
-      );
+      res.end(toolsListResult(rpc));
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     const controlSpec = { kind: 'credential', headers: { authorization: `Bearer ${control}` } };
     try {
       // First probe: graded attempt is rejected, so the control runs and the
       // agent records the valid credential.
       await rawMcpSessionProbe({
-        agentUrl,
+        agentUrl: agent.agentUrl,
         headers: { authorization: 'Bearer deliberately-invalid-probe-token-one' },
         control: controlSpec,
         allowPrivateIp: true,
@@ -4517,7 +4485,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       assert.ok(everSeen.includes(`Bearer ${control}`), 'the agent saw the control credential');
       // Second probe: its 401 challenge now echoes the remembered control value.
       const { httpResult } = await rawMcpSessionProbe({
-        agentUrl,
+        agentUrl: agent.agentUrl,
         headers: { authorization: 'Bearer deliberately-invalid-probe-token-two' },
         control: controlSpec,
         allowPrivateIp: true,
@@ -4530,7 +4498,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       assert.ok(!JSON.stringify(httpResult).includes(control), 'control credential survived the evidence seam');
       assert.match(JSON.stringify(httpResult), /REDACTED_CREDENTIAL/);
     } finally {
-      server.close();
+      agent.close();
     }
   });
 
@@ -4583,10 +4551,15 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
 });
 
 describe('mcp_session_probe report surfaces (#2940 review)', () => {
-  it('publishes the task constant so consumers do not match a magic string', () => {
-    const publicSurface = require('../../dist/lib/testing/storyboard/index.js');
-    assert.strictEqual(publicSurface.MCP_SESSION_PROBE_TASK, MCP_SESSION_PROBE_TASK);
+  it('publishes the task constant on the @adcp/sdk/testing consumer surface', () => {
+    // `./testing` maps to dist/lib/testing/index.js in package.json exports;
+    // internal module paths are blocked for consumers, so the barrel is the
+    // only surface a report consumer can key on.
+    const publicSurface = require('../../dist/lib/testing/index.js');
+    assert.strictEqual(publicSurface.MCP_SESSION_PROBE_TASK, 'mcp_session_probe');
     assert.strictEqual(MCP_SESSION_PROBE_TASK, 'mcp_session_probe');
+    const exported = require('../../package.json').exports['./testing'].require.default;
+    assert.strictEqual(exported, './dist/lib/testing/index.js');
   });
 
   it('escapes control characters in agent-supplied tool names before they reach skip.detail', async () => {
@@ -4623,6 +4596,32 @@ describe('mcp_session_probe report surfaces (#2940 review)', () => {
     // Actionable: names the reason the branch cannot contribute, and a remedy.
     assert.match(detail, /cannot grade a positive/);
     assert.match(detail, /Remedy: advertise one allowlisted read tool/);
+  });
+
+  it('surfaces the ungradable skip reason and remedy in human CLI output', () => {
+    // The CLI's generic skip printer (bin/adcp-storyboard-summary.js) is what
+    // an operator actually reads. `session_probe_ungradable` must not be in its
+    // `handledReasons` set, or the only explanation of why the
+    // static-credential branch cannot contribute is never printed.
+    const { formatStepSkipLines } = require('../../bin/adcp-storyboard-summary.js');
+    const esc = String.fromCharCode(27);
+    const lines = formatStepSkipLines(
+      {
+        skipped: true,
+        skip_reason: 'session_probe_ungradable',
+        skip: {
+          reason: 'not_applicable',
+          detail: `cannot grade a positive static-credential step${esc}[2J Remedy: advertise one allowlisted read tool`,
+        },
+      },
+      { handledReasons: new Set(['capability_prerequisite_unavailable']) }
+    );
+    assert.ok(lines.length >= 2, 'reason and detail are both rendered');
+    assert.match(lines[0], /session_probe_ungradable/);
+    assert.match(lines[1], /cannot grade a positive/);
+    assert.match(lines[1], /Remedy: advertise one allowlisted read tool/);
+    // The CLI escapes at print time; no raw control byte reaches the terminal.
+    assert.ok(!lines.join('').includes(esc));
   });
 
   it('surfaces the ungradable skip detail in JUnit output', () => {
@@ -4663,20 +4662,7 @@ describe('mcp_session_probe report surfaces (#2940 review)', () => {
 describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#2940 review)', () => {
   /** Server whose responses carry a non-correlating JSON-RPC id. */
   async function startMiscorrelatingAgent() {
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      if (rpc.method === 'notifications/initialized') {
-        res.writeHead(202);
-        res.end();
-        return;
-      }
+    return startStreamableHttpAgent(async (rpc, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'mis-session' });
       res.end(
         JSON.stringify({
@@ -4691,9 +4677,6 @@ describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#
         })
       );
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const port = server.address().port;
-    return { agentUrl: `http://127.0.0.1:${port}/mcp`, close: () => server.close() };
   }
 
   it('does not accept a control whose response id does not correlate', async () => {
@@ -4704,21 +4687,20 @@ describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
+        timeoutMs: 1200,
       });
-      // The graded attempt is "accepted" only if its envelope correlates; it
-      // does not, so this cannot be certified either way.
+      // The official client correlates responses by request id, so a
+      // non-correlating envelope is dropped and the request times out. Either
+      // way this must not be certified.
       assert.match(httpResult.error ?? '', /inconclusive/);
-      assert.match(httpResult.error ?? '', /does not correlate/);
+      assert.match(httpResult.error ?? '', /request timed out/);
     } finally {
       agent.close();
     }
   });
 
-  it('rejects a non-JSON-RPC-2.0 envelope', async () => {
-    const server = http.createServer(async (req, res) => {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  it('does not accept a non-JSON-RPC-2.0 envelope', async () => {
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -4728,59 +4710,44 @@ describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#
         })
       );
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
       const { httpResult } = await rawMcpSessionProbe({
-        agentUrl,
+        agentUrl: agent.agentUrl,
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
+        timeoutMs: 1200,
       });
-      assert.match(httpResult.error ?? '', /not a JSON-RPC 2\.0 envelope/);
+      // Either the SDK rejects the envelope outright or it never correlates;
+      // both must fail closed rather than certify a protected call.
+      assert.ok(httpResult.error, 'a malformed envelope must not be certified');
+      assert.match(httpResult.error ?? '', /did not complete the protected operation/);
     } finally {
-      server.close();
+      agent.close();
     }
   });
 
   it('labels an unimplementable wire version as protocol incompatibility, not an auth verdict', async () => {
-    const server = http.createServer(async (req, res) => {
-      if (req.method === 'DELETE') {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const rpc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
       res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'future-session' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          id: rpc.id,
-          result: {
-            protocolVersion: '2026-07-28',
-            capabilities: {},
-            serverInfo: { name: 'future', version: '1.0.0' },
-          },
-        })
-      );
+      res.end(initializeResult(rpc, { protocolVersion: '2026-07-28' }));
     });
-    await new Promise(resolve => server.listen(0, resolve));
-    const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
     try {
       const { httpResult } = await rawMcpSessionProbe({
-        agentUrl,
+        agentUrl: agent.agentUrl,
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
+        timeoutMs: 4000,
       });
       assert.match(httpResult.error ?? '', /protocolVersion this SDK does not implement/);
       assert.match(httpResult.error ?? '', /Upgrade the SDK/);
-      // Must not be phrased as a credential finding.
+      // Must not be phrased as a credential finding, and must not echo the
+      // agent-controlled version string the SDK puts in its own message.
       assert.ok(!/refused/.test(httpResult.error ?? ''));
+      assert.ok(!(httpResult.error ?? '').includes('2026-07-28'));
     } finally {
-      server.close();
+      agent.close();
     }
   });
 });
@@ -4901,6 +4868,164 @@ describe('mcp_session_probe: routing headers and effective credentials (#2940 re
       const byId = stepsById(result);
       assert.match(byId.probe_invalid_oauth_token.error ?? '', /no OAuth access token/);
       assert.strictEqual(byId.assert_mechanism.passed, false);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 review)', () => {
+  /** Agent that buries the credential it received far below the scan depth. */
+  async function startDeepEchoAgent(depth) {
+    return startStreamableHttpAgent(async (rpc, res, { req }) => {
+      // Bare token: not matched by the capture layer's `Bearer …` mask.
+      const echoed = (req.headers.authorization ?? 'none').replace(/^Bearer /, '');
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'deep-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      let nested = { leaked: echoed };
+      for (let i = 0; i < depth; i += 1) nested = { nest: nested };
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(toolsListResult(rpc, [{ name: 'list_plans', inputSchema: { type: 'object' }, _meta: nested }]));
+    });
+  }
+
+  it('elides a subtree it cannot scan rather than passing the original through', async () => {
+    const credential = 'sk_live_buried_beyond_scan_depth';
+    const agent = await startDeepEchoAgent(60);
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: `Bearer ${credential}` },
+        control: { kind: 'probe_is_valid_credential' },
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      const serialized = JSON.stringify(httpResult);
+      assert.ok(!serialized.includes(credential), 'a credential below the scan depth must not survive');
+      assert.match(serialized, /REDACTED_UNSCANNABLE_DEPTH/, 'the unscannable subtree is elided, not dropped silently');
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('still scrubs a credential nested within the scan depth', async () => {
+    const credential = 'sk_live_within_scan_depth_value';
+    const agent = await startDeepEchoAgent(4);
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: `Bearer ${credential}` },
+        control: { kind: 'probe_is_valid_credential' },
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      const serialized = JSON.stringify(httpResult);
+      assert.ok(!serialized.includes(credential));
+      assert.match(serialized, /REDACTED_CREDENTIAL/);
+      // Shallow nesting is scanned, not elided.
+      assert.ok(!serialized.includes('REDACTED_UNSCANNABLE_DEPTH'));
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('elides an oversized collection rather than passing entries through unscanned', async () => {
+    const credential = 'sk_live_past_the_entry_cap_value';
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
+      const echoed = (req.headers.authorization ?? 'none').replace(/^Bearer /, '');
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'wide-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      // 900 entries: the last ones sit past the entry cap.
+      const filler = Array.from({ length: 899 }, (_, i) => `t${i}`);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        toolsListResult(rpc, [
+          { name: 'list_plans', inputSchema: { type: 'object' }, _meta: { wide: [...filler, echoed] } },
+        ])
+      );
+    });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        headers: { authorization: `Bearer ${credential}` },
+        control: { kind: 'probe_is_valid_credential' },
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      const serialized = JSON.stringify(httpResult);
+      assert.ok(!serialized.includes(credential), 'an entry past the cap must not survive unscanned');
+      assert.match(serialized, /REDACTED_UNSCANNABLE_SIZE/);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: routing headers are derived, not name-guessed (#2940 review)', () => {
+  it('preserves routing headers a name-based credential filter would drop', async () => {
+    // `isCredentialHeaderName`'s regex treats any `…-key…` segment as a
+    // credential, which would strip these and silently reroute the probe.
+    const agent = await startProbeAgent({
+      enforce: 'session',
+      servePrm: true,
+      requireTenant: 'acme',
+      requireRoutingKey: 'eu-west-1',
+    });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, {
+          headers: {
+            'x-tenant-id': 'acme',
+            'x-routing-key': 'eu-west-1',
+            'x-partition-key': 'p-7',
+            'x-idempotency-key': 'idem-1',
+          },
+        })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.passed, true, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_invalid_oauth_token.passed, true);
+      assert.strictEqual(result.overall_passed, true);
+      for (const request of agent.rpc()) {
+        assert.strictEqual(request.tenant, 'acme', `tenant header present on ${request.method}`);
+        assert.strictEqual(request.routingKey, 'eu-west-1', `routing key present on ${request.method}`);
+      }
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('drops a header whose value carries a run credential, whatever it is named', async () => {
+    // An `auth: none` probe must really be unauthenticated, so a secret parked
+    // under a custom name is excluded by value rather than by guessing names.
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, {
+          auth: { type: 'oauth', tokens: { access_token: 'sk_valid' } },
+          headers: { 'x-tenant-id': 'acme', 'x-custom-passthrough': 'sk_valid' },
+        })
+      );
+      const unauthRequests = agent.seen.filter(r => r.authorization === null && r.method === 'initialize');
+      assert.ok(unauthRequests.length > 0, 'the unauthenticated probe ran');
+      for (const request of unauthRequests) {
+        assert.ok(
+          !JSON.stringify(request.headers ?? {}).includes('sk_valid'),
+          'no run credential reached the unauthenticated probe under any header name'
+        );
+      }
+      // Routing still survives.
+      assert.ok(agent.rpc().every(r => r.tenant === 'acme'));
     } finally {
       agent.close();
     }
