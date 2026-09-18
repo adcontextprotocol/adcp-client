@@ -56,10 +56,44 @@ function synthesizePositiveStep(vector: PositiveVector): StoryboardStep {
 }
 
 function synthesizeNegativeStep(vector: NegativeVector): StoryboardStep {
-  return {
+  const base = {
     id: `${NEGATIVE_STEP_PREFIX}${vector.id}`,
     title: `Negative: ${vector.name}`,
     task: REQUEST_SIGNING_PROBE_TASK,
+  };
+  // JUnit and most report consumers carry the step title and drop the
+  // narrative, so the title is the only place a reader of a pass count can
+  // learn this step never touched the agent.
+  const inLibraryTitle = `Negative (SDK verifier self-check, agent not contacted): ${vector.name}`;
+  // Vectors that ship an inline `jwks_override` publish a deliberately
+  // malformed JWK the agent under test never serves, so the grader decides
+  // them against the SDK verifier instead of probing — `http_status` is 0 by
+  // contract (`gradeJwksOverrideNegative`). Asserting 401 against that grade
+  // fails a vector the grader passed, and no implementation can move it
+  // (adcp-client#2955). Assert the grade itself instead.
+  if (vector.jwks_override) {
+    return {
+      ...base,
+      title: inLibraryTitle,
+      narrative:
+        `Vector ${vector.id} publishes an inline malformed JWK, so it is graded against the ` +
+        `library verifier rather than sent to the agent; expect rejection with ` +
+        `error="${vector.expected_error_code}".`,
+      validations: [
+        {
+          check: 'probe_passed',
+          // Name the grading plane in the description: this step reports on
+          // the SDK verifier, not on the agent under test, and a report
+          // reader counting graded vectors has to be able to tell.
+          description:
+            `SDK verifier rejects ${vector.id} with error="${vector.expected_error_code}" ` +
+            `(graded in-library; the agent under test is not contacted)`,
+        },
+      ],
+    };
+  }
+  return {
+    ...base,
     narrative:
       `Build vector ${vector.id} with its documented mutation and send to the agent; ` +
       `expect 401 with WWW-Authenticate: Signature error="${vector.expected_error_code}".`,

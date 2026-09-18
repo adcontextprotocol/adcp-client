@@ -35,15 +35,26 @@ export interface BuildOptions {
    */
   baseUrl?: string;
   /**
-   * Transport-layer framing. `'raw'` (default) sends the vector body to the
-   * retargeted vector URL verbatim — matches the conformance vectors' intent
-   * of testing a per-operation HTTP endpoint. `'mcp'` wraps the vector body
-   * in a JSON-RPC `tools/call` envelope and posts to `baseUrl` as-is (no
-   * path join); operation name comes from the vector URL's last segment.
+   * Transport-layer framing. `'raw'` sends the vector body to the retargeted
+   * vector URL verbatim — matches the conformance vectors' intent of testing
+   * a per-operation HTTP endpoint. `'mcp'` wraps the vector body in a
+   * JSON-RPC `tools/call` envelope and posts to `baseUrl` as-is (no path
+   * join); operation name comes from the vector URL's last segment.
    *
    * MCP mode trades the canonicalization-edge coverage for reach: vectors
    * 005–008 fold into plain POSTs against the MCP endpoint, but the grader
    * works against any MCP agent that wires a verifier at the HTTP layer.
+   *
+   * **Defaults differ by layer, deliberately.** Omitting the field here
+   * builds a raw request: this is the low-level primitive, and a caller
+   * holding a vector and a REST target shouldn't have its body silently
+   * re-framed. Every grader entry point above it (`gradeRequestSigning`,
+   * `gradeOneVector`, the storyboard `request_signing_probe` dispatch)
+   * resolves the default to `'mcp'` instead, because the runner reaches
+   * agents through `tools/call` and raw replay 404s on an MCP mount before
+   * the verifier runs (adcontextprotocol/adcp#6548). REST-binding agents
+   * pass `'raw'` explicitly — `adcp storyboard run --signing-transport raw`
+   * or `adcp grade request-signing --transport raw`.
    */
   transport?: 'raw' | 'mcp';
   /**

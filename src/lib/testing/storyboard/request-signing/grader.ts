@@ -170,6 +170,15 @@ export interface VectorGradeResult {
   expected_error_code?: string;
   http_status: number;
   diagnostic?: string;
+  /**
+   * The request never completed: `ProbeResult.error` was set (DNS, connect,
+   * TLS, SSRF guard). Structured rather than left to the `probe error:`
+   * prefix on `diagnostic`, because callers have to tell a transport fault
+   * from a verdict — both report `http_status: 0` with text attached, and
+   * the storyboard's coverage classifier would otherwise report an
+   * unreachable agent as "only the SDK self-check ran".
+   */
+  transport_error?: boolean;
   probe_duration_ms: number;
   /**
    * For neg/016 (replayed-nonce) only: total number of (probe1, probe2)
@@ -336,6 +345,43 @@ const TRANSPORT_UNGRADABLE: Record<string, string> = {
     'HTTP transport cannot route to an intentionally malformed DNS authority; verified at the library level.',
 };
 
+/** A vector excluded on its own terms, independent of the run's transport. */
+export interface SemanticVectorExclusion {
+  skip_reason: 'capability_profile_mismatch' | 'transport_ungradable';
+  diagnostic: string;
+}
+
+/**
+ * Exclusions that depend on the vector and the agent's declared profile, not
+ * on how this run reaches the agent: a capability-profile mismatch, and the
+ * `TRANSPORT_UNGRADABLE` carve-outs above (which no HTTP binding can grade on
+ * any protocol). Returns `undefined` when the vector is gradable in principle.
+ *
+ * Shared with the storyboard probe so both entry points apply the same rules
+ * in the same order, and so the probe can apply them *before* its own
+ * protocol-transport gate. Gating on protocol first would relabel a vector the
+ * agent's profile never opted into — or one no transport can carry — as this
+ * protocol's missing coverage (adcp-client#2954).
+ */
+export function semanticVectorExclusion(
+  vector: PositiveVector | NegativeVector,
+  declaredCapability?: Pick<VerifierCapabilityFixture, 'protocol_methods_required_for'>
+): SemanticVectorExclusion | undefined {
+  if (declaredCapability) {
+    // Only the protocol-method dimension — see
+    // `protocolMethodCoverageMismatch` for why the rest of
+    // `capabilityMismatch` needs an operator-selected profile rather than an
+    // advertised one. The skip stays auditable either way: it surfaces as a
+    // `profile_excluded` selection result on the step, and an agent that
+    // under-declares to dodge a vector shows up in the skip count.
+    const mismatch = protocolMethodCoverageMismatch(vector, declaredCapability);
+    if (mismatch) return { skip_reason: 'capability_profile_mismatch', diagnostic: mismatch };
+  }
+  const transportReason = TRANSPORT_UNGRADABLE[vector.id];
+  if (transportReason) return { skip_reason: 'transport_ungradable', diagnostic: transportReason };
+  return undefined;
+}
+
 /**
  * Centralized skip decisions. Checks (in order): onlyVectors filter,
  * operator skipVectors, agent-capability-profile mismatch
@@ -366,21 +412,18 @@ function preflightSkip(
     return { ...base, skipped: true, skip_reason: 'operator_skip' };
   }
   if (options.agentCapability) {
+    // Full profile comparison: `agentCapability` here is an operator-selected
+    // profile, not an advertisement, so every dimension is meaningful.
+    // Surface the mismatch in the diagnostic so operators can audit which
+    // vectors were dodged. An agent that under-declares its capability
+    // (claims `required_for: []` while it actually enforces on multiple ops)
+    // would hide negative-vector failures here — the operator needs to see
+    // the skip count to catch that pattern. The caller inspects
+    // `report.skipped_count` plus the individual `skip_reason`/`diagnostic`
+    // pairs.
     const mismatch = capabilityMismatch(vector, options.agentCapability);
     if (mismatch) {
-      // Surface the mismatch in the diagnostic so operators can audit
-      // which vectors were dodged. An agent that under-declares its
-      // capability (claims `required_for: []` while it actually
-      // enforces on multiple ops) would hide negative-vector failures
-      // here — the operator needs to see the skip count to catch that
-      // pattern. The caller inspects `report.skipped_count` plus the
-      // individual `skip_reason`/`diagnostic` pairs.
-      return {
-        ...base,
-        skipped: true,
-        skip_reason: 'capability_profile_mismatch',
-        diagnostic: mismatch,
-      };
+      return { ...base, skipped: true, skip_reason: 'capability_profile_mismatch', diagnostic: mismatch };
     }
   }
   if (!options.agentCapability && options.agentContentDigestPolicy) {
@@ -394,9 +437,11 @@ function preflightSkip(
       };
     }
   }
-  const transportReason = TRANSPORT_UNGRADABLE[vector.id];
-  if (transportReason) {
-    return { ...base, skipped: true, skip_reason: 'transport_ungradable', diagnostic: transportReason };
+  // Transport-ungradable comes from the shared helper so the grader and the
+  // storyboard probe can't drift on which vectors no HTTP binding can carry.
+  const semantic = semanticVectorExclusion(vector);
+  if (semantic) {
+    return { ...base, skipped: true, skip_reason: semantic.skip_reason, diagnostic: semantic.diagnostic };
   }
   // Canonicalization-edge positive vectors (005–008) bake their edge case
   // into the vector URL path, query, or port. MCP mode flattens every vector
@@ -522,6 +567,7 @@ function gradePositive(vector: PositiveVector, probe: ProbeResult): VectorGradeR
     passed: accepted && !probe.error,
     http_status: probe.status,
     diagnostic: accepted ? undefined : buildPositiveDiagnostic(vector, probe),
+    ...(probe.error !== undefined && { transport_error: true }),
     probe_duration_ms: probe.duration_ms,
   };
 }
@@ -626,6 +672,7 @@ function gradeStaticNegative(
     expected_error_code: vector.expected_error_code,
     actual_error_code: probe.wwwAuthenticateErrorCode,
     diagnostic: buildNegativeDiagnostic(vector, probe),
+    ...(probe.error !== undefined && { transport_error: true }),
     probe_duration_ms: probe.duration_ms,
   }));
 }
@@ -645,6 +692,12 @@ async function gradeReplayWindow(
   let rejectedCount = 0;
   let lastSecondStatus = 0;
   let lastSecondErrorCode: string | undefined;
+  // A second probe that never completed is a transport fault, not evidence
+  // that the agent accepted a replay. Tracked across pairs because either
+  // terminal return below can be reached after one: without it the caller
+  // sees `http_status: 0` with a diagnostic and cannot tell an unreachable
+  // agent from a verdict.
+  let sawSecondTransportError = false;
 
   for (let i = 0; i < pairCount; i++) {
     const nonce = randomBytes(16).toString('base64url');
@@ -665,6 +718,7 @@ async function gradeReplayWindow(
           `replay_window contract: first submission MUST be accepted but agent returned ${first.status}` +
           (first.wwwAuthenticateErrorCode ? ` (error="${first.wwwAuthenticateErrorCode}")` : '') +
           '. Check runner JWKS registration with the agent.',
+        ...(first.error !== undefined && { transport_error: true }),
         probe_duration_ms: totalDurationMs,
         replay_pairs_tried: i + 1,
         replay_pairs_rejected: rejectedCount,
@@ -675,6 +729,7 @@ async function gradeReplayWindow(
     totalDurationMs += second.duration_ms;
     lastSecondStatus = second.status;
     lastSecondErrorCode = second.wwwAuthenticateErrorCode;
+    if (second.error !== undefined) sawSecondTransportError = true;
 
     if (negativeAcceptedErrorCode(vector, second)) {
       rejectedCount++;
@@ -689,6 +744,11 @@ async function gradeReplayWindow(
       http_status: lastSecondStatus,
       expected_error_code: vector.expected_error_code,
       actual_error_code: lastSecondErrorCode,
+      // Unreachable today — an errored probe cannot satisfy
+      // `negativeAcceptedErrorCode`, so every pair rejecting implies none
+      // faulted — but carried on both terminal paths so the provenance
+      // cannot be lost if that counting changes.
+      ...(sawSecondTransportError && { transport_error: true }),
       probe_duration_ms: totalDurationMs,
       replay_pairs_tried: pairCount,
       replay_pairs_rejected: pairCount,
@@ -703,6 +763,7 @@ async function gradeReplayWindow(
     expected_error_code: vector.expected_error_code,
     actual_error_code: lastSecondErrorCode,
     diagnostic: buildReplayWindowFailDiagnostic(vector, rejectedCount, pairCount),
+    ...(sawSecondTransportError && { transport_error: true }),
     probe_duration_ms: totalDurationMs,
     replay_pairs_tried: pairCount,
     replay_pairs_rejected: rejectedCount,
@@ -744,24 +805,42 @@ async function gradeRateAbuse(
   // Fill the cap with cap distinct-nonce requests, then probe one more — that
   // (cap+1)th request is what the vector expects to be rejected.
   let durationMs = 0;
+  // A fill request that never completed means the cap was not actually
+  // reached, so the (cap+1) response proves nothing about the limiter. Keep
+  // the first failure's text, not just a flag: "the cap was never
+  // established" is only actionable if it says which request died and how.
+  let fillTransportError: string | undefined;
   for (let i = 0; i < cap; i++) {
     const nonce = randomBytes(16).toString('base64url');
     const signed = buildNegativeRequest(vector, loaded.keys, { nonce, ...buildOpts });
     const probe = await probeSignedRequest(signed, probeOpts);
     durationMs += probe.duration_ms;
+    if (probe.error !== undefined && fillTransportError === undefined) {
+      fillTransportError = `cap-fill request ${i + 1} of ${cap} never completed: ${probe.error}`;
+    }
   }
   const finalNonce = randomBytes(16).toString('base64url');
   const capPlusOne = buildNegativeRequest(vector, loaded.keys, { nonce: finalNonce, ...buildOpts });
   const probe = await probeSignedRequest(capPlusOne, probeOpts);
   durationMs += probe.duration_ms;
+  // A correct (cap+1) rejection is only evidence when the cap was actually
+  // reached. Without this the vector passes on a limiter that was never
+  // exercised — the agent may simply reject every request with that code.
+  const capEstablished = fillTransportError === undefined;
   return {
     vector_id: vector.id,
     kind: 'negative',
-    passed: negativeAcceptedErrorCode(vector, probe),
+    passed: capEstablished && negativeAcceptedErrorCode(vector, probe),
     http_status: probe.status,
     expected_error_code: vector.expected_error_code,
     actual_error_code: probe.wwwAuthenticateErrorCode,
-    diagnostic: buildNegativeDiagnostic(vector, probe),
+    diagnostic: capEstablished
+      ? buildNegativeDiagnostic(vector, probe)
+      : `rate_abuse contract: the per-keyid cap was never established — ${fillTransportError}. ` +
+        `The (cap+1) response (status ${probe.status}` +
+        (probe.wwwAuthenticateErrorCode ? `, error="${probe.wwwAuthenticateErrorCode}"` : '') +
+        ') says nothing about the limiter, so this vector is ungraded rather than passing.',
+    ...((probe.error !== undefined || !capEstablished) && { transport_error: true }),
     probe_duration_ms: durationMs,
   };
 }
@@ -960,23 +1039,37 @@ function capabilityMismatch(
       `Either add the operation to the agent's request_signing.required_for, or accept the skip.`
     );
   }
-  // Same check for `protocol_methods_required_for` (adcp#4326 namespace).
-  // Negative vectors that grade JSON-RPC protocol methods (e.g. unsigned
-  // `tasks/cancel`) auto-skip when the agent doesn't declare the bucket —
-  // matching the behavior of `required_for` for AdCP-tool vectors.
-  const vectorProtocolMethodsRequiredFor = vectorCap.protocol_methods_required_for ?? [];
-  const agentProtocolMethodsRequiredForSet = new Set(agentCap.protocol_methods_required_for ?? []);
-  const missingProtocolMethodsRequiredFor = vectorProtocolMethodsRequiredFor.filter(
-    method => !agentProtocolMethodsRequiredForSet.has(method)
+  return protocolMethodCoverageMismatch(vector, agentCap);
+}
+
+/**
+ * The `protocol_methods_required_for` slice of `capabilityMismatch`
+ * (adcp#4326 namespace): negative vectors that grade a JSON-RPC protocol
+ * method (only `028-unsigned-protocol-method-required` today) don't apply to
+ * an agent that never claimed to require a signature on that method, exactly
+ * as `required_for` works for AdCP-tool vectors.
+ *
+ * Split out and exported because it is the one dimension safe to decide from
+ * an agent's *advertised* `request_signing` block. The others describe the
+ * profile a vector was authored against — an operator selects a matching one
+ * with `--covers-content-digest` / `agentCapability`, and reading them off a
+ * live advertisement instead would exclude most of the vector set (a
+ * `covers_content_digest: 'either', required_for: []` advertisement mismatches
+ * 39 of 40 vectors), quietly gutting the storyboard it was meant to sharpen.
+ */
+export function protocolMethodCoverageMismatch(
+  vector: PositiveVector | NegativeVector,
+  agentCap: Pick<VerifierCapabilityFixture, 'protocol_methods_required_for'>
+): string | undefined {
+  const required = vector.verifier_capability.protocol_methods_required_for ?? [];
+  const declared = new Set(agentCap.protocol_methods_required_for ?? []);
+  const missing = required.filter(method => !declared.has(method));
+  if (missing.length === 0) return undefined;
+  return (
+    `Vector asserts protocol_methods_required_for includes [${missing.join(', ')}] ` +
+    `but agent's protocol_methods_required_for does not. Either add the method to the agent's ` +
+    `request_signing.protocol_methods_required_for, or accept the skip.`
   );
-  if (missingProtocolMethodsRequiredFor.length > 0) {
-    return (
-      `Vector asserts protocol_methods_required_for includes [${missingProtocolMethodsRequiredFor.join(', ')}] ` +
-      `but agent's protocol_methods_required_for does not. Either add the method to the agent's ` +
-      `request_signing.protocol_methods_required_for, or accept the skip.`
-    );
-  }
-  return undefined;
 }
 
 function buildNegativeDiagnostic(vector: NegativeVector, probe: ProbeResult): string | undefined {

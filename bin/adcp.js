@@ -48,7 +48,14 @@ const {
   writeSummaryFile,
   printSoftFailBlock,
   defaultComplianceTimeoutSeconds,
+  escapeTerminalControlChars,
+  formatStepSkipLines,
+  formatStepVerdictLines,
+  isCoverageUnavailableStep,
+  unverifiedSigningCoverage,
+  parseRequestSigningFlags,
 } = require('./adcp-storyboard-summary.js');
+
 const { scheduleVersionCheck } = require('./adcp-version-check.js');
 const { formatStoryboardResultsAsJUnit } = require('../dist/lib/testing/storyboard/junit.js');
 const { ADCP_VERSION, LIBRARY_VERSION } = require('../dist/lib/version.js');
@@ -1166,6 +1173,12 @@ function parseAgentOptions(args) {
       ? args[invariantsIdx + 1]
       : null;
 
+  // Request-signing vector knobs are captured here solely so their values are
+  // excluded from `positionalArgs`. The authoritative parse (validation +
+  // error exits) lives in `extractRequestSigningOptions(args)`.
+  const signingTransportValue = readFlagValue(args, '--signing-transport');
+  const signingSkipVectorsValue = readFlagValue(args, '--signing-skip-vectors');
+
   const localAgentIdx = args.indexOf('--local-agent');
   const localAgentValue =
     localAgentIdx !== -1 && localAgentIdx + 1 < args.length && !args[localAgentIdx + 1].startsWith('--')
@@ -1239,6 +1252,8 @@ function parseAgentOptions(args) {
     webhookReceiverTlsCertValue,
     webhookReceiverTlsKeyValue,
     invariantsValue,
+    signingTransportValue,
+    signingSkipVectorsValue,
     localAgentValue,
     formatValue,
     summaryOutputValue,
@@ -2164,6 +2179,35 @@ WEBHOOK OPTIONS:
                                   direct child only).
                                   HTTP-on-the-wire — spec-compliant.
 
+REQUEST-SIGNING VECTOR OPTIONS (signed_requests storyboard):
+  --signing-transport raw|mcp     How the RFC 9421 conformance vectors are
+                                  framed on the wire. NOT the same as
+                                  --transport/--protocol, which selects how the
+                                  storyboard itself talks to the agent. Default:
+                                  inferred from the resolved protocol — an MCP
+                                  run wraps each vector in a tools/call envelope
+                                  (mcp); an A2A run reports the vectors
+                                  signing_transport_unavailable (COVERAGE
+                                  UNAVAILABLE; the track cannot pass) because
+                                  the fixtures have no A2A framing. Pass raw for
+                                  agents that
+                                  expose AdCP tools as per-operation HTTP
+                                  endpoints. Mirrors
+                                  \`adcp grade request-signing --transport\`.
+  --signing-skip-vectors IDS      Comma-separated vector ids to skip (graded
+                                  operator_skip), e.g.
+                                  025-jwk-alg-crv-mismatch. Unknown ids are
+                                  rejected — a typo would otherwise skip
+                                  nothing, silently.
+  --signing-skip-rate-abuse       Skip the rate-abuse vector, which floods
+                                  cap+1 requests at the agent. Boolean: pass
+                                  the bare flag (=false is rejected, not read
+                                  as "off").
+
+  A run whose signing vectors were never dispatched exits 3 even though its
+  steps are skip-shaped: nothing about the verifier was graded. --soft-fail
+  reports it and exits 0.
+
 PARALLEL DISPATCH OPTIONS:
   --parallel-dispatch             Enable process-local concurrent dispatches
                                   for storyboards that require the
@@ -2767,11 +2811,35 @@ async function resolveFileComplianceRunOptions(args, opts) {
 function printCapabilityPrerequisiteSkip(step) {
   if (!step.skipped || step.skip_reason !== 'capability_prerequisite_unavailable' || !step.skip?.detail || step.error)
     return;
-  const detail = String(step.skip.detail).replace(
-    /[\u0000-\u001f\u007f-\u009f]/g,
-    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
-  );
-  console.log(`   Skipped: ${detail}`);
+  console.log(`   Skipped: ${escapeTerminalControlChars(step.skip.detail)}`);
+}
+
+// `printCapabilityPrerequisiteSkip` already phrases this one.
+const SKIP_REASONS_PRINTED_ELSEWHERE = new Set(['capability_prerequisite_unavailable']);
+
+/**
+ * Print why a step was skipped, naming runner-owned coverage gaps as gaps
+ * and echoing the remedy the runner supplied. Without this a skipped-only
+ * run prints a green-looking `0 passed` line and nothing else.
+ */
+// Remedy strings already printed in this invocation. A whole-storyboard
+// coverage gap repeats one ~550-character remedy per vector; on a routed run
+// that is ~38 identical copies, which buries the rest of the report.
+const PRINTED_SKIP_REMEDIES = new Set();
+
+function printStepSkipDetail(step) {
+  const lines = formatStepSkipLines(step, { handledReasons: SKIP_REASONS_PRINTED_ELSEWHERE });
+  for (const [index, line] of lines.entries()) {
+    // Line 0 is the reason; any line after it is the detail/remedy.
+    if (index > 0 && line.length > 200) {
+      if (PRINTED_SKIP_REMEDIES.has(line)) {
+        console.log('   (same remedy as above)');
+        continue;
+      }
+      PRINTED_SKIP_REMEDIES.add(line);
+    }
+    console.log(line);
+  }
 }
 
 async function handleStoryboardRun(args) {
@@ -2861,6 +2929,12 @@ async function handleStoryboardRun(args) {
     process.exit(2);
   }
 
+  // Usage gate before any network work: a mistyped signing flag should exit 2
+  // without protocol autodetection, and certainly without the inline OAuth
+  // browser flow below. The authoritative parse runs again downstream, on the
+  // path that actually consumes the options.
+  extractRequestSigningOptions(args);
+
   // Inline OAuth: if --oauth is set and the agent is a saved alias that
   // doesn't have valid tokens, run the browser flow now so the downstream
   // runner sees freshly-saved tokens via getAgent().
@@ -2915,6 +2989,7 @@ async function handleStoryboardRun(args) {
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
   const parallelDispatchOpts = extractParallelDispatchOptions(args);
+  const requestSigningOpts = extractRequestSigningOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
 
   // Load invariants before the dry-run gate so `--dry-run --invariants` fails
@@ -2989,6 +3064,7 @@ async function handleStoryboardRun(args) {
     }),
     ...(mergedRunHeaders && { headers: mergedRunHeaders }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+    ...(requestSigningOpts ?? {}),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -3041,6 +3117,7 @@ async function handleStoryboardRun(args) {
         console.log(`\n${icon} ${step.title}${skipLabel} (${step.duration_ms}ms)`);
         console.log(`   Task: ${step.task}`);
         printCapabilityPrerequisiteSkip(step);
+        printStepSkipDetail(step);
         if (step.error) {
           console.log(`   Error: ${step.error}`);
         }
@@ -3266,6 +3343,54 @@ function extractWebhookReceiverOptions(args) {
  */
 function extractParallelDispatchOptions(args) {
   return args.includes('--parallel-dispatch') ? { contracts: ['parallel_dispatch_runner'] } : null;
+}
+
+/**
+ * CLI wrapper over `parseRequestSigningFlags`: turn a rejected flag into a
+ * usage message and exit 2 rather than silently falling back — a mistyped
+ * transport would otherwise surface as 38 unexplained vector failures.
+ */
+function extractRequestSigningOptions(args) {
+  const parsed = parseRequestSigningFlags(
+    flag => readFlagValue(args, flag),
+    flag => args.includes(flag) || args.some(a => a.startsWith(`${flag}=`)),
+    {
+      readInlineValue: flag => {
+        const eqArg = args.find(a => a.startsWith(`${flag}=`));
+        return eqArg ? eqArg.slice(flag.length + 1) : null;
+      },
+      knownVectorIds: args.some(a => a === '--signing-skip-vectors' || a.startsWith('--signing-skip-vectors='))
+        ? knownSigningVectorIds(args)
+        : null,
+    }
+  );
+  if (!parsed.ok) {
+    console.error(`ERROR: ${parsed.error}`);
+    process.exit(2);
+  }
+  return parsed.options;
+}
+
+/**
+ * Vector ids from the compliance cache this run will actually grade against,
+ * for validating `--signing-skip-vectors`.
+ *
+ * Returns `null` when the cache can't be read: a missing cache is the run's
+ * problem to report where it matters (the runner says so with a remedy), not
+ * a reason to refuse an otherwise valid flag.
+ */
+function knownSigningVectorIds(args) {
+  try {
+    const { loadRequestSigningVectors } = require('../dist/lib/testing/storyboard/request-signing/index.js');
+    const { complianceVersion, complianceDir } = parseComplianceSelection(args);
+    const loaded = loadRequestSigningVectors({
+      ...(complianceVersion && { version: complianceVersion }),
+      ...(complianceDir && { complianceDir }),
+    });
+    return [...loaded.positive, ...loaded.negative].map(v => v.id);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -3953,6 +4078,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
 
   const storyboardsSpec = storyboardId ? [storyboardId] : 'all';
   const parallelDispatchOpts = extractParallelDispatchOptions(args);
+  const requestSigningOpts = extractRequestSigningOptions(args);
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
   let result;
   try {
@@ -3971,6 +4097,7 @@ async function handleLocalAgentStoryboardRun(modulePath, args, opts) {
         }),
         ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
         ...mergeStoryboardContracts(parallelDispatchOpts),
+        ...(requestSigningOpts ?? {}),
       },
       onStoryboardComplete:
         jsonOutput || format === 'junit'
@@ -4182,6 +4309,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
   const parallelDispatchOpts = extractParallelDispatchOptions(args);
+  const requestSigningOpts = extractRequestSigningOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
   if ((webhookReceiverBase || webhookAutoTunnel) && strategy === 'multi-pass') {
     // The runner throws on this combination (each pass binds a fresh receiver
@@ -4408,6 +4536,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
       mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
     }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+    ...(requestSigningOpts ?? {}),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4454,6 +4583,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           console.log(`\n${icon} ${instTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
           console.log(`   Task: ${step.task}`);
           printCapabilityPrerequisiteSkip(step);
+          printStepSkipDetail(step);
           if (step.error) {
             console.log(`   Error: ${step.error}`);
           }
@@ -4521,6 +4651,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
   const webhookAutoTunnel = args.includes('--webhook-receiver-auto-tunnel');
   const webhookReceiverBase = extractWebhookReceiverOptions(args);
   const parallelDispatchOpts = extractParallelDispatchOptions(args);
+  const requestSigningOpts = extractRequestSigningOptions(args);
   validateAutoTunnelArgs(args, webhookReceiverBase);
 
   // Strip per-flag values that may have leaked into positionals via parseAgentOptions.
@@ -4695,6 +4826,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
       mediaBuyLifecycleCompatibility: opts.mediaBuyLifecycleCompatibility,
     }),
     ...(opts.loadedTestKit !== undefined && { test_kit: opts.loadedTestKit }),
+    ...(requestSigningOpts ?? {}),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -4771,6 +4903,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
           console.log(`\n${icon} ${agentTag}${step.title}${skipLabel} (${step.duration_ms}ms)`);
           console.log(`   Task: ${step.task}`);
           printCapabilityPrerequisiteSkip(step);
+          printStepSkipDetail(step);
           if (step.error) console.log(`   Error: ${step.error}`);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
@@ -4813,6 +4946,22 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
 }
 
 // Shared implementation: run all matching storyboards against an agent
+// One remedy per way a run can end with no graded vector. Keeping them
+// distinct matters: an unreachable agent and an over-broad
+// `--signing-skip-vectors` need opposite actions from the operator.
+const SIGNING_COVERAGE_REMEDIES = {
+  probe_errored: 'the probes could not complete — fix the transport or auth failure reported above, then re-run',
+  transport_unverified:
+    'this runner has no request-signing dispatch for the run protocol — grade the MCP or REST binding, ' +
+    'or set --signing-transport when that binding answers at the same URL',
+  scope_excluded:
+    "every vector was excluded by this run's own selection — drop the --signing-skip-vectors entries you did " +
+    'not mean to exclude',
+  self_check_only:
+    'only the in-library SDK self-check ran, and it never contacts your agent — widen the selection so a wire ' +
+    'vector is graded',
+};
+
 async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
   const opts = parsedOpts || parseAgentOptions(rawArgs);
 
@@ -4893,6 +5042,10 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     resolvedOauthClientCredentials: oauthClientCredentials,
   });
 
+  // Validate the signing flags before `resolveWebhookReceiverOptions`, which
+  // may spawn a tunnel child process: a bad flag value should exit 2 without
+  // standing infrastructure up first.
+  const requestSigningOpts = extractRequestSigningOptions(rawArgs);
   const webhookReceiverOpts = await resolveWebhookReceiverOptions(rawArgs, { jsonOutput: opts.jsonOutput });
   const parallelDispatchOpts = extractParallelDispatchOptions(rawArgs);
 
@@ -4922,6 +5075,7 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     ...(opts.schemaRoot && { schemaRoot: opts.schemaRoot }),
     ...(!opts.strictResponseSchemaValidation && { strictResponseSchemaValidation: false }),
     ...(opts.hostedStableLineAlias && { hostedStableLineAlias: opts.hostedStableLineAlias }),
+    ...(requestSigningOpts ?? {}),
   };
 
   if (!opts.jsonOutput) {
@@ -5025,14 +5179,34 @@ async function runFullAssessment(agentArg, rawArgs, parsedOpts) {
     // exercised its tracks and they passed" is a CI failure. `partial`
     // is preserved as exit 0 because some tracks were silent (wired but
     // unexercised) — that's a reportable observation, not a hard failure.
+    //
+    // One narrow exception (adcp-client#2954): a run whose request-signing
+    // vectors were never dispatched verified nothing about the verifier, and
+    // its steps are skip-shaped, so every count above reads clean. That is
+    // the case #2956 exists to make visible in CI, so it exits nonzero — on
+    // its own signal, without touching how any other `partial` run exits.
+    const unverifiedSigning = unverifiedSigningCoverage(result);
     const isFailingExit =
       result.overall_status === 'failing' ||
       result.overall_status === 'unreachable' ||
-      result.overall_status === 'auth_required';
+      result.overall_status === 'auth_required' ||
+      unverifiedSigning.length > 0;
 
+    if (unverifiedSigning.length > 0 && !opts.jsonOutput) {
+      for (const gap of unverifiedSigning) {
+        console.error(
+          `\n❌ ${escapeTerminalControlChars(gap.storyboard_id)}: no request-signing vector reached the agent. ` +
+            `${SIGNING_COVERAGE_REMEDIES[gap.coverage] ?? 'no vector was graded'}.`
+        );
+      }
+      if (!opts.softFail) {
+        console.error('   Pass --soft-fail to report this without failing the job.');
+      }
+    }
     if (opts.softFail && isFailingExit) {
       const failedNames = result.failures?.map(f => f.storyboard_id).filter((v, i, a) => a.indexOf(v) === i) ?? [];
-      printSoftFailBlock(failedNames, opts.jsonOutput);
+      const unverifiedNames = unverifiedSigning.map(gap => gap.storyboard_id);
+      printSoftFailBlock([...new Set([...failedNames, ...unverifiedNames])], opts.jsonOutput);
     }
     process.exit(opts.softFail ? 0 : isFailingExit ? 3 : 0);
   } catch (error) {
@@ -5113,6 +5287,10 @@ async function handleStoryboardStepCmd(args) {
     process.exit(2);
   }
 
+  // Same usage gate as `storyboard run`: fail a bad signing flag before the
+  // OAuth browser flow and agent resolution.
+  extractRequestSigningOptions(args);
+
   await maybeRunInlineOAuth(agentArg, args, { jsonOutput });
 
   const {
@@ -5163,6 +5341,7 @@ async function handleStoryboardStepCmd(args) {
       resolvedOauthClient,
       resolvedOauthClientCredentials,
     }),
+    ...(extractRequestSigningOptions(args) ?? {}),
   };
 
   const restoreLogs = jsonOutput ? captureStdoutLogs() : null;
@@ -5176,10 +5355,12 @@ async function handleStoryboardStepCmd(args) {
   if (jsonOutput) {
     await writeJsonOutput(result);
   } else {
-    const icon = result.passed ? '✅' : '❌';
     console.log(`\n── Step: ${result.title} ──────────────────────────────`);
     console.log(`Task: ${result.task}`);
-    console.log(`\n${icon} ${result.passed ? 'Passed' : 'Failed'} (${result.duration_ms}ms)`);
+    console.log('');
+    for (const line of formatStepVerdictLines(result, { durationMs: result.duration_ms })) {
+      console.log(line);
+    }
 
     if (result.error) {
       console.log(`Error: ${result.error}`);
@@ -5214,7 +5395,19 @@ async function handleStoryboardStepCmd(args) {
     }
   }
 
-  process.exit(result.passed ? 0 : 3);
+  // A skipped step is `passed: true` — skip is not failure. That is right for
+  // a step the agent opted out of, and wrong for one the runner could not
+  // grade: `adcp storyboard step … && echo ok` would print ok for a vector
+  // nothing verified. Exit 3 on that gap, matching what the verdict lines
+  // above already say (adcp-client#2954) — and honour `--soft-fail` here as
+  // every other exit site in this file does, because the help text and the
+  // guide both offer it as the opt-out for exactly this.
+  const stepFailed = !result.passed || isCoverageUnavailableStep(result);
+  if (stepFailed && opts.softFail) {
+    printSoftFailBlock([`${storyboardId}/${stepId}`], jsonOutput);
+    process.exit(0);
+  }
+  process.exit(stepFailed ? 3 : 0);
 }
 
 async function handleCheckNetworkCommand(args) {

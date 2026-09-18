@@ -2258,7 +2258,11 @@ test('CLI capability skip diagnostics escape controls without exposing unrelated
     source.indexOf('async function handleStoryboardRun')
   );
   const lines = [];
-  const scope = { console: { log: line => lines.push(line) } };
+  // The escaper lives in `bin/adcp-storyboard-summary.js` since the skip
+  // printers were split out (adcp-client#2954); inject the real implementation
+  // the CLI uses rather than a stand-in, so this still tests shipped escaping.
+  const { escapeTerminalControlChars, formatStepSkipLines } = require('../../bin/adcp-storyboard-summary.js');
+  const scope = { console: { log: line => lines.push(line) }, escapeTerminalControlChars, formatStepSkipLines };
   vm.runInNewContext(helper, scope);
   scope.printCapabilityPrerequisiteSkip({
     skipped: true,

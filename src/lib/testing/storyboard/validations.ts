@@ -317,6 +317,8 @@ function runValidation(validation: StoryboardValidation, ctx: ValidationContext)
       return requireHttpResult(ctx, validation, hr => validateHttpStatus(validation, hr));
     case 'http_status_in':
       return requireHttpResult(ctx, validation, hr => validateHttpStatusIn(validation, hr));
+    case 'probe_passed':
+      return requireHttpResult(ctx, validation, hr => validateProbePassed(validation, hr));
     case 'on_401_require_header':
       return requireHttpResult(ctx, validation, hr => validateOn401RequireHeader(validation, hr));
     case 'resource_equals_agent_url':
@@ -1877,6 +1879,37 @@ function validateHttpStatusIn(validation: StoryboardValidation, hr: HttpProbeRes
     json_pointer: null,
     expected: allowed,
     actual: hr.status,
+  };
+}
+
+/**
+ * Grade a probe by the verdict it reported rather than by a wire status.
+ *
+ * Used by request-signing vectors the grader decides in-library (the
+ * `jwks_override` negatives): there is no HTTP exchange to assert on, and
+ * `HttpProbeResult.error` is the dispatch layer's carrier for "the grader
+ * failed this vector". Keeping the check status-free is deliberate — a
+ * synthetic 401 would conflate the library-verification plane with the wire
+ * plane (adcp-client#2955).
+ *
+ * The pass branch depends on the producing dispatch never reporting a failed
+ * grade with an empty `error`: `probeRequestSigningVector` enforces that with
+ * a `'vector grade failed'` fallback when the grader supplies no diagnostic.
+ * A dispatch that grades without honoring that invariant would pass here
+ * vacuously — keep the two in step.
+ */
+function validateProbePassed(validation: StoryboardValidation, hr: HttpProbeResult): ValidationResult {
+  if (!hr.error) {
+    return { check: 'probe_passed', passed: true, description: validation.description };
+  }
+  return {
+    check: 'probe_passed',
+    passed: false,
+    description: validation.description,
+    error: `Probe reported a failed grade: ${hr.error}`,
+    json_pointer: null,
+    expected: 'probe grade with no error',
+    actual: hr.error,
   };
 }
 

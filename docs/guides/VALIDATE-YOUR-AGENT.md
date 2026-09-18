@@ -103,6 +103,9 @@ temporary legacy compatibility harnesses rather than routine compliance runs.
 - `--brief <text>` — custom product-discovery brief (default varies by storyboard)
 - `--auth <token>` — bearer token (also accepts `$ADCP_AUTH_TOKEN`)
 - `--oauth` — run the browser OAuth flow inline when the saved alias has no valid tokens (MCP only; equivalent to `adcp --save-auth <alias> <url> --oauth` then re-running)
+- `--signing-transport raw|mcp` — how the `signed_requests` conformance vectors are framed on the wire. Not the same as `--transport`/`--protocol`. Default: inferred from the resolved protocol
+- `--signing-skip-vectors <ids>` — comma-separated vector ids to exclude (graded `operator_skip`); unknown ids are rejected
+- `--signing-skip-rate-abuse` — skip the rate-abuse vector, which floods cap+1 requests at the agent (bare flag; `=false` is rejected, not read as "off")
 
 **Authoring webhook assertions.** Webhook storyboard pseudo-steps share the
 receiver URL and filter contract. Use `triggered_by` to scope the observation
@@ -262,6 +265,32 @@ npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp -
 # Isolate a single vector
 npx @adcp/sdk@adcp-3.1 grade request-signing https://sandbox.agent.example/mcp --only 016-replayed-nonce
 ```
+
+#### Same vectors inside `storyboard run`
+
+The `signed_requests` storyboard synthesizes one step per vector and grades them through the same engine. `storyboard run` exposes the knobs that matter there:
+
+```bash
+# Per-operation HTTP endpoints instead of a single MCP mount
+npx @adcp/sdk@adcp-3.1 storyboard run https://sandbox.agent.example/adcp signed_requests \
+  --signing-transport raw --auth $TOKEN
+
+# Drop a vector your deployment can't satisfy, and the cap+1 flood
+npx @adcp/sdk@adcp-3.1 storyboard run https://sandbox.agent.example/mcp signed_requests \
+  --signing-skip-vectors 025-jwk-alg-crv-mismatch --signing-skip-rate-abuse --auth $TOKEN
+```
+
+- **`--signing-transport` is not `--transport`.** `--transport`/`--protocol` selects how the storyboard talks to your agent; `--signing-transport` selects how the conformance vectors are framed. Mirrors `adcp grade request-signing --transport`.
+- **Leave it unset by default.** The vector transport is inferred from the resolved protocol: an MCP run frames every vector as a `tools/call` envelope, so an MCP-only agent no longer collects 404s from raw per-operation replay.
+- **On an A2A run most vectors report `COVERAGE UNAVAILABLE`, and the command exits 3.** The runner dispatches vectors two ways — verbatim REST replay and an MCP `tools/call` re-frame — and it does not yet dispatch them through the official A2A client, so it declines to grade rather than POSTing an MCP envelope at an A2A endpoint and scoring the resulting 405 as a signature failure. Each ungradable vector skips with detailed reason `signing_transport_unavailable` (canonical `not_applicable` plus that token as `skip.detail`, the output contract's registered sub-reason shape). What holds the verdict open is coverage, not the reason: no vector reached the agent, so the storyboard is non-passing (`overall_passed: false`), the `security_transport` track stays `partial` — including when every step in the track skipped, and when a sibling storyboard (`oauth_setup`) passes everything — and the command exits nonzero. **If you advertise `request_signing.supported: true` and are graded over A2A, this is you:** there is no agent-side fix. Grade your verifier through the agent's MCP or REST binding, pass `--signing-transport` when that binding answers on the same URL as the A2A card, or run with `--soft-fail` to report the gap without failing the job.
+- **Only the in-library vector still grades on A2A.** `025-jwk-alg-crv-mismatch` is decided against the SDK verifier with no wire exchange, so the run's protocol is irrelevant to it — and its step says so in the title, because it verifies the SDK and not your agent. Everything probed reports the coverage gap, `028-unsigned-protocol-method-required` included. That is a gap in this runner, not in the A2A client: `@a2a-js/sdk` issues `tasks/cancel` fine, but no signing probe is wired through it yet, and writing the fixture's bytes to the endpoint directly would be a hand-rolled A2A dispatch.
+- **Vectors excluded on their own terms say so, on every protocol.** `026-non-ascii-host` reports `transport_ungradable` (no HTTP client can carry a non-ASCII authority — `fetch` punycodes it first). `028-unsigned-protocol-method-required` reports `capability_profile_mismatch` unless your `get_adcp_capabilities` declares `request_signing.protocol_methods_required_for` — **this applies on MCP runs too, not just A2A**: previously the storyboard dispatched 028 at every agent, so one that never claimed the JSON-RPC bucket could fail it. Declare the bucket (e.g. `['tasks/cancel']`) if you verify signatures on protocol methods; a declaration your AdCP line's schema rejects is discarded rather than treated as "not declared", so it cannot suppress the vector. Note `adcp grade request-signing` does not read your advertisement — it uses the profile you pass it — so the two commands can disagree about 028 by design.
+- **A run that graded nothing exits nonzero.** Skipped steps are `passed: true`, so a coverage gap used to exit 0. `adcp storyboard step` now exits 3 when the runner could not dispatch the step, and the full assessment exits 3 when a storyboard's signing coverage went unverified — including when your own `--signing-skip-vectors` removed every vector, which is the other way to end up with nothing graded. The message names which of the two happened. Everything else keeps exit 0: other `partial` runs, legacy fixture gaps, and single steps you excluded yourself. `--soft-fail` works on both commands and reports the gap while exiting 0.
+- **Library callers get the same knobs.** `comply(agentUrl, { request_signing: { transport: 'mcp', skipVectors: [...], onlyVectors: [...], skipRateAbuse: true, rateAbuseCap: 5 } })` from `@adcp/sdk/testing` mirrors the CLI, plus `onlyVectors`/`rateAbuseCap`, which have no flag yet. `adcp grade request-signing` spells the same knobs `--transport`, `--skip`, `--only`, `--skip-rate-abuse`, `--rate-abuse-cap`; `storyboard run` prefixes them because `--transport` is already taken by the storyboard's own transport.
+- **Mistyped flag values are rejected.** `--signing-skip-vectors` validates every id against the shipped vector set (a typo silently skipped nothing before), and `--signing-skip-rate-abuse` refuses a value — `=false` used to read as "on".
+- **Vector `025-jwk-alg-crv-mismatch` is graded in-library.** It publishes a malformed JWK your agent never serves, so there is no HTTP exchange: the step asserts the grader's verdict (`probe_passed`), not a 401.
+
+> **Published 3.0 line.** These fixes ship on the 3.1+/prerelease line. The `adcp-3.0` dist-tag (`@adcp/sdk@7.11.x`) still defaults the vector transport to `raw` and has no `--signing-*` flags; an MCP-only agent must grade `signed_requests` from the 3.1 CLI (or drive `runStoryboard` with `request_signing: { transport: 'mcp' }`) until that line takes a backport.
 
 ### Multi-instance testing
 
