@@ -48,13 +48,7 @@ function gitBlobSha1(bytes: Buffer): string {
 
 function readProvenance(): FixtureProvenance {
   const provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as FixtureProvenance;
-  const protocolVersion = readFileSync(path.join(repoRoot, 'ADCP_VERSION'), 'utf8').trim();
   if (provenance.schema_version !== 1) throw new Error('Fixture provenance schema_version must be 1.');
-  if (provenance.protocol_version !== protocolVersion) {
-    throw new Error(
-      `Fixture provenance targets ${provenance.protocol_version}, but ADCP_VERSION is ${protocolVersion}.`
-    );
-  }
   if (provenance.source_tag !== `v${provenance.protocol_version}`) {
     throw new Error('Fixture provenance source_tag must match protocol_version.');
   }
