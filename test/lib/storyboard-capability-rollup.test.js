@@ -54,10 +54,7 @@ const {
 const { runStoryboard } = require('../../dist/lib/testing/storyboard/runner.js');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader.js');
 const { buildComplianceBundleResults } = require('../../dist/lib/testing/compliance/comply.js');
-const {
-  resolveStoryboardsForCapabilities,
-  listAllComplianceStoryboards,
-} = require('../../dist/lib/testing/storyboard/compliance.js');
+const { resolveStoryboardsForCapabilities } = require('../../dist/lib/testing/storyboard/compliance.js');
 const { closeConnections } = require('../../dist/lib/protocols/index.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
 
