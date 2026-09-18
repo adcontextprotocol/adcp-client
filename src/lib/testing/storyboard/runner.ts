@@ -92,7 +92,7 @@ import {
 } from './probes';
 import { readBrandJsonUrl } from '../../signing/agent-resolver/capabilities-types';
 import { selectAgentByUrl } from '../../signing/agent-resolver/select-agent';
-import { resolveDeclaredTestKit, validateTestKit } from './test-kit';
+import { PROBE_TASK_ALLOWLIST, resolveDeclaredTestKit, validateTestKit } from './test-kit';
 import { normalizeValidationOnlyTasks, validateStoryboardShape, VALIDATION_ONLY_TASK } from './loader';
 import { evaluatePhaseCondition, phaseConditionUsesContext } from './phase-condition';
 import { trustedStoryboardComplianceRoot } from './provenance';
@@ -344,6 +344,13 @@ const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> 
   // registered *shape* now means that registration changes nothing here.
   signing_transport_unavailable: 'signing_transport_unavailable',
 };
+
+/**
+ * Per-request cap for the MCP session auth probe. A step can make up to eight
+ * requests (graded + control lifecycle, four each), so the shared 10 s
+ * `ssrfSafeFetch` default would let a tarpitting agent hold one step for ~80 s.
+ */
+const MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS = 5_000;
 
 const REPLAY_WEBHOOK_VECTOR_TASK = 'replay_webhook_vector';
 const REPLAY_TRUSTED_MATCH_CONTEXT_VECTOR_TASK = 'replay_trusted_match_context_vector';
@@ -7224,6 +7231,8 @@ async function executeProbeStep(
   // step's extraction note so operators can tell session-boundary enforcement
   // from per-operation enforcement.
   let sessionProbeStage: McpSessionStage | undefined;
+  /** Fixed-vocabulary verdict description from the session probe. */
+  let sessionProbeDetail: string | undefined;
 
   const contractsInScope = new Set(options.contracts ?? []);
   if (step.requires_contract) {
@@ -7334,7 +7343,7 @@ async function executeProbeStep(
     // MCP session auth probe: the no-allowlist fallback for
     // `$test_kit.auth.probe_task` (adcp-client#2940). See
     // `planMcpSessionSentinel` for which steps it can honestly grade.
-    const plan = planMcpSessionSentinel(step, options);
+    const plan = planMcpSessionSentinel(step, options, client);
     if (plan.kind === 'error') {
       httpResult = { url: runState.agentUrl, status: 0, headers: {}, body: null, error: plan.error };
     } else if (plan.kind === 'skip') {
@@ -7353,6 +7362,12 @@ async function executeProbeStep(
         headers: plan.headers,
         control: plan.control,
         allowPrivateIp: options.allow_http === true,
+        // Up to eight requests per step (two lifecycles x initialize /
+        // initialized / tools-list / delete). Honour run cancellation and cap
+        // each request well under the shared 10 s default so a tarpitting
+        // agent cannot hold a step for ~80 s.
+        ...(options.signal && { signal: options.signal }),
+        timeoutMs: MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS,
         ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
       });
       // Left on the default `http` request/response record shape so
@@ -7361,6 +7376,7 @@ async function executeProbeStep(
       // credential lives in headers, so nothing about them is recorded.
       httpResult = probe.httpResult;
       sessionProbeStage = probe.stage;
+      sessionProbeDetail = probe.detail;
     }
   } else if (step.task === 'request_signing_probe') {
     httpResult = await probeRequestSigningVector(step.id, runState.agentUrl, options);
@@ -7696,7 +7712,7 @@ async function executeProbeStep(
 
   const probeNote =
     sessionProbeStage !== undefined
-      ? `MCP session probe graded at ${sessionProbeStage}`
+      ? `MCP session probe graded at ${sessionProbeStage} (${sessionProbeDetail ?? 'no detail'})`
       : 'http-probe body parsed as JSON';
   const extraction: RunnerExtractionRecord = httpResult
     ? httpResult.error
@@ -8767,17 +8783,97 @@ function defaultAuthHeadersForRawProbe(options: StoryboardRunOptions): Record<st
 }
 
 /**
+ * Non-credential headers every MCP session-probe request must carry.
+ *
+ * A multi-tenant agent routes on headers (`x-tenant-id`, `x-account`, …). The
+ * A2A auth-override client already preserves them
+ * (`createA2AAuthOverrideClient`); dropping them on the MCP session probe
+ * would point the graded attempt and its acceptance control at a *different
+ * tenant* than the SDK transport uses — where a rejection says nothing about
+ * the tenant under test, and an acceptance by some default tenant would let
+ * `security_baseline` pass on evidence from the wrong agent.
+ *
+ * Credential-looking headers are excluded: the step's own `auth` directive is
+ * the only credential the probe may present, and `isCredentialHeaderName`
+ * already encodes that boundary for the A2A path.
+ */
+function sessionProbeRoutingHeaders(options: StoryboardRunOptions): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(options.headers ?? {})) {
+    if (isCredentialHeaderName(name)) continue;
+    try {
+      assertSafeAuthHeaderPart(value, `options.headers.${name}`);
+    } catch {
+      continue;
+    }
+    headers[name] = value;
+  }
+  // Match the SDK transport's own non-credential headers.
+  if (options.test_session_id) {
+    try {
+      assertSafeAuthHeaderPart(options.test_session_id, 'options.test_session_id');
+      headers['X-Test-Session-ID'] = options.test_session_id;
+    } catch {
+      /* malformed values are reported by the transport that uses them */
+    }
+  }
+  if (options.userAgent) {
+    try {
+      assertSafeAuthHeaderPart(options.userAgent, 'options.userAgent');
+      headers['User-Agent'] = options.userAgent;
+    } catch {
+      /* as above */
+    }
+  }
+  return headers;
+}
+
+/**
+ * OAuth access token this run would actually present, preferring the live one.
+ *
+ * `MCPOAuthProvider.saveTokens` writes refreshed / newly-acquired tokens back
+ * onto the client's `AgentConfig`, not onto `StoryboardRunOptions`. A run that
+ * started with no tokens and completed the flow during discovery (`--oauth`),
+ * or whose token was refreshed mid-run, therefore has a live credential the
+ * original options never see — reading options alone would report "no OAuth
+ * access token" for exactly the OAuth/PRM agents this probe exists to verify.
+ */
+function effectiveOAuthAccessToken(client: unknown, options: StoryboardRunOptions): string | undefined {
+  const live = liveAgentOAuthAccessToken(client);
+  if (live !== undefined) return live;
+  const auth = options.auth;
+  if (auth?.type !== 'oauth' && auth?.type !== 'oauth_client_credentials') return undefined;
+  const configured = auth.tokens?.access_token;
+  return typeof configured === 'string' && configured.length > 0 ? configured : undefined;
+}
+
+/** Best-effort read of the client's live `oauth_tokens.access_token`. */
+function liveAgentOAuthAccessToken(client: unknown): string | undefined {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- narrow probe of a structural client
+    const candidate = (client as any)?.getAgent?.('test')?.getAgent?.();
+    const token = candidate?.oauth_tokens?.access_token;
+    return typeof token === 'string' && token.length > 0 ? (token as string) : undefined;
+  } catch {
+    // Test doubles and non-MCP clients do not expose an agent config.
+    return undefined;
+  }
+}
+
+/**
  * Credential mechanism a sentinel step is exercising, derived from
  * `step.auth.type`. The acceptance control must be the *same kind* of
  * credential, because the storyboard's branches certify different claims:
  *
  * - `oauth_bearer` → `oauth_discovery` certifies "the agent validates inbound
- *   OAuth tokens". A static API key accepted at the endpoint does not show
- *   that the issuer named in the protected-resource metadata gates the
- *   resource, so it cannot stand in as the control — otherwise correct PRM
- *   plus an unrelated shared secret would launder into
+ *   OAuth tokens". A static API key accepted at the endpoint is no evidence
+ *   about that path, so it cannot stand in as the control — otherwise correct
+ *   PRM plus an unrelated shared secret would launder into
  *   `auth_mechanism_verified`, which is the advertised-but-unserved failure
- *   mode `security_baseline` exists to catch.
+ *   mode `security_baseline` exists to catch. Note the bound on the positive
+ *   claim too: an accepted OAuth control shows the endpoint accepted the
+ *   credential the runner was *configured with* as an OAuth token. The runner
+ *   does not verify that token's issuer cryptographically.
  * - `api_key` / `basic` → the matching static-credential branch.
  * - `any` → `auth: none` (the unauthenticated probe), which asserts only that
  *   *some* credential is required, so any valid credential discriminates.
@@ -8792,11 +8888,9 @@ interface SessionControlUnavailable {
 type SessionControlResolution = { headers: Record<string, string> } | { unavailable: SessionControlUnavailable };
 
 /** Authorization header from an OAuth access token held by the run, if any. */
-function oauthAccessTokenHeaders(options: StoryboardRunOptions): Record<string, string> | undefined {
-  const auth = options.auth;
-  if (auth?.type !== 'oauth' && auth?.type !== 'oauth_client_credentials') return undefined;
-  const token = auth.tokens?.access_token;
-  if (typeof token !== 'string' || token.length === 0) return undefined;
+function oauthAccessTokenHeaders(options: StoryboardRunOptions, client: unknown): Record<string, string> | undefined {
+  const token = effectiveOAuthAccessToken(client, options);
+  if (token === undefined) return undefined;
   try {
     assertSafeAuthHeaderPart(token, 'options.auth.tokens.access_token');
   } catch {
@@ -8839,9 +8933,10 @@ function staticCredentialHeaders(
  */
 function sessionControlCredentials(
   mechanism: SessionControlMechanism,
-  options: StoryboardRunOptions
+  options: StoryboardRunOptions,
+  client: unknown
 ): SessionControlResolution {
-  const oauth = oauthAccessTokenHeaders(options);
+  const oauth = oauthAccessTokenHeaders(options, client);
   const bearer =
     options.auth?.type === 'bearer'
       ? staticCredentialHeaders({ type: 'api_key', value: options.auth.token }, options)
@@ -8869,7 +8964,8 @@ function sessionControlCredentials(
         unavailable: {
           reason:
             `this run holds no OAuth access token, and a static API key or Basic credential is not evidence ` +
-            `that the authorization server advertised in your protected-resource metadata gates this resource`,
+            `about the OAuth path at all — accepting a shared secret says nothing about whether tokens from the ` +
+            `issuer advertised in your protected-resource metadata are what gates this resource`,
           remedy:
             `Run the storyboard with OAuth so the runner holds a token minted by that issuer ` +
             `(\`adcp --save-auth <alias> <url> --oauth\`, or pass \`--oauth\` to \`storyboard run\`).`,
@@ -8912,14 +9008,26 @@ function sessionControlCredentials(
 }
 
 /**
- * Bound an agent-supplied tool list before it enters a compliance report.
- * `tools/list` names are unbounded in count and length and are not passed
- * through the runner's URL/secret scrubbers on `skip.detail`.
+ * Bound and sanitize an agent-supplied tool list before it enters a compliance
+ * report. `tools/list` names are unbounded in count and length, and
+ * `skip.detail` is rendered straight into terminals, CI logs and JUnit XML —
+ * so an embedded ESC, CR or NUL could rewrite surrounding output. Control
+ * characters are escaped rather than dropped so the original bytes stay
+ * diagnosable, matching the CLI's own `printRunnerSkipDetail` treatment.
  */
 function summarizeAdvertisedTools(tools: readonly string[] | undefined): string {
-  const names = (tools ?? []).slice(0, 20).map(name => name.slice(0, 64));
+  const names = (tools ?? []).slice(0, 20).map(name => escapeControlChars(name.slice(0, 64)));
   const overflow = (tools?.length ?? 0) - names.length;
   return overflow > 0 ? `${names.join(', ')}, …${overflow} more` : names.join(', ');
+}
+
+/** Escape C0/C1 control characters (ESC, CR, LF, NUL, …) as \uXXXX. */
+function escapeControlChars(value: string): string {
+  // eslint-disable-next-line no-control-regex -- escaping control chars is the point
+  return value.replace(
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
 }
 
 /** Mechanism a step's auth directive exercises. */
@@ -8961,7 +9069,11 @@ type McpSessionSentinelPlan =
   | { kind: 'skip'; reason: RunnerDetailedSkipReason; detail: string }
   | { kind: 'probe'; headers: Record<string, string>; control: McpSessionProbeControl };
 
-function planMcpSessionSentinel(step: StoryboardStep, options: StoryboardRunOptions): McpSessionSentinelPlan {
+function planMcpSessionSentinel(
+  step: StoryboardStep,
+  options: StoryboardRunOptions,
+  client: unknown
+): McpSessionSentinelPlan {
   if (options.protocol === 'a2a') {
     return {
       kind: 'error',
@@ -8974,18 +9086,24 @@ function planMcpSessionSentinel(step: StoryboardStep, options: StoryboardRunOpti
   if (step.auth === undefined) {
     return {
       kind: 'skip',
-      reason: 'probe_skipped',
-      detail:
+      reason: 'session_probe_ungradable',
+      detail: redactOAuthUrlsInText(
         `Agent advertises no auth-required, read-only AdCP tool that accepts an empty request body, so the runner ` +
-        `fell back to the MCP "${MCP_SESSION_PROBE_TASK}" session probe. That probe cannot grade a positive ` +
-        `static-credential step: its validations assert an AdCP task response body, which no MCP protocol ` +
-        `operation produces. Advertised tools: [${summarizeAdvertisedTools(options.agentTools)}].`,
+          `fell back to the MCP "${MCP_SESSION_PROBE_TASK}" session probe. That probe cannot grade a positive ` +
+          `static-credential step: its validations assert an AdCP task response body, which no MCP protocol ` +
+          `operation produces, so this mechanism's branch cannot contribute auth_mechanism_verified. Remedy: ` +
+          `advertise one allowlisted read tool (${PROBE_TASK_ALLOWLIST.slice(0, 4).join(', ')}, …), or serve ` +
+          `RFC 9728 metadata and run with OAuth so the OAuth branch can be verified instead. ` +
+          `Advertised tools: [${summarizeAdvertisedTools(options.agentTools)}].`
+      ),
     };
   }
 
+  const routing = sessionProbeRoutingHeaders(options);
   let headers: Record<string, string>;
   try {
-    headers = authHeadersForStep(step.auth, options);
+    // Routing first so a step credential always wins on Authorization.
+    headers = { ...routing, ...authHeadersForStep(step.auth, options) };
   } catch (err) {
     return {
       kind: 'error',
@@ -8993,7 +9111,7 @@ function planMcpSessionSentinel(step: StoryboardStep, options: StoryboardRunOpti
     };
   }
 
-  const control = sessionControlCredentials(sessionControlMechanismFor(step.auth), options);
+  const control = sessionControlCredentials(sessionControlMechanismFor(step.auth), options, client);
   if ('unavailable' in control) {
     // The probe still runs — its response is useful evidence — but grades
     // inconclusive rather than certifying an auth mechanism.
@@ -9004,7 +9122,11 @@ function planMcpSessionSentinel(step: StoryboardStep, options: StoryboardRunOpti
   if (headers.authorization !== undefined && control.headers.authorization === headers.authorization) {
     return { kind: 'probe', headers, control: { kind: 'probe_is_valid_credential' } };
   }
-  return { kind: 'probe', headers, control: { kind: 'credential', headers: control.headers } };
+  return {
+    kind: 'probe',
+    headers,
+    control: { kind: 'credential', headers: { ...routing, ...control.headers } },
+  };
 }
 
 /**

@@ -62,6 +62,18 @@ function formatAdvisoryFinding(validation: { description: string; error?: string
  * `.d.ts`; the runtime module is still present in `dist/` for the CLI
  * (`bin/adcp.js`) to `require()` directly.
  */
+/**
+ * Skip message for a per-step `<skipped>` element. The detailed reason alone is
+ * often not actionable (`session_probe_ungradable`, `fixture_unsatisfied`), so
+ * the runner-authored detail is appended when present — JUnit consumers are
+ * frequently the only surface a CI reviewer reads.
+ */
+function stepSkipMessage(step: { skip_reason?: string; skip?: { detail?: string } }): string {
+  const reason = step.skip_reason || 'skipped';
+  const detail = step.skip?.detail;
+  return detail ? `${reason}: ${detail}` : reason;
+}
+
 export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {
   let totalTests = 0;
   let totalFailures = 0;
@@ -87,7 +99,7 @@ export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): str
             totalSkipped += 1;
             suiteCases.push(
               `    <testcase classname="${xmlEscape(sb.storyboard_id)}" name="${xmlEscape(name)}" time="${time}">\n` +
-                `      <skipped message="${xmlEscape(step.skip_reason || 'skipped')}"/>\n` +
+                `      <skipped message="${xmlEscape(stepSkipMessage(step))}"/>\n` +
                 `    </testcase>`
             );
             continue;

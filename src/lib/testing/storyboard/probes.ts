@@ -247,6 +247,10 @@ async function postRawMcpJsonRpc(options: {
   parseBody?: boolean;
   allowEmptyBody?: boolean;
   fetchFn?: typeof fetch;
+  /** Run-level cancellation, composed with the fetch primitive's timeout. */
+  signal?: AbortSignal;
+  /** Per-request cap; defaults to `ssrfSafeFetch`'s 10 s. */
+  timeoutMs?: number;
 }): Promise<RawJsonRpcPostResult> {
   const {
     agentUrl,
@@ -272,6 +276,8 @@ async function postRawMcpJsonRpc(options: {
       },
       body: JSON.stringify(envelope),
       allowPrivateIp,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.fetchFn ? { trustedFetchFn: options.fetchFn } : {}),
     });
     httpResult.status = res.status;
@@ -540,6 +546,12 @@ export type McpSessionStage = 'initialize' | 'notifications/initialized' | 'tool
 interface McpSessionAttempt {
   /** True only when initialize + initialized + tools/list all succeeded. */
   accepted: boolean;
+  /**
+   * The attempt failed because this SDK cannot speak the version the agent
+   * negotiated — never because of credentials. Reported separately so a
+   * protocol mismatch is not presented as an auth finding.
+   */
+  protocolIncompatible?: boolean;
   /** Where the verdict was decided. */
   stage: McpSessionStage;
   /** Credential-free description of the verdict. */
@@ -554,6 +566,8 @@ async function postMcpLifecycleRequest(options: {
   headers: Record<string, string>;
   allowPrivateIp: boolean;
   fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
   sessionId?: string;
   protocolVersion?: string;
   responseId?: number;
@@ -565,6 +579,8 @@ async function postMcpLifecycleRequest(options: {
     headers: options.headers,
     allowPrivateIp: options.allowPrivateIp,
     fetchFn: options.fetchFn,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
     ...(options.protocolVersion !== undefined ? { protocolVersion: options.protocolVersion } : {}),
     ...(options.responseId !== undefined ? { responseId: options.responseId } : {}),
@@ -579,11 +595,22 @@ async function postMcpLifecycleRequest(options: {
  * conformant answer is `202 Accepted` with an empty body — an absent envelope
  * there is success, not a parse failure.
  */
-function rejectionDetail(posted: RawJsonRpcPostResult, expectResponseBody = true): string | undefined {
+function rejectionDetail(
+  posted: RawJsonRpcPostResult,
+  options: { expectResponseBody?: boolean; expectedId?: number } = {}
+): string | undefined {
+  const { expectResponseBody = true, expectedId } = options;
   const { httpResult, parsed, parseError } = posted;
   if (httpResult.error) return 'transport error';
   if (httpResult.status >= 400) return `HTTP ${httpResult.status}`;
   if (parseError || (expectResponseBody && !parsed)) return 'unparseable JSON-RPC response';
+  // A response that does not correlate to the request is not an answer. Without
+  // this an agent could return someone else's success envelope — or a bare
+  // notification — and have the control graded as accepted.
+  if (parsed !== undefined && expectedId !== undefined) {
+    if (parsed.jsonrpc !== '2.0') return 'response is not a JSON-RPC 2.0 envelope';
+    if (parsed.id !== expectedId) return 'response id does not correlate to the request';
+  }
   if (parsed?.error) {
     // `error.code` only when it is genuinely numeric — never `error.message`,
     // and never a stringified agent-supplied value.
@@ -609,6 +636,8 @@ async function terminateMcpSession(options: {
   protocolVersion?: string;
   allowPrivateIp: boolean;
   fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<void> {
   try {
     await ssrfSafeFetch(options.agentUrl, {
@@ -620,6 +649,8 @@ async function terminateMcpSession(options: {
         ...(options.protocolVersion ? { [MCP_PROTOCOL_VERSION_HEADER]: options.protocolVersion } : {}),
       },
       allowPrivateIp: options.allowPrivateIp,
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.fetchFn ? { trustedFetchFn: options.fetchFn } : {}),
     });
   } catch {
@@ -638,9 +669,9 @@ async function terminateMcpSession(options: {
  * the Streamable HTTP session rejects at `initialize`, one that authenticates
  * each operation rejects at `tools/list`, and both are reported as rejections
  * with the rejecting response as evidence. A server that serves `tools/list`
- * with no credential is reported as accepted — which is what makes a
- * fail-open agent visibly fail its authored `http_status_in` assertion instead
- * of being silently skipped.
+ * with no credential is reported as accepted, which {@link rawMcpSessionProbe}
+ * then refuses to treat as rejection evidence — so a fail-open agent fails
+ * visibly instead of being silently skipped.
  *
  * Every parameter is MCP-defined (`tools/list` takes only an optional
  * `cursor`), so no agent-authored request schema can 400 the probe before the
@@ -652,12 +683,15 @@ async function runMcpSessionLifecycle(options: {
   headers: Record<string, string>;
   allowPrivateIp: boolean;
   fetchFn?: typeof fetch;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<McpSessionAttempt> {
-  const { agentUrl, headers, allowPrivateIp, fetchFn } = options;
+  const { agentUrl, headers, allowPrivateIp, fetchFn, signal, timeoutMs } = options;
+  const perRequest = { agentUrl, headers, allowPrivateIp, fetchFn, signal, timeoutMs };
 
   const initializeId = ++probeRequestId;
   const initialize = await postMcpLifecycleRequest({
-    agentUrl,
+    ...perRequest,
     envelope: {
       jsonrpc: '2.0',
       id: initializeId,
@@ -670,51 +704,57 @@ async function runMcpSessionLifecycle(options: {
         clientInfo: { name: 'AdCP Storyboard MCP Session Probe', version: '1.0.0' },
       },
     },
-    headers,
-    allowPrivateIp,
-    fetchFn,
     responseId: initializeId,
   });
 
-  const initializeRejection = rejectionDetail(initialize);
-  if (initializeRejection !== undefined) {
-    return { accepted: false, stage: 'initialize', detail: initializeRejection, posted: initialize };
-  }
-  if (!InitializeResultSchema.safeParse(initialize.parsed?.result).success) {
-    return {
-      accepted: false,
-      stage: 'initialize',
-      detail: 'initialize result did not match the MCP InitializeResult schema',
-      posted: initialize,
-    };
-  }
-  const negotiatedProtocolVersion = initialize.parsed?.result?.protocolVersion;
-  if (
-    typeof negotiatedProtocolVersion !== 'string' ||
-    !SUPPORTED_PROTOCOL_VERSIONS.includes(negotiatedProtocolVersion)
-  ) {
-    // The negotiated value is agent-controlled, so it is described, not echoed.
-    return {
-      accepted: false,
-      stage: 'initialize',
-      detail: 'negotiated protocolVersion is not supported by this SDK',
-      posted: initialize,
-    };
-  }
-
+  // Capture the session id before any early return. A server can issue one on
+  // a 200 whose body then fails schema or version validation; without this the
+  // probe would abandon a live session on those paths.
   const sessionId = initialize.httpResult.headers[MCP_SESSION_ID_HEADER];
+  let negotiatedProtocolVersion: string | undefined;
   try {
+    const initializeRejection = rejectionDetail(initialize, { expectedId: initializeId });
+    if (initializeRejection !== undefined) {
+      return { accepted: false, stage: 'initialize', detail: initializeRejection, posted: initialize };
+    }
+    if (!InitializeResultSchema.safeParse(initialize.parsed?.result).success) {
+      return {
+        accepted: false,
+        stage: 'initialize',
+        detail: 'initialize result did not match the MCP InitializeResult schema',
+        posted: initialize,
+      };
+    }
+    const negotiated = initialize.parsed?.result?.protocolVersion;
+    if (typeof negotiated !== 'string' || !SUPPORTED_PROTOCOL_VERSIONS.includes(negotiated)) {
+      // Per the MCP lifecycle the client offers its latest version and the
+      // server may answer with another it supports; a version this SDK does
+      // not implement is a *protocol compatibility* problem, not an auth
+      // verdict, and is labelled as such so nobody reads it as a credential
+      // rejection. Widening the accepted set would mean speaking a wire
+      // version we do not implement — the remedy is an SDK bump, not a
+      // looser probe. The value itself is agent-controlled, so it is
+      // described rather than echoed.
+      return {
+        accepted: false,
+        protocolIncompatible: true,
+        stage: 'initialize',
+        detail:
+          `agent negotiated a protocolVersion this SDK does not implement (offered ` +
+          `${LATEST_PROTOCOL_VERSION}; supports ${SUPPORTED_PROTOCOL_VERSIONS.length} versions)`,
+        posted: initialize,
+      };
+    }
+    negotiatedProtocolVersion = negotiated;
+
     const initialized = await postMcpLifecycleRequest({
-      agentUrl,
+      ...perRequest,
       envelope: { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
-      headers,
-      allowPrivateIp,
-      fetchFn,
       ...(sessionId ? { sessionId } : {}),
       protocolVersion: negotiatedProtocolVersion,
       allowEmptyBody: true,
     });
-    const initializedRejection = rejectionDetail(initialized, false);
+    const initializedRejection = rejectionDetail(initialized, { expectResponseBody: false });
     if (initializedRejection !== undefined) {
       return {
         accepted: false,
@@ -726,16 +766,13 @@ async function runMcpSessionLifecycle(options: {
 
     const listId = ++probeRequestId;
     const list = await postMcpLifecycleRequest({
-      agentUrl,
+      ...perRequest,
       envelope: { jsonrpc: '2.0', id: listId, method: 'tools/list', params: {} },
-      headers,
-      allowPrivateIp,
-      fetchFn,
       ...(sessionId ? { sessionId } : {}),
       protocolVersion: negotiatedProtocolVersion,
       responseId: listId,
     });
-    const listRejection = rejectionDetail(list);
+    const listRejection = rejectionDetail(list, { expectedId: listId });
     if (listRejection !== undefined) {
       return { accepted: false, stage: 'tools/list', detail: listRejection, posted: list };
     }
@@ -754,9 +791,11 @@ async function runMcpSessionLifecycle(options: {
         agentUrl,
         headers,
         sessionId,
-        protocolVersion: negotiatedProtocolVersion,
+        ...(negotiatedProtocolVersion ? { protocolVersion: negotiatedProtocolVersion } : {}),
         allowPrivateIp,
         fetchFn,
+        ...(signal ? { signal } : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
     }
   }
@@ -823,6 +862,88 @@ export type McpSessionProbeControl =
  * own body are the same exposure every raw probe has, and are handled by the
  * runner's `redactSecrets` / response-header allowlist.
  */
+/**
+ * Credential values the probe sent, in every form an agent could echo them:
+ * the full `Authorization` header value and the bare token after the scheme.
+ *
+ * Very short values are excluded — redacting a one- or two-character string
+ * would corrupt unrelated evidence — and the list is never logged.
+ */
+function sentCredentialValues(...headerSets: Array<Record<string, string> | undefined>): string[] {
+  const values = new Set<string>();
+  for (const headers of headerSets) {
+    const authorization = headers?.authorization;
+    if (typeof authorization !== 'string' || authorization.length === 0) continue;
+    values.add(authorization);
+    const spaceAt = authorization.indexOf(' ');
+    if (spaceAt > 0) values.add(authorization.slice(spaceAt + 1));
+  }
+  return [...values].filter(value => value.trim().length >= 8);
+}
+
+/** Replace every occurrence of a sent credential inside one string. */
+function redactCredentialValuesInText(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    if (!secret) continue;
+    out = out.split(secret).join('[REDACTED_CREDENTIAL]');
+  }
+  return out;
+}
+
+/**
+ * Deep value-based redaction of sent credentials across a parsed JSON body.
+ *
+ * The runner's `redactSecrets` matches property *names* (`token`, `api_key`,
+ * …). That does not help when an agent echoes the `Authorization` header it
+ * received into a value the probe legitimately records — a tool `description`,
+ * a `serverInfo.name`, a `WWW-Authenticate` parameter. On the positive probe
+ * the echoed value is the run's **valid** credential, so the evidence seam
+ * scrubs by value before anything reaches `response` /
+ * `response_record.payload`.
+ *
+ * Object keys are scrubbed too: a credential echoed as a key would otherwise
+ * survive as a property name.
+ */
+function redactCredentialValuesDeep(value: unknown, secrets: readonly string[], depth = 0): unknown {
+  if (secrets.length === 0 || depth > 12) return value;
+  if (typeof value === 'string') return redactCredentialValuesInText(value, secrets);
+  if (Array.isArray(value)) return value.map(entry => redactCredentialValuesDeep(entry, secrets, depth + 1));
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      Object.defineProperty(out, redactCredentialValuesInText(key, secrets), {
+        value: redactCredentialValuesDeep(entry, secrets, depth + 1),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Scrub sent credentials from the one probe response that becomes evidence.
+ * Body and headers both: `www-authenticate` is on the runner's response-header
+ * allowlist, so an agent could route a credential into a report through an
+ * `error_description` parameter.
+ */
+function redactCredentialsFromEvidence(httpResult: HttpProbeResult, secrets: readonly string[]): HttpProbeResult {
+  if (secrets.length === 0) return httpResult;
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(httpResult.headers)) {
+    headers[name] = redactCredentialValuesInText(value, secrets);
+  }
+  return {
+    ...httpResult,
+    headers,
+    body: redactCredentialValuesDeep(httpResult.body, secrets),
+    ...(httpResult.error !== undefined ? { error: redactCredentialValuesInText(httpResult.error, secrets) } : {}),
+  };
+}
+
 export async function rawMcpSessionProbe(options: {
   agentUrl: string;
   /** Credentials under test. Empty for the unauthenticated probe. */
@@ -833,30 +954,111 @@ export async function rawMcpSessionProbe(options: {
   allowPrivateIp?: boolean;
   /** Scoped fetch implementation for every request this probe makes. */
   fetchFn?: typeof fetch;
-}): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult; stage: McpSessionStage }> {
-  const { agentUrl, headers = {}, control, allowPrivateIp = false, fetchFn } = options;
+  /** Run-level cancellation. Threaded through every request and cleanup. */
+  signal?: AbortSignal;
+  /** Per-request cap; defaults to `ssrfSafeFetch`'s 10 s. */
+  timeoutMs?: number;
+}): Promise<{
+  httpResult: HttpProbeResult;
+  taskResult?: TaskResult;
+  stage: McpSessionStage;
+  /** Fixed-vocabulary description of the graded verdict. Never agent text. */
+  detail: string;
+}> {
+  const { agentUrl, headers = {}, control, allowPrivateIp = false, fetchFn, signal, timeoutMs } = options;
+  const lifecycle = { agentUrl, allowPrivateIp, fetchFn, signal, timeoutMs };
   // The graded attempt runs first so its response is captured as evidence
   // regardless of what the control does afterwards.
-  const graded = await runMcpSessionLifecycle({ agentUrl, headers, allowPrivateIp, fetchFn });
+  const rawGraded = await runMcpSessionLifecycle({ ...lifecycle, headers });
+  // Evidence seam: everything downstream (`response`,
+  // `response_record.payload`, validations) reads this response, so scrub the
+  // credentials we just sent out of it by value before anyone can persist it.
+  // The runner's name-based `redactSecrets` still runs on top.
+  const secrets = sentCredentialValues(headers, control.kind === 'credential' ? control.headers : undefined);
+  const graded: McpSessionAttempt = {
+    ...rawGraded,
+    posted: { ...rawGraded.posted, httpResult: redactCredentialsFromEvidence(rawGraded.posted.httpResult, secrets) },
+  };
   const taskResult =
     graded.posted.parsed && !graded.posted.parseError
       ? taskResultFromRpc(graded.posted.httpResult, graded.posted.parsed)
       : taskResultFromPostFailure(graded.posted);
-  const conclusive = { httpResult: graded.posted.httpResult, taskResult, stage: graded.stage };
+  const conclusive = {
+    httpResult: graded.posted.httpResult,
+    taskResult: {
+      ...taskResult,
+      ...(taskResult.data !== undefined ? { data: redactCredentialValuesDeep(taskResult.data, secrets) } : {}),
+      ...(taskResult.error !== undefined ? { error: redactCredentialValuesInText(taskResult.error, secrets) } : {}),
+    },
+    stage: graded.stage,
+    detail: graded.detail,
+  };
 
-  if (control.kind === 'probe_is_valid_credential') return conclusive;
+  // A positive probe presents the run's valid credential, so its own
+  // acceptance IS the evidence — but only when the lifecycle actually
+  // completed. Enforced here rather than in the authored `http_status`
+  // validation for the same reason as the negative direction below: a
+  // storyboard that omits that check must not be able to present a refused
+  // credential as a successful static-credential probe.
+  if (control.kind === 'probe_is_valid_credential') {
+    if (graded.accepted) return conclusive;
+    if (graded.protocolIncompatible) {
+      return inconclusiveSessionProbe(
+        graded,
+        `${graded.detail} at ${graded.stage}`,
+        "Upgrade the SDK to one that implements the agent's MCP wire version, then re-run."
+      );
+    }
+    return refusedSessionProbe(
+      graded,
+      `the run's valid credential did not complete the protected operation (rejected at ` +
+        `${graded.stage}: ${graded.detail}), so there is no successful protected call to certify`,
+      'Confirm the credential is current and that the agent accepts it on MCP protocol operations.'
+    );
+  }
+
+  // Every other control kind means the graded attempt carried a credential
+  // state the agent is expected to refuse (deliberately invalid, or none).
+  //
+  // Enforced HERE, in the primitive, rather than left to the authored
+  // `http_status_in` validation: a storyboard step that omits that check —
+  // a future revision, a custom `--file` storyboard, an adopter's own
+  // narrative — would otherwise mint `auth_mechanism_verified` off an
+  // endpoint that completed the whole lifecycle for a credential it should
+  // have rejected. The probe refuses to characterise an acceptance as
+  // rejection evidence no matter what the YAML asks of it.
+  if (graded.accepted) {
+    return refusedSessionProbe(
+      graded,
+      `the credential state under test completed the full session lifecycle (accepted at ` +
+        `${graded.stage}: ${graded.detail}), so the agent served a protected protocol operation with ` +
+        `credentials it was expected to refuse`,
+      'Enforce credential validation on MCP protocol operations before treating this path as conformant.'
+    );
+  }
+
+  if (graded.protocolIncompatible) {
+    return inconclusiveSessionProbe(
+      graded,
+      `${graded.detail} at ${graded.stage}`,
+      "Upgrade the SDK to one that implements the agent's MCP wire version, then re-run."
+    );
+  }
 
   if (control.kind === 'unavailable') {
     return inconclusiveSessionProbe(graded, control.reason, control.remedy);
   }
 
-  const acceptance = await runMcpSessionLifecycle({
-    agentUrl,
-    headers: control.headers,
-    allowPrivateIp,
-    fetchFn,
-  });
+  const acceptance = await runMcpSessionLifecycle({ ...lifecycle, headers: control.headers });
   if (acceptance.accepted) return conclusive;
+
+  if (acceptance.protocolIncompatible) {
+    return inconclusiveSessionProbe(
+      graded,
+      `${acceptance.detail} at ${acceptance.stage}`,
+      "Upgrade the SDK to one that implements the agent's MCP wire version, then re-run."
+    );
+  }
 
   return inconclusiveSessionProbe(
     graded,
@@ -865,18 +1067,31 @@ export async function rawMcpSessionProbe(options: {
   );
 }
 
-function inconclusiveSessionProbe(
-  graded: McpSessionAttempt,
-  reason: string,
-  remedy: string
-): { httpResult: HttpProbeResult; taskResult: TaskResult; stage: McpSessionStage } {
-  const inconclusive =
+type SessionProbeOutcome = {
+  httpResult: HttpProbeResult;
+  taskResult: TaskResult;
+  stage: McpSessionStage;
+  detail: string;
+};
+
+function inconclusiveSessionProbe(graded: McpSessionAttempt, reason: string, remedy: string): SessionProbeOutcome {
+  return sessionProbeError(
+    graded,
     `MCP session auth probe is inconclusive: ${reason}, so this step's response is not evidence ` +
-    `that the agent validates credentials. ${remedy}`;
+      `that the agent validates credentials. ${remedy}`
+  );
+}
+
+function refusedSessionProbe(graded: McpSessionAttempt, reason: string, remedy: string): SessionProbeOutcome {
+  return sessionProbeError(graded, `MCP session auth probe refuses this as auth evidence: ${reason}. ${remedy}`);
+}
+
+function sessionProbeError(graded: McpSessionAttempt, message: string): SessionProbeOutcome {
   return {
-    httpResult: { ...graded.posted.httpResult, error: inconclusive },
-    taskResult: failedTaskResult(inconclusive),
+    httpResult: { ...graded.posted.httpResult, error: message },
+    taskResult: failedTaskResult(message),
     stage: graded.stage,
+    detail: graded.detail,
   };
 }
 

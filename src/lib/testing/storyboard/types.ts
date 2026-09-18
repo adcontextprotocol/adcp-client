@@ -1531,6 +1531,11 @@ export const WEBHOOK_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
  * what makes the verdict independent of whether the agent enforces auth at
  * the session boundary or per operation.
  *
+ * What the probe can establish is bounded: that the endpoint accepts a
+ * credential the *runner was configured with* and refuses the states it was
+ * told to refuse. It does not verify any cryptographic property of that
+ * credential, and does not prove which issuer minted it.
+ *
  * Deliberately **not** a member of `PROBE_TASK_ALLOWLIST`: operators cannot
  * select it via `test_kit.auth.probe_task`, only the runner can resolve to it.
  */
@@ -2243,6 +2248,13 @@ export type RunnerDetailedSkipReason =
   /** A valid fixture strategy ladder exhausted without finding a binding. */
   | 'fixture_unsatisfied'
   /**
+   * The MCP session auth probe (`mcp_session_probe`) cannot grade this step:
+   * its authored validations assert an AdCP task response body that no MCP
+   * protocol operation produces. Distinct from the generic `probe_skipped` so
+   * human and JUnit output can surface the actionable detail (adcp-client#2940).
+   */
+  | 'session_probe_ungradable'
+  /**
    * A root capability predicate on the storyboard evaluated to false —
    * the agent explicitly declared it does not support the capability this
    * storyboard tests (e.g. `adcp.idempotency.supported: false`). The whole
@@ -2301,6 +2313,7 @@ export const DETAILED_SKIP_TO_CANONICAL: Record<RunnerDetailedSkipReason, Runner
   force_scenario_unsupported: 'not_applicable',
   fixture_seed_unsupported: 'not_applicable',
   fixture_unsatisfied: 'not_applicable',
+  session_probe_ungradable: 'not_applicable',
   capability_unsupported: 'not_applicable',
   capability_prerequisite_unavailable: 'not_applicable',
   rate_abuse_opt_out: 'unsatisfied_contract',
