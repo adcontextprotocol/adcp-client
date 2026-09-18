@@ -62,6 +62,12 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
 /**
  * Human-readable rendering of {@link PROBE_TASK_ALLOWLIST}, so probe, runner
  * and operator-facing remedies all name the same tools and cannot drift.
+ *
+ * Internal to the runner: exported for sibling modules, deliberately **not**
+ * re-exported from `@adcp/sdk/testing`. Report consumers should read
+ * {@link PROBE_TASK_ALLOWLIST} (which is public) and render it themselves.
+ *
+ * @internal
  */
 export const PROBE_TASK_ALLOWLIST_SUMMARY: string = PROBE_TASK_ALLOWLIST.join(', ');
 

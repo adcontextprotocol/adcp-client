@@ -35,7 +35,6 @@ function xmlSafeText(value: string): string {
   return (
     value
       // C0/C1 controls other than tab, LF and CR.
-      // eslint-disable-next-line no-control-regex -- escaping control chars is the point
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, escapeCodeUnit)
       // XML 1.0 noncharacters.
       .replace(/[\uFDD0-\uFDEF\uFFFE\uFFFF]/g, escapeCodeUnit)
@@ -51,10 +50,15 @@ function escapeCodeUnit(char: string): string {
  *
  * Only runner-authored reasons carry their detail into the report; other
  * details can contain raw seller diagnostics, and JUnit is a shared CI
- * artifact. The CLI draws the same line in `formatStepSkipLines`
- * (`bin/adcp-storyboard-summary.js`), which prefers the probe's own remedy
- * over a raw `skip.detail`. Length is capped so one long remedy cannot
- * dominate the document.
+ * artifact that gets archived, diffed and re-parsed long after the run.
+ *
+ * The terminal is intentionally more permissive: `formatStepSkipLines`
+ * (`bin/adcp-storyboard-summary.js`) prefers the probe's own remedy and will
+ * print a seller-authored `skip.detail` when that is all there is, because an
+ * operator reading their own run wants the detail and the CLI escapes control
+ * characters at print time. This gate is the stricter of the two, not a
+ * mirror of it. Length is capped so one long remedy cannot dominate the
+ * document.
  */
 const RUNNER_AUTHORED_SKIP_REASONS: ReadonlySet<string> = new Set([
   'capability_prerequisite_unavailable',

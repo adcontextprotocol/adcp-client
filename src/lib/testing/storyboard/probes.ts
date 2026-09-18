@@ -841,10 +841,10 @@ function transportErrorEvidence(agentUrl: string, detail: string): HttpProbeResu
  * `withRawResponseCapture` buffers the body via `response.clone().text()`
  * before truncating, so an oversized reply is already in memory by then.
  *
- * The probe has no legitimate need for a large or long-lived body: it reads
- * exactly one `InitializeResult` and one `ListToolsResult`. So the cap applies
- * to every content type, counts bytes as they stream, and errors the stream at
- * the boundary rather than after buffering.
+ * One lifecycle reads exactly one `InitializeResult` and one `CallToolResult`,
+ * so the body is bounded by what a single AdCP read page can legitimately be.
+ * The cap therefore applies to every content type, counts bytes as they
+ * stream, and errors the stream at the boundary rather than after buffering.
  *
  * The same wrapper carries the deadline. `RequestOptions.timeout` only covers
  * SDK *requests*; `notifications/initialized` is a fire-and-forget notification
@@ -857,10 +857,11 @@ function wrapProbeFetch(
   upstream: typeof fetch,
   options: {
     maxResponseBytes: number;
-    /** Hard ceiling on requests one lifecycle may make. */
-    maxRequests: number;
-    /** Hard ceiling on total bytes one lifecycle may read. */
-    maxTotalBytes: number;
+    /**
+     * Request / byte / deadline ceilings, shared across every lifecycle one
+     * probe runs so a candidate walk cannot multiply them.
+     */
+    budget: SessionProbeBudget;
     timeoutMs?: number;
     signal?: AbortSignal;
     /**
@@ -872,17 +873,21 @@ function wrapProbeFetch(
     onCapExceeded?: () => void;
   }
 ): typeof fetch {
-  const { maxResponseBytes, maxRequests, maxTotalBytes, timeoutMs, signal } = options;
-  // Per-lifecycle amplification budget. A server may answer the SSE stream with
-  // `retry: 0`, and the SDK's reconnection ceiling does not bind the POST-stream
-  // path — unbounded reconnects would issue thousands of requests in seconds and
-  // grow the capture array without limit. These counters are the backstop.
-  let requestCount = 0;
-  let totalBytes = 0;
+  const { maxResponseBytes, budget, timeoutMs, signal } = options;
+  // Amplification backstop. A server may answer the SSE stream with `retry: 0`,
+  // and the SDK's reconnection ceiling does not bind the POST-stream path —
+  // unbounded reconnects would issue thousands of requests in seconds and grow
+  // the capture array without limit. The budget is shared with every other
+  // lifecycle in this probe, so retrying a second candidate spends from the
+  // same pool rather than starting a fresh one.
   const wrapped: typeof fetch = async (input, init) => {
-    requestCount += 1;
-    if (requestCount > maxRequests) throw new ProbeAmplificationError('request', maxRequests);
-    if (totalBytes > maxTotalBytes) throw new ProbeAmplificationError('byte', maxTotalBytes);
+    if (budget.requestsRemaining <= 0) {
+      throw new ProbeAmplificationError('request', MCP_SESSION_PROBE_MAX_REQUESTS);
+    }
+    budget.requestsRemaining -= 1;
+    if (budget.bytesRemaining <= 0) throw new ProbeAmplificationError('byte', MCP_SESSION_PROBE_MAX_TOTAL_BYTES);
+    const msLeft = budget.deadlineAt - Date.now();
+    if (msLeft <= 0) throw new ProbeAmplificationError('deadline', MCP_SESSION_PROBE_WALK_TIMEOUT_MS);
     // Aborted by the body cap below: erroring the stream alone frees the
     // socket but leaves the SDK's pending request waiting out its own
     // timeout, so an oversized reply would still cost the full deadline.
@@ -891,6 +896,10 @@ function wrapProbeFetch(
     if (signal) signals.push(signal);
     if (init?.signal) signals.push(init.signal);
     if (timeoutMs !== undefined) signals.push(AbortSignal.timeout(timeoutMs));
+    // The whole-probe deadline, not just this request's: an agent that answers
+    // every exchange just inside `timeoutMs` would otherwise cost
+    // `requests x timeout x candidates`.
+    signals.push(AbortSignal.timeout(msLeft));
     const composed = AbortSignal.any(signals);
 
     // Identity encoding so a small gzip bomb cannot decompress past the cap
@@ -909,9 +918,9 @@ function wrapProbeFetch(
       signal: composed,
     });
     return capResponseBody(response, maxResponseBytes, capAbort, options.onCapExceeded, read => {
-      totalBytes += read;
-      if (totalBytes > maxTotalBytes) {
-        capAbort.abort(new ProbeAmplificationError('byte', maxTotalBytes));
+      budget.bytesRemaining -= read;
+      if (budget.bytesRemaining <= 0) {
+        capAbort.abort(new ProbeAmplificationError('byte', MCP_SESSION_PROBE_MAX_TOTAL_BYTES));
         options.onCapExceeded?.();
         return false;
       }
@@ -995,10 +1004,28 @@ class ProbeResponseTooLargeError extends Error {
   }
 }
 
-/** Raised when one lifecycle exceeds its request or total-byte budget. */
+/**
+ * Test seam for the shared amplification budget.
+ *
+ * `wrapProbeFetch`'s request, byte and deadline ceilings are backstops behind
+ * `reconnectionOptions.maxRetries: 0` — with the SDK configured as this probe
+ * configures it there is no reachable path that issues dozens of requests, so
+ * the only way to exercise the counters from outside is to drive the wrapper
+ * directly with a small budget. Internal; not part of the published surface.
+ *
+ * @internal
+ */
+export function __probeFetchWithBudgetForTest(
+  upstream: typeof fetch,
+  budget: { requestsRemaining: number; bytesRemaining: number; deadlineAt: number }
+): typeof fetch {
+  return wrapProbeFetch(upstream, { maxResponseBytes: MCP_SESSION_PROBE_MAX_RESPONSE_BYTES, budget });
+}
+
+/** Raised when a probe exceeds its shared request, byte or wall-clock budget. */
 class ProbeAmplificationError extends Error {
   constructor(
-    readonly kind: 'request' | 'byte',
+    readonly kind: 'request' | 'byte' | 'deadline',
     limit: number
   ) {
     super(`MCP session probe exceeded its ${kind} budget (${limit})`);
@@ -1007,16 +1034,43 @@ class ProbeAmplificationError extends Error {
 }
 
 /**
- * Per-lifecycle amplification budget.
+ * Amplification budget for **one whole probe**, candidate walk included.
  *
- * Five requests are expected: initialize, the initialized notification, the
- * optional standalone SSE stream, the graded `tools/call`, and the terminating
- * DELETE. 12 leaves slack for a conformant server that splits a response
- * across streams, while still bounding an agent that tries to turn one probe
- * into a request storm. Tripping it aborts the lifecycle rather than grading
- * whatever arrived.
+ * Five requests are expected per lifecycle: initialize, the initialized
+ * notification, the optional standalone SSE stream, the graded `tools/call`,
+ * and the terminating DELETE. A probe runs at most
+ * {@link MCP_SESSION_PROBE_MAX_CANDIDATES} graded lifecycles plus one control,
+ * so 28 leaves slack for a conformant server that splits a response across
+ * streams while still bounding an agent that tries to turn one probe into a
+ * request storm.
+ *
+ * Deliberately **not** reset per candidate: a per-lifecycle-only ceiling let a
+ * tarpitting agent multiply the whole budget by the candidate count.
  */
-const MCP_SESSION_PROBE_MAX_REQUESTS = 12;
+const MCP_SESSION_PROBE_MAX_REQUESTS = 28;
+
+/**
+ * Candidate targets one probe will try before giving up.
+ *
+ * Retrying past a shape refusal is what lets an agent whose first canonical
+ * read needs an argument still be graded, but the candidate list is as long as
+ * the agent's advertisement and each retry is a full lifecycle. Three is
+ * enough for the ordering to matter (allowlisted, then `get_principal`, then
+ * the next canonical read) without turning one step into a minute of wall
+ * clock.
+ */
+const MCP_SESSION_PROBE_MAX_CANDIDATES = 3;
+
+/**
+ * Wall-clock ceiling for one whole probe, candidate walk included.
+ *
+ * The per-request timeout bounds a single exchange; without an overall
+ * deadline an agent that answers every request just inside that timeout still
+ * costs `requests x timeout` per candidate. 25 s is comfortably above a
+ * healthy probe (tens of milliseconds locally, low seconds across a WAN) and
+ * far below the storyboard's own step budget.
+ */
+const MCP_SESSION_PROBE_WALK_TIMEOUT_MS = 25_000;
 
 /** Reconnection ceiling: a probe never resumes a stream. */
 const NO_RECONNECTION = {
@@ -1029,18 +1083,37 @@ const NO_RECONNECTION = {
 /** Fresh deadline for the detached cleanup DELETE. */
 const SESSION_TERMINATION_TIMEOUT_MS = 2_000;
 
-/** Total bytes one lifecycle may read across every request. */
+/** Total bytes one probe may read across every request. */
 const MCP_SESSION_PROBE_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 
 /**
- * Opt-in ceilings for the shared capture recorder. Passed explicitly so normal
- * MCP behaviour elsewhere is untouched; overflow is marked, and the probe then
- * fails closed rather than grading a silently truncated log.
+ * Mutable budget shared by every lifecycle one probe runs — the graded
+ * candidate walk and the acceptance control alike.
+ *
+ * Shared rather than per-lifecycle because the hazard is the *walk*: each
+ * retry is a whole new session, so a ceiling that resets per candidate is no
+ * ceiling at all. Best-effort session teardown keeps its own small budget so
+ * an exhausted probe still cleans up after itself.
  */
-const CAPTURE_CEILINGS = {
-  maxCaptures: MCP_SESSION_PROBE_MAX_REQUESTS,
-  maxTotalBodyBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
-} as const;
+interface SessionProbeBudget {
+  requestsRemaining: number;
+  bytesRemaining: number;
+  /** `Date.now()` value after which no further request may start. */
+  readonly deadlineAt: number;
+}
+
+function createSessionProbeBudget(): SessionProbeBudget {
+  return {
+    requestsRemaining: MCP_SESSION_PROBE_MAX_REQUESTS,
+    bytesRemaining: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+    deadlineAt: Date.now() + MCP_SESSION_PROBE_WALK_TIMEOUT_MS,
+  };
+}
+
+/** True once the probe may not start another lifecycle. */
+function budgetExhausted(budget: SessionProbeBudget): boolean {
+  return budget.requestsRemaining <= 0 || budget.bytesRemaining <= 0 || Date.now() >= budget.deadlineAt;
+}
 
 /**
  * Body cap for the session probe.
@@ -1053,6 +1126,22 @@ const CAPTURE_CEILINGS = {
  * the graded body is buffered for evidence.
  */
 const MCP_SESSION_PROBE_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Opt-in ceilings for the shared capture recorder. Passed explicitly so normal
+ * MCP behaviour elsewhere is untouched; overflow is marked, and the probe then
+ * fails closed rather than grading a silently truncated log.
+ */
+const CAPTURE_CEILINGS = {
+  maxCaptures: MCP_SESSION_PROBE_MAX_REQUESTS,
+  maxTotalBodyBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+  // Matched to this probe's own response cap. The recorder's 1 MiB default
+  // truncates mid-body and flags `bodyTruncated`, which for a 1-4 MiB reply
+  // the probe deliberately allows would hand the grader a body that is no
+  // longer parseable JSON — a legitimate large `list_creatives` page would
+  // read as a malformed response instead of an acceptance.
+  maxBodyBytes: MCP_SESSION_PROBE_MAX_RESPONSE_BYTES,
+} as const;
 
 /**
  * Drive one complete MCP session lifecycle with a single credential state and
@@ -1082,14 +1171,16 @@ const MCP_SESSION_PROBE_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 async function runMcpSessionLifecycle(options: {
   agentUrl: string;
   headers: Record<string, string>;
-  /** Advertised, read-shaped, auth-required AdCP tool to call with `{}`. */
+  /** Canonical, read-shaped, auth-required AdCP tool to call with `{}`. */
   toolName: string;
   allowPrivateIp: boolean;
+  /** Shared with every other lifecycle this probe runs. */
+  budget: SessionProbeBudget;
   fetchFn?: typeof fetch;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<McpSessionAttempt> {
-  const { agentUrl, headers, toolName, allowPrivateIp, fetchFn, signal, timeoutMs } = options;
+  const { agentUrl, headers, toolName, allowPrivateIp, budget, fetchFn, signal, timeoutMs } = options;
 
   // SSRF-guarded transport fetch innermost, then this probe's own hard byte
   // cap + deadline, then raw capture for grading. The cap sits *below* the
@@ -1104,8 +1195,7 @@ async function runMcpSessionLifecycle(options: {
       }),
       {
         maxResponseBytes: MCP_SESSION_PROBE_MAX_RESPONSE_BYTES,
-        maxRequests: MCP_SESSION_PROBE_MAX_REQUESTS,
-        maxTotalBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+        budget,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         ...(signal ? { signal } : {}),
         onCapExceeded: () => closeOnCapExceeded(),
@@ -1185,8 +1275,13 @@ async function runMcpSessionLifecycle(options: {
         }),
         {
           maxResponseBytes: MCP_SESSION_PROBE_MAX_RESPONSE_BYTES,
-          maxRequests: 2,
-          maxTotalBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+          // Teardown gets its own small budget, not the probe's: an exhausted
+          // walk must still be able to close the session it opened.
+          budget: {
+            requestsRemaining: 2,
+            bytesRemaining: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+            deadlineAt: Date.now() + SESSION_TERMINATION_TIMEOUT_MS,
+          },
           timeoutMs: SESSION_TERMINATION_TIMEOUT_MS,
         }
       ),
@@ -1228,29 +1323,32 @@ async function runMcpSessionLifecycle(options: {
   const evidence = httpProbeResultFromCapture(graded);
 
   if (thrown === undefined) {
-    // The call completed at the MCP layer. An operation-level AdCP error can
-    // still sit inside that successful envelope, so classify the payload.
-    const codes = adcpErrorCodesIn(toolResult);
-    if (codes.some(code => ADCP_AUTH_REJECTION_CODES.includes(code))) {
-      return {
-        verdict: 'auth_rejected',
-        accepted: false,
-        stage,
-        detail: `operation-level ${codes.find(c => ADCP_AUTH_REJECTION_CODES.includes(c))}`,
-        evidence,
-      };
-    }
-    if (codes.some(code => ADCP_SCHEMA_REJECTION_CODES.includes(code))) {
-      return {
-        verdict: 'schema_or_param',
-        accepted: false,
-        stage,
-        detail: 'operation-level INVALID_REQUEST',
-        evidence,
-      };
-    }
-    const isError = (toolResult as { isError?: unknown } | undefined)?.isError === true;
-    if (isError) {
+    // The call completed at the MCP layer.
+    //
+    // `isError === true` is the gate for *any* operation-level classification,
+    // on both `structuredContent` and the result root. An AdCP success
+    // envelope may legitimately carry `errors[]` — 116 response schemas model
+    // it as warnings / partial success, `list_transformers` among them — so
+    // reading a code out of a successful result would let an agent that just
+    // served tenant data to a bogus credential hand back
+    // `errors: [{ code: 'AUTH_INVALID' }]` as a warning and be graded a
+    // *rejection*. That is the fail-open case this probe exists to catch, so
+    // a success falls through to `accepted` no matter what its warnings say.
+    if ((toolResult as { isError?: unknown } | undefined)?.isError === true) {
+      const codes = adcpErrorCodesIn(toolResult);
+      const authCode = codes.find(code => ADCP_AUTH_REJECTION_CODES.includes(code));
+      if (authCode !== undefined) {
+        return { verdict: 'auth_rejected', accepted: false, stage, detail: `operation-level ${authCode}`, evidence };
+      }
+      if (codes.some(code => ADCP_SCHEMA_REJECTION_CODES.includes(code))) {
+        return {
+          verdict: 'schema_or_param',
+          accepted: false,
+          stage,
+          detail: 'operation-level INVALID_REQUEST',
+          evidence,
+        };
+      }
       // `isError` with no recognized AdCP code is an unexplained tool failure.
       // Bucketing it as a shape refusal would let a *control* that fails this
       // way count as "reached the handler", certifying an agent that refuses
@@ -1319,41 +1417,53 @@ async function runMcpSessionLifecycle(options: {
 }
 
 /**
- * Credential values the probe sent, in every form an agent could echo them:
- * the full `Authorization` header value and the bare token after the scheme
- * (which is also what rides in `x-adcp-auth`).
+ * Credential values the probe sent, in every form an agent could echo them.
  *
+ * Reads **every** credential-bearing header, not just `Authorization`: a
+ * normal AdCP dispatch also sends the bare token as `x-adcp-auth`, and a
+ * direct caller of this primitive may send that one alone. Header names are
+ * matched case-insensitively because `Record<string, string>` is not a
+ * `Headers` bag — `Authorization`, `authorization` and `X-AdCP-Auth` are all
+ * the same header on the wire but three distinct object keys here, and
+ * missing one leaves the credential in the persisted evidence.
+ *
+ * Every form is collected: the full header value, the bare token after a
+ * scheme, and for Basic the decoded `user:password` plus the password alone.
  * The returned list is scrub input only and is never logged.
  */
+const CREDENTIAL_HEADER_NAMES: ReadonlySet<string> = new Set(['authorization', 'x-adcp-auth', 'x-api-key']);
+
 function sentCredentialValues(...headerSets: Array<Record<string, string> | undefined>): string[] {
   const values = new Set<string>();
+  const add = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) values.add(value);
+  };
   for (const headers of headerSets) {
-    const authorization = headers?.authorization;
-    if (typeof authorization !== 'string' || authorization.length === 0) continue;
-    values.add(authorization);
-    const spaceAt = authorization.indexOf(' ');
-    if (spaceAt <= 0) continue;
-    const scheme = authorization.slice(0, spaceAt).toLowerCase();
-    const credential = authorization.slice(spaceAt + 1);
-    values.add(credential);
-    if (scheme !== 'basic') continue;
-    // Basic credentials travel base64-encoded, but an agent that decodes the
-    // header before echoing it (a "debug" handler logging the resolved user,
-    // an error template interpolating the password) leaks the cleartext form,
-    // which no amount of matching on the encoded blob catches.
-    const decoded = decodeBase64Utf8(credential);
-    if (decoded === undefined) continue;
-    values.add(decoded);
-    const colonAt = decoded.indexOf(':');
-    if (colonAt >= 0) {
-      const password = decoded.slice(colonAt + 1);
+    for (const [name, raw] of Object.entries(headers ?? {})) {
+      if (!CREDENTIAL_HEADER_NAMES.has(name.toLowerCase())) continue;
+      if (typeof raw !== 'string' || raw.length === 0) continue;
+      add(raw);
+      const spaceAt = raw.indexOf(' ');
+      if (spaceAt <= 0) continue; // No scheme prefix: the whole value is the token.
+      const scheme = raw.slice(0, spaceAt).toLowerCase();
+      const credential = raw.slice(spaceAt + 1);
+      add(credential);
+      if (scheme !== 'basic') continue;
+      // Basic credentials travel base64-encoded, but an agent that decodes the
+      // header before echoing it (a "debug" handler logging the resolved user,
+      // an error template interpolating the password) leaks the cleartext
+      // form, which no amount of matching on the encoded blob catches.
+      const decoded = decodeBase64Utf8(credential);
+      if (decoded === undefined) continue;
+      add(decoded);
+      const colonAt = decoded.indexOf(':');
       // The password alone is the secret half; the username is often an
       // account identifier that appears legitimately in evidence.
-      if (password.length > 0) values.add(password);
+      if (colonAt >= 0) add(decoded.slice(colonAt + 1));
     }
   }
   // No length floor. A short credential is still a credential, and the caller
-  // configured it deliberately; dropping 1–7-character values left a real
+  // configured it deliberately; dropping 1-7-character values left a real
   // bypass. Over-redacting evidence is the cheaper failure.
   return [...values].filter(value => value.trim().length > 0);
 }
@@ -1546,7 +1656,13 @@ export async function rawMcpSessionProbe(options: {
   allowPrivateIp?: boolean;
   /** Scoped fetch implementation for every request this probe makes. */
   fetchFn?: typeof fetch;
-  /** Run-level cancellation. Threaded through every request and cleanup. */
+  /**
+   * Run-level cancellation, applied to every graded and control request.
+   *
+   * Best-effort session teardown is deliberately **not** bound to it: a run
+   * cancelled after `initialize` must still send its DELETE, so cleanup runs
+   * detached with its own short deadline.
+   */
   signal?: AbortSignal;
   /** Per-request cap handed to the SDK's `RequestOptions.timeout`. */
   timeoutMs?: number;
@@ -1570,16 +1686,27 @@ export async function rawMcpSessionProbe(options: {
   gradedTool: string;
 }> {
   const { agentUrl, headers = {}, control, allowPrivateIp = false, fetchFn, signal, timeoutMs } = options;
-  const candidates = typeof options.toolName === 'string' ? [options.toolName] : [...options.toolName];
-  const base = { agentUrl, allowPrivateIp, fetchFn, signal, timeoutMs };
+  const requested = typeof options.toolName === 'string' ? [options.toolName] : [...options.toolName];
+  // An empty candidate list is a caller bug (the runner reports
+  // `session_probe_ungradable` instead of calling here), but it must not throw
+  // out of a conformance run.
+  if (requested.length === 0) return noTargetProbe(agentUrl);
+  // Bounded walk: at most three candidates, and every lifecycle draws from one
+  // shared request/byte/deadline budget. Per-candidate ceilings alone let a
+  // tarpitting agent multiply the cost by the length of its own tool list.
+  const candidates = requested.slice(0, MCP_SESSION_PROBE_MAX_CANDIDATES);
+  const budget = createSessionProbeBudget();
+  const base = { agentUrl, allowPrivateIp, budget, fetchFn, signal, timeoutMs };
 
   // Walk candidates until one answers something other than a shape refusal.
   let graded!: McpSessionAttempt;
-  let toolName = candidates[0] ?? '';
+  let toolName = candidates[0] as string;
   for (const candidate of candidates) {
     toolName = candidate;
     graded = await runMcpSessionLifecycle({ ...base, toolName: candidate, headers });
     if (graded.verdict !== 'schema_or_param') break;
+    // Stop before opening a session the budget cannot pay for.
+    if (budgetExhausted(budget)) break;
   }
   const lifecycle = { ...base, toolName };
   // Evidence seam: the graded attempt above ran before any control, so its
@@ -1681,6 +1808,28 @@ type SessionProbeOutcome = {
   gradedTool: string;
 };
 
+/**
+ * Outcome for a probe called with no candidate target at all.
+ *
+ * The runner never reaches here — `planMcpSessionSentinel` reports
+ * `session_probe_ungradable` first — but this primitive is exported, and a
+ * direct caller passing `[]` must get an honest "nothing was graded" result
+ * rather than a TypeError out of a conformance run.
+ */
+function noTargetProbe(agentUrl: string): SessionProbeOutcome {
+  const message =
+    `MCP session probe could not run: no protected tool was supplied to grade, so nothing was learned ` +
+    `about this agent's credentials. Pass at least one canonical AdCP read task as \`toolName\`.`;
+  const evidence = transportErrorEvidence(agentUrl, 'no candidate target supplied');
+  return {
+    httpResult: { ...evidence, error: message },
+    taskResult: failedTaskResult(message),
+    stage: 'initialize',
+    detail: 'no candidate target supplied',
+    gradedTool: '',
+  };
+}
+
 /** Synthetic TaskResult so callers that want a body shape can read one. */
 function taskResultFromEvidence(graded: McpSessionAttempt): TaskResult {
   if (graded.accepted) {
@@ -1703,13 +1852,6 @@ function protocolIncompatibleProbe(
   );
 }
 
-/**
- * A lifecycle the official client refused on *shape* rather than status: a 2xx
- * whose body is not a conformant `InitializeResult` / `ListToolsResult`, or an
- * envelope it would not parse. Worded distinctly from both the credential and
- * the wire-version diagnostics so an adopter reads "fix your response shape"
- * instead of hunting a token problem.
- */
 /**
  * The agent refused the *shape* of the protected call. Not an auth result in
  * either direction: the selected target needs arguments this probe cannot

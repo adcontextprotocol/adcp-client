@@ -363,9 +363,12 @@ const CANONICAL_SKIP_DETAILS: Partial<Record<RunnerDetailedSkipReason, string>> 
 };
 
 /**
- * Per-request cap for the MCP session auth probe. A step can make up to eight
- * requests (graded + control lifecycle, four each), so the shared 10 s
- * `ssrfSafeFetch` default would let a tarpitting agent hold one step for ~80 s.
+ * Per-request cap for the MCP session auth probe.
+ *
+ * A step runs a graded lifecycle (retried across at most three canonical
+ * candidates) plus one control lifecycle, so the shared 10 s `ssrfSafeFetch`
+ * default would let a tarpitting agent hold one step for minutes. This bounds
+ * a single exchange; `rawMcpSessionProbe` bounds the step as a whole.
  */
 const MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS = 5_000;
 
@@ -7412,10 +7415,11 @@ async function executeProbeStep(
         // a stateful agent's echo cannot land them in this step's evidence.
         redactValues: runCredentialValues(options),
         allowPrivateIp: options.allow_http === true,
-        // Up to eight requests per step (two lifecycles x initialize /
-        // initialized / tools-list / delete). Honour run cancellation and cap
-        // each request well under the shared 10 s default so a tarpitting
-        // agent cannot hold a step for ~80 s.
+        // Honour run cancellation and cap each request well under the shared
+        // 10 s `ssrfSafeFetch` default. The probe additionally bounds the
+        // whole step — candidate walk included — with one shared request /
+        // byte / wall-clock budget, so a tarpitting agent cannot multiply this
+        // per-request cap by the length of its own tool list.
         ...(options.signal && { signal: options.signal }),
         timeoutMs: MCP_SESSION_PROBE_REQUEST_TIMEOUT_MS,
         ...(options.transport?.trustedFetchFn && { fetchFn: options.transport.trustedFetchFn }),
@@ -8869,37 +8873,60 @@ function sessionProbeRoutingHeaders(options: StoryboardRunOptions): Record<strin
     }
     headers[name] = value;
   }
-  // Match the SDK transport's own non-credential headers.
-  if (options.test_session_id) {
-    try {
-      assertSafeAuthHeaderPart(options.test_session_id, 'options.test_session_id');
-      headers['X-Test-Session-ID'] = options.test_session_id;
-    } catch {
-      /* malformed values are reported by the transport that uses them */
-    }
-  }
-  if (options.userAgent) {
-    try {
-      assertSafeAuthHeaderPart(options.userAgent, 'options.userAgent');
-      headers['User-Agent'] = options.userAgent;
-    } catch {
-      /* as above */
-    }
-  }
+  // Match the SDK transport's own non-credential headers — but only where the
+  // operator did not already set them. `options.headers` keys are arbitrary
+  // case (`x-test-session-id` from `-H`, `X-Test-Session-ID` here) and are
+  // distinct object properties, so an unconditional assignment emits the
+  // header *twice*. Explicit precedence: an operator's own value wins, and the
+  // runner's derived value only fills a gap.
+  setHeaderIfAbsent(headers, 'X-Test-Session-ID', options.test_session_id, 'options.test_session_id');
+  setHeaderIfAbsent(headers, 'User-Agent', options.userAgent, 'options.userAgent');
   return headers;
 }
 
 /**
- * Credential values this run holds, for value-based header exclusion. Short
- * values are ignored so a one-character credential cannot strip every header.
+ * Set a runner-derived header only when the operator has not already supplied
+ * it under any capitalisation. Malformed values are dropped here; the
+ * transport that owns them reports them.
+ */
+function setHeaderIfAbsent(
+  headers: Record<string, string>,
+  name: string,
+  value: string | undefined,
+  label: string
+): void {
+  if (!value) return;
+  const lower = name.toLowerCase();
+  if (Object.keys(headers).some(existing => existing.toLowerCase() === lower)) return;
+  try {
+    assertSafeAuthHeaderPart(value, label);
+  } catch {
+    return;
+  }
+  headers[name] = value;
+}
+
+/**
+ * Credential values this run holds, for value-based header exclusion and for
+ * scrubbing evidence.
+ *
+ * **Basic usernames are deliberately absent.** The password is the secret
+ * half; the username is usually an account or tenant identifier that appears
+ * legitimately in a `WWW-Authenticate` realm, a routing header and the
+ * agent's own diagnostics. Redacting it corrupts exactly the evidence an
+ * operator needs, for no secrecy gain — `probes.ts` draws the same line when
+ * it decodes a Basic header. The full `user:password` pair and the password
+ * alone are both covered.
  */
 function runCredentialValues(options: StoryboardRunOptions): string[] {
   const values: string[] = [];
   const auth = options.auth;
   if (auth?.type === 'bearer' && typeof auth.token === 'string') values.push(auth.token);
   if (auth?.type === 'basic') {
-    if (typeof auth.username === 'string') values.push(auth.username);
     if (typeof auth.password === 'string') values.push(auth.password);
+    if (typeof auth.username === 'string' && typeof auth.password === 'string') {
+      values.push(`${auth.username}:${auth.password}`);
+    }
   }
   if (auth?.type === 'oauth' || auth?.type === 'oauth_client_credentials') {
     const token = auth.tokens?.access_token;
@@ -8908,8 +8935,10 @@ function runCredentialValues(options: StoryboardRunOptions): string[] {
   const kit = options.test_kit?.auth;
   if (typeof kit?.api_key === 'string') values.push(kit.api_key);
   const basic = kit?.basic;
-  if (typeof basic?.username === 'string') values.push(basic.username);
   if (typeof basic?.password === 'string') values.push(basic.password);
+  if (typeof basic?.username === 'string' && typeof basic?.password === 'string') {
+    values.push(`${basic.username}:${basic.password}`);
+  }
   if (typeof basic?.credentials === 'string') values.push(basic.credentials);
   // Custom `options.headers` values are credentials too whenever the header
   // name says so — an adopter's `x-gateway-token` is as much a secret as a
@@ -9504,16 +9533,22 @@ function planMcpSessionSentinel(
 
   const unroutable = unroutableProbeHeader(options);
   if (unroutable !== undefined) {
+    // Ambiguity about the *operator's* header is not an agent defect. Failing
+    // the step would mark a conformant agent non-compliant for how the run was
+    // invoked, so this is reported as an ungradable coverage gap: the probe
+    // still refuses to forward or drop the header, it just says why instead of
+    // blaming the agent.
     return {
-      kind: 'error',
-      error:
-        `Cannot run the MCP session probe: the runner cannot classify run header ` +
-        `"${escapeControlChars(unroutable.slice(0, 64))}", and both answers are unsafe — forwarding it could ` +
-        `make the unauthenticated probe authenticated, dropping it could send the probe to a different tenant ` +
-        `than the rest of this run. Three ways forward: rename it to a recognised routing header ` +
-        `(${[...SESSION_PROBE_ROUTING_HEADERS].join(', ')}); drop it from this run if the probe does not need ` +
-        `it; or, if it carries a credential, move that into \`options.auth\` / \`test_kit.auth\` where the ` +
-        `runner owns it.`,
+      kind: 'skip',
+      reason: 'session_probe_ungradable',
+      detail:
+        `The runner cannot classify run header "${escapeControlChars(unroutable.slice(0, 64))}", and both ` +
+        `answers are unsafe — forwarding it could make the unauthenticated probe authenticated, dropping it ` +
+        `could send the probe to a different tenant than the rest of this run. Nothing was graded, and this ` +
+        `is a property of the run, not of the agent. Three ways forward: rename it to a recognised routing ` +
+        `header (${[...SESSION_PROBE_ROUTING_HEADERS].join(', ')}); drop it from this run if the probe does ` +
+        `not need it; or, if it carries a credential, move that into \`options.auth\` / \`test_kit.auth\` ` +
+        `where the runner owns it.`,
     };
   }
 
