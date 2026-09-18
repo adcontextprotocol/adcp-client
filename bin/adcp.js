@@ -3119,7 +3119,7 @@ async function handleStoryboardRun(args) {
         printCapabilityPrerequisiteSkip(step);
         printStepSkipDetail(step);
         if (step.error) {
-          console.log(`   Error: ${step.error}`);
+          console.log(`   Error: ${escapeTerminalControlChars(step.error)}`);
         }
         for (const v of step.validations) {
           const vIcon = v.passed ? '✅' : '❌';
@@ -4585,7 +4585,7 @@ async function handleMultiInstanceStoryboardRun(args, opts, urls) {
           printCapabilityPrerequisiteSkip(step);
           printStepSkipDetail(step);
           if (step.error) {
-            console.log(`   Error: ${step.error}`);
+            console.log(`   Error: ${escapeTerminalControlChars(step.error)}`);
           }
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
@@ -4904,7 +4904,7 @@ async function handleAgentsRoutedStoryboardRun(args, opts, routing) {
           console.log(`   Task: ${step.task}`);
           printCapabilityPrerequisiteSkip(step);
           printStepSkipDetail(step);
-          if (step.error) console.log(`   Error: ${step.error}`);
+          if (step.error) console.log(`   Error: ${escapeTerminalControlChars(step.error)}`);
           for (const v of step.validations) {
             const vIcon = v.passed ? '✅' : '❌';
             console.log(`   ${vIcon} ${v.description}`);
@@ -5704,7 +5704,7 @@ function renderDiagnosisReport(report) {
     const label = STEP_LABELS[step.name] || step.name;
     const prefix = `  • ${label}`;
     if (step.error) {
-      console.log(`${prefix}  ↳ skipped: ${step.error}`);
+      console.log(`${prefix}  ↳ skipped: ${escapeTerminalControlChars(step.error)}`);
       continue;
     }
     if (step.http) {

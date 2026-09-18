@@ -1519,22 +1519,32 @@ export const WEBHOOK_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_.:-]{16,255}$/;
  * `$test_kit.auth.probe_task` normally resolves to an advertised entry of
  * `PROBE_TASK_ALLOWLIST`. When MCP discovery succeeds but the agent advertises
  * none of them, `selectProbeTask` resolves to this sentinel instead of
- * `undefined`, and the runner drives a complete MCP session lifecycle —
- * `initialize` → `notifications/initialized` → `tools/list`, then `DELETE` to
- * terminate — instead of a tool call.
+ * `undefined` — but only on an explicit `protocol: 'mcp'`. The runner then
+ * drives a complete MCP session lifecycle: `initialize` →
+ * `notifications/initialized` → `tools/call` against a canonical AdCP
+ * protected read the agent advertises, then `DELETE` to terminate the session.
  *
- * Every step of that lifecycle has a parameter surface defined by the MCP
- * specification rather than by the agent's own tool schemas, so — unlike an
- * arbitrary non-allowlisted AdCP tool — it can never 400 on agent-authored
- * schema validation before the auth layer runs. `tools/list` is the graded
- * operation: probing through it (rather than stopping at the handshake) is
- * what makes the verdict independent of whether the agent enforces auth at
- * the session boundary or per operation.
+ * The graded call is `tools/call`, not MCP discovery: `tools/list` is not an
+ * AdCP protected task (`get_adcp_capabilities` is mandatory-public), so it can
+ * never be evidence about this agent's authentication. Grading a real
+ * protected operation — rather than stopping at the handshake — is also what
+ * makes the verdict independent of whether the agent enforces auth at the
+ * session boundary or per operation.
+ *
+ * The target is drawn from the canonical AdCP tool registries, excludes the
+ * public tier and mutating tasks, and must declare no required request field.
+ * The runner still cannot guarantee an agent accepts an empty-argument call:
+ * the next candidate is tried, and if every one refuses the shape the step
+ * reports *inconclusive* on its response rather than an auth result. When the
+ * agent advertises no eligible target at all, the step is skipped
+ * `session_probe_ungradable` instead.
  *
  * What the probe can establish is bounded: that the endpoint accepts a
  * credential the *runner was configured with* and refuses the states it was
- * told to refuse. It does not verify any cryptographic property of that
- * credential, and does not prove which issuer minted it.
+ * told to refuse, **at the tool it graded**. It is evidence that the auth
+ * mechanism is enforced, not proof that every tool enforces it. It does not
+ * verify any cryptographic property of that credential, and does not prove
+ * which issuer minted it.
  *
  * Deliberately **not** a member of `PROBE_TASK_ALLOWLIST`: operators cannot
  * select it via `test_kit.auth.probe_task`, only the runner can resolve to it.

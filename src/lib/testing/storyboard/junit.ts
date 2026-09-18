@@ -10,14 +10,59 @@ import type { StoryboardResult, StoryboardStepResult, StoryboardStepHint } from 
 import { collectDetachedAssertionFailures } from '../compliance/storyboard-tracks';
 import { randomBytes } from 'node:crypto';
 
+/**
+ * Escape a value for XML **and** neutralise what XML 1.0 cannot represent.
+ *
+ * Markup-significant characters are entity-encoded as usual. C0/C1 controls
+ * (other than tab/LF/CR) and the XML 1.0 noncharacters U+FDD0–FDEF, U+FFFE and
+ * U+FFFF are illegal in an XML 1.0 document *even as numeric references*, so
+ * emitting one produces a report a strict CI parser rejects outright. Every
+ * attribute and body in this formatter carries runner- or agent-supplied text
+ * (failure messages, skip details, advisory findings, assertion details), so
+ * the sanitisation lives here rather than at twelve call sites.
+ */
 function xmlEscape(s: unknown): string {
-  return String(s ?? '')
+  return xmlSafeText(String(s ?? ''))
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;');
 }
+
+/** Replace characters XML 1.0 cannot represent with a printable escape. */
+function xmlSafeText(value: string): string {
+  return (
+    value
+      // C0/C1 controls other than tab, LF and CR.
+      // eslint-disable-next-line no-control-regex -- escaping control chars is the point
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, escapeCodeUnit)
+      // XML 1.0 noncharacters.
+      .replace(/[\uFDD0-\uFDEF\uFFFE\uFFFF]/g, escapeCodeUnit)
+  );
+}
+
+function escapeCodeUnit(char: string): string {
+  return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+}
+
+/**
+ * Trust boundary for a skip detail.
+ *
+ * Only runner-authored reasons carry their detail into the report; other
+ * details can contain raw seller diagnostics, and JUnit is a shared CI
+ * artifact. The CLI draws the same line in `formatStepSkipLines`
+ * (`bin/adcp-storyboard-summary.js`), which prefers the probe's own remedy
+ * over a raw `skip.detail`. Length is capped so one long remedy cannot
+ * dominate the document.
+ */
+const RUNNER_AUTHORED_SKIP_REASONS: ReadonlySet<string> = new Set([
+  'capability_prerequisite_unavailable',
+  'session_probe_ungradable',
+  'fixture_unsatisfied',
+]);
+
+const MAX_SKIP_DETAIL_CHARS = 400;
 
 function hintLines(hints: readonly StoryboardStepHint[] | undefined): string[] {
   if (!hints || hints.length === 0) return [];
@@ -69,27 +114,11 @@ function formatAdvisoryFinding(validation: { description: string; error?: string
  * frequently the only surface a CI reviewer reads.
  */
 function stepSkipMessage(step: { skip_reason?: string; skip?: { detail?: string } }): string {
-  const reason = xmlSafeText(step.skip_reason || 'skipped');
-  const detail = step.skip?.detail === undefined ? undefined : xmlSafeText(step.skip.detail);
-  return detail ? `${reason}: ${detail}` : reason;
-}
-
-/**
- * Escape characters XML 1.0 cannot represent at all.
- *
- * `xmlEscape` handles the markup-significant five, but C0 controls other than
- * tab/LF/CR are **illegal in XML 1.0 even as numeric references** — emitting
- * one produces a document that strict CI parsers reject outright, turning an
- * agent-supplied string into a broken report. Skip details carry
- * agent-supplied fragments (advertised tool names, seller diagnostics), so
- * neutralise them here rather than trusting every producer upstream.
- */
-function xmlSafeText(value: string): string {
-  // eslint-disable-next-line no-control-regex -- escaping control chars is the point
-  return value.replace(
-    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g,
-    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
-  );
+  const reason = step.skip_reason || 'skipped';
+  const raw = step.skip?.detail;
+  if (raw === undefined || !RUNNER_AUTHORED_SKIP_REASONS.has(step.skip_reason ?? '')) return reason;
+  const clipped = raw.length > MAX_SKIP_DETAIL_CHARS ? `${raw.slice(0, MAX_SKIP_DETAIL_CHARS)}…` : raw;
+  return `${reason}: ${clipped}`;
 }
 
 export function formatStoryboardResultsAsJUnit(results: StoryboardResult[]): string {

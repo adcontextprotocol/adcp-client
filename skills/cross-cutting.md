@@ -53,15 +53,18 @@ An agent that accepts unauthenticated requests is non-compliant — the universa
 
 `security_baseline` proves authentication by calling a **protected AdCP tool** with an empty request body. It picks that target from `test_kit.auth.probe_task` when you advertise one of `list_creatives`, `get_media_buy_delivery`, `list_authorized_properties`, `get_signals`, `list_property_lists`, `list_collection_lists`, `list_content_standards`, `list_accounts`.
 
-Advertise none of them and the runner falls back to an MCP session probe that selects any read-shaped (`list_*` / `get_*`) auth-required tool you do advertise. It will never use:
+Advertise none of them and the runner falls back to an MCP session probe, which selects a target from the **canonical AdCP task registry** — `get_principal`, `list_tasks`, `list_transformers`, `get_plan_audit_logs` are the parameter-free protected reads outside the allowlist today. Selection order is the runner's, not your advertisement order, and it will never use:
 
-- **public-tier tools** — `get_adcp_capabilities` (mandatory-public), `get_products`, `list_creative_formats`;
+- **tool names you invented** — only canonical AdCP tasks are eligible. Enforcing credentials on a `get_probe_target` of your own while leaving the real surface open certifies nothing;
+- **public-tier tools** — `get_adcp_capabilities` (mandatory-public), `get_products`, `list_products`, `list_creative_formats`;
 - **mutating tools** — an empty-argument write is not a read probe;
 - **`tools/list`** — MCP discovery is not an AdCP protected task, so it is never the evidence.
 
-If nothing qualifies, the step grades `session_probe_ungradable` and **no auth mechanism can be certified**. Static-credential-only agents are affected most: the positive API-key/Basic probe asserts an AdCP response body that no protocol operation produces, so that branch cannot contribute on session evidence alone. The durable fix is to advertise one allowlisted read tool; serving RFC 9728 metadata and running with `--oauth` verifies the OAuth branch instead.
+If nothing qualifies, the step reports `session_probe_ungradable` and **no auth mechanism can be certified**. Static-credential-only agents are affected most: the positive API-key/Basic probe asserts an AdCP response body that no protocol operation produces, so that branch cannot contribute on session evidence alone. The durable fix is to advertise one allowlisted read tool; serving RFC 9728 metadata and running with `--oauth` verifies the OAuth branch instead.
 
-If your tool refuses an empty-argument call on shape (`INVALID_REQUEST`, a missing required field), the probe reports **inconclusive** rather than a pass or a fail — it cannot tell a credential decision from a schema decision.
+If your tool refuses an empty-argument call on shape (`INVALID_REQUEST`, a missing required field), the probe retries the next candidate and — if they all refuse — reports **inconclusive** rather than a pass or a fail. It cannot tell a credential decision from a schema decision.
+
+A pass here means the mechanism is enforced **at the tool that was graded** (the step note names it). It is not a certificate that every tool checks credentials, and it verifies nothing cryptographic about the credential or its issuer.
 
 ## Don't break when RFC 9421 Signature headers arrive
 

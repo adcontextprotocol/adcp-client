@@ -26,6 +26,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { createAgentTransportFetch } from '../../net';
 import {
+  getCaptureOverflowFromError,
   getCapturesFromError,
   withRawResponseCapture,
   wrapFetchWithCapture,
@@ -40,6 +41,7 @@ import {
   isPrivateIp as sharedIsPrivateIp,
 } from '../../net';
 import { MCP_SESSION_PROBE_TASK } from './types';
+import { PROBE_TASK_ALLOWLIST_SUMMARY } from './test-kit';
 import type { HttpProbeResult } from './types';
 import type { TaskResult } from '../types';
 
@@ -533,7 +535,7 @@ export async function rawMcpProbe(options: {
 //
 // AGENTS.md is absolute: MCP goes through the official
 // `@modelcontextprotocol/sdk` client, never a hand-rolled lifecycle. This
-// probe therefore drives `Client.connect()` → `Client.listTools()` →
+// probe therefore drives `Client.connect()` → `Client.callTool(target, {})` →
 // `StreamableHTTPClientTransport.terminateSession()` and lets the SDK own
 // `initialize`, `notifications/initialized`, response-id correlation, result
 // schema validation and protocol-version negotiation.
@@ -543,8 +545,8 @@ export async function rawMcpProbe(options: {
 //
 //   - `StreamableHTTPClientTransportOptions.fetch` takes the repo's
 //     SSRF-guarded `createAgentTransportFetch` (DNS classification,
-//     connection pinning, redirect validation), wrapped in the same
-//     size-limit and raw-capture layers `protocols/mcp.ts` uses.
+//     connection pinning, redirect validation), wrapped in this probe's own
+//     body cap and deadline plus the raw-capture layer `protocols/mcp.ts` uses.
 //   - `withRawResponseCapture` records each exchange, and attaches partial
 //     captures to a thrown error — which is how a 401 stays gradable even
 //     though `connect()` rejects.
@@ -671,11 +673,17 @@ function findHeader(headers: Record<string, string>, name: string): string | und
   return Object.entries(headers).find(([key]) => key.toLowerCase() === name)?.[1];
 }
 
-/** Session id the server issued on `initialize`, read from the capture log. */
+/**
+ * Session id the server issued on `initialize`.
+ *
+ * Scoped to the initialize exchange on purpose: a later response advertising a
+ * different `Mcp-Session-Id` would otherwise be picked up and cleanup would
+ * DELETE a session the probe never established, leaving the real one open.
+ */
 function sessionIdFromCaptures(captures: readonly RawHttpCapture[]): string | undefined {
-  for (const capture of [...captures].reverse()) {
-    const entry = Object.entries(capture.headers).find(([name]) => name.toLowerCase() === 'mcp-session-id');
-    const value = entry?.[1];
+  for (const capture of captures) {
+    if (capture.requestJsonRpcMethod !== 'initialize') continue;
+    const value = findHeader(capture.headers, 'mcp-session-id');
     if (typeof value === 'string' && value.length > 0) return value;
   }
   return undefined;
@@ -710,23 +718,61 @@ function gradedCapture(captures: readonly RawHttpCapture[]): RawHttpCapture | un
  * the storyboard contract is the thing that needs to widen — tracked with the
  * other upstream items in the PR description.
  */
-const ADCP_AUTH_REJECTION_CODES: readonly string[] = ['AUTH_MISSING', 'AUTH_INVALID'];
+const ADCP_AUTH_REJECTION_CODES: readonly string[] = [
+  'AUTH_MISSING',
+  'AUTH_INVALID',
+  // Deprecated in AdCP 3.x but retained by the error-code enum as a
+  // backward-compatible alias for the two above, so an agent still emitting it
+  // is making an authentication statement.
+  'AUTH_REQUIRED',
+];
 
 /** AdCP error codes that mean the call shape was refused, not the credential. */
 const ADCP_SCHEMA_REJECTION_CODES: readonly string[] = ['INVALID_REQUEST'];
 
-/** Scan a tool-result envelope for an AdCP error code, bounded in depth. */
-function adcpErrorCodesIn(value: unknown, depth = 0): string[] {
-  if (depth > 8 || value === null) return [];
-  if (typeof value === 'string') {
-    const upper = value.toUpperCase();
-    return [...ADCP_AUTH_REJECTION_CODES, ...ADCP_SCHEMA_REJECTION_CODES].filter(code => upper.includes(code));
+/** Property names an AdCP error code is carried under. */
+const ADCP_ERROR_CODE_FIELDS: ReadonlySet<string> = new Set(['code', 'error_code', 'errorCode']);
+
+/**
+ * Collect AdCP error codes from the **recognized error envelope** of a tool
+ * result, never from arbitrary payload data.
+ *
+ * Two unsound shortcuts are avoided here:
+ *
+ *   - A substring scan over every string would grade a *successful*, fail-open
+ *     payload that merely documents its vocabulary — prose like "on failure
+ *     this returns AUTH_INVALID", or a `supported_error_codes` enum — as a
+ *     credential rejection.
+ *   - An exact `code` field *anywhere* is almost as bad: tenant data routinely
+ *     carries `code` (a currency code, a country code, a line-item code), so a
+ *     successful payload containing `{ code: 'AUTH_INVALID' }` in a data row
+ *     would certify an agent that just served that row to a bogus token.
+ *
+ * So only the AdCP error envelope is inspected: `error` / `errors[]` on the
+ * structured content (or on the result root). Per the error-handling contract
+ * an agent signalling an operation-level failure populates that envelope *and*
+ * flips `isError`, so this is where a real rejection lives.
+ */
+function adcpErrorCodesIn(toolResult: unknown): string[] {
+  const result = toolResult as { structuredContent?: unknown; content?: unknown } | null | undefined;
+  const roots = [result?.structuredContent, result].filter(
+    (root): root is Record<string, unknown> => root !== null && typeof root === 'object'
+  );
+  const envelopes: unknown[] = [];
+  for (const root of roots) {
+    if (root.error !== undefined) envelopes.push(root.error);
+    if (Array.isArray(root.errors)) envelopes.push(...root.errors);
   }
-  if (Array.isArray(value)) return value.flatMap(entry => adcpErrorCodesIn(entry, depth + 1));
-  if (typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>).flatMap(entry => adcpErrorCodesIn(entry, depth + 1));
+  const found: string[] = [];
+  for (const envelope of envelopes) {
+    if (envelope === null || typeof envelope !== 'object') continue;
+    for (const [key, entry] of Object.entries(envelope as Record<string, unknown>)) {
+      if (!ADCP_ERROR_CODE_FIELDS.has(key) || typeof entry !== 'string') continue;
+      const code = entry.trim().toUpperCase();
+      if (ADCP_AUTH_REJECTION_CODES.includes(code) || ADCP_SCHEMA_REJECTION_CODES.includes(code)) found.push(code);
+    }
   }
-  return [];
+  return found;
 }
 
 /** True when the official client refused the server's negotiated wire version. */
@@ -737,17 +783,36 @@ function isUnsupportedProtocolVersion(error: unknown): boolean {
 }
 
 /**
- * Statuses that constitute an affirmative authentication rejection.
+ * Statuses that are an authentication rejection on their own.
  *
- * 401 is the semantically correct answer (RFC 6750 §3); 403 is accepted
- * because production gateways conflate them; 400 covers a credential the agent
- * refused to parse (RFC 6750 §3.1). Everything else — 5xx, a malformed 2xx, a
- * transport failure — is a broken exchange, not evidence about credentials.
+ * 401 is the semantically correct answer (RFC 6750 §3) and 403 is accepted
+ * because production gateways conflate them.
+ *
+ * 400 is deliberately **not** here. RFC 6750 §3.1 permits it for a credential
+ * the agent refused to parse, but a 400 is far more often a parameter
+ * complaint — and the storyboard's `http_status_in: [400, 401, 403]` would
+ * then certify an agent that never checked the credential at all. A 400 needs
+ * explicit auth semantics: a `WWW-Authenticate` challenge, or an exact
+ * operation-level AdCP auth code.
  */
-const AUTH_REJECTION_STATUSES: ReadonlySet<number> = new Set([400, 401, 403]);
+const AUTH_REJECTION_STATUSES: ReadonlySet<number> = new Set([401, 403]);
+
+/**
+ * Whether a 400 carries affirmative evidence that it is about the credential
+ * rather than the request shape.
+ */
+function fourHundredIsAuthRejection(evidence: HttpProbeResult, codes: readonly string[]): boolean {
+  if (findHeader(evidence.headers, 'www-authenticate') !== undefined) return true;
+  return codes.some(code => ADCP_AUTH_REJECTION_CODES.includes(code));
+}
 
 /** Fixed-vocabulary description of a non-HTTP SDK rejection. */
 function sdkRejectionDetail(error: unknown): string {
+  if (error instanceof ProbeResponseTooLargeError) return 'response exceeded the probe body cap';
+  if (error instanceof ProbeAmplificationError) return `exceeded the probe ${error.kind} budget`;
+  const cause = (error as { cause?: unknown } | undefined)?.cause;
+  if (cause instanceof ProbeResponseTooLargeError) return 'response exceeded the probe body cap';
+  if (cause instanceof ProbeAmplificationError) return `exceeded the probe ${cause.kind} budget`;
   if (error instanceof StreamableHTTPError && typeof error.code === 'number') {
     return `HTTP ${error.code}`;
   }
@@ -786,12 +851,16 @@ function transportErrorEvidence(agentUrl: string, detail: string): HttpProbeResu
  * with no response handler, so a server that accepts the POST and withholds the
  * response would hang `connect()` indefinitely. Applying the signal at the
  * fetch boundary bounds every exchange uniformly — initialize, the
- * notification, tools/list and the terminating DELETE.
+ * notification, the graded tools/call and the terminating DELETE.
  */
 function wrapProbeFetch(
   upstream: typeof fetch,
   options: {
     maxResponseBytes: number;
+    /** Hard ceiling on requests one lifecycle may make. */
+    maxRequests: number;
+    /** Hard ceiling on total bytes one lifecycle may read. */
+    maxTotalBytes: number;
     timeoutMs?: number;
     signal?: AbortSignal;
     /**
@@ -803,8 +872,17 @@ function wrapProbeFetch(
     onCapExceeded?: () => void;
   }
 ): typeof fetch {
-  const { maxResponseBytes, timeoutMs, signal } = options;
+  const { maxResponseBytes, maxRequests, maxTotalBytes, timeoutMs, signal } = options;
+  // Per-lifecycle amplification budget. A server may answer the SSE stream with
+  // `retry: 0`, and the SDK's reconnection ceiling does not bind the POST-stream
+  // path — unbounded reconnects would issue thousands of requests in seconds and
+  // grow the capture array without limit. These counters are the backstop.
+  let requestCount = 0;
+  let totalBytes = 0;
   const wrapped: typeof fetch = async (input, init) => {
+    requestCount += 1;
+    if (requestCount > maxRequests) throw new ProbeAmplificationError('request', maxRequests);
+    if (totalBytes > maxTotalBytes) throw new ProbeAmplificationError('byte', maxTotalBytes);
     // Aborted by the body cap below: erroring the stream alone frees the
     // socket but leaves the SDK's pending request waiting out its own
     // timeout, so an oversized reply would still cost the full deadline.
@@ -820,8 +898,25 @@ function wrapProbeFetch(
     const headers = new Headers(init?.headers);
     if (!headers.has('accept-encoding')) headers.set('accept-encoding', 'identity');
 
-    const response = await upstream(input, { ...(init ?? {}), headers, signal: composed });
-    return capResponseBody(response, maxResponseBytes, capAbort, options.onCapExceeded);
+    // `redirect: 'manual'` on every request, not just the ones the SDK passes
+    // `requestInit` to — the GET that opens the SSE stream drops it. An
+    // agent-steered redirect must never be followed, and `--allow-http` must
+    // not quietly turn that back on.
+    const response = await upstream(input, {
+      ...(init ?? {}),
+      headers,
+      redirect: 'manual',
+      signal: composed,
+    });
+    return capResponseBody(response, maxResponseBytes, capAbort, options.onCapExceeded, read => {
+      totalBytes += read;
+      if (totalBytes > maxTotalBytes) {
+        capAbort.abort(new ProbeAmplificationError('byte', maxTotalBytes));
+        options.onCapExceeded?.();
+        return false;
+      }
+      return true;
+    });
   };
   return wrapped;
 }
@@ -831,7 +926,8 @@ function capResponseBody(
   response: Response,
   maxBytes: number,
   capAbort: AbortController,
-  onCapExceeded?: () => void
+  onCapExceeded?: () => void,
+  countBytes?: (read: number) => boolean
 ): Response {
   const declared = response.headers.get('content-length');
   if (declared !== null && /^\d+$/.test(declared.trim()) && Number(declared.trim()) > maxBytes) {
@@ -844,6 +940,10 @@ function capResponseBody(
   const counter = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       seen += chunk.byteLength;
+      if (countBytes?.(chunk.byteLength) === false) {
+        controller.error(new ProbeAmplificationError('byte', maxBytes));
+        return;
+      }
       if (seen > maxBytes) {
         const tooLarge = new ProbeResponseTooLargeError(maxBytes);
         controller.error(tooLarge);
@@ -862,11 +962,30 @@ function capResponseBody(
 }
 
 /**
- * Allowlisted read tools named in the schema-refusal remedy. Spelled out here
- * rather than imported so `probes.ts` keeps no dependency on the test-kit
- * module.
+ * Allowlisted read tools named in the schema-refusal remedy.
+ *
+ * Aliases the one canonical rendering so the probe, the runner's skip details
+ * and the adopter docs cannot drift into naming different tools.
  */
-const PROBE_TASK_ALLOWLIST_HINT = 'list_creatives, get_media_buy_delivery, get_signals, list_accounts, …';
+const PROBE_TASK_ALLOWLIST_HINT = PROBE_TASK_ALLOWLIST_SUMMARY;
+
+/**
+ * Neutralise control characters in any externally supplied fragment before it
+ * is interpolated into a diagnostic.
+ *
+ * The runner picks targets from its own canonical registry, but this primitive
+ * is exported and a direct caller may pass any string — and these diagnostics
+ * flow into terminals, CI logs, JSON reports and JUnit XML (where C0 controls
+ * are not even legal). Escaped rather than dropped so the original bytes stay
+ * diagnosable.
+ */
+function fenceAgentText(value: string, maxLength = 96): string {
+  const clipped = value.length > maxLength ? `${value.slice(0, maxLength)}…` : value;
+  return clipped.replace(
+    /[\u0000-\u001f\u007f-\u009f]/g,
+    char => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+}
 
 /** Raised when an agent's reply exceeds the session probe's body cap. */
 class ProbeResponseTooLargeError extends Error {
@@ -876,35 +995,89 @@ class ProbeResponseTooLargeError extends Error {
   }
 }
 
+/** Raised when one lifecycle exceeds its request or total-byte budget. */
+class ProbeAmplificationError extends Error {
+  constructor(
+    readonly kind: 'request' | 'byte',
+    limit: number
+  ) {
+    super(`MCP session probe exceeded its ${kind} budget (${limit})`);
+    this.name = 'ProbeAmplificationError';
+  }
+}
+
 /**
- * Body cap for the session probe. An `InitializeResult` and a `ListToolsResult`
- * for a realistic agent are kilobytes; 256 KiB leaves generous headroom for a
- * large tool catalogue while bounding a hostile stream.
+ * Per-lifecycle amplification budget.
+ *
+ * Five requests are expected: initialize, the initialized notification, the
+ * optional standalone SSE stream, the graded `tools/call`, and the terminating
+ * DELETE. 12 leaves slack for a conformant server that splits a response
+ * across streams, while still bounding an agent that tries to turn one probe
+ * into a request storm. Tripping it aborts the lifecycle rather than grading
+ * whatever arrived.
  */
-const MCP_SESSION_PROBE_MAX_RESPONSE_BYTES = 256 * 1024;
+const MCP_SESSION_PROBE_MAX_REQUESTS = 12;
+
+/** Reconnection ceiling: a probe never resumes a stream. */
+const NO_RECONNECTION = {
+  maxReconnectionDelay: 0,
+  initialReconnectionDelay: 0,
+  reconnectionDelayGrowFactor: 1,
+  maxRetries: 0,
+} as const;
+
+/** Fresh deadline for the detached cleanup DELETE. */
+const SESSION_TERMINATION_TIMEOUT_MS = 2_000;
+
+/** Total bytes one lifecycle may read across every request. */
+const MCP_SESSION_PROBE_MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Opt-in ceilings for the shared capture recorder. Passed explicitly so normal
+ * MCP behaviour elsewhere is untouched; overflow is marked, and the probe then
+ * fails closed rather than grading a silently truncated log.
+ */
+const CAPTURE_CEILINGS = {
+  maxCaptures: MCP_SESSION_PROBE_MAX_REQUESTS,
+  maxTotalBodyBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+} as const;
+
+/**
+ * Body cap for the session probe.
+ *
+ * Sized for a real protected *data* tool, not a handshake: `list_creatives` or
+ * `get_media_buy_delivery` on a busy tenant legitimately answers with hundreds
+ * of KiB, and capping below that would turn a healthy acceptance control into
+ * an inconclusive verdict. 4 MiB is generous for any single AdCP read page
+ * while still bounding a hostile stream — unbounded is not an option, since
+ * the graded body is buffered for evidence.
+ */
+const MCP_SESSION_PROBE_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 /**
  * Drive one complete MCP session lifecycle with a single credential state and
  * report where the agent's auth decision landed.
  *
  * `Client.connect()` performs `initialize` plus `notifications/initialized`;
- * `Client.listTools()` is the graded protected operation; the transport's
- * `terminateSession()` issues the session-ending DELETE. Every step is the
- * official SDK's, so result schemas, response-id correlation and version
- * negotiation are the SDK's semantics rather than this module's.
+ * `Client.callTool(toolName, {})` is the graded protected operation; the
+ * transport's `terminateSession()` issues the session-ending DELETE. Every
+ * step is the official SDK's, so result schemas, response-id correlation and
+ * version negotiation are the SDK's semantics rather than this module's.
  *
- * Grading the protected operation — rather than stopping at the handshake — is
+ * Grading a protected AdCP tool — rather than stopping at the handshake — is
  * what makes the verdict independent of the agent's enforcement point: a
  * server that authenticates the Streamable HTTP session rejects during
- * `connect()`, one that authenticates each operation rejects during
- * `listTools()`, and both are reported as rejections with the rejecting
- * response as evidence. A server that serves `tools/list` with no credential is
- * reported as accepted, which {@link rawMcpSessionProbe} then refuses to treat
- * as rejection evidence — so a fail-open agent fails visibly instead of being
- * silently skipped.
+ * `connect()`, one that authenticates each operation rejects during the
+ * `tools/call`, and both are reported as rejections with the rejecting
+ * response as evidence. A server that answers the protected call with a
+ * tenant payload for a bogus credential is reported as accepted, which
+ * {@link rawMcpSessionProbe} then refuses to treat as rejection evidence — so
+ * a fail-open agent fails visibly instead of being silently skipped.
  *
- * `tools/list` takes only an optional `cursor`, so no agent-authored request
- * schema can 400 the probe before the auth layer runs.
+ * The target is chosen from the canonical AdCP registries with no required
+ * request field, but an agent may still refuse an empty-argument call. That is
+ * classified `schema_or_param` and reported inconclusive: a shape refusal is
+ * not an authentication result.
  */
 async function runMcpSessionLifecycle(options: {
   agentUrl: string;
@@ -931,6 +1104,8 @@ async function runMcpSessionLifecycle(options: {
       }),
       {
         maxResponseBytes: MCP_SESSION_PROBE_MAX_RESPONSE_BYTES,
+        maxRequests: MCP_SESSION_PROBE_MAX_REQUESTS,
+        maxTotalBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         ...(signal ? { signal } : {}),
         onCapExceeded: () => closeOnCapExceeded(),
@@ -947,6 +1122,9 @@ async function runMcpSessionLifecycle(options: {
       ...(signal ? { signal } : {}),
     },
     fetch: transportFetch,
+    // A conformance probe never wants a resumed stream: an agent answering
+    // `retry: 0` would otherwise have the SDK reconnect in a tight loop.
+    reconnectionOptions: NO_RECONNECTION,
   });
   // Closing the transport rejects every pending request with
   // `ConnectionClosed`, which is what turns a tripped cap into a prompt
@@ -958,6 +1136,7 @@ async function runMcpSessionLifecycle(options: {
   };
 
   let captures: readonly RawHttpCapture[] = [];
+  let capturesOverflowed: 'captures' | 'bytes' | undefined;
   let thrown: unknown;
   let toolResult: unknown;
   try {
@@ -971,12 +1150,14 @@ async function runMcpSessionLifecycle(options: {
       } finally {
         await client.close().catch(() => {});
       }
-    });
+    }, CAPTURE_CEILINGS);
     captures = run.captures;
+    capturesOverflowed = run.overflowed;
     toolResult = run.result;
   } catch (err) {
     thrown = err;
     captures = getCapturesFromError(err) ?? [];
+    capturesOverflowed = getCaptureOverflowFromError(err);
   }
 
   // Official session termination on every exit path — including a 200
@@ -991,10 +1172,26 @@ async function runMcpSessionLifecycle(options: {
   // the `sessionId` option.
   const issuedSessionId = transport.sessionId ?? sessionIdFromCaptures(captures);
   if (issuedSessionId !== undefined) {
+    // Cleanup is deliberately detached from the caller's signal. When a run is
+    // cancelled after `initialize`, composing the already-aborted signal here
+    // meant no DELETE was ever sent and the session leaked; a fresh, short
+    // deadline bounds it instead.
     const terminator = new StreamableHTTPClientTransport(new URL(agentUrl), {
-      requestInit: { headers, redirect: 'manual', ...(signal ? { signal } : {}) },
-      fetch: transportFetch,
+      requestInit: { headers, redirect: 'manual' },
+      fetch: wrapProbeFetch(
+        createAgentTransportFetch(agentUrl, {
+          allowPrivateIp,
+          ...(fetchFn ? { trustedFetchFn: fetchFn } : {}),
+        }),
+        {
+          maxResponseBytes: MCP_SESSION_PROBE_MAX_RESPONSE_BYTES,
+          maxRequests: 2,
+          maxTotalBytes: MCP_SESSION_PROBE_MAX_TOTAL_BYTES,
+          timeoutMs: SESSION_TERMINATION_TIMEOUT_MS,
+        }
+      ),
       sessionId: issuedSessionId,
+      reconnectionOptions: NO_RECONNECTION,
     });
     // Seed the negotiated version so the DELETE carries `MCP-Protocol-Version`
     // like every other post-initialize request; a server that requires the
@@ -1002,6 +1199,17 @@ async function runMcpSessionLifecycle(options: {
     const negotiated = transport.protocolVersion ?? negotiatedVersionFromCaptures(captures);
     if (negotiated !== undefined) terminator.setProtocolVersion(negotiated);
     await terminateSessionBestEffort(terminator);
+  }
+
+  if (capturesOverflowed !== undefined) {
+    const detail = `capture ${capturesOverflowed} ceiling exceeded`;
+    return {
+      verdict: 'unusable',
+      accepted: false,
+      stage: 'initialize',
+      detail,
+      evidence: transportErrorEvidence(agentUrl, detail),
+    };
   }
 
   const graded = gradedCapture(captures);
@@ -1043,7 +1251,17 @@ async function runMcpSessionLifecycle(options: {
     }
     const isError = (toolResult as { isError?: unknown } | undefined)?.isError === true;
     if (isError) {
-      return { verdict: 'schema_or_param', accepted: false, stage, detail: 'tool reported isError', evidence };
+      // `isError` with no recognized AdCP code is an unexplained tool failure.
+      // Bucketing it as a shape refusal would let a *control* that fails this
+      // way count as "reached the handler", certifying an agent that refuses
+      // the valid credential too. Unusable is the honest verdict.
+      return {
+        verdict: 'unusable',
+        accepted: false,
+        stage,
+        detail: 'tool reported isError with no AdCP error code',
+        evidence,
+      };
     }
     return { verdict: 'accepted', accepted: true, stage, detail: `HTTP ${graded.status}`, evidence };
   }
@@ -1063,25 +1281,49 @@ async function runMcpSessionLifecycle(options: {
       evidence,
     };
   }
+  // Shape first. An `InvalidParams` answer says the agent rejected the *call*,
+  // and classifying it as auth (which a bare 400 used to do) is how a probe
+  // certifies an agent that never looked at the credential.
+  const detail = sdkRejectionDetail(thrown);
+  const bodyCodes = adcpErrorCodesIn(decodeCapturedBody(graded.body, findHeader(graded.headers, 'content-type')));
+  const invalidParams = detail === `JSON-RPC error code ${ErrorCode.InvalidParams}`;
+  const schemaCode = bodyCodes.some(code => ADCP_SCHEMA_REJECTION_CODES.includes(code));
+  if (invalidParams || schemaCode) {
+    return {
+      verdict: 'schema_or_param',
+      accepted: false,
+      stage,
+      detail: invalidParams ? 'JSON-RPC InvalidParams (-32602)' : 'operation-level INVALID_REQUEST',
+      evidence,
+    };
+  }
   if (AUTH_REJECTION_STATUSES.has(graded.status)) {
     return { verdict: 'auth_rejected', accepted: false, stage, detail: `HTTP ${graded.status}`, evidence };
+  }
+  if (graded.status === 400) {
+    if (fourHundredIsAuthRejection(evidence, bodyCodes)) {
+      return { verdict: 'auth_rejected', accepted: false, stage, detail: 'HTTP 400 with an auth challenge', evidence };
+    }
+    return {
+      verdict: 'schema_or_param',
+      accepted: false,
+      stage,
+      detail: 'HTTP 400 with no authentication evidence',
+      evidence,
+    };
   }
   if (graded.status >= 400) {
     return { verdict: 'unusable', accepted: false, stage, detail: `HTTP ${graded.status}`, evidence };
   }
-  // A 2xx the SDK rejected: an AdCP schema/param refusal surfaces as a
-  // JSON-RPC -32602, anything else is an unusable exchange.
-  const detail = sdkRejectionDetail(thrown);
-  const schemaish = detail === `JSON-RPC error code ${ErrorCode.InvalidParams}`;
-  return { verdict: schemaish ? 'schema_or_param' : 'unusable', accepted: false, stage, detail, evidence };
+  return { verdict: 'unusable', accepted: false, stage, detail, evidence };
 }
 
 /**
  * Credential values the probe sent, in every form an agent could echo them:
- * the full `Authorization` header value and the bare token after the scheme.
+ * the full `Authorization` header value and the bare token after the scheme
+ * (which is also what rides in `x-adcp-auth`).
  *
- * Very short values are excluded — redacting a one- or two-character string
- * would corrupt unrelated evidence — and the list is never logged.
+ * The returned list is scrub input only and is never logged.
  */
 function sentCredentialValues(...headerSets: Array<Record<string, string> | undefined>): string[] {
   const values = new Set<string>();
@@ -1110,11 +1352,10 @@ function sentCredentialValues(...headerSets: Array<Record<string, string> | unde
       if (password.length > 0) values.add(password);
     }
   }
-  // Floor of 4 rather than 8: short API keys and short Basic passwords are
-  // still credentials, and a run that configured one is asking for it to be
-  // protected. Below 4 characters a substring replace would mangle unrelated
-  // evidence for no meaningful secrecy gain.
-  return [...values].filter(value => value.trim().length >= 4);
+  // No length floor. A short credential is still a credential, and the caller
+  // configured it deliberately; dropping 1–7-character values left a real
+  // bypass. Over-redacting evidence is the cheaper failure.
+  return [...values].filter(value => value.trim().length > 0);
 }
 
 /** Decode a base64 Basic credential, or undefined when it is not valid base64. */
@@ -1244,10 +1485,11 @@ export type McpSessionProbeControl =
  * driven by the official SDK client — the auth probe for agents that advertise
  * none of `PROBE_TASK_ALLOWLIST` (adcp-client#2940).
  *
- * See {@link runMcpSessionLifecycle} for the request sequence. The probe never
- * reaches an AdCP tool handler and never mutates agent state: `tools/list` is
- * a read-only protocol operation and the session is terminated through the
- * transport's own `terminateSession()`.
+ * See {@link runMcpSessionLifecycle} for the request sequence. Per credential
+ * state the probe calls exactly one read-only AdCP tool with empty arguments
+ * and mutates no agent state — mutating tasks are excluded from target
+ * selection — and the session is terminated through the transport's own
+ * `terminateSession()`.
  *
  * ## Credential discrimination (fail-closed)
  *
@@ -1291,11 +1533,13 @@ export async function rawMcpSessionProbe(options: {
   /** Credentials under test. Empty for the unauthenticated probe. */
   headers?: Record<string, string>;
   /**
-   * Advertised, read-shaped, auth-required AdCP tool to call with `{}` — the
-   * graded protected operation. The caller selects it; see the runner's
-   * `selectProtectedToolTarget`.
+   * Canonical AdCP tools to call with `{}` — the graded protected operation, in
+   * the runner's deterministic preference order. When the agent refuses the
+   * *shape* of the first, the next is tried: a shape refusal says nothing
+   * about credentials, and a target that needs arguments would otherwise make
+   * every probe inconclusive. See the runner's `protectedToolCandidates`.
    */
-  toolName: string;
+  toolName: string | readonly string[];
   /** Acceptance control. Required — see {@link McpSessionProbeControl}. */
   control: McpSessionProbeControl;
   /** Allow http:// and private-IP agent URLs (dev loops). Default false. */
@@ -1306,31 +1550,53 @@ export async function rawMcpSessionProbe(options: {
   signal?: AbortSignal;
   /** Per-request cap handed to the SDK's `RequestOptions.timeout`. */
   timeoutMs?: number;
+  /**
+   * Extra secret values to scrub from evidence even though this probe never
+   * sent them.
+   *
+   * The runner's other steps *do* forward `options.headers`, so a stateful
+   * agent can echo an adopter's `x-gateway-token` back on a later step even
+   * though the probe deliberately withholds it. Those values are still
+   * credentials, and the evidence seam is where they would get persisted.
+   */
+  redactValues?: readonly string[];
 }): Promise<{
   httpResult: HttpProbeResult;
   taskResult?: TaskResult;
   stage: McpSessionStage;
   /** Fixed-vocabulary description of the graded verdict. Never agent text. */
   detail: string;
+  /** The exact canonical tool that was graded, so reports are auditable. */
+  gradedTool: string;
 }> {
-  const { agentUrl, headers = {}, toolName, control, allowPrivateIp = false, fetchFn, signal, timeoutMs } = options;
-  const lifecycle = { agentUrl, toolName, allowPrivateIp, fetchFn, signal, timeoutMs };
-  // The graded attempt runs first so its response is captured as evidence
-  // regardless of what the control does afterwards.
-  const rawGraded = await runMcpSessionLifecycle({ ...lifecycle, headers });
-  // Evidence seam: everything downstream (`response`,
-  // `response_record.payload`, validations) reads this response, so scrub the
-  // credentials we just sent out of it by value before anyone can persist it.
-  const secrets = sentCredentialValues(headers, control.kind === 'credential' ? control.headers : undefined);
-  const graded: McpSessionAttempt = {
-    ...rawGraded,
-    evidence: redactCredentialsFromEvidence(rawGraded.evidence, secrets),
-  };
+  const { agentUrl, headers = {}, control, allowPrivateIp = false, fetchFn, signal, timeoutMs } = options;
+  const candidates = typeof options.toolName === 'string' ? [options.toolName] : [...options.toolName];
+  const base = { agentUrl, allowPrivateIp, fetchFn, signal, timeoutMs };
+
+  // Walk candidates until one answers something other than a shape refusal.
+  let graded!: McpSessionAttempt;
+  let toolName = candidates[0] ?? '';
+  for (const candidate of candidates) {
+    toolName = candidate;
+    graded = await runMcpSessionLifecycle({ ...base, toolName: candidate, headers });
+    if (graded.verdict !== 'schema_or_param') break;
+  }
+  const lifecycle = { ...base, toolName };
+  // Evidence seam: the graded attempt above ran before any control, so its
+  // response is what everything downstream reads (`response`,
+  // `response_record.payload`, validations). Scrub the credentials in play out
+  // of it by value before anyone can persist it.
+  const secrets = [
+    ...sentCredentialValues(headers, control.kind === 'credential' ? control.headers : undefined),
+    ...(options.redactValues ?? []).filter(value => value.trim().length > 0),
+  ];
+  graded = { ...graded, evidence: redactCredentialsFromEvidence(graded.evidence, secrets) };
   const conclusive = {
     httpResult: graded.evidence,
     taskResult: taskResultFromEvidence(graded),
     stage: graded.stage,
     detail: graded.detail,
+    gradedTool: toolName,
   };
 
   // A positive probe presents the run's valid credential, so its own
@@ -1341,14 +1607,15 @@ export async function rawMcpSessionProbe(options: {
   // credential as a successful static-credential probe.
   if (control.kind === 'probe_is_valid_credential') {
     if (graded.verdict === 'accepted') return conclusive;
-    if (graded.protocolIncompatible) return protocolIncompatibleProbe(graded);
+    if (graded.protocolIncompatible) return protocolIncompatibleProbe(graded, toolName);
     if (graded.verdict === 'schema_or_param') return schemaOrParamProbe(graded, toolName);
-    if (graded.verdict === 'unusable') return malformedResponseProbe(graded);
+    if (graded.verdict === 'unusable') return malformedResponseProbe(graded, toolName);
     return refusedSessionProbe(
       graded,
-      `the run's valid credential was refused on the selected protected tool "${toolName}" (rejected at ` +
+      `the run's valid credential was refused on the selected protected tool "${fenceAgentText(toolName)}" (rejected at ` +
         `${graded.stage}: ${graded.detail}), so there is no successful protected call to certify`,
-      'Confirm the credential is current and that the agent accepts it on that tool.'
+      'Confirm the credential is current and that the agent accepts it on that tool.',
+      toolName
     );
   }
 
@@ -1358,13 +1625,14 @@ export async function rawMcpSessionProbe(options: {
     return refusedSessionProbe(
       graded,
       `the credential state under test received a successful payload from the protected tool ` +
-        `"${toolName}" (accepted at ${graded.stage}: ${graded.detail}), so the agent served ` +
+        `"${fenceAgentText(toolName)}" (accepted at ${graded.stage}: ${graded.detail}), so the agent served ` +
         `tenant-scoped data to credentials it was expected to refuse`,
-      'Enforce credential validation on that tool before treating this path as conformant.'
+      'Enforce credential validation on that tool before treating this path as conformant.',
+      toolName
     );
   }
 
-  if (graded.protocolIncompatible) return protocolIncompatibleProbe(graded);
+  if (graded.protocolIncompatible) return protocolIncompatibleProbe(graded, toolName);
 
   // "Not accepted" is not the same as "refused the credential". A shape
   // refusal says nothing about credentials in either direction (the chosen
@@ -1373,10 +1641,10 @@ export async function rawMcpSessionProbe(options: {
   // validation list either would otherwise be handed back as conclusive and
   // mint `auth_mechanism_verified` on a healthy control.
   if (graded.verdict === 'schema_or_param') return schemaOrParamProbe(graded, toolName);
-  if (graded.verdict === 'unusable') return malformedResponseProbe(graded);
+  if (graded.verdict === 'unusable') return malformedResponseProbe(graded, toolName);
 
   if (control.kind === 'unavailable') {
-    return inconclusiveSessionProbe(graded, control.reason, control.remedy);
+    return inconclusiveSessionProbe(graded, control.reason, control.remedy, toolName);
   }
 
   // Mechanism-matched control on the *same* target. It only has to prove the
@@ -1386,20 +1654,22 @@ export async function rawMcpSessionProbe(options: {
   // means the rejection under test cannot be attributed to credentials.
   const acceptance = await runMcpSessionLifecycle({ ...lifecycle, headers: control.headers });
   if (acceptance.verdict === 'accepted' || acceptance.verdict === 'schema_or_param') return conclusive;
-  if (acceptance.protocolIncompatible) return protocolIncompatibleProbe(graded, acceptance);
+  if (acceptance.protocolIncompatible) return protocolIncompatibleProbe(graded, toolName, acceptance);
   if (acceptance.verdict === 'auth_rejected') {
     return inconclusiveSessionProbe(
       graded,
-      `the run's valid credential was also refused on "${toolName}" (rejected at ${acceptance.stage}: ` +
+      `the run's valid credential was also refused on "${fenceAgentText(toolName)}" (rejected at ${acceptance.stage}: ` +
         `${acceptance.detail})`,
-      'Check that the credential is current and that it is accepted on that tool.'
+      'Check that the credential is current and that it is accepted on that tool.',
+      toolName
     );
   }
   return inconclusiveSessionProbe(
     graded,
-    `the control call on "${toolName}" did not produce a usable answer (${acceptance.stage}: ` +
+    `the control call on "${fenceAgentText(toolName)}" did not produce a usable answer (${acceptance.stage}: ` +
       `${acceptance.detail})`,
-    'Check that the agent URL is reachable and that the tool answers a credentialed call.'
+    'Check that the agent URL is reachable and that the tool answers a credentialed call.',
+    toolName
   );
 }
 
@@ -1408,6 +1678,7 @@ type SessionProbeOutcome = {
   taskResult: TaskResult;
   stage: McpSessionStage;
   detail: string;
+  gradedTool: string;
 };
 
 /** Synthetic TaskResult so callers that want a body shape can read one. */
@@ -1420,13 +1691,15 @@ function taskResultFromEvidence(graded: McpSessionAttempt): TaskResult {
 
 function protocolIncompatibleProbe(
   graded: McpSessionAttempt,
+  gradedTool: string,
   attempt: McpSessionAttempt = graded
 ): SessionProbeOutcome {
   return sessionProbeError(
     graded,
     `MCP session probe could not run: ${attempt.detail} at ${attempt.stage}. This is a protocol ` +
       `compatibility problem, not an authentication result — nothing was learned about this agent's ` +
-      `credentials. Upgrade the SDK to one that implements the agent's MCP wire version, then re-run.`
+      `credentials. Upgrade the SDK to one that implements the agent's MCP wire version, then re-run.`,
+    gradedTool
   );
 }
 
@@ -1446,21 +1719,23 @@ function protocolIncompatibleProbe(
 function schemaOrParamProbe(graded: McpSessionAttempt, toolName: string): SessionProbeOutcome {
   return sessionProbeError(
     graded,
-    `MCP session auth probe is inconclusive: the agent refused the shape of the call to "${toolName}" ` +
+    `MCP session auth probe is inconclusive: the agent refused the shape of the call to "${fenceAgentText(toolName)}" ` +
       `(${graded.detail}) rather than answering it, so nothing was learned about this agent's ` +
       `credentials. Advertise one auth-required, read-only tool that accepts an empty request body ` +
-      `(${PROBE_TASK_ALLOWLIST_HINT}) so the probe has a parameter-free protected target.`
+      `(${PROBE_TASK_ALLOWLIST_HINT}) so the probe has a parameter-free protected target.`,
+    toolName
   );
 }
 
-function malformedResponseProbe(graded: McpSessionAttempt): SessionProbeOutcome {
+function malformedResponseProbe(graded: McpSessionAttempt, gradedTool: string): SessionProbeOutcome {
   if (graded.detail === 'request timed out' || graded.detail === 'request aborted') {
     return sessionProbeError(
       graded,
       `MCP session probe could not run: the agent answered ${graded.stage} with HTTP ` +
         `${graded.evidence.status} but never delivered a usable response to that request ` +
         `(${graded.detail}). This is not an authentication result — nothing was learned about this ` +
-        `agent's credentials.`
+        `agent's credentials.`,
+      gradedTool
     );
   }
   return sessionProbeError(
@@ -1468,28 +1743,45 @@ function malformedResponseProbe(graded: McpSessionAttempt): SessionProbeOutcome 
     `MCP session probe could not run: the agent answered ${graded.stage} with HTTP ` +
       `${graded.evidence.status} but a body the official MCP client rejected (${graded.detail}). This is a ` +
       `response-shape problem, not an authentication result — nothing was learned about this agent's ` +
-      `credentials. Return a conformant result for that operation, then re-run.`
+      `credentials. Return a conformant result for that operation, then re-run.`,
+    gradedTool
   );
 }
 
-function inconclusiveSessionProbe(graded: McpSessionAttempt, reason: string, remedy: string): SessionProbeOutcome {
+function inconclusiveSessionProbe(
+  graded: McpSessionAttempt,
+  reason: string,
+  remedy: string,
+  gradedTool: string
+): SessionProbeOutcome {
   return sessionProbeError(
     graded,
     `MCP session auth probe is inconclusive: ${reason}, so this step's response is not evidence ` +
-      `that the agent validates credentials. ${remedy}`
+      `that the agent validates credentials. ${remedy}`,
+    gradedTool
   );
 }
 
-function refusedSessionProbe(graded: McpSessionAttempt, reason: string, remedy: string): SessionProbeOutcome {
-  return sessionProbeError(graded, `MCP session auth probe refuses this as auth evidence: ${reason}. ${remedy}`);
+function refusedSessionProbe(
+  graded: McpSessionAttempt,
+  reason: string,
+  remedy: string,
+  gradedTool: string
+): SessionProbeOutcome {
+  return sessionProbeError(
+    graded,
+    `MCP session auth probe refuses this as auth evidence: ${reason}. ${remedy}`,
+    gradedTool
+  );
 }
 
-function sessionProbeError(graded: McpSessionAttempt, message: string): SessionProbeOutcome {
+function sessionProbeError(graded: McpSessionAttempt, message: string, gradedTool: string): SessionProbeOutcome {
   return {
     httpResult: { ...graded.evidence, error: message },
     taskResult: failedTaskResult(message),
     stage: graded.stage,
     detail: graded.detail,
+    gradedTool,
   };
 }
 

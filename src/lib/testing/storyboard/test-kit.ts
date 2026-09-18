@@ -16,12 +16,16 @@
  *      runner misreport "agent failed auth" when the root cause is that
  *      schema validation rejected the probe before the auth layer ran.
  *
- * An agent that advertises none of the allowlist still gets its auth verified:
- * {@link selectProbeTask} falls back to the MCP session probe. That sentinel
+ * An agent that advertises none of the allowlist can still have its auth
+ * verified: {@link selectProbeTask} falls back to the MCP session probe, which
+ * calls a *canonical* AdCP read task the agent does advertise. An agent whose
+ * whole surface is its own invented tool names has nothing the runner will
+ * trust as a protected AdCP operation, and is reported
+ * `session_probe_ungradable` with a remedy rather than certified. That sentinel
  * is intentionally absent from {@link PROBE_TASK_ALLOWLIST} so a kit cannot
- * name it via `probe_task`; the runner resolves it, or a storyboard may name
- * it directly, and either way it is graded honestly by
- * `planMcpSessionSentinel`.
+ * name it via `probe_task`; the runner resolves it, or a storyboard may name it
+ * directly, and either way `planMcpSessionSentinel` grades it honestly — and
+ * only on an explicit `protocol: 'mcp'`.
  */
 
 import type { TestOptions } from '../types';
@@ -56,6 +60,12 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * Human-readable rendering of {@link PROBE_TASK_ALLOWLIST}, so probe, runner
+ * and operator-facing remedies all name the same tools and cannot drift.
+ */
+export const PROBE_TASK_ALLOWLIST_SUMMARY: string = PROBE_TASK_ALLOWLIST.join(', ');
+
+/**
  * Select an advertised auth probe without dispatching an inapplicable tool.
  * The configured task is a preference, not permission to call a tool the
  * agent did not advertise.
@@ -67,15 +77,15 @@ export const PROBE_TASK_ALLOWLIST: readonly string[] = Object.freeze([
  *   3. The first allowlisted task the agent advertises.
  *   4. **MCP only**: the {@link MCP_SESSION_PROBE_TASK} sentinel
  *      (adcp-client#2940). An agent whose entire read surface sits outside the
- *      allowlist (`list_plans`, `list_sellers`, …) still authenticates MCP
- *      protocol operations, and the sentinel drives a complete session
- *      lifecycle (`initialize` → `notifications/initialized` → `tools/list`)
- *      whose parameters are MCP-defined — so `security_baseline` can verify a
+ *      allowlist may still expose a canonical protected read
+ *      (`get_principal`, `list_tasks`, …), and the sentinel drives a complete
+ *      session lifecycle (`initialize` → `notifications/initialized` →
+ *      `tools/call`) against one — so `security_baseline` can verify a
  *      correctly configured agent instead of reporting
- *      `auth_mechanism_verified: []`. Those out-of-allowlist tools cannot be
- *      probed directly: their parameter surfaces are agent-authored and may
- *      400 on schema validation before auth runs, which would misreport as an
- *      auth failure.
+ *      `auth_mechanism_verified: []`. The chosen tool is called with empty
+ *      arguments; when the agent refuses that shape the probe reports
+ *      *inconclusive* rather than guessing, which is the hazard the allowlist
+ *      exists to avoid.
  *   5. Anything other than an explicit `protocol: 'mcp'` → `undefined`
  *      (unchanged). A2A's `message/send` requires `params.message` and has no
  *      equivalent parameter-free protected operation, and an unset protocol

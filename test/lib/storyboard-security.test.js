@@ -22,6 +22,7 @@ const {
   runStoryboardStep,
   __sessionControlCredentialsForTest,
   __selectProtectedToolTargetForTest,
+  __protectedToolCandidatesForTest,
 } = require('../../dist/lib/testing/storyboard/runner');
 const { loadStoryboardFile } = require('../../dist/lib/testing/storyboard/loader');
 const { comply, detectAuthRejection } = require('../../dist/lib/testing/compliance/comply');
@@ -3285,30 +3286,58 @@ describe('validateTestKit: enforced at runStoryboard / runStoryboardStep entry',
 // mcp_session_probe sentinel — no-allowlist auth probe (#2940)
 // ────────────────────────────────────────────────────────────
 
-const ORCHESTRATOR_TOOLS = ['get_adcp_capabilities', 'list_creative_status', 'list_plans', 'list_sellers'];
+/**
+ * A no-allowlist agent the session probe *can* grade.
+ *
+ * It advertises none of `PROBE_TASK_ALLOWLIST` — the #2940 shape — but does
+ * advertise canonical AdCP reads that take no required argument
+ * (`get_principal`, `list_tasks`), so there is a real protected AdCP operation
+ * to grade. `get_adcp_capabilities` and `get_products` are public tier and are
+ * never selected.
+ */
+const CANONICAL_NO_ALLOWLIST_TOOLS = ['get_adcp_capabilities', 'get_products', 'get_principal', 'list_tasks'];
+
+/**
+ * #2940's literal reporter shape: every tool is agent-authored and outside the
+ * canonical AdCP registries.
+ *
+ * There is no protected AdCP operation to grade here, so the runner must report
+ * `session_probe_ungradable` with an adopter remedy — not certify the agent on
+ * the strength of a name it made up.
+ */
+const CUSTOM_ONLY_TOOLS = ['get_adcp_capabilities', 'list_creative_status', 'list_plans', 'list_sellers'];
 
 describe('selectProbeTask: mcp_session_probe fallback', () => {
   it('falls back to the session-probe sentinel only on an explicit mcp protocol', () => {
     assert.strictEqual(
-      selectProbeTask('list_creatives', ORCHESTRATOR_TOOLS, { protocol: 'mcp' }),
+      selectProbeTask('list_creatives', CANONICAL_NO_ALLOWLIST_TOOLS, { protocol: 'mcp' }),
       MCP_SESSION_PROBE_TASK
     );
-    assert.strictEqual(selectProbeTask(undefined, ORCHESTRATOR_TOOLS, { protocol: 'mcp' }), MCP_SESSION_PROBE_TASK);
+    assert.strictEqual(
+      selectProbeTask(undefined, CANONICAL_NO_ALLOWLIST_TOOLS, { protocol: 'mcp' }),
+      MCP_SESSION_PROBE_TASK
+    );
     // An unset protocol means the caller never declared a transport, so the
     // runner keeps the historical `undefined` resolution instead of
     // substituting an MCP probe.
-    assert.strictEqual(selectProbeTask('list_creatives', ORCHESTRATOR_TOOLS), undefined);
-    assert.strictEqual(selectProbeTask(undefined, ORCHESTRATOR_TOOLS), undefined);
+    assert.strictEqual(selectProbeTask('list_creatives', CANONICAL_NO_ALLOWLIST_TOOLS), undefined);
+    assert.strictEqual(selectProbeTask(undefined, CANONICAL_NO_ALLOWLIST_TOOLS), undefined);
   });
 
   it('prefers an advertised allowlisted tool over the sentinel', () => {
     const mcp = { protocol: 'mcp' };
     assert.strictEqual(
-      selectProbeTask('list_creatives', ['list_creatives', ...ORCHESTRATOR_TOOLS], mcp),
+      selectProbeTask('list_creatives', ['list_creatives', ...CANONICAL_NO_ALLOWLIST_TOOLS], mcp),
       'list_creatives'
     );
-    assert.strictEqual(selectProbeTask('list_creatives', ['get_signals', ...ORCHESTRATOR_TOOLS], mcp), 'get_signals');
-    assert.strictEqual(selectProbeTask(undefined, ['list_accounts', ...ORCHESTRATOR_TOOLS], mcp), 'list_accounts');
+    assert.strictEqual(
+      selectProbeTask('list_creatives', ['get_signals', ...CANONICAL_NO_ALLOWLIST_TOOLS], mcp),
+      'get_signals'
+    );
+    assert.strictEqual(
+      selectProbeTask(undefined, ['list_accounts', ...CANONICAL_NO_ALLOWLIST_TOOLS], mcp),
+      'list_accounts'
+    );
   });
 
   it('preserves the preference verbatim when discovery is unavailable', () => {
@@ -3319,7 +3348,7 @@ describe('selectProbeTask: mcp_session_probe fallback', () => {
   });
 
   it('does not invent an A2A fallback', () => {
-    assert.strictEqual(selectProbeTask('list_creatives', ORCHESTRATOR_TOOLS, { protocol: 'a2a' }), undefined);
+    assert.strictEqual(selectProbeTask('list_creatives', CANONICAL_NO_ALLOWLIST_TOOLS, { protocol: 'a2a' }), undefined);
     assert.strictEqual(selectProbeTask('list_creatives', ['get_signals'], { protocol: 'a2a' }), 'get_signals');
   });
 
@@ -3473,7 +3502,7 @@ async function startProbeAgent(opts = {}) {
         JSON.stringify({
           jsonrpc: '2.0',
           id: rpc.id,
-          result: { tools: ORCHESTRATOR_TOOLS.map(name => ({ name, inputSchema: { type: 'object' } })) },
+          result: { tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name, inputSchema: { type: 'object' } })) },
         })
       );
       return;
@@ -3567,7 +3596,7 @@ function initializeResult(rpc, overrides = {}) {
   });
 }
 
-function toolsListResult(rpc, tools = [{ name: 'list_plans', inputSchema: { type: 'object' } }]) {
+function toolsListResult(rpc, tools = [{ name: 'get_principal', inputSchema: { type: 'object' } }]) {
   return JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: { tools } });
 }
 
@@ -3598,7 +3627,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, taskResult, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -3616,7 +3645,7 @@ describe('rawMcpSessionProbe', () => {
       assert.strictEqual(call.sessionId, 'probe-session');
       assert.strictEqual(call.protocolVersion, '2025-11-25');
       // The selected protected tool, called with empty arguments.
-      assert.deepStrictEqual(call.params, { name: 'list_plans', arguments: {} });
+      assert.deepStrictEqual(call.params, { name: 'get_principal', arguments: {} });
       assert.deepStrictEqual(agent.seen[0].params.capabilities, {});
       assert.strictEqual(typeof agent.seen[0].params.protocolVersion, 'string');
     } finally {
@@ -3629,7 +3658,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -3655,7 +3684,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: {},
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -3675,7 +3704,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: {},
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -3696,7 +3725,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, taskResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -3716,7 +3745,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, taskResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: { kind: 'unavailable', reason: 'this run holds no OAuth access token', remedy: 'Run with --oauth.' },
         allowPrivateIp: true,
@@ -3741,7 +3770,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -3785,7 +3814,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult, taskResult } = await rawMcpSessionProbe({
         agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer probe_secret_value' },
         control: { kind: 'credential', headers: { authorization: 'Bearer control_secret_value' } },
         allowPrivateIp: true,
@@ -3824,7 +3853,7 @@ describe('rawMcpSessionProbe', () => {
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -3951,12 +3980,12 @@ function runOptionsFor(agent, extra = {}) {
   return {
     protocol: 'mcp',
     allow_http: true,
-    agentTools: ORCHESTRATOR_TOOLS,
+    agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
     auth: { type: 'oauth', tokens: { access_token: 'sk_valid' } },
     test_kit: { auth: { probe_task: 'list_creatives' } },
-    _profile: { name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS },
+    _profile: { name: 'Orchestrator', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
     _client: {
-      getAgentInfo: async () => ({ name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+      getAgentInfo: async () => ({ name: 'Orchestrator', tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })) }),
     },
     ...extra,
   };
@@ -3985,7 +4014,9 @@ describe('security_baseline: no-allowlist MCP agent', () => {
         true,
         JSON.stringify(byId.probe_invalid_oauth_token, null, 2)
       );
-      assert.match(byId.probe_invalid_oauth_token.extraction.note, /graded at initialize/);
+      // The note names the exact tool that was graded, so a report reader can
+      // tell which protected operation the verdict actually rests on.
+      assert.match(byId.probe_invalid_oauth_token.extraction.note, /graded get_principal at initialize/);
       assert.strictEqual(byId.assert_mechanism.passed, true, JSON.stringify(byId.assert_mechanism, null, 2));
       assert.strictEqual(result.overall_passed, true, JSON.stringify(result.phases, null, 2));
 
@@ -4020,7 +4051,7 @@ describe('security_baseline: no-allowlist MCP agent', () => {
       const byId = stepsById(result);
       assert.strictEqual(byId.probe_unauth.passed, true, JSON.stringify(byId.probe_unauth, null, 2));
       assert.strictEqual(byId.probe_invalid_oauth_token.passed, true);
-      assert.match(byId.probe_invalid_oauth_token.extraction.note, /graded at tools\/call/);
+      assert.match(byId.probe_invalid_oauth_token.extraction.note, /graded get_principal at tools\/call/);
       assert.strictEqual(result.overall_passed, true);
     } finally {
       agent.close();
@@ -4089,7 +4120,7 @@ describe('security_baseline: no-allowlist MCP agent', () => {
   it('keeps calling an advertised allowlisted tool when the agent has one', async () => {
     const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
     try {
-      const tools = [...ORCHESTRATOR_TOOLS, 'get_signals'];
+      const tools = [...CANONICAL_NO_ALLOWLIST_TOOLS, 'get_signals'];
       const result = await runStoryboard(
         agent.agentUrl,
         securityBaselineStoryboard(),
@@ -4166,10 +4197,12 @@ describe('security_baseline: no-allowlist MCP agent', () => {
     storyboard.phases[0].steps[0].task = MCP_SESSION_PROBE_TASK;
     const result = await runStoryboard('https://a2a.example/a2a', storyboard, {
       protocol: 'a2a',
-      agentTools: ORCHESTRATOR_TOOLS,
+      agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
       test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
-      _profile: { name: 'A2A', tools: ORCHESTRATOR_TOOLS },
-      _client: { getAgentInfo: async () => ({ name: 'A2A', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }) },
+      _profile: { name: 'A2A', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
+      _client: {
+        getAgentInfo: async () => ({ name: 'A2A', tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })) }),
+      },
     });
     const byId = stepsById(result);
     assert.strictEqual(byId.probe_unauth.passed, false);
@@ -4179,10 +4212,12 @@ describe('security_baseline: no-allowlist MCP agent', () => {
   it('keeps the A2A no-allowlist path on its existing not_applicable skip', async () => {
     const result = await runStoryboard('https://a2a.example/a2a', securityBaselineStoryboard(), {
       protocol: 'a2a',
-      agentTools: ORCHESTRATOR_TOOLS,
+      agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
       test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
-      _profile: { name: 'A2A', tools: ORCHESTRATOR_TOOLS },
-      _client: { getAgentInfo: async () => ({ name: 'A2A', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }) },
+      _profile: { name: 'A2A', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
+      _client: {
+        getAgentInfo: async () => ({ name: 'A2A', tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })) }),
+      },
     });
     const byId = stepsById(result);
     assert.strictEqual(byId.probe_unauth.skipped, true);
@@ -4206,14 +4241,17 @@ describe('security_baseline: no-allowlist MCP agent', () => {
     ];
     const result = await runStoryboard('https://agent.example/mcp', storyboard, {
       protocol: 'mcp',
-      agentTools: ORCHESTRATOR_TOOLS,
+      agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
       test_kit: {
         auth: { api_key: 'sk_valid', probe_task: 'list_creatives' },
         operations: { primary_webhook_emitter: 'assert_contribution' },
       },
-      _profile: { name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS },
+      _profile: { name: 'Orchestrator', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
       _client: {
-        getAgentInfo: async () => ({ name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+        getAgentInfo: async () => ({
+          name: 'Orchestrator',
+          tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })),
+        }),
       },
     });
     const byId = stepsById(result);
@@ -4230,7 +4268,7 @@ describe('rawMcpSessionProbe: primitive-level fail-open refusal (#2940 review)',
     try {
       const { httpResult, taskResult, detail, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -4254,7 +4292,7 @@ describe('rawMcpSessionProbe: primitive-level fail-open refusal (#2940 review)',
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: {},
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
@@ -4272,7 +4310,7 @@ describe('rawMcpSessionProbe: primitive-level fail-open refusal (#2940 review)',
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -4340,7 +4378,7 @@ describe('rawMcpSessionProbe: session cleanup and cancellation (#2940 review)', 
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
@@ -4364,7 +4402,7 @@ describe('rawMcpSessionProbe: session cleanup and cancellation (#2940 review)', 
     try {
       await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
@@ -4394,7 +4432,7 @@ describe('rawMcpSessionProbe: session cleanup and cancellation (#2940 review)', 
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: {},
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
@@ -4418,7 +4456,7 @@ describe('rawMcpSessionProbe: session cleanup and cancellation (#2940 review)', 
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: {},
         control: { kind: 'unavailable', reason: 'no credential', remedy: 'Configure one.' },
         allowPrivateIp: true,
@@ -4457,7 +4495,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       });
       res.end(
         toolsListResult(rpc, [
-          { name: 'list_plans', description: `Authenticated as ${echoed}`, inputSchema: { type: 'object' } },
+          { name: 'get_principal', description: `Authenticated as ${echoed}`, inputSchema: { type: 'object' } },
         ])
       );
     });
@@ -4469,7 +4507,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
     try {
       const { httpResult, taskResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${credential}` },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -4479,7 +4517,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       assert.match(serialized, /REDACTED_CREDENTIAL/, 'the echo is replaced, not silently dropped');
       // Non-credential evidence is preserved.
       assert.strictEqual(httpResult.status, 200);
-      assert.match(JSON.stringify(httpResult.body), /list_plans/);
+      assert.match(JSON.stringify(httpResult.body), /get_principal/);
     } finally {
       agent.close();
     }
@@ -4520,7 +4558,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       // agent records the valid credential.
       await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer deliberately-invalid-probe-token-one' },
         control: controlSpec,
         allowPrivateIp: true,
@@ -4529,7 +4567,7 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       // Second probe: its 401 challenge now echoes the remembered control value.
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer deliberately-invalid-probe-token-two' },
         control: controlSpec,
         allowPrivateIp: true,
@@ -4571,11 +4609,11 @@ describe('rawMcpSessionProbe: value-based credential redaction at the evidence s
       const result = await runStoryboard(agent.agentUrl, storyboard, {
         protocol: 'mcp',
         allow_http: true,
-        agentTools: ORCHESTRATOR_TOOLS,
+        agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
         test_kit: { auth: { api_key: credential, probe_task: 'list_creatives' } },
-        _profile: { name: 'Echo', tools: ORCHESTRATOR_TOOLS },
+        _profile: { name: 'Echo', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
         _client: {
-          getAgentInfo: async () => ({ name: 'Echo', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+          getAgentInfo: async () => ({ name: 'Echo', tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })) }),
         },
       });
       const step = stepsById(result).probe_valid_credential;
@@ -4607,7 +4645,7 @@ describe('mcp_session_probe report surfaces (#2940 review)', () => {
   });
 
   it('escapes control characters in agent-supplied tool names before they reach skip.detail', async () => {
-    const hostileTools = ['list_plans[2Jwiped', 'list_sellers\nInjected: line', 'x'.repeat(200)];
+    const hostileTools = ['get_principal[2Jwiped', 'list_tasks\nInjected: line', 'x'.repeat(200)];
     const storyboard = securityBaselineStoryboard();
     storyboard.phases[0].steps = [];
     storyboard.phases[1].steps = [
@@ -4728,7 +4766,7 @@ describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -4760,7 +4798,7 @@ describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -4784,7 +4822,7 @@ describe('rawMcpSessionProbe: envelope correlation and protocol compatibility (#
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidApiKey()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -4812,7 +4850,7 @@ describe('rawMcpSessionProbe: positive probe must complete the protected operati
     try {
       const { httpResult, taskResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -4832,7 +4870,7 @@ describe('rawMcpSessionProbe: positive probe must complete the protected operati
     try {
       const { httpResult, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -4881,7 +4919,7 @@ describe('mcp_session_probe: routing headers and effective credentials (#2940 re
     const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
     // Simulates `--oauth`: options carry no usable token, but the client's live
     // agent config holds the one the transport actually presents.
-    const liveAgentConfig = { oauth_tokens: { access_token: 'sk_valid' } };
+    const liveAgentConfig = { agent_uri: agent.agentUrl, oauth_tokens: { access_token: 'sk_valid' } };
     try {
       const result = await runStoryboard(
         agent.agentUrl,
@@ -4889,7 +4927,10 @@ describe('mcp_session_probe: routing headers and effective credentials (#2940 re
         runOptionsFor(agent, {
           auth: { type: 'oauth', tokens: { access_token: '' } },
           _client: {
-            getAgentInfo: async () => ({ name: 'Orchestrator', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+            getAgentInfo: async () => ({
+              name: 'Orchestrator',
+              tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })),
+            }),
             getAgent: () => ({ getAgent: () => liveAgentConfig }),
           },
         })
@@ -4930,6 +4971,74 @@ describe('mcp_session_probe: routing headers and effective credentials (#2940 re
   });
 });
 
+describe('mcp_session_probe: run-level header credentials are scrubbed too (#2940 security C)', () => {
+  it('keeps a withheld options.headers credential out of the evidence a stateful agent echoes', async () => {
+    // The probe refuses to forward `x-gateway-token` into an `auth: none`
+    // request — but the run's ordinary steps do send it, so a stateful agent
+    // can echo it back here. It is still a credential, and this step's
+    // evidence is what gets persisted into a compliance report.
+    const gatewayToken = 'gw_gJ8sQ2ePcR';
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'echo-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="mcp", error="invalid_token"',
+        // Learned on an earlier authenticated step and replayed here.
+        'x-seen-gateway-token': gatewayToken,
+      });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: rpc.id ?? null,
+          error: { code: -32001, message: `no session for gateway ${gatewayToken}` },
+        })
+      );
+    });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: 'get_principal',
+        headers: {},
+        control: VALID_CONTROL,
+        redactValues: [gatewayToken],
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      const serialized = JSON.stringify(httpResult);
+      assert.ok(!serialized.includes(gatewayToken), `evidence must not carry the token: ${serialized}`);
+      assert.match(serialized, /REDACTED/);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('carries the run credential values into the probe from the runner', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, { headers: { 'x-tenant-id': 'acme', 'x-gateway-token': 'gw_run_secret' } })
+      );
+      // The credential-shaped header is dropped, the routing header is kept,
+      // and the step still grades.
+      const rpc = agent.rpc();
+      assert.ok(rpc.length > 0);
+      for (const request of rpc) {
+        assert.strictEqual(request.headers['x-gateway-token'], undefined, 'a run credential never reaches the probe');
+        assert.strictEqual(request.tenant, 'acme');
+      }
+      assert.strictEqual(stepsById(result).probe_unauth.passed, true);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
 describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 review)', () => {
   /** Agent that buries the credential it received far below the scan depth. */
   async function startDeepEchoAgent(depth) {
@@ -4944,7 +5053,7 @@ describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 r
       let nested = { leaked: echoed };
       for (let i = 0; i < depth; i += 1) nested = { nest: nested };
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(toolsListResult(rpc, [{ name: 'list_plans', inputSchema: { type: 'object' }, _meta: nested }]));
+      res.end(toolsListResult(rpc, [{ name: 'get_principal', inputSchema: { type: 'object' }, _meta: nested }]));
     });
   }
 
@@ -4954,7 +5063,7 @@ describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 r
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${credential}` },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -4974,7 +5083,7 @@ describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 r
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${credential}` },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5007,7 +5116,7 @@ describe('mcp_session_probe: redaction fails closed at traversal limits (#2940 r
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${credential}` },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5058,6 +5167,29 @@ describe('mcp_session_probe: routing headers are derived, not name-guessed (#294
     }
   });
 
+  it('fails the step, naming the header, when it can classify a run header neither way', async () => {
+    // Forwarding an unknown header could authenticate an `auth: none` probe;
+    // dropping it could reroute the tenant. The runner refuses to pick, and
+    // says which header and what to do about it.
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, { headers: { 'x-tenant-id': 'acme', 'x-unknown-passthrough': 'whatever' } })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.passed, false, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.match(byId.probe_unauth.error ?? '', /cannot classify run header "x-unknown-passthrough"/);
+      assert.match(byId.probe_unauth.error ?? '', /rename it to a recognised routing header/);
+      // The value itself is never echoed back into the diagnostic.
+      assert.ok(!(byId.probe_unauth.error ?? '').includes('whatever'));
+      assert.strictEqual(agent.rpc().length, 0, 'nothing was dispatched at the agent');
+    } finally {
+      agent.close();
+    }
+  });
+
   it('drops a header whose value carries a run credential, whatever it is named', async () => {
     // An `auth: none` probe must really be unauthenticated, so a secret parked
     // under a custom name is excluded by value rather than by guessing names.
@@ -5091,7 +5223,11 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
   /** Agent that streams an unbounded SSE body after a valid initialize. */
   async function startFloodingAgent(opts = {}) {
     const bytesPerFrame = 64 * 1024;
+    // Self-stop far above the probe's 4 MiB response cap so the assertion
+    // measures the probe's teardown, not a race with the mock's own limit.
+    const selfStopBytes = 64 * 1024 * 1024;
     let streamed = 0;
+    let closedByPeer = false;
     const server = http.createServer(async (req, res) => {
       if (req.method === 'GET') {
         res.writeHead(405);
@@ -5140,9 +5276,12 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
           streamed += bytesPerFrame;
           res.write(`: ${filler}\n\n`);
         }
-        if (streamed > 8 * 1024 * 1024) clearInterval(pump);
+        if (streamed > selfStopBytes) clearInterval(pump);
       }, 1);
-      res.on('close', () => clearInterval(pump));
+      res.on('close', () => {
+        closedByPeer = !res.writableEnded;
+        clearInterval(pump);
+      });
       return;
     });
     await new Promise(resolve => server.listen(0, resolve));
@@ -5150,6 +5289,8 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
     return {
       agentUrl: `http://127.0.0.1:${port}/mcp`,
       streamedBytes: () => streamed,
+      closedByPeer: () => closedByPeer,
+      selfStopBytes,
       close: () => server.close(),
     };
   }
@@ -5160,7 +5301,7 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       const started = Date.now();
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5171,9 +5312,12 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
       // aborts the in-flight request, so this must not cost the deadline.
       assert.ok(httpResult.error, 'an oversized reply must not be certified');
       assert.ok(elapsed < 4000, `the cap fails fast rather than burning the deadline (${elapsed}ms)`);
+      // The probe aborted the in-flight request rather than buffering to the
+      // end: the server saw its peer close a response it never finished.
+      assert.ok(agent.closedByPeer(), 'the probe tore the stream down instead of draining it');
       assert.ok(
-        agent.streamedBytes() < 8 * 1024 * 1024,
-        `the probe tore the stream down early (streamed ${agent.streamedBytes()} bytes)`
+        agent.streamedBytes() < agent.selfStopBytes,
+        `teardown happened long before the flood gave up (streamed ${agent.streamedBytes()} bytes)`
       );
     } finally {
       agent.close();
@@ -5185,7 +5329,7 @@ describe('mcp_session_probe: hard streaming body cap (#2940 review P1)', () => {
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5240,7 +5384,7 @@ describe('mcp_session_probe: deadline and cancellation reach every exchange (#29
       const started = Date.now();
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5263,7 +5407,7 @@ describe('mcp_session_probe: deadline and cancellation reach every exchange (#29
       const started = Date.now();
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: 'Bearer sk_valid' },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5304,7 +5448,7 @@ describe('mcp_session_probe: affirmative auth-rejection evidence (#2940 review P
       try {
         const { httpResult, taskResult } = await rawMcpSessionProbe({
           agentUrl: agent.agentUrl,
-          toolName: 'list_plans',
+          toolName: 'get_principal',
           headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
           // A control that would be accepted cannot rescue non-auth evidence.
           control: VALID_CONTROL,
@@ -5370,7 +5514,7 @@ describe('mcp_session_probe: affirmative auth-rejection evidence (#2940 review P
     }
   });
 
-  it('still accepts 400, 401 and 403 as rejection evidence', async () => {
+  it('accepts 401, 403, and a 400 that carries an auth challenge, as rejection evidence', async () => {
     for (const status of [400, 401, 403]) {
       const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
         if (req.headers.authorization === 'Bearer sk_valid') {
@@ -5389,7 +5533,7 @@ describe('mcp_session_probe: affirmative auth-rejection evidence (#2940 review P
       try {
         const { httpResult } = await rawMcpSessionProbe({
           agentUrl: agent.agentUrl,
-          toolName: 'list_plans',
+          toolName: 'get_principal',
           headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
           control: VALID_CONTROL,
           allowPrivateIp: true,
@@ -5400,6 +5544,76 @@ describe('mcp_session_probe: affirmative auth-rejection evidence (#2940 review P
       } finally {
         agent.close();
       }
+    }
+  });
+
+  it('refuses a bare 400 with no auth challenge and no AdCP auth code', async () => {
+    // `security_baseline` asserts `http_status_in: [400, 401, 403]`, so a
+    // parameter complaint that the probe graded as auth would certify an agent
+    // that never read the credential. A 400 has to *say* it is about auth.
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
+      if (req.headers.authorization === 'Bearer sk_valid') {
+        if (rpc.method === 'initialize') {
+          res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 's' });
+          res.end(initializeResult(rpc));
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(toolCallResult(rpc));
+        return;
+      }
+      // No `WWW-Authenticate`, no AdCP error code: just "bad request".
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: -32600, message: 'bad request' } }));
+    });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: 'get_principal',
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      assert.strictEqual(httpResult.status, 400);
+      assert.match(httpResult.error ?? '', /inconclusive/);
+      assert.match(httpResult.error ?? '', /refused the shape of the call/);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('does not read an AdCP auth code out of ordinary payload data', async () => {
+    // A fail-open agent that answers a bogus credential with a tenant payload
+    // containing `{ code: 'AUTH_INVALID' }` — a line-item code, a currency
+    // code, an enum of supported errors — must not be graded as a rejection.
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'payload-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        toolCallResult(rpc, {
+          principal: { id: 'acme' },
+          supported_error_codes: [{ code: 'AUTH_INVALID' }, { code: 'AUTH_MISSING' }],
+        })
+      );
+    });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: 'get_principal',
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      assert.strictEqual(httpResult.status, 200);
+      assert.match(httpResult.error ?? '', /refuses this as auth evidence/);
+    } finally {
+      agent.close();
     }
   });
 });
@@ -5432,7 +5646,7 @@ describe('mcp_session_probe: Basic and short credential forms are redacted (#294
       try {
         const { httpResult } = await rawMcpSessionProbe({
           agentUrl: agent.agentUrl,
-          toolName: 'list_plans',
+          toolName: 'get_principal',
           headers: { authorization: `Basic ${encoded}` },
           control: { kind: 'probe_is_valid_credential' },
           allowPrivateIp: true,
@@ -5464,7 +5678,7 @@ describe('mcp_session_probe: Basic and short credential forms are redacted (#294
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${shortToken}` },
         control: { kind: 'probe_is_valid_credential' },
         allowPrivateIp: true,
@@ -5501,11 +5715,14 @@ describe('mcp_session_probe: Basic and short credential forms are redacted (#294
       const result = await runStoryboard(agent.agentUrl, storyboard, {
         protocol: 'mcp',
         allow_http: true,
-        agentTools: ORCHESTRATOR_TOOLS,
+        agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
         test_kit: { auth: { basic: { username: 'acme-buyer', password }, probe_task: 'list_creatives' } },
-        _profile: { name: 'BasicEcho', tools: ORCHESTRATOR_TOOLS },
+        _profile: { name: 'BasicEcho', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
         _client: {
-          getAgentInfo: async () => ({ name: 'BasicEcho', tools: ORCHESTRATOR_TOOLS.map(name => ({ name })) }),
+          getAgentInfo: async () => ({
+            name: 'BasicEcho',
+            tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })),
+          }),
         },
       });
       const step = stepsById(result).probe_basic;
@@ -5674,7 +5891,7 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
         res.end(
           toolsListResult(
             rpc,
-            ORCHESTRATOR_TOOLS.map(name => ({ name, inputSchema: { type: 'object' } }))
+            CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name, inputSchema: { type: 'object' } }))
           )
         );
         return;
@@ -5722,7 +5939,7 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
     try {
       const { httpResult, stage } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_creative_status',
+        toolName: 'list_tasks',
         headers: {},
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -5736,7 +5953,7 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
       const calls = agent.seen.filter(r => r.method === 'tools/call');
       assert.ok(calls.length >= 1);
       assert.ok(
-        calls.every(r => r.name === 'list_creative_status'),
+        calls.every(r => r.name === 'list_tasks'),
         'only the selected target was called'
       );
       assert.ok(!agent.seen.some(r => r.method === 'tools/list'), 'the probe issues no discovery call of its own');
@@ -5750,7 +5967,7 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
     try {
       const { httpResult, stage, detail } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_creative_status',
+        toolName: 'list_tasks',
         headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -5770,7 +5987,7 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_creative_status',
+        toolName: 'list_tasks',
         headers: {},
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -5800,7 +6017,7 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
     try {
       const { httpResult } = await rawMcpSessionProbe({
         agentUrl: agent.agentUrl,
-        toolName: 'list_plans',
+        toolName: 'get_principal',
         headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
         control: VALID_CONTROL,
         allowPrivateIp: true,
@@ -5817,8 +6034,9 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
   it('never selects a public-tier or mutating tool as the protected target', () => {
     const select = tools => __selectProtectedToolTargetForTest(tools);
     // Public tier is skipped even when advertised first.
-    assert.strictEqual(select(['get_adcp_capabilities', 'list_creative_status']), 'list_creative_status');
-    assert.strictEqual(select(['get_products', 'list_sellers']), 'list_sellers');
+    assert.strictEqual(select(['get_adcp_capabilities', 'get_principal']), 'get_principal');
+    assert.strictEqual(select(['get_products', 'list_tasks']), 'list_tasks');
+    assert.strictEqual(select(['list_products', 'list_transformers']), 'list_transformers');
     assert.strictEqual(select(['list_creative_formats', 'get_signals']), 'get_signals');
     // Mutating tools are never a read probe, whatever they are named.
     assert.strictEqual(select(['create_media_buy', 'sync_creatives']), undefined);
@@ -5826,5 +6044,821 @@ describe('mcp_session_probe: the selected protected tool is the subject (#2940 p
     assert.strictEqual(select(['si_get_offering', 'si_send_message']), undefined);
     assert.strictEqual(select(['get_adcp_capabilities']), undefined);
     assert.strictEqual(select(undefined), undefined);
+  });
+
+  it('grades only canonical AdCP tasks, so an agent cannot plant a decoy target', () => {
+    const select = tools => __selectProtectedToolTargetForTest(tools);
+    const candidates = tools => __protectedToolCandidatesForTest(tools);
+
+    // The #2940 reporter: read-shaped names, none of them AdCP tasks. An agent
+    // that enforced auth on `get_probe_target` alone while serving the real
+    // surface open would otherwise be certified by its own vocabulary.
+    assert.strictEqual(select(['get_probe_target', 'list_probe_targets']), undefined);
+    assert.deepStrictEqual(candidates(CUSTOM_ONLY_TOOLS), []);
+    assert.strictEqual(select(CUSTOM_ONLY_TOOLS), undefined);
+
+    // A decoy advertised alongside a canonical read never wins: order is the
+    // runner's, and non-canonical names are not eligible at all.
+    assert.strictEqual(select(['get_probe_target', 'list_tasks']), 'list_tasks');
+
+    // Canonical reads that need an id are excluded: an empty-argument call
+    // would be refused on shape and teach the probe nothing about auth.
+    assert.strictEqual(select(['get_media_buy_artifacts', 'get_task_status']), undefined);
+
+    // Eligibility is the exported capability registries, not "any name the
+    // SDK happens to have a request schema for". `get_media_buys` and
+    // `get_creative_delivery` are read-shaped and parameter-free in
+    // `TOOL_REQUEST_SCHEMAS`, but they are not members of the eight canonical
+    // tool registries, so the runner will not grade auth on them. Widening
+    // the registry is how a tool becomes eligible — never the agent's
+    // advertisement.
+    assert.strictEqual(select(['get_media_buys', 'get_creative_delivery']), undefined);
+  });
+
+  it('orders candidates by runner preference, not by the agent advertisement order', () => {
+    const candidates = tools => __protectedToolCandidatesForTest(tools);
+
+    // Allowlisted tools first (allowlist order), whatever order they arrive in.
+    assert.deepStrictEqual(candidates(['get_signals', 'list_creatives']), ['list_creatives', 'get_signals']);
+
+    // Then canonical parameter-free reads, `get_principal` ahead of the rest.
+    assert.deepStrictEqual(candidates(CANONICAL_NO_ALLOWLIST_TOOLS), ['get_principal', 'list_tasks']);
+    assert.deepStrictEqual(candidates(['list_tasks', 'list_transformers', 'get_principal']), [
+      'get_principal',
+      'list_tasks',
+      'list_transformers',
+    ]);
+
+    // Allowlisted entries outrank the canonical remainder even when the agent
+    // lists the remainder first.
+    assert.deepStrictEqual(candidates(['get_principal', 'list_accounts']), ['list_accounts', 'get_principal']);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// #2940 final review batch: transport normalization, amplification
+// ceilings, detached cleanup, credential parity, signed runs
+// ────────────────────────────────────────────────────────────
+
+describe('mcp_session_probe: effective transport normalization (#2940 code review)', () => {
+  it('resolves the sentinel for a comply() run that never declared a protocol', async () => {
+    // `comply()` has always spoken MCP when `protocol` was unset
+    // (`effectiveOptions.protocol ?? 'mcp'` at every client construction).
+    // Probe selection is explicit-MCP-only, so without normalization at the
+    // entry boundary the default caller silently lost the fallback.
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await comply(agent.agentUrl, {
+        storyboards: ['security_baseline'],
+        allow_http: true,
+        timeout_ms: 30000,
+        auth: { type: 'bearer', token: 'sk_valid' },
+      });
+      assert.ok(result.storyboards_executed?.includes('security_baseline'));
+
+      // Observable proof the sentinel ran: an unauthenticated session probe
+      // and a control that completed the protected call on a canonical target.
+      // Without normalization `selectProbeTask` returns `undefined` here, the
+      // steps skip `missing_tool`, and none of this traffic exists.
+      const rpc = agent.rpc();
+      assert.ok(
+        rpc.some(r => r.method === 'initialize' && r.authorization === null),
+        `expected an unauthenticated session probe, saw ${JSON.stringify(rpc.map(r => [r.method, r.authorization]))}`
+      );
+      assert.ok(
+        rpc.some(r => r.method === 'tools/call' && r.params?.name === 'get_principal'),
+        'the probe graded a canonical protected read'
+      );
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('refuses a directly authored sentinel on a run with no declared transport, and sends no MCP', async () => {
+    // The mirror image: normalization belongs to `comply()`, not to the
+    // runner. A storyboard that names the sentinel on a raw `runStoryboard`
+    // call with no transport must not reach the agent at all.
+    // The storyboard's `protected_resource_metadata` step is a plain GET, so
+    // only JSON-RPC POSTs count as "the probe reached the agent".
+    let posts = 0;
+    const server = http.createServer((req, res) => {
+      if (req.method === 'POST') posts += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const storyboard = securityBaselineStoryboard();
+      storyboard.phases[0].steps[0].task = MCP_SESSION_PROBE_TASK;
+      const agentUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+      const result = await runStoryboard(agentUrl, storyboard, {
+        allow_http: true,
+        agentTools: CANONICAL_NO_ALLOWLIST_TOOLS,
+        test_kit: { auth: { api_key: 'sk_valid', probe_task: 'list_creatives' } },
+        _profile: { name: 'Orchestrator', tools: CANONICAL_NO_ALLOWLIST_TOOLS },
+        _client: {
+          getAgentInfo: async () => ({
+            name: 'Orchestrator',
+            tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })),
+          }),
+        },
+      });
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.passed, false);
+      assert.match(byId.probe_unauth.error ?? '', /requires an explicit/);
+      assert.match(byId.probe_unauth.error ?? '', /no transport/);
+      assert.strictEqual(posts, 0, 'no MCP JSON-RPC was dispatched at the agent');
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: credential parity with a normal MCP dispatch (#2940 security final)', () => {
+  it('sends both Authorization and x-adcp-auth, and neither on auth: none', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(agent.agentUrl, securityBaselineStoryboard(), runOptionsFor(agent));
+      assert.strictEqual(stepsById(result).assert_mechanism.passed, true);
+
+      const rpc = agent.rpc();
+      const withBearer = rpc.filter(r => r.authorization !== null);
+      assert.ok(withBearer.length > 0);
+      for (const request of withBearer) {
+        const token = request.authorization.replace(/^Bearer /, '');
+        assert.strictEqual(
+          request.headers['x-adcp-auth'],
+          token,
+          'a credential the normal transport sends twice is sent twice by the probe'
+        );
+      }
+
+      const unauth = rpc.filter(r => r.authorization === null);
+      assert.ok(unauth.length > 0, 'the unauthenticated probe ran');
+      for (const request of unauth) {
+        assert.strictEqual(request.headers['x-adcp-auth'], undefined, 'auth: none carries no credential at all');
+      }
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('grades an x-adcp-auth-only agent as verified rather than inconclusive', async () => {
+    // An agent is conformant if it reads either header. A control that only
+    // sent `Authorization` would be refused here, and a correctly configured
+    // agent would be reported inconclusive.
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
+      if (req.headers['x-adcp-auth'] !== 'sk_valid') {
+        res.writeHead(401, {
+          'content-type': 'application/json',
+          'www-authenticate': 'Bearer realm="mcp", error="invalid_token"',
+        });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: -32001, message: 'no' } }));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'parity-session' });
+      res.end(rpc.method === 'initialize' ? initializeResult(rpc) : toolCallResult(rpc));
+    });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: 'get_principal',
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}`, 'x-adcp-auth': generateRandomInvalidJwt() },
+        control: { kind: 'credential', headers: { authorization: 'Bearer sk_valid', 'x-adcp-auth': 'sk_valid' } },
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      assert.strictEqual(httpResult.status, 401);
+      assert.strictEqual(httpResult.error, undefined, 'the control reached the handler, so the 401 is conclusive');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: cleanup survives run cancellation (#2940 codex)', () => {
+  it('sends exactly one DELETE carrying the session id and negotiated version after an abort', async () => {
+    const controller = new AbortController();
+    const seen = [];
+    const server = http.createServer(async (req, res) => {
+      if (req.method === 'GET') {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      if (req.method === 'DELETE') {
+        seen.push({
+          method: 'DELETE',
+          sessionId: req.headers['mcp-session-id'] ?? null,
+          protocolVersion: req.headers['mcp-protocol-version'] ?? null,
+        });
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (raw.trim().length === 0) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      const rpc = JSON.parse(raw);
+      seen.push({ method: rpc.method, sessionId: req.headers['mcp-session-id'] ?? null });
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'cancel-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      if (rpc.method === 'notifications/initialized') {
+        res.writeHead(202);
+        res.end();
+        // The session exists server-side and the handshake is complete.
+        // Cancel the run here: composing the already-aborted caller signal
+        // into cleanup meant no DELETE was ever sent and the session leaked.
+        controller.abort();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(toolCallResult(rpc));
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+        toolName: 'get_principal',
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+        signal: controller.signal,
+        timeoutMs: 4000,
+      });
+      const deletes = seen.filter(entry => entry.method === 'DELETE');
+      assert.strictEqual(deletes.length, 1, `exactly one DELETE, saw ${JSON.stringify(seen)}`);
+      assert.strictEqual(deletes[0].sessionId, 'cancel-session');
+      assert.strictEqual(deletes[0].protocolVersion, '2025-11-25', 'teardown carries the negotiated version');
+      // A cancelled run learns nothing about credentials.
+      assert.match(httpResult.error ?? '', /could not run|inconclusive/);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: request amplification is bounded (#2940 security A/B)', () => {
+  /**
+   * Agent that turns one probe into an unbounded request storm.
+   *
+   * The SDK opens its standalone SSE stream after `notifications/initialized`
+   * is accepted with 202. This agent answers that GET with a priming event id
+   * plus `retry: 0`, then closes gracefully without a response — which the SDK
+   * treats as resumable and reconnects immediately, resetting its attempt
+   * counter each time. With the SDK's default `maxRetries: 2` that loops for
+   * as long as the caller is willing to wait.
+   */
+  async function startSseFloodAgent() {
+    let posts = 0;
+    let gets = 0;
+    const server = http.createServer(async (req, res) => {
+      if (req.method === 'GET') {
+        gets += 1;
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+        res.write('retry: 0\n');
+        res.write(`id: evt-${gets}\n`);
+        res.write('event: message\n');
+        res.write('data: {"jsonrpc":"2.0","method":"notifications/message","params":{}}\n\n');
+        res.end();
+        return;
+      }
+      if (req.method === 'DELETE') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (raw.trim().length === 0) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      posts += 1;
+      const rpc = JSON.parse(raw);
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'flood-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      if (rpc.method === 'notifications/initialized') {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      // Withhold the protected call so only the probe's deadline ends the run.
+      await new Promise(() => {});
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    return {
+      agentUrl: `http://127.0.0.1:${server.address().port}/mcp`,
+      counts: () => ({ posts, gets }),
+      close: () => server.close(),
+    };
+  }
+
+  it('never resumes a hostile retry: 0 SSE stream', async () => {
+    const agent = await startSseFloodAgent();
+    try {
+      await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: 'get_principal',
+        headers: {},
+        control: { kind: 'probe_is_valid_credential' },
+        allowPrivateIp: true,
+        timeoutMs: 1500,
+      });
+      const { posts, gets } = agent.counts();
+      // Exactly one standalone stream: `reconnectionOptions.maxRetries: 0`.
+      // The SDK default (2, reset on every successful reconnect) turns this
+      // same agent into a loop bounded only by wall-clock.
+      assert.strictEqual(gets, 1, `one SSE stream, saw ${gets}`);
+      assert.ok(posts <= 3, `initialize + initialized + the withheld call, saw ${posts}`);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('leaves the shared capture recorder unbounded unless a caller opts in', async () => {
+    const {
+      withRawResponseCapture,
+      getCaptureOverflowFromError,
+    } = require('../../dist/lib/protocols/rawResponseCapture');
+    const plain = await withRawResponseCapture(async () => 'ok');
+    assert.strictEqual(plain.overflowed, undefined);
+    assert.strictEqual(plain.result, 'ok');
+    assert.strictEqual(getCaptureOverflowFromError(new Error('no captures')), undefined);
+  });
+
+  it('marks an overflowing capture log rather than silently truncating it', async () => {
+    const {
+      withRawResponseCapture,
+      wrapFetchWithCapture,
+      getCaptureOverflowFromError,
+    } = require('../../dist/lib/protocols/rawResponseCapture');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ padding: 'y'.repeat(2048) }));
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const url = `http://127.0.0.1:${server.address().port}/`;
+    try {
+      const capturedFetch = wrapFetchWithCapture(fetch);
+      const byCount = await withRawResponseCapture(
+        async () => {
+          for (let i = 0; i < 4; i += 1) await (await capturedFetch(url)).text();
+          return 'done';
+        },
+        { maxCaptures: 2 }
+      );
+      assert.strictEqual(byCount.overflowed, 'captures');
+      assert.ok(byCount.captures.length <= 2, 'the log stops growing at the ceiling');
+
+      const byBytes = await withRawResponseCapture(
+        async () => {
+          for (let i = 0; i < 4; i += 1) await (await capturedFetch(url)).text();
+          return 'done';
+        },
+        { maxTotalBodyBytes: 1024 }
+      );
+      assert.strictEqual(byBytes.overflowed, 'bytes');
+
+      // And the marker survives a throw, which is how the probe fails closed.
+      const thrown = await withRawResponseCapture(
+        async () => {
+          for (let i = 0; i < 4; i += 1) await (await capturedFetch(url)).text();
+          throw new Error('boom');
+        },
+        { maxCaptures: 1 }
+      ).catch(err => err);
+      assert.strictEqual(getCaptureOverflowFromError(thrown), 'captures');
+    } finally {
+      server.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: signed runs refuse to misgrade (#2940 security final)', () => {
+  const signingKey = (() => {
+    const { generateKeyPairSync } = require('crypto');
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const jwk = privateKey.export({ format: 'jwk' });
+    return { ...jwk, kid: 'probe-signer', alg: 'Ed25519', use: 'sig', adcp_use: 'request-signing', key_ops: ['sign'] };
+  })();
+
+  function signingOptions(agent, requestSigning) {
+    return runOptionsFor(agent, {
+      functional_request_signing: {
+        kind: 'inline',
+        kid: signingKey.kid,
+        alg: 'ed25519',
+        private_key: signingKey,
+        agent_url: 'https://compliance-runner.example',
+      },
+      _profile: {
+        name: 'Signer',
+        tools: CANONICAL_NO_ALLOWLIST_TOOLS,
+        raw_capabilities: requestSigning === undefined ? {} : { request_signing: requestSigning },
+      },
+    });
+  }
+
+  it('reports session_probe_ungradable when every target must carry an RFC 9421 signature', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        signingOptions(agent, { required_for: ['get_principal'], supported_for: ['list_tasks'] })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.skipped, true, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_unauth.skip_reason, 'session_probe_ungradable');
+      assert.match(byId.probe_unauth.skip.detail, /mints no RFC 9421 signatures/);
+      assert.strictEqual(
+        agent.rpc().length,
+        0,
+        'nothing was graded, so no probe traffic was sent to the protected surface'
+      );
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('still grades a target the signing advertisement does not cover', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        signingOptions(agent, { required_for: ['create_media_buy'] })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.skipped, undefined, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_unauth.passed, true);
+      assert.match(byId.probe_unauth.extraction?.note ?? '', /graded get_principal/);
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('refuses to grade when the signing advertisement cannot be parsed', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        signingOptions(agent, { required_for: 'get_principal' })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.skipped, true, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_unauth.skip_reason, 'session_probe_ungradable');
+      assert.match(byId.probe_unauth.skip.detail, /could not read which operations/);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: the #2940 reporter shape is explained, not certified', () => {
+  it('reports session_probe_ungradable with the full allowlist remedy for a custom-only agent', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, {
+          agentTools: CUSTOM_ONLY_TOOLS,
+          _profile: { name: 'Reporter', tools: CUSTOM_ONLY_TOOLS },
+          _client: {
+            getAgentInfo: async () => ({ name: 'Reporter', tools: CUSTOM_ONLY_TOOLS.map(name => ({ name })) }),
+          },
+        })
+      );
+      const byId = stepsById(result);
+      assert.strictEqual(byId.probe_unauth.skipped, true, JSON.stringify(byId.probe_unauth, null, 2));
+      assert.strictEqual(byId.probe_unauth.skip_reason, 'session_probe_ungradable');
+      assert.strictEqual(byId.probe_unauth.skip.reason, 'not_applicable');
+      // The remedy names every allowlisted tool, from the one constant.
+      for (const tool of PROBE_TASK_ALLOWLIST) {
+        assert.ok(
+          byId.probe_unauth.skip.detail.includes(tool),
+          `remedy names ${tool}: ${byId.probe_unauth.skip.detail}`
+        );
+      }
+      // Not certified: the required contribution is absent.
+      assert.strictEqual(byId.assert_mechanism.passed, false);
+      assert.strictEqual(agent.rpc().length, 0, 'no probe traffic for a target the runner would not trust');
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: candidate retry after a shape refusal (#2940 protocol final)', () => {
+  it('grades the next canonical candidate when the first refuses the empty-argument shape', async () => {
+    const called = [];
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'retry-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      called.push(rpc.params?.name);
+      if (rpc.params?.name === 'get_principal') {
+        // Needs an argument this probe will not synthesise.
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(adcpErrorResult(rpc, 'INVALID_REQUEST'));
+        return;
+      }
+      if (req.headers.authorization === 'Bearer sk_valid') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(toolCallResult(rpc));
+        return;
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="mcp", error="invalid_token"',
+      });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: -32001, message: 'no' } }));
+    });
+    try {
+      const { httpResult, gradedTool } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: ['get_principal', 'list_tasks'],
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      assert.deepStrictEqual(
+        called.filter((name, index) => called.indexOf(name) === index),
+        ['get_principal', 'list_tasks'],
+        'the shape refusal retried the next candidate'
+      );
+      assert.strictEqual(gradedTool, 'list_tasks');
+      assert.strictEqual(httpResult.status, 401);
+      assert.strictEqual(httpResult.error, undefined, 'graded on the candidate that answered');
+    } finally {
+      agent.close();
+    }
+  });
+
+  it('stays inconclusive when every candidate refuses the shape', async () => {
+    const agent = await startStreamableHttpAgent(async (rpc, res) => {
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'all-refuse' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(adcpErrorResult(rpc, 'INVALID_REQUEST'));
+    });
+    try {
+      const { httpResult, gradedTool } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: ['get_principal', 'list_tasks'],
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      assert.strictEqual(gradedTool, 'list_tasks', 'the last candidate tried is what the report names');
+      assert.match(httpResult.error ?? '', /inconclusive/);
+      assert.match(httpResult.error ?? '', /refused the shape of the call/);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: a bare isError control proves nothing (#2940 security final)', () => {
+  it('refuses to treat isError with no AdCP code as proof the control reached the handler', async () => {
+    // The negative probe is rejected 401. The control answers `isError: true`
+    // with no recognized code — an unexplained tool failure. Bucketing that as
+    // "reached the handler" would certify an agent that refuses the valid
+    // credential too.
+    const agent = await startStreamableHttpAgent(async (rpc, res, { req }) => {
+      if (rpc.method === 'initialize') {
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 'iserror-session' });
+        res.end(initializeResult(rpc));
+        return;
+      }
+      if (req.headers.authorization === 'Bearer sk_valid') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpc.id,
+            result: { isError: true, content: [{ type: 'text', text: 'something went wrong' }] },
+          })
+        );
+        return;
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer realm="mcp", error="invalid_token"',
+      });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id ?? null, error: { code: -32001, message: 'no' } }));
+    });
+    try {
+      const { httpResult } = await rawMcpSessionProbe({
+        agentUrl: agent.agentUrl,
+        toolName: 'get_principal',
+        headers: { authorization: `Bearer ${generateRandomInvalidJwt()}` },
+        control: VALID_CONTROL,
+        allowPrivateIp: true,
+        timeoutMs: 4000,
+      });
+      assert.strictEqual(httpResult.status, 401);
+      assert.match(httpResult.error ?? '', /inconclusive/);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('mcp_session_probe: live OAuth token is bound to the agent under test (#2940 security F)', () => {
+  it('ignores a token held for a different agent rather than presenting it', async () => {
+    const agent = await startProbeAgent({ enforce: 'session', servePrm: true });
+    try {
+      const result = await runStoryboard(
+        agent.agentUrl,
+        securityBaselineStoryboard(),
+        runOptionsFor(agent, {
+          auth: { type: 'oauth', tokens: { access_token: '' } },
+          _client: {
+            getAgentInfo: async () => ({
+              name: 'Orchestrator',
+              tools: CANONICAL_NO_ALLOWLIST_TOOLS.map(name => ({ name })),
+            }),
+            // A neighbouring tenant's config: right shape, wrong agent.
+            getAgent: () => ({
+              getAgent: () => ({
+                agent_uri: 'https://other-tenant.example/mcp',
+                oauth_tokens: { access_token: 'sk_valid' },
+              }),
+            }),
+          },
+        })
+      );
+      const byId = stepsById(result);
+      assert.match(byId.probe_invalid_oauth_token.error ?? '', /no OAuth access token/);
+      assert.ok(
+        !agent.rpc().some(r => r.authorization === 'Bearer sk_valid'),
+        "another agent's token was never presented to this agent"
+      );
+      assert.strictEqual(byId.assert_mechanism.passed, false);
+    } finally {
+      agent.close();
+    }
+  });
+});
+
+describe('JUnit sanitization covers every agent-influenced attribute (#2940 code review)', () => {
+  const NONCHARACTERS = [
+    String.fromCharCode(0xfdd0),
+    String.fromCharCode(0xfffe),
+    String.fromCharCode(0xffff),
+    String.fromCharCode(0x08),
+  ];
+
+  it('escapes XML 1.0 noncharacters so a strict parser can read the report', () => {
+    const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
+    const hostile = `probe${NONCHARACTERS.join('')} end`;
+    const xml = formatStoryboardResultsAsJUnit([
+      {
+        storyboard_id: 'security_baseline',
+        storyboard_title: hostile,
+        overall_passed: false,
+        skipped_count: 1,
+        total_duration_ms: 1,
+        phases: [
+          {
+            phase_id: 'unauth_rejection',
+            phase_title: hostile,
+            passed: false,
+            steps: [
+              {
+                step_id: 'probe_unauth',
+                title: hostile,
+                task: MCP_SESSION_PROBE_TASK,
+                passed: false,
+                error: hostile,
+                validations: [{ check: 'http_status_in', passed: false, description: hostile, error: hostile }],
+              },
+              {
+                step_id: 'probe_api_key',
+                title: hostile,
+                task: MCP_SESSION_PROBE_TASK,
+                passed: true,
+                skipped: true,
+                skip_reason: 'session_probe_ungradable',
+                skip: { reason: 'not_applicable', detail: hostile },
+                validations: [],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    for (const char of NONCHARACTERS) {
+      assert.ok(!xml.includes(char), `U+${char.charCodeAt(0).toString(16)} is escaped everywhere it can appear`);
+    }
+    // Sanitized, not dropped: the surrounding text stays diagnosable.
+    assert.match(xml, /probe/);
+    assert.match(xml, /end/);
+  });
+
+  it('caps a runner-authored skip detail so one step cannot flood the report', () => {
+    const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
+    const xml = formatStoryboardResultsAsJUnit([
+      {
+        storyboard_id: 'security_baseline',
+        storyboard_title: 'Authentication baseline',
+        overall_passed: true,
+        skipped_count: 1,
+        total_duration_ms: 1,
+        phases: [
+          {
+            phase_id: 'api_key_path',
+            phase_title: 'API key mechanism',
+            passed: true,
+            steps: [
+              {
+                step_id: 'probe_api_key',
+                title: 'Positive probe',
+                task: MCP_SESSION_PROBE_TASK,
+                passed: true,
+                skipped: true,
+                skip_reason: 'session_probe_ungradable',
+                skip: { reason: 'not_applicable', detail: 'x'.repeat(5000) },
+                validations: [],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    const longest = Math.max(...(xml.match(/x+/g) ?? ['']).map(run => run.length));
+    assert.ok(longest > 0 && longest <= 400, `skip detail is capped, longest run was ${longest}`);
+  });
+
+  it('does not forward an unregistered skip reason detail into the report', () => {
+    const { formatStoryboardResultsAsJUnit } = require('../../dist/lib/testing/storyboard/junit.js');
+    const xml = formatStoryboardResultsAsJUnit([
+      {
+        storyboard_id: 'security_baseline',
+        storyboard_title: 'Authentication baseline',
+        overall_passed: true,
+        skipped_count: 1,
+        total_duration_ms: 1,
+        phases: [
+          {
+            phase_id: 'p',
+            phase_title: 'p',
+            passed: true,
+            steps: [
+              {
+                step_id: 's',
+                title: 's',
+                task: 'list_creatives',
+                passed: true,
+                skipped: true,
+                skip_reason: 'agent_declined',
+                skip: { reason: 'not_applicable', detail: 'SELLER_AUTHORED_DIAGNOSTIC_TEXT' },
+                validations: [],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    assert.ok(
+      !xml.includes('SELLER_AUTHORED_DIAGNOSTIC_TEXT'),
+      'only runner-authored skip reasons carry their detail into JUnit'
+    );
+  });
+});
+
+describe('CLI escapes agent-influenced step errors (#2940 DX)', () => {
+  it('neutralizes terminal control characters in step.error', () => {
+    const source = require('fs').readFileSync(require.resolve('../../bin/adcp.js'), 'utf8');
+    const unescaped = source.match(/console\.log\(`[^`]*\$\{step\.error\}/g) ?? [];
+    assert.deepStrictEqual(unescaped, [], 'every step.error print site goes through escapeTerminalControlChars');
+    const { escapeTerminalControlChars } = require('../../bin/adcp-storyboard-summary.js');
+    const escaped = escapeTerminalControlChars(`graded get_principal${String.fromCharCode(27)}[2J wiped`);
+    assert.ok(!escaped.includes(String.fromCharCode(27)));
+    assert.match(escaped, /graded get_principal/);
   });
 });

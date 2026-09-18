@@ -49,6 +49,12 @@ export const SLOW_NODE_TESTS = new Set([
   // alone, which leaves no margin under the fast suite's 60s per-test ceiling
   // once a shard runs files concurrently.
   'test/lib/storyboard-capability-rollup.test.js',
+  // Boots ~20 live MCP/HTTP mock agents across 54 suites, including a full
+  // comply() run and a deliberately slow SSE flood. ~29s standing alone, which
+  // is past the point where the fast suite's 60s per-file ceiling still has
+  // margin once a shard runs files concurrently — same reasoning as its
+  // siblings above.
+  'test/lib/storyboard-security.test.js',
 ]);
 
 function normalizeTestPath(testPath) {
