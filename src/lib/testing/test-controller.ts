@@ -27,6 +27,7 @@ export type ControllerScenario =
   | 'force_get_products_arm'
   | 'force_get_signals_arm'
   | 'force_task_completion'
+  | 'reset_state'
   | 'simulate_delivery'
   | 'simulate_budget_spend'
   /**

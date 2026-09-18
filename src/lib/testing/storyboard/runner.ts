@@ -98,6 +98,7 @@ import { REQUEST_SIGNING_PROBE_TASK } from './request-signing/synthesize';
 import { createWebhookReceiver, type WebhookReceiver, type WebhookWaitResult } from './webhook-receiver';
 import { WEBHOOK_ASSERTION_TASKS, armWebhookAssertions, executeWebhookAssertionStep } from './webhook-assertions';
 import { runControllerSeeding, type ControllerSeedingResult } from './seeding';
+import { callControllerRaw } from '../test-controller';
 import { applyFixtureBindingsToRequest, type FixtureBindingRegistry } from './fixture-resolution';
 import { getComplianceCacheDir } from './compliance';
 import { signWebhook, type RequestLike } from '../../signing/client';
@@ -1026,6 +1027,56 @@ function resetClientSessions(clients: readonly TestClient[]): void {
     const reset = (client as unknown as { resetContext?: () => void }).resetContext;
     if (typeof reset === 'function') reset.call(client);
   }
+}
+
+/**
+ * Ask a sandbox controller to clear seller-side fixtures before a storyboard.
+ * Older controllers may not implement the additive scenario; UNKNOWN_SCENARIO
+ * preserves backward compatibility while upgraded controllers establish the
+ * explicit isolation boundary that correlation IDs alone cannot provide.
+ */
+async function resetControllerState(
+  client: TestClient,
+  storyboard: Storyboard,
+  options: StoryboardRunOptions
+): Promise<TestStepResult | undefined> {
+  const controller = options._controllerCapabilities;
+  if (controller?.detected !== true || !controller.scenarios.includes('reset_state')) return undefined;
+  const outcome = await runStep('Reset test-controller state', 'comply_test_controller', () =>
+    callControllerRaw(
+      client,
+      {
+        scenario: 'reset_state',
+        context: { correlation_id: `${storyboard.id}--__reset_state__` },
+      },
+      options
+    )
+  );
+  if (!outcome.step.passed) return outcome.step;
+
+  const raw = outcome.result;
+  const data = raw?.data as { success?: boolean; error?: string; error_detail?: string } | undefined;
+  if (raw?.success && data?.success === true) return undefined;
+  if (raw?.success && data?.success === false && data.error === 'UNKNOWN_SCENARIO') return undefined;
+  return {
+    ...outcome.step,
+    passed: false,
+    error: data?.error_detail ?? data?.error ?? raw?.error ?? 'comply_test_controller reset_state failed',
+  };
+}
+
+async function resetControllerStates(
+  targets: ReadonlyArray<{ client: TestClient; options: StoryboardRunOptions }>,
+  storyboard: Storyboard
+): Promise<TestStepResult | undefined> {
+  const seen = new Set<TestClient>();
+  for (const target of targets) {
+    if (seen.has(target.client)) continue;
+    seen.add(target.client);
+    const failure = await resetControllerState(target.client, storyboard, target.options);
+    if (failure) return failure;
+  }
+  return undefined;
 }
 
 function isPollEligibleEnvelope(data: unknown): data is PollEligibleEnvelopeShape {
@@ -2779,6 +2830,21 @@ async function executeStoryboardPass(
           options = { ...options, _profile: profile };
         }
       }
+    }
+  }
+
+  if (preSeeded === undefined) {
+    const resetTargets =
+      routingContext && options.agents
+        ? [...routingContext.profiles.entries()].map(([key, profile]) => ({
+            client: routingContext!.clients.get(key)!,
+            options: routedAgentOptions(options.agents![key]!, options, profile),
+          }))
+        : clients.map(client => ({ client, options }));
+    const resetFailure = await resetControllerStates(resetTargets, storyboard);
+    if (resetFailure) {
+      if (!callerOwnsClients) await closeScopedConnections(options.protocol);
+      return buildDiscoveryFailedResult(agentUrls, storyboard, resetFailure);
     }
   }
 
@@ -4916,6 +4982,15 @@ async function runMultiPass(
       _profile: preSeedProfile,
       ...(options.agentTools ? {} : { agentTools: normalizeAgentToolNames(preSeedProfile.tools) }),
     };
+  }
+
+  const resetFailure = await resetControllerStates(
+    preSeedClients.map(client => ({ client, options })),
+    storyboard
+  );
+  if (resetFailure) {
+    await closeScopedConnections(options.protocol);
+    return buildDiscoveryFailedResult(agentUrls, storyboard, resetFailure);
   }
 
   // runStoryboardBody cannot evaluate capability-gated requirements until
