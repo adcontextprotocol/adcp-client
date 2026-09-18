@@ -551,7 +551,13 @@ function evaluateRequiresCapabilityGate(
   return null;
 }
 
-function storyboardCapabilityPredicates(storyboard: Storyboard): RequiresCapabilityPredicate[] {
+/**
+ * Every root applicability predicate a storyboard authors, across
+ * `requires_capability` and `requires_all_capabilities`. Exported so the
+ * compliance rollup keys on the same set the runner gates on, rather than
+ * re-listing the fields and drifting when one is added.
+ */
+export function storyboardCapabilityPredicates(storyboard: Storyboard): RequiresCapabilityPredicate[] {
   return [
     ...(storyboard.requires_capability ? [storyboard.requires_capability] : []),
     ...(storyboard.requires_all_capabilities ?? []),
@@ -1369,10 +1375,52 @@ async function runStoryboardBody(
   // can be evaluated faithfully, so a missing harness remains one whole-
   // storyboard skip instead of being multiplied across passes.
   const allRequires = resolveStoryboardRequires(storyboard, options);
-  const firstAgentRequirement = allRequires.findIndex(r => r === 'controller' || r === 'request_signer');
-  const earlyRequires = options.agents
-    ? allRequires.slice(0, firstAgentRequirement < 0 ? undefined : firstAgentRequirement)
-    : allRequires;
+  // Without a root capability predicate nothing has to be discovered before
+  // the `requires` gate can speak, so the pre-flight evaluates as much of the
+  // declared list as it can — in declared order, and no further.
+  //
+  // "No further" is the load-bearing half. `checkRequires` reports the FIRST
+  // unmet gate in declared order, so a requirement that cannot be assessed
+  // yet has to defer *along with every requirement declared after it*.
+  // Filtering one out instead — or letting `checkRequires` fall through it —
+  // lets a later gate answer while an earlier one is still unknown, and the
+  // run then reports the wrong requirement. That is exactly how routed and
+  // non-routed runs of the same agent disagreed: a real `comply()` run
+  // threads `_profile` + `agentTools`, so non-routed settled a declared-first
+  // `controller` in the pre-flight, while routed skipped past it and reported
+  // whatever came next (adcp-client#2945 review).
+  //
+  // What is assessable is mode-dependent, so `preflightDefersRequirement`
+  // mirrors `checkRequires`'s own self-deferral conditions exactly. Everything
+  // else — `multi_agent`, `seeded_state`, the receiver/runner harness gates,
+  // unrecognized forward-compat values — is decidable from the run options
+  // alone and answers in place, which is what keeps a topology gate from being
+  // reported as a discovery failure.
+  //
+  // With a root capability predicate, AdCP 3.2's applicability order puts the
+  // capability verdict first ("predicates MUST be evaluated before the runner
+  // evaluates `requires`"), so the whole list defers until discovery has
+  // resolved it (adcp-client#2945).
+  const preflightDefersRequirement = (requirement: string): boolean => {
+    switch (requirement) {
+      case 'controller':
+        // Routed: per-route *discovered* tools are authoritative, and they are
+        // not known until `executeStoryboardPass` has run discovery. A
+        // caller-supplied `agentTools` is a stale or cross-tenant list and
+        // must never settle this gate. Non-routed: matches
+        // `checkRequires`'s `if (!options.agentTools) continue`.
+        return options.agents !== undefined || !options.agentTools;
+      case 'request_signer':
+        // Routed threads no run-level profile, so the gate is answered per
+        // selected route after discovery. Non-routed: matches
+        // `checkRequires`'s `if (!profile?.raw_capabilities) break`.
+        return options.agents !== undefined || !options._profile?.raw_capabilities;
+      default:
+        return false;
+    }
+  };
+  const firstDeferred = allRequires.findIndex(preflightDefersRequirement);
+  const earlyRequires = hasCapabilityGate ? [] : allRequires.slice(0, firstDeferred < 0 ? undefined : firstDeferred);
   if (earlyRequires.length && (!deferCapabilityAndRequires || (options.agents && !hasCapabilityGate))) {
     const requirementCheck = await checkRequires(
       earlyRequires,
@@ -1768,6 +1816,26 @@ function buildRequiredAnyOfToolsMissingResult(
 }
 
 /**
+ * A verdict about one runtime requirement that the caller established before
+ * calling `checkRequires`, because `checkRequires` cannot derive it from its
+ * own inputs. Routed runs are the case: `controller` and `request_signer` are
+ * answered per selected route during the routing preflight, never from the
+ * cross-tenant tool union the routed run assembles for `required_tools`
+ * ANY-OF gating.
+ *
+ *   - `'unmet'`   — report it, at its own declared position.
+ *   - `'met'`     — satisfied; declared order moves on to the next tag.
+ *   - `'unknown'` — the caller owns this requirement but could not settle it
+ *                   (a routing failure, or no route to read it from). Declared
+ *                   order moves on WITHOUT `checkRequires` re-deriving an
+ *                   answer from inputs the caller has ruled inadmissible.
+ */
+type PrecomputedRequirementVerdict =
+  | { status: 'unmet'; requirement: string; detail: string }
+  | { status: 'met' }
+  | { status: 'unknown' };
+
+/**
  * Resolve a storyboard's `requires:` tags against the runtime environment.
  * Returns the first unmet requirement (with a human-readable detail) or
  * `null` when every requirement is available. Spec: adcp-client#1626.
@@ -1820,11 +1888,35 @@ async function checkRequires(
   requires: readonly string[],
   storyboard: Storyboard,
   options: StoryboardRunOptions,
-  profile?: AgentProfile
+  profile?: AgentProfile,
+  /**
+   * Verdicts the caller already established for specific requirements, keyed
+   * by requirement name. Routed runs resolve `controller` and
+   * `request_signer` per selected route during the routing preflight —
+   * `checkRequires` cannot redo either, because routed mode threads no single
+   * run-level profile and its `options.agentTools` is a cross-tenant union.
+   * Handing the verdict back in here keeps it subject to the same ordered,
+   * forward-compatible precedence as every other gate, instead of
+   * short-circuiting ahead of an earlier unmet requirement
+   * (adcp-client#2945 review).
+   *
+   * An entry — of ANY status, including `'unknown'` — also means the caller
+   * owns that requirement's provenance, so this function must not fall back
+   * to its own inputs for it.
+   */
+  precomputed?: ReadonlyMap<string, PrecomputedRequirementVerdict>
 ): Promise<
   { requirement: string; detail: string } | { preparedPublisherAuthProbes?: PreparedTrustedMatchPublisherAuthProbes }
 > {
   let preparedPublisherAuthProbes = getPreparedTrustedMatchPublisherAuth(options);
+  // Declared order, unconditionally. `checkRequires` reports the first unmet
+  // gate in the list; reordering it — or letting one requirement class
+  // override another — is what made routed and non-routed runs of the same
+  // agent disagree (adcp-client#2945 review). Which gates are *assessable*
+  // at this point is the only thing that varies: `controller` and
+  // `request_signer` self-defer while no profile is threaded through, so a
+  // pre-discovery pass naturally falls through to the next declared
+  // requirement, and a post-discovery pass answers them in place.
   for (const requirement of requires) {
     if (!isKnownRequirement(requirement)) {
       return {
@@ -1834,6 +1926,19 @@ async function checkRequires(
           `This SDK does not know how to satisfy it, so the requirement is treated as unmet ` +
           `for forward compatibility.`,
       };
+    }
+    // A precomputed verdict answers this requirement at its own declared
+    // position — the routed equivalent of the switch below resolving it — so
+    // an earlier unmet gate still wins and a later one never pre-empts it.
+    // `'met'` and `'unknown'` both move declared order along without letting
+    // the switch re-derive the answer from inputs the caller has already
+    // ruled inadmissible (in routed mode, the cross-tenant tool union).
+    const established = precomputed?.get(requirement);
+    if (established) {
+      if (established.status === 'unmet') {
+        return { requirement: established.requirement, detail: established.detail };
+      }
+      continue;
     }
     switch (requirement) {
       case 'controller': {
@@ -2558,6 +2663,54 @@ async function executeStoryboardPass(
   const routedPhaseCapabilitySkips = new Map<string, string>();
   const routedStepRequirements = new Map<StoryboardStep, string>();
   const routedRootCapabilitySkips: string[] = [];
+  // Routed requirement failures are kept in their OWN channel. Folding them
+  // into `routedRootCapabilitySkips` made an unmet `request_signer` surface as
+  // `capability_unsupported` with no `skip.requirement`, so routed and
+  // non-routed runs of the same agent disagreed and the provenance of the
+  // skip — authored capability predicate vs. unmet runtime requirement — was
+  // unrecoverable downstream (adcp-client#2945 review).
+  const routedRootRequirementSkips: Array<{ requirement: string; detail: string }> = [];
+  // `controller` answers from the route that owns the state this storyboard
+  // exercises — never from the cross-tenant union assembled above. That union
+  // exists for `required_tools` ANY-OF gating ("a storyboard that needs >=1 of
+  // [sync_governance, activate_signal] passes when any tenant serves either
+  // one"), which is disjunctive by design. Controller availability is the
+  // opposite question: a peer tenant's `comply_test_controller` cannot seed
+  // another tenant's state, which is the invariant the fixture-resolution
+  // callback below already asserts — "No union member can authorize a selected
+  // agent's operation". Reading the union let a signals peer's controller
+  // satisfy a seller's gate, and the seller's steps then executed against
+  // unseeded state and graded green (adcp-client#2945 review).
+  //
+  // Scope is deliberately (C), not "every callable route must have one": a
+  // route that is merely read from — a signals peer serving static marketplace
+  // data — is not a fixture target and needs no controller of its own. So the
+  // gate is unmet only when NO route serving a state-exercising step advertises
+  // one. Per-tenant fixture targeting would let this be exact; it is the
+  // follow-up already tracked where routed + `controller_seeding: true`
+  // fail-fasts, and until it lands a shared control plane fronting two tenants
+  // has to be declared, not inferred from a union.
+  //
+  // Keyed by the EXACT `options.agents` key, never by URL: two keys may share
+  // one URL with different `auth` (one tenant per bearer behind a shared
+  // control plane). URL keying collapsed them into whichever key the map lists
+  // first, so the last step to dispatch overwrote the other's tool list and
+  // the verdict flipped with step order — a false negative for a seller that
+  // does advertise a controller, and misattributed route names in the detail
+  // (adcp-client#2945 review).
+  const routedControllerRoutes = new Map<
+    string,
+    {
+      /** Tools discovered for this exact route. */
+      tools: readonly string[];
+      /**
+       * True once this route serves a step that is not itself a
+       * `comply_test_controller` back-channel call — i.e. a step whose state
+       * a controller would have to seed.
+       */
+      stateExercising: boolean;
+    }
+  >();
   const routedErrors = new Map<StoryboardStep, unknown>();
   const reportedRoutingErrors = new Set<StoryboardStep>();
   let context: StoryboardContext = { ...storyboard.context, ...options.context };
@@ -2591,12 +2744,13 @@ async function executeStoryboardPass(
         try {
           const selected = dispatch.nextFor(step);
           const selectedOptions = selected.options!;
-          let rootDetail = evaluateStoryboardCapabilityGates(
+          const rootDetail = evaluateStoryboardCapabilityGates(
             storyboard,
             selected.profile,
             selectedOptions.agentTools,
             options.adcpVersion
           );
+          let requirementSkip: { requirement: string; detail: string } | undefined;
           if (rootDetail === null && allRequires.includes('request_signer')) {
             const requirement = await checkRequires(['request_signer'], storyboard, selectedOptions, {
               ...selected.profile!,
@@ -2605,24 +2759,65 @@ async function executeStoryboardPass(
               raw_capabilities: selected.profile!.raw_capabilities ?? {},
             });
             if ('requirement' in requirement) {
-              rootDetail = requirement.detail;
+              requirementSkip = requirement;
               routedStepRequirements.set(step, requirement.requirement);
             }
           }
+          // Evaluated up front, not lazily behind `??`, because the controller
+          // provenance below has to know whether this step will actually run.
+          // `evaluateRequiresCapabilityGate` is pure, so hoisting it is free.
+          const phaseDetail = phase.requires_capability
+            ? evaluateRequiresCapabilityGate(
+                phase.requires_capability,
+                selected.profile,
+                selectedOptions.agentTools,
+                options.adcpVersion
+              )
+            : null;
+          // Only routes whose step will actually run can vouch for — or be
+          // held to — the `controller` gate. A route the storyboard's own
+          // capability predicate (root OR phase) puts out of scope executes
+          // nothing, so it exercises no state and is no fixture target
+          // (adcp-client#2945 review).
+          //
+          // A route whose `request_signer` verdict came back unmet is
+          // deliberately NOT excluded: that route IS in the storyboard's
+          // declared scope and merely lacks a runtime capability, so it stays
+          // in the set and declared order — not exclusion order — decides
+          // which of the two gates is reported. That is what keeps parity with
+          // a non-routed run, which assesses both from the same profile.
+          if (allRequires.includes('controller') && rootDetail === null && phaseDetail === null) {
+            // Always set in routed mode: `createRoutingDispatcher` throws
+            // rather than returning an assignment without a key.
+            const routeKey = selected.agentKey ?? selected.agentUrl;
+            // `routedAgentOptions` always projects the route's discovered
+            // tools (`[]` when the agent advertises none), so there is no
+            // undiscovered-tools case to guess at here.
+            const routeTools = selectedOptions.agentTools ?? [];
+            const resolvedTask = resolveTaskName(step, selectedOptions) ?? step.task;
+            const previous = routedControllerRoutes.get(routeKey);
+            routedControllerRoutes.set(routeKey, {
+              tools: routeTools,
+              // A `comply_test_controller` step is the back-channel itself,
+              // not the state under test, so it cannot vouch for the route it
+              // is dispatched to. One state-exercising step is enough to mark
+              // the route, whatever order the steps arrive in.
+              stateExercising: (previous?.stateExercising ?? false) || resolvedTask !== 'comply_test_controller',
+            });
+          }
+          // Two provenances, two channels. Per-step skip detail is unchanged:
+          // a route that opted out still yields a `not_applicable` step skip
+          // carrying `skip.requirement`, which is the established routed
+          // behaviour for partial coverage.
           if (rootDetail !== null) routedRootCapabilitySkips.push(rootDetail);
-          const detail =
-            rootDetail ??
-            (phase.requires_capability
-              ? evaluateRequiresCapabilityGate(
-                  phase.requires_capability,
-                  selected.profile,
-                  selectedOptions.agentTools,
-                  options.adcpVersion
-                )
-              : null);
+          else if (requirementSkip) routedRootRequirementSkips.push(requirementSkip);
+          const detail = rootDetail ?? requirementSkip?.detail ?? phaseDetail;
           if (detail !== null) routedStepCapabilitySkips.set(step, detail);
         } catch (error) {
-          // Routing errors remain failures, never evidence of inapplicability.
+          // Routing errors remain failures, never evidence of inapplicability:
+          // an ambiguous claim, an unmapped tool, a broken route, or a
+          // topology that cannot serve a step the storyboard authored are all
+          // actionable.
           routedErrors.set(step, error);
         }
       }
@@ -2667,17 +2862,17 @@ async function executeStoryboardPass(
   // collected again from the fully-fetched profile at result-build time.
   const preflightNotices = collectCapabilityNotices(storyboard, options._profile);
 
+  const callableStepCount = storyboard.phases.reduce(
+    (n, phase) => n + phase.steps.filter(step => step.task !== VALIDATION_ONLY_TASK).length,
+    0
+  );
+
   // Capability applicability is intentionally first. Optional capability
   // storyboards must grade not_applicable for agents that did not opt in,
   // without inspecting or reporting any missing operator runtime adapter.
   if (storyboardCapabilityPredicates(storyboard).length > 0) {
     const unmetDetail = routingContext
-      ? routedRootCapabilitySkips.length > 0 &&
-        routedRootCapabilitySkips.length ===
-          storyboard.phases.reduce(
-            (n, phase) => n + phase.steps.filter(step => step.task !== VALIDATION_ONLY_TASK).length,
-            0
-          )
+      ? routedRootCapabilitySkips.length > 0 && routedRootCapabilitySkips.length === callableStepCount
         ? routedRootCapabilitySkips[0]!
         : null
       : evaluateStoryboardCapabilityGates(storyboard, profile, options.agentTools, options.adcpVersion);
@@ -2690,12 +2885,83 @@ async function executeStoryboardPass(
     }
   }
 
+  // Every route opted out of a runtime requirement: hand that verdict to the
+  // ordered `requires` gate below rather than returning here, so it competes
+  // on the same footing as `controller` and any unknown forward-compat value.
+  // Returning early reported `request_signer` even when an earlier gate was
+  // also unmet, which diverged from a non-routed run of the same agent
+  // (adcp-client#2945 review). The verdict itself is still the routed one —
+  // `checkRequires` cannot recompute it without a run-level profile — and it
+  // still replaces the old `capability_unsupported` mislabel, which claimed
+  // the authored capability predicate had evaluated false when the agent had
+  // in fact satisfied it.
+  const establishedRequirements = new Map<string, PrecomputedRequirementVerdict>();
+  // In routed mode BOTH agent-dependent requirements are the preflight's to
+  // own — always, in every status. Entering them here (rather than filtering
+  // them out of the gate's input list) is what lets `checkRequires` evaluate
+  // the full declared list, so an earlier declared requirement still wins and
+  // declared-order parity with a non-routed run of the same agent holds.
+  if (routingContext && allRequires.includes('controller')) {
+    const decided = [...routedControllerRoutes].filter(([, route]) => route.stateExercising);
+    // A storyboard whose only in-scope callable steps ARE the controller
+    // back-channel still needs a controller — on the route those steps
+    // dispatch to. Falling back to every in-scope route keeps that fail-closed
+    // instead of silently dropping the gate and dialing the wire
+    // (adcp-client#2945 review).
+    const routes = decided.length > 0 ? decided : [...routedControllerRoutes];
+    if (routedErrors.size > 0 || routes.length === 0) {
+      // Routing failures outrank every requirement, and with no in-scope
+      // route there is nothing authoritative to read. Either way the union
+      // must not answer in its place.
+      establishedRequirements.set('controller', { status: 'unknown' });
+    } else if (routes.some(([, route]) => route.tools.includes('comply_test_controller'))) {
+      establishedRequirements.set('controller', { status: 'met' });
+    } else {
+      const exercised = routes.map(([key]) => key);
+      const exercisedKeys = new Set(exercised);
+      const peersWithController = [...routingContext.profiles.entries()]
+        .filter(
+          ([key, peer]) =>
+            !exercisedKeys.has(key) && normalizeAgentToolNames(peer.tools)?.includes('comply_test_controller')
+        )
+        .map(([key]) => key);
+      establishedRequirements.set('controller', {
+        status: 'unmet',
+        requirement: 'controller',
+        detail:
+          `Storyboard requires 'controller'; no route serving this storyboard's steps advertises ` +
+          `comply_test_controller. Route(s) exercised: [${exercised.join(', ')}]. ` +
+          (peersWithController.length
+            ? `Agent(s) [${peersWithController.join(', ')}] in this map do advertise it, but a peer ` +
+              `route's controller cannot seed another route's state — a run-level tool union does not ` +
+              `grant it. `
+            : '') +
+          `Add comply_test_controller to the route that owns the state, or pin the seeding step to ` +
+          `that route with 'agent:'.`,
+      });
+    }
+  }
+  if (routingContext && allRequires.includes('request_signer')) {
+    // Every in-scope route opted out: that is the run-level verdict, at its
+    // declared position. Partial opt-out stays per-step (`skip.requirement` on
+    // the routes that declined), and a routing failure leaves it unsettled.
+    establishedRequirements.set(
+      'request_signer',
+      routedErrors.size === 0 &&
+        routedRootRequirementSkips.length > 0 &&
+        routedRootRequirementSkips.length === callableStepCount
+        ? { status: 'unmet', ...routedRootRequirementSkips[0]! }
+        : { status: 'unknown' }
+    );
+  }
+
   if (allRequires.length) {
     const requirementCheck = await checkRequires(
-      routedErrors.size > 0 ? allRequires.filter(requirement => requirement !== 'controller') : allRequires,
+      allRequires,
       storyboard,
       options,
-      routingContext ? undefined : profile
+      routingContext ? undefined : profile,
+      establishedRequirements
     );
     if ('requirement' in requirementCheck) {
       if (!callerOwnsClients) await closeScopedConnections(options.protocol);
@@ -8927,6 +9193,18 @@ function getNextStepPreview(
 interface StepAssignment {
   client: TestClient;
   agentUrl: string;
+  /**
+   * Exact key in `options.agents` that dispatch resolved for this step. Set
+   * only by the routing dispatcher; `undefined` for replica round-robin,
+   * which has keys of its own.
+   *
+   * The URL is NOT a route identity: two keys may legitimately share one URL
+   * with different `auth` — one tenant per bearer against a shared control
+   * plane. Anything keyed per route must key on this, or two tenants collapse
+   * into whichever key happens to appear first in the map
+   * (adcp-client#2945 review).
+   */
+  agentKey?: string;
   /** 0-based index into the agent URL list */
   instanceIndex: number;
   /** Profile discovered for the agent selected to execute this step. */
@@ -9017,6 +9295,7 @@ function createRoutingDispatcher(
       return {
         client,
         agentUrl: url,
+        agentKey: key,
         instanceIndex: keyToIndex.get(key) ?? 0,
         profile,
         options: routedAgentOptions(agents[key]!, options, profile),
