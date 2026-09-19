@@ -765,7 +765,10 @@ function ensureInit(version: string): LoaderState {
  * Walk every directory except `bundled/` (pre-resolved schemas with refs
  * already inlined). Response files that `buildFileIndex` registered as tools
  * are registered with `relaxResponseRoot` applied, matching `getValidator`.
- * The fileIndex check is stricter than a filename-suffix match:
+ * Response schemas are matched by both indexed path and canonical `$id`:
+ * bundled and modular documents may intentionally share the same root `$id`,
+ * even though only the bundled path is selected by `buildFileIndex`.
+ * These checks are stricter than a filename-suffix match:
  * building-block fragments like `core/pagination-response.json` end in
  * `-response.json` but aren't tools, so suffix-matching would wrongly treat
  * them as relaxable response roots.
@@ -786,11 +789,13 @@ function ensureCoreLoaded(s: LoaderState): void {
   // unregistered, so a later compile of `create_media_buy` fails on
   // `MissingRefError: can't resolve /schemas/media-buy/package-request.json`.
   //
-  const responseToolFiles = new Map<string, Direction>();
+  const responseToolFiles = new Set<string>();
+  const responseToolIds = new Set<string>();
   for (const [key, file] of s.fileIndex) {
     if (key.endsWith('::request')) continue;
-    const direction = key.slice(key.indexOf('::') + 2) as Direction;
-    responseToolFiles.set(file, direction);
+    responseToolFiles.add(file);
+    const schema = loadJson(file);
+    if (typeof schema.$id === 'string') responseToolIds.add(schema.$id);
   }
   const registeredIds = getAjvRegisteredIds(s.ajv);
   for (const entry of readdirSync(s.root, { withFileTypes: true })) {
@@ -798,9 +803,10 @@ function ensureCoreLoaded(s: LoaderState): void {
     if (!isRuntimeSchemaDirectory(entry.name)) continue;
     const abs = path.join(s.root, entry.name);
     for (const file of walkJsonFiles(abs)) {
-      const responseDirection = responseToolFiles.get(file);
       const schema = loadJson(file);
-      const schemaToRegister = responseDirection === undefined ? schema : relaxResponseRoot(schema);
+      const isResponseTool =
+        responseToolFiles.has(file) || (typeof schema.$id === 'string' && responseToolIds.has(schema.$id));
+      const schemaToRegister = isResponseTool ? relaxResponseRoot(schema) : schema;
       if (typeof schemaToRegister.$id === 'string' && !registeredIds.has(schemaToRegister.$id)) {
         s.ajv.addSchema(schemaToRegister);
         registeredIds.add(schemaToRegister.$id);

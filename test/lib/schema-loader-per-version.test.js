@@ -26,6 +26,7 @@ const {
   listValidatorKeys,
   resolveBundleKey,
   hasSchemaBundle,
+  withExternalSchemaRoot,
   _resetValidationLoader,
 } = require('../../dist/lib/validation/schema-loader.js');
 const { ADCP_VERSION } = require('../../dist/lib/version.js');
@@ -391,6 +392,54 @@ describe('schema-loader per-version state', () => {
       /\/bundled\//,
       `expected bundled $id, got: ${schema.$id} — bundled-path priority must survive ensureCoreLoaded narrowing`
     );
+  });
+
+  test('canonical bundled response ids preserve response-root relaxation', () => {
+    const version = '8.8.0';
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'adcp-schema-loader-canonical-id-'));
+    const bundledDir = path.join(tempRoot, 'bundled', 'media-buy');
+    const modularDir = path.join(tempRoot, 'media-buy');
+    const responseId = `/schemas/${version}/media-buy/list-products-response.json`;
+    fs.mkdirSync(bundledDir, { recursive: true });
+    fs.mkdirSync(modularDir, { recursive: true });
+
+    const responseSchema = {
+      $id: responseId,
+      type: 'object',
+      properties: { outcome: { const: 'listed' } },
+      required: ['outcome'],
+      additionalProperties: false,
+    };
+    fs.writeFileSync(
+      path.join(bundledDir, 'list-products-request.json'),
+      JSON.stringify({
+        $id: `/schemas/${version}/media-buy/list-products-request.json`,
+        type: 'object',
+        additionalProperties: false,
+      })
+    );
+    fs.writeFileSync(path.join(bundledDir, 'list-products-response.json'), JSON.stringify(responseSchema));
+    fs.writeFileSync(path.join(modularDir, 'list-products-response.json'), JSON.stringify(responseSchema));
+
+    try {
+      withExternalSchemaRoot(version, tempRoot, () => {
+        _resetValidationLoader(version);
+        const request = getValidator('list_products', 'request', version);
+        assert.ok(request, 'request validator must compile and trigger core schema registration');
+        assert.strictEqual(request({}), true, JSON.stringify(request.errors));
+
+        const response = getValidator('list_products', 'sync', version);
+        assert.ok(response, 'response validator must compile');
+        assert.strictEqual(
+          response({ outcome: 'listed', envelope_extension: true }),
+          true,
+          `response root must remain extensible when modular and bundled schemas share ${responseId}: ${JSON.stringify(response.errors)}`
+        );
+      });
+    } finally {
+      _resetValidationLoader(version);
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 
   test('getSchemaValidatorByRef compiles MCP webhook payload schema with nested refs', () => {
