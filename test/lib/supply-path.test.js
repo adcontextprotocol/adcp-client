@@ -274,6 +274,33 @@ describe('fail-closed authoritative semantics', () => {
       assert.equal(evaluateSupplyPath(evidence).state, 'owner_attested');
     }
   });
+  it('rejects malformed host inline property grants', () => {
+    const evidence = input();
+    const grant = evidence.hostManifest.authorized_agents[0];
+    grant.authorization_type = 'inline_properties';
+    delete grant.property_ids;
+    grant.properties = [{ property_id: 'hoststream_ctv' }];
+    const result = evaluateSupplyPath(evidence);
+    assert.equal(result.state, 'owner_attested');
+    assert.equal(result.legs.host_authorization.failure, 'property_scope_mismatch');
+  });
+  for (const [selection_type, field] of [
+    ['by_id', 'property_ids'],
+    ['by_tag', 'property_tags'],
+  ]) {
+    it(`rejects malformed owner publisher_properties ${selection_type} elements`, () => {
+      const evidence = input();
+      evidence.hostManifest.authorized_agents = [];
+      evidence.hostInventoryPartnerDomains = [OWNER];
+      const grant = evidence.ownerManifest.authorized_agents[0];
+      grant.authorization_type = 'publisher_properties';
+      delete grant.property_ids;
+      grant.publisher_properties = [{ publisher_domain: OWNER, selection_type, [field]: [null] }];
+      const result = evaluateSupplyPath(evidence);
+      assert.equal(result.state, 'owner_attested');
+      assert.equal(result.legs.owner_agent_declared.failure, 'agent_not_declared_by_owner');
+    });
+  }
   it('checks identifier-only carriage against a resolvable host grant', () => {
     const evidence = input();
     evidence.ownerManifest.collections[0].distribution[0] = {

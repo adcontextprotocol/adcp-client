@@ -56,7 +56,21 @@ function coversCollection(entry: Record<string, unknown>, owner: string, id: str
 }
 
 const PROPERTY_TYPES = new Set<string>(PropertyTypeValues);
-const PROPERTY_IDENTIFIER_TYPES = new Set<string>(PropertyIdentifierTypesValues);
+const PROPERTY_IDENTIFIER_TYPES = new Set<string>([
+  ...PropertyIdentifierTypesValues,
+  // The SDK still accepts the published pre-3.2 discovery aliases represented
+  // by discovery/types.ts and by the canonical supply-path corpus.
+  'amazon_app_store_id',
+  'roku_channel_id',
+  'lg_channel_id',
+  'vizio_app_id',
+  'fire_tv_app_id',
+  'dooh_venue_id',
+  'podcast_rss_feed',
+  'spotify_show_id',
+  'iab_tech_lab_domain_id',
+  'custom',
+]);
 const PROPERTY_CHANNELS = new Set<string>(MediaChannelValues);
 
 /** A declaration is not evidence unless its property grant is complete and schema-shaped. */
@@ -110,7 +124,19 @@ function hasPropertyAuthorizationEnvelope(entry: Record<string, unknown>): boole
       return false;
     }
     try {
-      entry.publisher_properties.forEach(selector => parsePublisherPropertySelector(selector));
+      for (const raw of entry.publisher_properties) {
+        const selector = parsePublisherPropertySelector(raw);
+        const value = raw as Record<string, unknown>;
+        if (
+          (selector.selection_type === 'by_id' &&
+            (!propertyTokens(value.property_ids) || value.property_tags !== undefined)) ||
+          (selector.selection_type === 'by_tag' &&
+            (!propertyTokens(value.property_tags) || value.property_ids !== undefined)) ||
+          (selector.selection_type === 'all' && (value.property_ids !== undefined || value.property_tags !== undefined))
+        ) {
+          return false;
+        }
+      }
       return true;
     } catch {
       return false;
@@ -404,7 +430,7 @@ export function evaluateSupplyPath(input: SupplyPathInput): SupplyPathVerdict {
         carriage.ok &&
         collectionLeg.ok &&
         covered.find(e => {
-          if (unsupportedConstraints(e).length) return false;
+          if (!hasPropertyAuthorizationEnvelope(e) || unsupportedConstraints(e).length) return false;
           const scope = propertyScope(e, host, hostManifest, input.requireExplicitHostPublisherDomain);
           const required = input.requiredHostPropertyIds ?? claimed;
           if (
