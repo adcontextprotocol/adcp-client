@@ -1,13 +1,11 @@
+import { createHash } from 'node:crypto';
 import type { SinglePublisherPropertySelector } from '../discovery/types';
 import type { ListProductsResponse } from '../types';
 import { verifySupplyPath, verifyAuthoritativeSupplyPath } from './verify';
 import { SUPPLY_PATH_STATES, hasValidPropertySelectorPredicate } from './evaluate';
 import { boundedOption, SupplyPathEvidenceSession } from './fetch-evidence';
 import { agentIdentity, domain, record, strings, validateSupplyPathRequest } from './validation';
-import {
-  parsePublisherPropertySelector,
-  expandPublisherPropertySelector,
-} from '../discovery/publisher-property-selector';
+import { parsePublisherPropertySelector } from '../discovery/publisher-property-selector';
 import type {
   SupplyPathRequest,
   SupplyPathState,
@@ -40,6 +38,30 @@ export type ProductSupplyPathOptions = ProductSupplyPathVerificationOptions & {
   timeoutMs?: number;
   signal?: AbortSignal;
 };
+
+const MAX_SELECTOR_PREPROCESS_VALUES = 32_768;
+const MAX_SELECTOR_PREPROCESS_BYTES = 4 * 1024 * 1024;
+
+function selectorPredicateFingerprint(selector: SinglePublisherPropertySelector): {
+  key: string;
+  values: number;
+  bytes: number;
+} {
+  const predicate =
+    selector.selection_type === 'by_id'
+      ? selector.property_ids
+      : selector.selection_type === 'by_tag'
+        ? selector.property_tags
+        : [];
+  const hash = createHash('sha256').update(selector.selection_type);
+  let bytes = selector.selection_type.length;
+  for (const value of predicate) {
+    if (value.length > 8192) throw new Error('selector_work_limit_exceeded');
+    hash.update('\0').update(value);
+    bytes += value.length;
+  }
+  return { key: hash.digest('hex'), values: predicate.length, bytes };
+}
 
 /**
  * Annotate products with external-domain collection paths. Preserves actual
@@ -91,24 +113,46 @@ export async function annotateProductsSupplyPaths<T extends object>(
     try {
       if (!value.publisher_properties.every(hasValidPropertySelectorPredicate))
         throw new Error('invalid_product_selector_predicate');
-      const propertySelectorsByKey = new Map<string, SinglePublisherPropertySelector>();
+      const selectorsByHost = new Map<string, Map<string, SinglePublisherPropertySelector>>();
       let selectorExpansions = 0;
+      let selectorValues = 0;
+      let selectorBytes = 0;
       for (const raw of value.publisher_properties) {
         checkPreprocessingBudget();
-        selectorExpansions += Array.isArray(raw.publisher_domains) ? raw.publisher_domains.length : 1;
+        const parsed = parsePublisherPropertySelector(raw);
+        const domains = 'publisher_domains' in parsed ? parsed.publisher_domains : [parsed.publisher_domain];
+        const single: SinglePublisherPropertySelector =
+          parsed.selection_type === 'all'
+            ? { selection_type: 'all', publisher_domain: domains[0]! }
+            : parsed.selection_type === 'by_id'
+              ? {
+                  selection_type: 'by_id',
+                  publisher_domain: domains[0]!,
+                  property_ids: parsed.property_ids,
+                }
+              : {
+                  selection_type: 'by_tag',
+                  publisher_domain: domains[0]!,
+                  property_tags: parsed.property_tags,
+                };
+        const predicate = selectorPredicateFingerprint(single);
+        selectorExpansions += domains.length;
+        selectorValues += domains.length + predicate.values * Math.min(domains.length, maxPaths);
+        selectorBytes +=
+          domains.reduce((total, publisher) => total + publisher.length, 0) +
+          predicate.bytes * Math.min(domains.length, maxPaths);
         if (selectorExpansions > 4096) throw new Error('selector_work_limit_exceeded');
-        for (const selector of expandPublisherPropertySelector(parsePublisherPropertySelector(raw))) {
-          propertySelectorsByKey.set(JSON.stringify(selector), selector);
+        if (selectorValues > MAX_SELECTOR_PREPROCESS_VALUES || selectorBytes > MAX_SELECTOR_PREPROCESS_BYTES)
+          throw new Error('selector_work_limit_exceeded');
+        for (const publisher_domain of domains) {
+          checkPreprocessingBudget();
+          let selectors = selectorsByHost.get(publisher_domain);
+          if (!selectors) {
+            selectors = new Map();
+            selectorsByHost.set(publisher_domain, selectors);
+          }
+          selectors.set(predicate.key, { ...single, publisher_domain });
         }
-      }
-      const propertySelectors = [...propertySelectorsByKey.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([, selector]) => selector);
-      const selectorsByHost = new Map<string, SinglePublisherPropertySelector[]>();
-      for (const selector of propertySelectors) {
-        const existing = selectorsByHost.get(selector.publisher_domain);
-        if (existing) existing.push(selector);
-        else selectorsByHost.set(selector.publisher_domain, [selector]);
       }
       const collectionIdsByOwner = new Map<string, Set<string>>();
       for (const selector of value.collections) {
@@ -129,8 +173,11 @@ export async function annotateProductsSupplyPaths<T extends object>(
         for (const id of selector.collection_ids) ids.add(id);
       }
       for (const [owner, collectionIds] of collectionIdsByOwner) {
-        for (const [host, selectors] of selectorsByHost) {
+        for (const [host, selectorsByKey] of selectorsByHost) {
           if (domain(host) === owner) continue;
+          const selectorEntries = [...selectorsByKey.entries()].sort(([left], [right]) => left.localeCompare(right));
+          const selectors = selectorEntries.map(([, selector]) => selector);
+          const selectorKey = selectorEntries.map(([key]) => key).join(':');
           for (const id of collectionIds) {
             checkPreprocessingBudget();
             const request = validateSupplyPathRequest({
@@ -139,7 +186,7 @@ export async function annotateProductsSupplyPaths<T extends object>(
               agent_url: agentUrl,
               collection_id: id,
             });
-            const key = JSON.stringify({ request, selectors });
+            const key = `${JSON.stringify(request)}\0${selectorKey}`;
             if (!requests.has(key) && requests.size >= maxPaths) {
               if (!errors.includes('path_limit_exceeded')) errors.push('path_limit_exceeded');
               return { keys, errors };

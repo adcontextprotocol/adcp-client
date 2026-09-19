@@ -135,7 +135,11 @@ export async function verifyAuthoritativeSupplyPath(
     for (const property of properties) {
       session.assertActive();
       if (property.tags === undefined) continue;
-      if (!strings(property.tags) || property.tags.length > 1024) {
+      if (
+        !Array.isArray(property.tags) ||
+        property.tags.length > 1024 ||
+        property.tags.some(tag => typeof tag !== 'string' || !tag.trim())
+      ) {
         selectorLimitExceeded = true;
         continue;
       }
@@ -202,7 +206,8 @@ export async function verifyAuthoritativeSupplyPath(
     if (!selectorLimitExceeded && (selectAll || selectedTags.size)) {
       for (const property of properties) {
         session.assertActive();
-        const selected = selectAll || (strings(property.tags) && property.tags.some(tag => selectedTags.has(tag)));
+        const selected =
+          selectAll || (Array.isArray(property.tags) && property.tags.some(tag => selectedTags.has(tag)));
         if (!selected) continue;
         if (typeof property.property_id !== 'string' || !property.property_id.length) unresolved = true;
         else ids.add(property.property_id);

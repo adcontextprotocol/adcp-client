@@ -663,6 +663,34 @@ describe('registry wrapper and product discovery annotations', () => {
     assert.equal(result.supply_path_verification.paths.length, 1);
     assert.equal(calls.length, 2);
   });
+  it('rejects compact selector byte amplification before allocating path keys', async () => {
+    const startedAt = Date.now();
+    const [result] = await annotateProductsSupplyPaths(
+      [
+        {
+          product_id: 'compact-amplification',
+          publisher_properties: [
+            {
+              publisher_domains: Array.from({ length: 1024 }, (_, index) => `host${index}.example`),
+              selection_type: 'by_tag',
+              property_tags: Array.from({ length: 128 }, (_, index) => `tag_${index}_${'a'.repeat(1000)}`),
+            },
+          ],
+          collections: [{ publisher_domain: OWNER, collection_ids: ['retro_news'] }],
+        },
+      ],
+      AGENT,
+      {
+        source: 'authoritative',
+        timeoutMs: 50,
+        trustedFetchFn: () => {
+          throw new Error('unexpected fetch');
+        },
+      }
+    );
+    assert.deepEqual(result.supply_path_verification.errors, ['selector_work_limit_exceeded']);
+    assert.ok(Date.now() - startedAt < 500, 'preprocessing should reject without predicate duplication');
+  });
   it('validates evidence-session options before allocating batch timers', async () => {
     const before = process.getActiveResourcesInfo().filter(resource => resource === 'Timeout').length;
     await assert.rejects(
@@ -776,6 +804,16 @@ describe('bounded evidence and complete product scope', () => {
       ],
     });
     assert.equal(result.state, 'owner_attested');
+  });
+  it('accepts a schema-valid empty property tag list for an unrelated by-id scope', async () => {
+    const fixture = input();
+    fixture.hostManifest.properties[0].tags = [];
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      trustedFetchFn: transport({ [`https://${HOST}/.well-known/adagents.json`]: fixture.hostManifest }),
+      propertySelectors: [{ publisher_domain: HOST, selection_type: 'by_id', property_ids: ['hoststream_ctv'] }],
+    });
+    assert.equal(result.state, 'verified_owner_sold');
   });
   it('fails closed before selector and property tags can multiply synchronous work', async () => {
     const fixture = input();
