@@ -26,8 +26,10 @@ export interface ProductSupplyPathAnnotation {
 export type AnnotatedSupplyPathProduct<T extends object> = Omit<T, keyof ProductSupplyPathAnnotation> &
   ProductSupplyPathAnnotation;
 type AnnotatedListProductsResponse<T> = T extends unknown
-  ? Omit<T, 'products'> & {
-      products: Array<AnnotatedSupplyPathProduct<NonNullable<ListProductsResponse['products']>[number]>>;
+  ? {
+      [K in keyof T]: K extends 'products'
+        ? Array<AnnotatedSupplyPathProduct<NonNullable<ListProductsResponse['products']>[number]>>
+        : T[K];
     }
   : never;
 export type ListProductsResponseWithSupplyPath = AnnotatedListProductsResponse<ListProductsResponse>;

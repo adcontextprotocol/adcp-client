@@ -29,13 +29,23 @@ import { annotateProductsSupplyPaths } from '${modulePath}';
 type ListResult = Awaited<ReturnType<AgentClient['listProducts']>>;
 declare const result: ListResult;
 declare const response: ListProductsResponseWithSupplyPath;
+declare const listed: Extract<ListProductsResponseWithSupplyPath, { outcome: 'listed' }>;
+declare const unchanged: Extract<ListProductsResponseWithSupplyPath, { outcome: 'unchanged' }>;
 const backwardsCompatible: TaskResult<ListProductsResponse> = result;
 
 if (result.success && result.status === 'completed') {
   result.data.products?.[0]?.supply_path_verification?.paths;
 }
 response.products?.[0]?.supply_path_state;
-response.products.map(product => product.product_id);
+listed.products.map(product => product.product_id);
+unchanged.products?.map(product => product.product_id);
+// @ts-expect-error An unchanged feed legitimately omits products.
+unchanged.products.map(product => product.product_id);
+const unchangedResponse: ListProductsResponseWithSupplyPath = {
+  outcome: 'unchanged',
+  feed_version: 'v1',
+  cache_scope: 'public',
+};
 
 const handler: ListProductsStatusChangeHandler = async completed => {
   completed.products?.[0]?.supply_path_verification?.errors;
@@ -55,6 +65,7 @@ annotateProductsSupplyPaths([], 'https://sales.example', {
 });
 void handler;
 void backwardsCompatible;
+void unchangedResponse;
 `
   );
 
