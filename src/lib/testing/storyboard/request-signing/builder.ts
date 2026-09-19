@@ -13,6 +13,7 @@ import {
 } from '../../../signing';
 import { findKey } from './vector-loader';
 import type { NegativeVector, PositiveVector, TestKeyset, TestKeypair } from './types';
+import type { CapturedA2aRequest } from './a2a-dispatch';
 
 export interface BuildOptions {
   /** Override the signer clock (unix seconds). Defaults to `Date.now()/1000`. */
@@ -55,8 +56,27 @@ export interface BuildOptions {
    * the verifier runs (adcontextprotocol/adcp#6548). REST-binding agents
    * pass `'raw'` explicitly — `adcp storyboard run --signing-transport raw`
    * or `adcp grade request-signing --transport raw`.
+   *
+   * `'a2a'` takes the request the OFFICIAL `@a2a-js/sdk` client emitted and
+   * signs those bytes. Nothing about the A2A wire is framed here: the endpoint,
+   * the JSON-RPC method name, the `a2a-version` header and the proto-JSON
+   * encoding are all the SDK's, captured at its own `fetchImpl` seam
+   * (`a2a-dispatch.ts`) and handed in via {@link BuildOptions.a2aRequest}. It
+   * trades the same canonicalization-edge coverage as MCP mode and for the same
+   * reason: both route every vector to the one endpoint the agent declares.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
+  /**
+   * The request the official A2A client produced for this vector. REQUIRED
+   * when `transport` is `'a2a'` and meaningless otherwise.
+   *
+   * Passed in rather than produced here because capturing it is asynchronous
+   * (the SDK resolves the agent card first) while this builder is synchronous
+   * — and because a builder that could reach the network would make signing
+   * depend on a fetch, which is the kind of coupling that turns a signature
+   * mismatch into an unreadable failure.
+   */
+  a2aRequest?: CapturedA2aRequest;
   /**
    * JSON-RPC `id` for the MCP envelope. Defaults to `crypto.randomUUID()`
    * so concurrent runs never collide. Override for tests that need a stable
@@ -431,6 +451,26 @@ interface TransportShapedRequest {
  */
 function applyTransport(vector: PositiveVector | NegativeVector, options: BuildOptions): TransportShapedRequest {
   const headers = { ...vector.request.headers };
+  if (options.transport === 'a2a') {
+    if (!options.a2aRequest) {
+      throw new Error(
+        `transport: 'a2a' requires a2aRequest — the request captured from the official ` +
+          `@a2a-js/sdk client (see a2a-dispatch.ts). Framing one here would be this repo ` +
+          `inventing an A2A binding, which is the thing that transport exists not to do.`
+      );
+    }
+    // The SDK's headers WIN over the vector's recorded REST headers: they
+    // describe the request that is actually going out (content-type,
+    // a2a-version), and they are present before signing so the signature base
+    // covers them. The vector's headers are kept underneath for anything the
+    // fixture adds that the transport does not set.
+    return {
+      method: options.a2aRequest.method,
+      url: options.a2aRequest.url,
+      headers: { ...headers, ...options.a2aRequest.headers },
+      body: options.a2aRequest.body,
+    };
+  }
   if (options.transport === 'mcp') {
     if (!options.baseUrl) {
       throw new Error(`transport: 'mcp' requires a baseUrl (the MCP endpoint, e.g. http://agent/mcp)`);

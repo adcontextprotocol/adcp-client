@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import { buildNegativeRequest, buildPositiveRequest, type BuildOptions, type SignedHttpRequest } from './builder';
 import { initializeMcpSession, probeSignedRequest, type ProbeOptions, type ProbeResult } from './probe';
 import { loadRequestSigningVectors, type LoadVectorsOptions } from './vector-loader';
+import { captureA2aRequest, operationFromVectorUrl, type CapturedA2aRequest } from './a2a-dispatch';
 import { loadSignedRequestsRunnerContract, type SignedRequestsRunnerContract } from './test-kit';
 import {
   InMemoryReplayStore,
@@ -105,7 +106,7 @@ export interface GradeOptions extends LoadVectorsOptions {
    *
    * See adcontextprotocol/adcp-client#612 for the MCP-mode rationale.
    */
-  transport?: 'raw' | 'mcp';
+  transport?: 'raw' | 'mcp' | 'a2a';
   /**
    * MCP session ID to attach as `Mcp-Session-Id` on every probe after
    * signing. When `transport` is `'mcp'` and this field is `undefined`,
@@ -501,6 +502,60 @@ function preflightSkip(
  * the storyboard-runner dispatch path where the caller runs many vectors in
  * sequence, prefer `gradeRequestSigning` which loads once.
  */
+/**
+ * The request the OFFICIAL A2A client emits for *vector*.
+ *
+ * Two vector shapes, distinguished by what the fixture body already is:
+ *
+ * - a JSON-RPC envelope naming a task-lifecycle method (vector 028 and the
+ *   `protocol_methods_*` namespace generally). The method is NOT re-framed
+ *   from the fixture — the corresponding client call is made instead, so the
+ *   SDK emits whichever spelling the agent's declared protocol version uses
+ *   (`tasks/cancel` on 0.3, `CancelTask` on 1.0). That distinction is the one
+ *   a seller's `protocol_methods_required_for` is declared against.
+ * - an AdCP operation body, sent as the invocation inside a `SendMessage`.
+ *
+ * Either way the bytes come back from the SDK and are signed as captured.
+ */
+async function captureA2aRequestForVector(
+  vector: PositiveVector | NegativeVector,
+  agentUrl: string
+): Promise<CapturedA2aRequest> {
+  const raw = vector.request.body;
+  const envelope = parseJsonRpcEnvelope(raw);
+  if (envelope) {
+    if (envelope.method === 'tasks/cancel' || envelope.method === 'CancelTask') {
+      const params = (envelope.params ?? {}) as Record<string, unknown>;
+      const taskId = typeof params.taskId === 'string' ? params.taskId : String(params.id ?? '');
+      return captureA2aRequest(agentUrl, { kind: 'cancelTask', taskId });
+    }
+    throw new Error(
+      `vector "${vector.id}" carries JSON-RPC method "${envelope.method}", which this transport does not ` +
+        `map to an official-client call. Add the mapping rather than framing the envelope by hand.`
+    );
+  }
+  return captureA2aRequest(agentUrl, {
+    kind: 'sendMessage',
+    operation: operationFromVectorUrl(vector.request.url),
+    args: raw && raw.length > 0 ? (JSON.parse(raw) as Record<string, unknown>) : {},
+  });
+}
+
+/** The fixture body as a JSON-RPC envelope, or `undefined` when it is not one. */
+function parseJsonRpcEnvelope(body: string | undefined): { method: string; params?: unknown } | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    if (parsed && parsed.jsonrpc === '2.0' && typeof parsed.method === 'string') {
+      return { method: parsed.method, params: parsed.params };
+    }
+  } catch {
+    // Not JSON at all — a fixture whose body is deliberately malformed. Those
+    // are AdCP-operation vectors; fall through to the SendMessage path.
+  }
+  return undefined;
+}
+
 export async function gradeOneVector(
   vectorId: string,
   kind: 'positive' | 'negative',
@@ -541,13 +596,21 @@ export async function gradeOneVector(
     mcpProtocolVersion = init.protocolVersion ?? mcpProtocolVersion;
   }
 
+  // A2A precondition: ask the official client for this vector's request. It
+  // resolves the agent card on the way, so a card that does not resolve fails
+  // here — visibly — instead of producing a framed guess.
+  let a2aRequest: CapturedA2aRequest | undefined;
+  if (transport === 'a2a' && requiresNetworkProbe) {
+    a2aRequest = await captureA2aRequestForVector(vector, agentUrl);
+  }
+
   const probeOpts: ProbeOptions = {
     allowPrivateIp: options.allowPrivateIp === true,
     timeoutMs: options.timeoutMs,
     mcpSessionId,
     mcpProtocolVersion: transport === 'mcp' ? mcpProtocolVersion : undefined,
   };
-  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport };
+  const buildOpts: BuildOptions = { baseUrl: agentUrl, transport, ...(a2aRequest ? { a2aRequest } : {}) };
 
   if (kind === 'positive') {
     const signed = buildPositiveRequest(vector as PositiveVector, loaded.keys, buildOpts);
