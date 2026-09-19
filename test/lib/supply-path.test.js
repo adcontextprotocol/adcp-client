@@ -284,6 +284,37 @@ describe('fail-closed authoritative semantics', () => {
     assert.equal(result.state, 'owner_attested');
     assert.equal(result.legs.host_authorization.failure, 'property_scope_mismatch');
   });
+  it('does not accept legacy discovery-only identifier aliases as property authorization', () => {
+    for (const identifierType of [
+      'amazon_app_store_id',
+      'lg_channel_id',
+      'vizio_app_id',
+      'fire_tv_app_id',
+      'dooh_venue_id',
+      'podcast_rss_feed',
+      'spotify_show_id',
+      'iab_tech_lab_domain_id',
+      'custom',
+    ]) {
+      const evidence = input();
+      evidence.hostManifest.authorized_agents = [];
+      evidence.hostInventoryPartnerDomains = [OWNER];
+      const grant = evidence.ownerManifest.authorized_agents[0];
+      grant.authorization_type = 'inline_properties';
+      delete grant.property_ids;
+      grant.properties = [
+        {
+          property_id: 'legacy_alias',
+          property_type: 'ctv_app',
+          name: 'Legacy alias',
+          identifiers: [{ type: identifierType, value: 'anything' }],
+        },
+      ];
+      const result = evaluateSupplyPath(evidence);
+      assert.equal(result.state, 'owner_attested');
+      assert.equal(result.legs.owner_agent_declared.failure, 'agent_not_declared_by_owner');
+    }
+  });
   for (const authorizationType of ['property_ids', 'property_tags', 'publisher_properties']) {
     it(`rejects malformed top-level properties for ${authorizationType} grants`, () => {
       const evidence = input();

@@ -25,9 +25,12 @@ export interface ProductSupplyPathAnnotation {
 }
 export type AnnotatedSupplyPathProduct<T extends object> = Omit<T, keyof ProductSupplyPathAnnotation> &
   ProductSupplyPathAnnotation;
-export type ListProductsResponseWithSupplyPath = Omit<ListProductsResponse, 'products'> & {
-  products?: Array<AnnotatedSupplyPathProduct<NonNullable<ListProductsResponse['products']>[number]>>;
-};
+type AnnotatedListProductsResponse<T> = T extends unknown
+  ? Omit<T, 'products'> & {
+      products: Array<AnnotatedSupplyPathProduct<NonNullable<ListProductsResponse['products']>[number]>>;
+    }
+  : never;
+export type ListProductsResponseWithSupplyPath = AnnotatedListProductsResponse<ListProductsResponse>;
 type ProductSupplyPathVerificationOptions =
   | RegistrySupplyPathOptions
   | Omit<AuthoritativeSupplyPathOptions, 'propertySelectors'>;

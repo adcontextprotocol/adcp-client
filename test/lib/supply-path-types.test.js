@@ -18,20 +18,24 @@ test('listProducts and its status handler expose supply-path annotations', () =>
     `
 import type {
   AgentClient,
+  ListProductsResponse,
   ListProductsResponseWithSupplyPath,
   ListProductsStatusChangeHandler,
   SupplyPathState,
+  TaskResult,
 } from '${modulePath}';
 import { annotateProductsSupplyPaths } from '${modulePath}';
 
 type ListResult = Awaited<ReturnType<AgentClient['listProducts']>>;
 declare const result: ListResult;
 declare const response: ListProductsResponseWithSupplyPath;
+const backwardsCompatible: TaskResult<ListProductsResponse> = result;
 
 if (result.success && result.status === 'completed') {
   result.data.products?.[0]?.supply_path_verification?.paths;
 }
 response.products?.[0]?.supply_path_state;
+response.products.map(product => product.product_id);
 
 const handler: ListProductsStatusChangeHandler = async completed => {
   completed.products?.[0]?.supply_path_verification?.errors;
@@ -50,6 +54,7 @@ annotateProductsSupplyPaths([], 'https://sales.example', {
   propertySelectors: [],
 });
 void handler;
+void backwardsCompatible;
 `
   );
 

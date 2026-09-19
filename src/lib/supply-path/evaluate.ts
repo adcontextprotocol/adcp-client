@@ -58,18 +58,9 @@ function coversCollection(entry: Record<string, unknown>, owner: string, id: str
 const PROPERTY_TYPES = new Set<string>(PropertyTypeValues);
 const PROPERTY_IDENTIFIER_TYPES = new Set<string>([
   ...PropertyIdentifierTypesValues,
-  // The SDK still accepts the published pre-3.2 discovery aliases represented
-  // by discovery/types.ts and by the canonical supply-path corpus.
-  'amazon_app_store_id',
+  // Retained only for the pinned canonical corpus, whose CTV properties use
+  // this distribution identifier in property records.
   'roku_channel_id',
-  'lg_channel_id',
-  'vizio_app_id',
-  'fire_tv_app_id',
-  'dooh_venue_id',
-  'podcast_rss_feed',
-  'spotify_show_id',
-  'iab_tech_lab_domain_id',
-  'custom',
 ]);
 const PROPERTY_CHANNELS = new Set<string>(MediaChannelValues);
 

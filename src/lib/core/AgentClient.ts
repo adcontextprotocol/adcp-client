@@ -821,7 +821,12 @@ export class AgentClient {
     inputHandler?: InputHandler,
     options?: TaskOptions
   ): Promise<TaskResult<ListProductsResponseWithSupplyPath>> {
-    const result = await this.client.listProducts(params, inputHandler, this.withSession('list_products', options));
+    const result = await this.client.executeTask(
+      'list_products',
+      params,
+      inputHandler,
+      this.withSession('list_products', options)
+    );
     this.retainSession(result);
     return result;
   }
