@@ -4842,10 +4842,11 @@ export class SingleAgentClient {
           );
           const completionSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
           const completionOptions = { ...(options ?? {}), ...(completionSignal ? { signal: completionSignal } : {}) };
+          const completed = await rawSubmittedWaitForCompletion(pollInterval, signal);
           return this.finalizeTaskResult(
-            await rawSubmittedWaitForCompletion(pollInterval, signal),
+            completed,
             context,
-            completionOptions,
+            completed.success && completed.status === 'completed' ? completionOptions : options,
             transformCompletedResponse,
             finalizerLegacyFormatConverter
           );
