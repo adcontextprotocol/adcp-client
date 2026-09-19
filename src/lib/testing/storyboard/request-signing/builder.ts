@@ -449,6 +449,26 @@ interface TransportShapedRequest {
  * Shared call site for `sign`, `signWithParamOverride`, `signWithComponents`
  * so every mutation path produces MCP-shaped requests when requested.
  */
+
+/**
+ * Merge *overrides* onto *base*, treating header names case-insensitively.
+ *
+ * An override replaces any base entry whose name matches case-insensitively,
+ * and keeps the OVERRIDE's spelling — the wire should carry the name the
+ * transport actually sending it chose, exactly once.
+ */
+function mergeHeadersCaseInsensitively(
+  base: Record<string, string>,
+  overrides: Record<string, string>
+): Record<string, string> {
+  const overridden = new Set(Object.keys(overrides).map(name => name.toLowerCase()));
+  const merged: Record<string, string> = {};
+  for (const [name, value] of Object.entries(base)) {
+    if (!overridden.has(name.toLowerCase())) merged[name] = value;
+  }
+  return { ...merged, ...overrides };
+}
+
 function applyTransport(vector: PositiveVector | NegativeVector, options: BuildOptions): TransportShapedRequest {
   const headers = { ...vector.request.headers };
   if (options.transport === 'a2a') {
@@ -464,10 +484,18 @@ function applyTransport(vector: PositiveVector | NegativeVector, options: BuildO
     // a2a-version), and they are present before signing so the signature base
     // covers them. The vector's headers are kept underneath for anything the
     // fixture adds that the transport does not set.
+    //
+    // CASE-INSENSITIVELY, because HTTP header names are. A plain object spread
+    // is case-SENSITIVE, so a fixture's `Content-Type` and the client's
+    // `content-type` both survive it and the request goes out carrying the
+    // header twice — which a conformant verifier refuses at checklist step 1 as
+    // `request_signature_header_malformed`, before it evaluates anything the
+    // vector actually grades. Measured against a live agent: 16 of 27 A2A
+    // vector failures were this and nothing else.
     return {
       method: options.a2aRequest.method,
       url: options.a2aRequest.url,
-      headers: { ...headers, ...options.a2aRequest.headers },
+      headers: mergeHeadersCaseInsensitively(headers, options.a2aRequest.headers),
       body: options.a2aRequest.body,
     };
   }

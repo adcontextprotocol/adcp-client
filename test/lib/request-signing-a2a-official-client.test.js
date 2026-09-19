@@ -139,3 +139,35 @@ test('an agent with no resolvable card leaves A2A dispatch unavailable, rather t
   // endpoint from the agent URL.
   await assert.rejects(() => resolveA2aDispatchTarget('http://127.0.0.1:1/'), /.*/);
 });
+
+const { buildPositiveRequest } = require('../../dist/lib/testing/storyboard/request-signing/builder.js');
+const { loadRequestSigningVectors } = require('../../dist/lib/testing/storyboard/request-signing/vector-loader.js');
+
+test('a header the fixture and the client both set goes on the wire ONCE', () => {
+  const loaded = loadRequestSigningVectors({});
+  // A fixture carrying `Content-Type` capitalised, against a client emitting
+  // `content-type` lowercase. A case-sensitive merge keeps both, the request
+  // carries the header twice, and a conformant verifier refuses it at
+  // checklist step 1 — before anything the vector grades is reached.
+  const vector = loaded.positive.find(v => Object.keys(v.request.headers || {}).some(h => /^content-type$/i.test(h)));
+  assert.ok(vector, 'expected a positive vector whose fixture sets Content-Type');
+
+  const signed = buildPositiveRequest(vector, loaded.keys, {
+    baseUrl: 'https://agent.example.com',
+    transport: 'a2a',
+    a2aRequest: {
+      url: 'https://agent.example.com/a2a',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0' },
+      body: '{"jsonrpc":"2.0","method":"SendMessage","params":{},"id":1}',
+    },
+  });
+
+  const contentTypeNames = Object.keys(signed.headers).filter(h => /^content-type$/i.test(h));
+  assert.deepStrictEqual(
+    contentTypeNames.length,
+    1,
+    `Content-Type must appear once; got ${JSON.stringify(contentTypeNames)}`
+  );
+  assert.strictEqual(signed.headers[contentTypeNames[0]], 'application/json');
+});
