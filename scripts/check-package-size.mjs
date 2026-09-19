@@ -64,7 +64,9 @@ const MAX_UNPACKED_PACKAGE_BYTES = 120 * 1024 * 1024;
 // remaining changes edit existing modules; byte budgets stay fixed.
 // Supply-path verification adds 32 runtime/declaration artifacts and its guide
 // and packaged example (34 files total); byte and schema budgets stay unchanged.
-const MAX_PACKED_FILE_COUNT = 6_135 + 34;
+// Native A2A compliance routing adds one internal dual-format module with both
+// declaration flavours (+4 files); byte and schema budgets stay unchanged.
+const MAX_PACKED_FILE_COUNT = 6_135 + 34 + 4;
 const MAX_BUNDLED_SCHEMA_BYTES = 1280 * 1024;
 const MAX_CJS_SCHEMA_DECLARATION_BYTES = 45 * 1024 * 1024;
 const MAX_ESM_SCHEMA_FACADE_BYTES = 1024;

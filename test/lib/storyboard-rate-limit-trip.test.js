@@ -2,6 +2,7 @@ const { describe, test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { runStoryboard, runStoryboardStep } = require('../../dist/lib/testing/storyboard/runner');
+const { createTestClient } = require('../../dist/lib/testing/client');
 const { registerAssertion } = require('../../dist/lib/testing/storyboard/assertions');
 const { extractFailures } = require('../../dist/lib/testing/compliance/comply');
 const { mapStoryboardResultsToTrackResult } = require('../../dist/lib/testing/compliance/storyboard-tracks');
@@ -356,17 +357,20 @@ describe('storyboard rate_limit_trip_runner wiring', () => {
 
   test('a2a run records target task transport without synthetic status', async () => {
     const calls = [];
-    const client = {
-      executeTask: async (_taskName, params) => {
-        calls.push(params);
-        if (calls.length === 1) return rateLimited();
-        return { success: true, data: { media_buy_id: 'mb_replay' } };
-      },
+    const client = createTestClient('https://stub.example/mcp', 'a2a', {
+      transport: { legacyCompat: { enabled: false } },
+    });
+    const executeTarget = async (_taskName, params) => {
+      calls.push(params);
+      if (calls.length === 1) return rateLimited();
+      return { success: true, data: { media_buy_id: 'mb_replay' } };
     };
+    client.executeTask = executeTarget;
+    client.createMediaBuy = params => executeTarget('create_media_buy', params);
 
     const result = await runTripStep(client, makeStoryboard(), { protocol: 'a2a' });
 
-    assert.equal(result.passed, true);
+    assert.equal(result.passed, true, JSON.stringify(result));
     assert.equal(result.request.transport, 'a2a');
     assert.equal(result.request.operation, 'create_media_buy');
     assert.deepEqual(result.request.payload, calls[1]);

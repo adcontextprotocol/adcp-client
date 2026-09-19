@@ -426,7 +426,7 @@ export async function rawMcpProbe(options: {
   headers?: Record<string, string>;
   /** Allow http:// and private-IP agent URLs (dev loops). Default false. */
   allowPrivateIp?: boolean;
-  /** Scoped fetch implementation for every handshake and tool request. */
+  /** Trusted scoped fetch for every handshake and tool request; must enforce DNS-rebinding protection. */
   fetchFn?: typeof fetch;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
   const { agentUrl, toolName, args, headers = {}, allowPrivateIp = false, fetchFn } = options;
@@ -1974,8 +1974,10 @@ export async function rawA2aProbe(options: {
   headers?: Record<string, string>;
   /** Allow http:// and private-IP agent URLs (dev loops). Default false. */
   allowPrivateIp?: boolean;
+  /** Trusted scoped fetch; must enforce DNS-rebinding protection. */
+  fetchFn?: typeof fetch;
 }): Promise<{ httpResult: HttpProbeResult; taskResult?: TaskResult }> {
-  const { agentUrl, method, params, headers = {}, allowPrivateIp = false } = options;
+  const { agentUrl, method, params, headers = {}, allowPrivateIp = false, fetchFn } = options;
   const body = JSON.stringify({
     jsonrpc: '2.0',
     id: ++probeRequestId,
@@ -1994,6 +1996,7 @@ export async function rawA2aProbe(options: {
       },
       body,
       allowPrivateIp,
+      ...(fetchFn ? { trustedFetchFn: fetchFn } : {}),
     });
     httpResult.status = res.status;
     httpResult.headers = res.headers;

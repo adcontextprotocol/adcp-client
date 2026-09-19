@@ -846,6 +846,32 @@ describe('rawMcpProbe', () => {
 // ────────────────────────────────────────────────────────────
 
 describe('rawA2aProbe', () => {
+  it('uses a trusted scoped fetch without replacing global fetch', async () => {
+    let seenUrl, seenInit;
+    const fetchFn = async (url, init) => {
+      seenUrl = url;
+      seenInit = init;
+      const request = JSON.parse(init.body);
+      return new Response(
+        JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { kind: 'task', id: 'task_scoped' } }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    };
+
+    const { httpResult, taskResult } = await rawA2aProbe({
+      agentUrl: 'https://seller.example/a2a',
+      method: 'tasks/get',
+      params: { id: 'task_scoped' },
+      fetchFn,
+    });
+
+    assert.strictEqual(seenUrl, 'https://seller.example/a2a');
+    assert.strictEqual(seenInit.method, 'POST');
+    assert.strictEqual(seenInit.redirect, 'manual');
+    assert.strictEqual(httpResult.status, 200);
+    assert.deepStrictEqual(taskResult.data, { kind: 'task', id: 'task_scoped' });
+  });
+
   it('sends JSON-RPC message/send and surfaces HTTP 200 + text_fallback extraction', async () => {
     let seenBody, seenAuth, seenAccept;
     const server = http.createServer(async (req, res) => {

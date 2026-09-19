@@ -85,6 +85,13 @@ setting is forwarded to both the official card resolver and JSON-RPC
 transport. It is also part of the A2A client-cache identity, so native-only
 and compatibility-enabled calls never reuse each other's discovered client.
 
+The compliance runner does not inherit that adopter default. `comply()`,
+`runStoryboard()`, and `runStoryboardStep()` grade every A2A route with
+`legacyCompat: { enabled: false }`, including A2A entries in a routed
+multi-agent run. A seller that exposes only the v0.3 compatibility interface
+may still work for ordinary SDK calls, but it is not A2A 1.0 conformant and its
+compliance run now fails instead of being projected through the legacy layer.
+
 ### Cross-origin signing-key delegation
 
 Signing-key discovery now evaluates the complete matching
