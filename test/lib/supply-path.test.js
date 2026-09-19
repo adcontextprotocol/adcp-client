@@ -572,8 +572,42 @@ describe('registry wrapper and product discovery annotations', () => {
       AGENT
     );
     assert.equal(invalid[0].supply_path_state, 'unverified');
-    assert.deepEqual(invalid[0].supply_path_verification.errors, ['invalid_product_selectors']);
+    assert.deepEqual(invalid[0].supply_path_verification.errors, ['invalid_collection_selector']);
     assert.deepEqual(await annotateProductsSupplyPaths([], AGENT), []);
+  });
+  it('rejects predicates that conflict with selection_type before evidence retrieval', async () => {
+    const conflicting = {
+      publisher_domain: HOST,
+      selection_type: 'all',
+      property_ids: ['unapproved_property'],
+    };
+    await assert.rejects(
+      verifySupplyPath(request, {
+        source: 'authoritative',
+        propertySelectors: [conflicting],
+        trustedFetchFn: () => {
+          throw new Error('unexpected fetch');
+        },
+      }),
+      /conflicts with selection_type/
+    );
+    const calls = [];
+    const [annotated] = await annotateProductsSupplyPaths(
+      [
+        {
+          product_id: 'conflicting-selector',
+          publisher_properties: [conflicting],
+          collections: [{ publisher_domain: OWNER, collection_ids: ['retro_news'] }],
+        },
+      ],
+      AGENT,
+      { source: 'authoritative', trustedFetchFn: transport({}, calls) }
+    );
+    assert.deepEqual(annotated.supply_path_verification.errors, ['invalid_product_selector_predicate']);
+    assert.equal(calls.length, 0);
+  });
+  it('reports an invalid agent URL independently of product selectors', async () => {
+    await assert.rejects(annotateProductsSupplyPaths([], 'not-a-url'), /agentUrl must be an HTTPS URL/);
   });
   it('deduplicates repeated selectors before path expansion', async () => {
     const propertySelector = { publisher_domain: HOST, selection_type: 'all' };
@@ -905,7 +939,7 @@ it('does not turn a malformed revocation list containing a valid denial into hos
         }),
       }),
     }),
-    /Invalid publisher revocation evidence/
+    /Invalid revoked_publisher_domains in adagents\.json for hoststream\.example/
   );
 });
 

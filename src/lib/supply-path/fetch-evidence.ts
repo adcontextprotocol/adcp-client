@@ -164,7 +164,9 @@ export class SupplyPathEvidenceSession {
     const denials = parseRevocations(document.revoked_publisher_domains);
     if (denials === null) {
       this.documentError(publisher, response, 'invalid_revocations');
-      throw new TypeError('Invalid publisher revocation evidence');
+      throw new TypeError(
+        `Invalid revoked_publisher_domains in adagents.json for ${publisher}; verification refused, correct the publisher's revocation declaration`
+      );
     }
     // Denials survive invalid affirmative envelopes and failed/chained pointers.
     this.observedRevocations.set(publisher, [...(this.observedRevocations.get(publisher) ?? []), ...denials]);

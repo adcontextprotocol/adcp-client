@@ -1,9 +1,9 @@
 import type { SinglePublisherPropertySelector } from '../discovery/types';
 import type { ListProductsResponse } from '../types';
 import { verifySupplyPath, verifyAuthoritativeSupplyPath } from './verify';
-import { SUPPLY_PATH_STATES, isUnqualifiedPropertySelector } from './evaluate';
+import { SUPPLY_PATH_STATES, hasValidPropertySelectorPredicate } from './evaluate';
 import { boundedOption, SupplyPathEvidenceSession } from './fetch-evidence';
-import { domain, record, strings, validateSupplyPathRequest } from './validation';
+import { agentIdentity, domain, record, strings, validateSupplyPathRequest } from './validation';
 import {
   parsePublisherPropertySelector,
   expandPublisherPropertySelector,
@@ -51,6 +51,7 @@ export async function annotateProductsSupplyPaths<T extends object>(
   agentUrl: string,
   options: ProductSupplyPathOptions = { source: 'authoritative' }
 ): Promise<Array<AnnotatedSupplyPathProduct<T>>> {
+  if (!agentIdentity(agentUrl)) throw new TypeError('agentUrl must be an HTTPS URL without credentials');
   const maxPaths = boundedOption(options.maxPaths, 64, 256, 'maxPaths');
   const timeoutMs = boundedOption(options.timeoutMs, 15_000, 60_000, 'timeoutMs');
   if (options.source === 'authoritative')
@@ -84,8 +85,8 @@ export async function annotateProductsSupplyPaths<T extends object>(
       return { keys, errors: ['invalid_product_selectors'] };
     }
     try {
-      if (!value.publisher_properties.every(isUnqualifiedPropertySelector))
-        throw new Error('unsupported_product_selector_fields');
+      if (!value.publisher_properties.every(hasValidPropertySelectorPredicate))
+        throw new Error('invalid_product_selector_predicate');
       const propertySelectorsByKey = new Map<string, SinglePublisherPropertySelector>();
       let selectorExpansions = 0;
       for (const raw of value.publisher_properties) {
@@ -144,8 +145,15 @@ export async function annotateProductsSupplyPaths<T extends object>(
           }
         }
       }
-    } catch {
-      errors.push('invalid_product_selectors');
+    } catch (cause) {
+      const code = cause instanceof Error ? cause.message : '';
+      errors.push(
+        ['invalid_product_selector_predicate', 'selector_work_limit_exceeded', 'invalid_collection_selector'].includes(
+          code
+        )
+          ? code
+          : 'invalid_product_selectors'
+      );
     }
     return { keys, errors };
   });

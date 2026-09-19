@@ -659,6 +659,41 @@ describe('client product property policy enforcement', () => {
 });
 
 describe('supply-path annotations across discovery completion paths', () => {
+  test('caller cancellation aborts authoritative evidence retrieval', async () => {
+    const product = makeProduct('owner-sold', 'host.example', {
+      collections: [{ publisher_domain: 'owner.example', collection_ids: ['channel'] }],
+    });
+    let started;
+    const evidenceStarted = new Promise(resolve => {
+      started = resolve;
+    });
+    let evidenceSignal;
+    const agent = makeClient({
+      validation: {
+        supplyPathVerification: {
+          source: 'authoritative',
+          trustedFetchFn: async (_url, init) => {
+            evidenceSignal = init.signal;
+            started();
+            return await new Promise((_resolve, reject) => {
+              init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+            });
+          },
+        },
+      },
+    });
+    ProtocolClient.callTool = async () => ({ status: 'completed', products: [product], cache_scope: 'public' });
+    const controller = new AbortController();
+    const pending = agent.getProducts({ brief: 'sports' }, undefined, {
+      project: false,
+      signal: controller.signal,
+    });
+    await evidenceStarted;
+    controller.abort(new Error('caller cancelled'));
+    await assert.rejects(pending, /caller cancelled/);
+    assert.strictEqual(evidenceSignal.aborted, true);
+  });
+
   for (const taskName of ['get_products', 'list_products']) {
     test(`${taskName} annotates immediate, polled, and webhook products before publication`, async () => {
       const products = [

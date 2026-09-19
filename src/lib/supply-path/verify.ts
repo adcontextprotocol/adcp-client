@@ -8,6 +8,7 @@ import { RegistryClient } from '../registry';
 import { SupplyPathEvidenceSession } from './fetch-evidence';
 import {
   isUnqualifiedPropertySelector,
+  hasValidPropertySelectorPredicate,
   evaluateSupplyPath,
   supplyPathAdsTxtPolicy,
   parseInventoryPartnerDomains,
@@ -79,6 +80,15 @@ export async function verifyAuthoritativeSupplyPath(
   options: AuthoritativeSupplyPathOptions,
   session: SupplyPathEvidenceSession
 ): Promise<AuthoritativeSupplyPathResult> {
+  if (options.propertySelectors !== undefined) {
+    if (!Array.isArray(options.propertySelectors) || !options.propertySelectors.length)
+      throw new TypeError('propertySelectors must be non-empty');
+    for (const raw of options.propertySelectors) {
+      if (!isUnqualifiedPropertySelector(raw)) throw new TypeError('Unsupported product property selector fields');
+      if (!hasValidPropertySelectorPredicate(raw))
+        throw new TypeError('Product property selector predicate conflicts with selection_type');
+    }
+  }
   const [ownerManifest, hostManifest] = await Promise.all([
     session.adagents(normalized.owner_domain),
     session.adagents(normalized.host_domain),
@@ -102,8 +112,6 @@ export async function verifyAuthoritativeSupplyPath(
   };
   const scopedInput: typeof input & { requiredHostPropertyIds?: string[] } = input;
   if (options.propertySelectors !== undefined) {
-    if (!Array.isArray(options.propertySelectors) || !options.propertySelectors.length)
-      throw new TypeError('propertySelectors must be non-empty');
     const ids = new Set<string>();
     const properties = records(hostManifest?.properties).filter(
       p =>
@@ -112,7 +120,6 @@ export async function verifyAuthoritativeSupplyPath(
     );
     let unresolved = false;
     for (const raw of options.propertySelectors) {
-      if (!isUnqualifiedPropertySelector(raw)) throw new TypeError('Unsupported product property selector fields');
       const selector = parsePublisherPropertySelector(raw);
       for (const single of expandPublisherPropertySelector(selector)) {
         if (domain(single.publisher_domain) !== normalized.host_domain)

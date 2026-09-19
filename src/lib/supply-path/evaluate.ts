@@ -238,6 +238,22 @@ export function isUnqualifiedPropertySelector(value: unknown): boolean {
   );
 }
 
+/** Reject predicates that conflict with the selector discriminator. */
+export function hasValidPropertySelectorPredicate(value: unknown): boolean {
+  if (!isUnqualifiedPropertySelector(value)) return false;
+  try {
+    const selector = parsePublisherPropertySelector(value);
+    const raw = value as Record<string, unknown>;
+    if (selector.selection_type === 'by_id')
+      return isPropertyTokenList(raw.property_ids) && raw.property_tags === undefined;
+    if (selector.selection_type === 'by_tag')
+      return isPropertyTokenList(raw.property_tags) && raw.property_ids === undefined;
+    return raw.property_ids === undefined && raw.property_tags === undefined;
+  } catch {
+    return false;
+  }
+}
+
 const UNDERSTOOD_GRANT_FIELDS = new Set([
   'url',
   'authorized_for',

@@ -4779,7 +4779,7 @@ export class SingleAgentClient {
       this.rememberProductPolicyRequestParams(taskType, context.productPolicyRequest, result, resumedOptions);
     }
     this.rememberLegacyFormatConverter(taskType, finalizerLegacyFormatConverter, result, resumedOptions);
-    result = await this.applyProductPropertyPolicy(result, taskType, context.productPolicyRequest);
+    result = await this.applyProductPropertyPolicy(result, taskType, context.productPolicyRequest, options?.signal);
     throwIfAborted(options?.signal);
 
     if (context.canonical) {
@@ -5332,7 +5332,8 @@ export class SingleAgentClient {
   private async applyProductPropertyPolicy<T>(
     result: TaskResult<T>,
     taskType: string,
-    requestParams: Record<string, unknown>
+    requestParams: Record<string, unknown>,
+    taskSignal?: AbortSignal
   ): Promise<TaskResult<T>> {
     // Reject non-transactable products (no pricing_options) before any
     // property-policy evaluation, regardless of whether a property policy is
@@ -5348,11 +5349,13 @@ export class SingleAgentClient {
     ) {
       const data = result.data as { products?: object[] };
       if (Array.isArray(data.products)) {
-        const products = await annotateProductsSupplyPaths(
-          data.products,
-          this.agent.agent_uri,
-          this.config.validation.supplyPathVerification
-        );
+        const configured = this.config.validation.supplyPathVerification;
+        const signals = [configured.signal, taskSignal].filter((signal): signal is AbortSignal => signal !== undefined);
+        const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+        const products = await annotateProductsSupplyPaths(data.products, this.agent.agent_uri, {
+          ...configured,
+          ...(signal ? { signal } : {}),
+        });
         result = { ...result, data: { ...result.data, products } };
       }
     }
@@ -5668,7 +5671,8 @@ export class SingleAgentClient {
           return await this.applyProductPropertyPolicyToTaskInfo(
             taskInfo,
             taskType,
-            (policyState.request ?? {}) as Record<string, unknown>
+            (policyState.request ?? {}) as Record<string, unknown>,
+            options?.signal
           );
         } finally {
           if (terminal) {
@@ -5687,7 +5691,8 @@ export class SingleAgentClient {
           return await this.applyProductPropertyPolicy(
             completed,
             taskType,
-            (policyState.request ?? {}) as Record<string, unknown>
+            (policyState.request ?? {}) as Record<string, unknown>,
+            signal ?? options?.signal
           );
         } finally {
           if (terminal) {
@@ -5708,7 +5713,8 @@ export class SingleAgentClient {
   private async applyProductPropertyPolicyToTaskInfo(
     taskInfo: TaskInfo,
     taskType: string,
-    requestParams: Record<string, unknown>
+    requestParams: Record<string, unknown>,
+    taskSignal?: AbortSignal
   ): Promise<TaskInfo> {
     if (
       (taskType !== 'get_products' &&
@@ -5735,7 +5741,8 @@ export class SingleAgentClient {
         debug_logs: [],
       }),
       taskType,
-      requestParams
+      requestParams,
+      taskSignal
     );
 
     if (policyResult.success) {
