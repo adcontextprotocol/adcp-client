@@ -174,25 +174,45 @@ test('a header the fixture and the client both set goes on the wire ONCE', () =>
 
 test("a header the FIXTURE deliberately malforms survives the transport's clean one", () => {
   const loaded = loadRequestSigningVectors({});
-  // Vector 022 presents a multi-valued Content-Type — that header IS the fault
-  // under test. If the transport's clean `content-type` overwrites it the agent
-  // answers about some other defect entirely, and the vector grades nothing.
-  const vector = loaded.negative.find(v => v.id.startsWith('022-'));
-  assert.ok(vector, 'expected negative vector 022');
-  const fixtureContentType = Object.entries(vector.request.headers || {}).find(([h]) => /^content-type$/i.test(h));
-  assert.ok(fixtureContentType, '022 must set Content-Type for this to grade anything');
+  // Guards the MERGE ORDER, and must fail if it is flipped. The transport is
+  // handed a `content-type` that differs from the fixture's, so whichever side
+  // wins is visible in the result: under the correct order the fixture's value
+  // survives, under the buggy one the transport's replaces it.
+  //
+  // This is why order matters at all. Vector 022 presents a deliberately
+  // multi-valued Content-Type and THAT HEADER IS THE FAULT UNDER TEST; a
+  // transport that overwrites it makes the agent answer about some other defect
+  // and the vector grades nothing.
+  const vector = loaded.positive.find(v => Object.keys(v.request.headers || {}).some(h => /^content-type$/i.test(h)));
+  assert.ok(vector, 'expected a positive vector whose fixture sets Content-Type');
+  const [, fixtureValue] = Object.entries(vector.request.headers).find(([h]) => /^content-type$/i.test(h));
 
-  const built = buildPositiveRequest(loaded.positive[0], loaded.keys, {
+  const built = buildPositiveRequest(vector, loaded.keys, {
     baseUrl: 'https://agent.example.com',
     transport: 'a2a',
     a2aRequest: {
       url: 'https://agent.example.com/a2a',
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'a2a-version': '1.0', accept: 'application/json' },
+      // Deliberately NOT what the fixture says, and not a value any fixture
+      // uses, so the assertion below can only pass one way.
+      headers: {
+        'content-type': 'application/vnd.transport-must-not-win',
+        'a2a-version': '1.0',
+        accept: 'application/json',
+      },
       body: '{}',
     },
   });
-  // The transport still supplies what the fixture does not set.
+
+  const names = Object.keys(built.headers).filter(h => /^content-type$/i.test(h));
+  assert.strictEqual(names.length, 1, `Content-Type must appear once; got ${JSON.stringify(names)}`);
+  assert.strictEqual(
+    built.headers[names[0]],
+    fixtureValue,
+    "the fixture's Content-Type must survive: it is the fault under test, and the transport only fills gaps"
+  );
+
+  // ...while the transport still supplies what the fixture does not set.
   assert.strictEqual(built.headers['a2a-version'], '1.0');
   assert.strictEqual(built.headers['accept'], 'application/json');
 });
