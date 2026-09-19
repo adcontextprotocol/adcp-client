@@ -1,4 +1,8 @@
-import { annotateProductsSupplyPaths, type ProductSupplyPathOptions } from '../supply-path/products';
+import {
+  annotateProductsSupplyPaths,
+  type ListProductsResponseWithSupplyPath,
+  type ProductSupplyPathOptions,
+} from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
 import { z } from 'zod';
@@ -20,6 +24,7 @@ import { isExternalSchemaRootActive, schemaAllowsTopLevelField } from '../valida
 import type {
   GetProductsRequest,
   GetProductsResponse,
+  ListProductsRequest,
   PropertyListReference,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
@@ -6149,6 +6154,21 @@ export class SingleAgentClient {
     );
   }
 
+  /** Discover products through the compact AdCP 3.2 catalog task. */
+  async listProducts(
+    params: ListProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListProductsResponseWithSupplyPath>> {
+    return this.executeAndHandle<ListProductsResponseWithSupplyPath>(
+      'list_products',
+      'onListProductsStatusChange',
+      params,
+      inputHandler,
+      options
+    );
+  }
+
   /** @deprecated Explicit raw-wire escape hatch for migration tooling. */
   async getProductsLegacy(
     params: GetProductsRequest,
@@ -7337,6 +7357,8 @@ export class SingleAgentClient {
     switch (taskName) {
       case 'get_products':
         return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
+      case 'list_products':
+        return this.listProducts(params as ListProductsRequest, inputHandler, options);
       case 'create_media_buy':
         return (await this.createMediaBuy(
           params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,

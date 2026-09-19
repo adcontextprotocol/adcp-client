@@ -250,7 +250,10 @@ export class SupplyPathEvidenceSession {
       );
     } catch (cause) {
       this.signal.throwIfAborted();
-      throw new Error('Supply-path authority storage failed', { cause });
+      throw new Error(
+        `Supply-path authority storage failed for ${publisher}; inspect error.cause and restore store availability or capacity without discarding existing pins`,
+        { cause }
+      );
     }
     this.signal.throwIfAborted();
     if (!accepted)
@@ -272,7 +275,10 @@ export class SupplyPathEvidenceSession {
       );
     } catch (cause) {
       this.signal.throwIfAborted();
-      throw new Error('Supply-path revocation storage failed', { cause });
+      throw new Error(
+        `Supply-path revocation storage failed for ${publisher}; inspect error.cause and restore store availability or capacity without discarding held revocations`,
+        { cause }
+      );
     }
     this.signal.throwIfAborted();
     // Persistence can add prior denials; it cannot erase current wire evidence.

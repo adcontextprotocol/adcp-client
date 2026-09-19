@@ -284,6 +284,26 @@ describe('fail-closed authoritative semantics', () => {
     assert.equal(result.state, 'owner_attested');
     assert.equal(result.legs.host_authorization.failure, 'property_scope_mismatch');
   });
+  for (const authorizationType of ['property_ids', 'property_tags', 'publisher_properties']) {
+    it(`rejects malformed top-level properties for ${authorizationType} grants`, () => {
+      const evidence = input();
+      evidence.hostManifest.properties[0] = {
+        property_id: 'hoststream_ctv',
+        tags: ['ctv'],
+      };
+      const grant = evidence.hostManifest.authorized_agents[0];
+      grant.authorization_type = authorizationType;
+      delete grant.property_ids;
+      if (authorizationType === 'property_ids') grant.property_ids = ['hoststream_ctv'];
+      if (authorizationType === 'property_tags') grant.property_tags = ['ctv'];
+      if (authorizationType === 'publisher_properties') {
+        grant.publisher_properties = [{ publisher_domain: HOST, selection_type: 'all' }];
+      }
+      const result = evaluateSupplyPath(evidence);
+      assert.equal(result.state, 'owner_attested');
+      assert.equal(result.legs.owner_distribution_carriage.failure, 'property_ids_unresolved');
+    });
+  }
   for (const [selection_type, field] of [
     ['by_id', 'property_ids'],
     ['by_tag', 'property_tags'],
@@ -554,6 +574,34 @@ describe('registry wrapper and product discovery annotations', () => {
     assert.equal(invalid[0].supply_path_state, 'unverified');
     assert.deepEqual(invalid[0].supply_path_verification.errors, ['invalid_product_selectors']);
     assert.deepEqual(await annotateProductsSupplyPaths([], AGENT), []);
+  });
+  it('deduplicates repeated selectors before path expansion', async () => {
+    const propertySelector = { publisher_domain: HOST, selection_type: 'all' };
+    const collectionSelector = { publisher_domain: OWNER, collection_ids: ['retro_news', 'retro_news'] };
+    const calls = [];
+    const [result] = await annotateProductsSupplyPaths(
+      [
+        {
+          product_id: 'duplicate-selectors',
+          publisher_properties: Array.from({ length: 128 }, () => ({ ...propertySelector })),
+          collections: Array.from({ length: 128 }, () => ({ ...collectionSelector })),
+        },
+      ],
+      AGENT,
+      { source: 'authoritative', trustedFetchFn: transport({}, calls) }
+    );
+    assert.equal(result.supply_path_state, 'verified_owner_sold');
+    assert.equal(result.supply_path_verification.paths.length, 1);
+    assert.equal(calls.length, 2);
+  });
+  it('validates evidence-session options before allocating batch timers', async () => {
+    const before = process.getActiveResourcesInfo().filter(resource => resource === 'Timeout').length;
+    await assert.rejects(
+      annotateProductsSupplyPaths([], AGENT, { source: 'authoritative', maxBodyBytes: 0 }),
+      /maxBodyBytes/
+    );
+    const after = process.getActiveResourcesInfo().filter(resource => resource === 'Timeout').length;
+    assert.equal(after, before);
   });
 });
 

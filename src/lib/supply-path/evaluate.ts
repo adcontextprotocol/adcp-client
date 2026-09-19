@@ -73,46 +73,56 @@ const PROPERTY_IDENTIFIER_TYPES = new Set<string>([
 ]);
 const PROPERTY_CHANNELS = new Set<string>(MediaChannelValues);
 
+function isPropertyToken(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-z0-9_]+$/.test(value);
+}
+
+function isPropertyTokenList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isPropertyToken);
+}
+
+function isOptionalUniqueList(value: unknown, valid: (item: unknown) => boolean): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(valid) && new Set(value).size === value.length);
+}
+
+/** A manifest property cannot authorize inventory unless its complete record is schema-shaped. */
+function isValidPropertyRecord(value: unknown): value is Record<string, unknown> {
+  if (
+    !record(value) ||
+    typeof value.property_type !== 'string' ||
+    !PROPERTY_TYPES.has(value.property_type) ||
+    typeof value.name !== 'string' ||
+    value.name.length === 0 ||
+    !Array.isArray(value.identifiers) ||
+    value.identifiers.length === 0
+  ) {
+    return false;
+  }
+  if (value.property_id !== undefined && !isPropertyToken(value.property_id)) return false;
+  if (value.publisher_domain !== undefined && !domain(value.publisher_domain)) return false;
+  if (
+    !isOptionalUniqueList(value.tags, isPropertyToken) ||
+    !isOptionalUniqueList(value.supported_channels, item => typeof item === 'string' && PROPERTY_CHANNELS.has(item))
+  ) {
+    return false;
+  }
+  return value.identifiers.every(
+    identifier =>
+      record(identifier) &&
+      typeof identifier.type === 'string' &&
+      PROPERTY_IDENTIFIER_TYPES.has(identifier.type) &&
+      typeof identifier.value === 'string' &&
+      identifier.value.length > 0
+  );
+}
+
 /** A declaration is not evidence unless its property grant is complete and schema-shaped. */
 function hasPropertyAuthorizationEnvelope(entry: Record<string, unknown>): boolean {
-  const propertyToken = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9_]+$/.test(value);
-  const propertyTokens = (value: unknown): value is string[] =>
-    Array.isArray(value) && value.length > 0 && value.every(propertyToken);
-  const optionalUniqueList = (value: unknown, valid: (item: unknown) => boolean): boolean =>
-    value === undefined || (Array.isArray(value) && value.every(valid) && new Set(value).size === value.length);
-  const validInlineProperty = (value: unknown): boolean => {
-    if (
-      !record(value) ||
-      typeof value.property_type !== 'string' ||
-      !PROPERTY_TYPES.has(value.property_type) ||
-      typeof value.name !== 'string' ||
-      !Array.isArray(value.identifiers) ||
-      value.identifiers.length === 0
-    ) {
-      return false;
-    }
-    if (value.property_id !== undefined && !propertyToken(value.property_id)) return false;
-    if (value.publisher_domain !== undefined && typeof value.publisher_domain !== 'string') return false;
-    if (
-      !optionalUniqueList(value.tags, propertyToken) ||
-      !optionalUniqueList(value.supported_channels, item => typeof item === 'string' && PROPERTY_CHANNELS.has(item))
-    ) {
-      return false;
-    }
-    return value.identifiers.every(
-      identifier =>
-        record(identifier) &&
-        typeof identifier.type === 'string' &&
-        PROPERTY_IDENTIFIER_TYPES.has(identifier.type) &&
-        typeof identifier.value === 'string'
-    );
-  };
-
-  if (entry.authorization_type === 'property_ids') return propertyTokens(entry.property_ids);
-  if (entry.authorization_type === 'property_tags') return propertyTokens(entry.property_tags);
+  if (entry.authorization_type === 'property_ids') return isPropertyTokenList(entry.property_ids);
+  if (entry.authorization_type === 'property_tags') return isPropertyTokenList(entry.property_tags);
   if (entry.authorization_type === 'inline_properties') {
     return (
-      Array.isArray(entry.properties) && entry.properties.length > 0 && entry.properties.every(validInlineProperty)
+      Array.isArray(entry.properties) && entry.properties.length > 0 && entry.properties.every(isValidPropertyRecord)
     );
   }
   if (entry.authorization_type === 'publisher_properties') {
@@ -129,9 +139,9 @@ function hasPropertyAuthorizationEnvelope(entry: Record<string, unknown>): boole
         const value = raw as Record<string, unknown>;
         if (
           (selector.selection_type === 'by_id' &&
-            (!propertyTokens(value.property_ids) || value.property_tags !== undefined)) ||
+            (!isPropertyTokenList(value.property_ids) || value.property_tags !== undefined)) ||
           (selector.selection_type === 'by_tag' &&
-            (!propertyTokens(value.property_tags) || value.property_ids !== undefined)) ||
+            (!isPropertyTokenList(value.property_tags) || value.property_ids !== undefined)) ||
           (selector.selection_type === 'all' && (value.property_ids !== undefined || value.property_tags !== undefined))
         ) {
           return false;
@@ -162,7 +172,9 @@ function propertyScope(
   if (entry.authorization_type === 'publisher_properties') {
     if (!Array.isArray(entry.publisher_properties) || entry.publisher_properties.length === 0) return new Set();
     const properties = records(manifest.properties).filter(
-      p => (p.publisher_domain === undefined && !requirePublisher) || domain(p.publisher_domain) === host
+      p =>
+        isValidPropertyRecord(p) &&
+        ((p.publisher_domain === undefined && !requirePublisher) || domain(p.publisher_domain) === host)
     );
     const ids = new Set<string>();
     try {
@@ -207,7 +219,11 @@ function propertyScope(
   );
   return new Set(
     result.properties
-      .filter(p => (p.publisher_domain === undefined && !requirePublisher) || domain(p.publisher_domain) === host)
+      .filter(
+        p =>
+          isValidPropertyRecord(p) &&
+          ((p.publisher_domain === undefined && !requirePublisher) || domain(p.publisher_domain) === host)
+      )
       .map(p => p.property_id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0)
   );
@@ -386,8 +402,9 @@ export function evaluateSupplyPath(input: SupplyPathInput): SupplyPathVerdict {
     } else {
       const properties = records(hostManifest.properties).filter(
         p =>
-          (p.publisher_domain === undefined && !input.requireExplicitHostPublisherDomain) ||
-          domain(p.publisher_domain) === host
+          isValidPropertyRecord(p) &&
+          ((p.publisher_domain === undefined && !input.requireExplicitHostPublisherDomain) ||
+            domain(p.publisher_domain) === host)
       );
       const counts = new Map<unknown, number>();
       for (const property of properties) counts.set(property.property_id, (counts.get(property.property_id) ?? 0) + 1);

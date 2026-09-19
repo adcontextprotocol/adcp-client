@@ -622,6 +622,7 @@ export type {
   UpdateMediaBuyStatusChangeHandler,
   SyncCreativesStatusChangeHandler,
   GetProductsStatusChangeHandler,
+  ListProductsStatusChangeHandler,
 } from './core/AsyncHandler';
 export {
   AsyncHandler,

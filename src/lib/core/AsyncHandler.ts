@@ -69,6 +69,7 @@ import type {
   CanonicalGetProductsResponse,
   CanonicalListCreativesResponse,
 } from '../v2/projection/creative-delivery';
+import type { ListProductsResponseWithSupplyPath } from '../supply-path/products';
 
 /**
  * Metadata provided with webhook responses
@@ -163,6 +164,11 @@ export type GetProductsStatusChangeHandler = (
     | GetProductsAsyncSubmitted
     | GetProductsAsyncWorking
     | GetProductsAsyncInputRequired,
+  metadata: WebhookMetadata
+) => void | Promise<void>;
+
+export type ListProductsStatusChangeHandler = (
+  response: ListProductsResponseWithSupplyPath,
   metadata: WebhookMetadata
 ) => void | Promise<void>;
 
@@ -263,6 +269,7 @@ export interface Activity {
 export interface AsyncHandlerConfig {
   // AdCP tool status change handlers - called for ALL status changes (completed, failed, working, input-required, submitted)
   onGetProductsStatusChange?: GetProductsStatusChangeHandler;
+  onListProductsStatusChange?: ListProductsStatusChangeHandler;
   onListCreativeFormatsLegacyStatusChange?: (
     data: ListCreativeFormatsResponse,
     metadata: WebhookMetadata
@@ -761,6 +768,10 @@ export class AsyncHandler {
     switch (taskType) {
       case 'get_products':
         handler = this.config.onGetProductsStatusChange;
+        break;
+
+      case 'list_products':
+        handler = this.config.onListProductsStatusChange;
         break;
 
       case 'list_creative_formats':

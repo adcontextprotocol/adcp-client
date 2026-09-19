@@ -1,4 +1,5 @@
 import type { SinglePublisherPropertySelector } from '../discovery/types';
+import type { ListProductsResponse } from '../types';
 import { verifySupplyPath, verifyAuthoritativeSupplyPath } from './verify';
 import { SUPPLY_PATH_STATES, isUnqualifiedPropertySelector } from './evaluate';
 import { boundedOption, SupplyPathEvidenceSession } from './fetch-evidence';
@@ -23,6 +24,9 @@ export interface ProductSupplyPathAnnotation {
     | { source: 'authoritative'; scope: 'product_properties'; paths: AuthoritativeSupplyPathResult[] }
   ) & { errors: string[] };
 }
+export type ListProductsResponseWithSupplyPath = Omit<ListProductsResponse, 'products'> & {
+  products?: Array<NonNullable<ListProductsResponse['products']>[number] & ProductSupplyPathAnnotation>;
+};
 export type ProductSupplyPathOptions = VerifySupplyPathOptions & {
   /** Maximum distinct paths in one discovery response. Default 64, max 256. */
   maxPaths?: number;
@@ -46,8 +50,17 @@ export async function annotateProductsSupplyPaths<T extends object>(
   options: ProductSupplyPathOptions = { source: 'authoritative' }
 ): Promise<Array<T & ProductSupplyPathAnnotation>> {
   const maxPaths = boundedOption(options.maxPaths, 64, 256, 'maxPaths');
+  const timeoutMs = boundedOption(options.timeoutMs, 15_000, 60_000, 'timeoutMs');
+  if (options.source === 'authoritative')
+    boundedOption(options.maxBodyBytes, 256 * 1024, 20 * 1024 * 1024, 'maxBodyBytes');
+  const deadlineAt = Date.now() + timeoutMs;
+  const checkPreprocessingBudget = (): void => {
+    options.signal?.throwIfAborted();
+    if (Date.now() >= deadlineAt) throw new Error('Supply-path discovery deadline exceeded');
+  };
   const requests = new Map<string, { request: SupplyPathRequest; selectors: SinglePublisherPropertySelector[] }>();
   const selections = products.map(product => {
+    checkPreprocessingBudget();
     const value = product as Record<string, unknown>;
     const keys: string[] = [];
     const errors: string[] = [];
@@ -71,11 +84,28 @@ export async function annotateProductsSupplyPaths<T extends object>(
     try {
       if (!value.publisher_properties.every(isUnqualifiedPropertySelector))
         throw new Error('unsupported_product_selector_fields');
-      const propertySelectors = value.publisher_properties.flatMap(raw =>
-        expandPublisherPropertySelector(parsePublisherPropertySelector(raw))
-      );
-      const hosts = [...new Set(propertySelectors.map(s => s.publisher_domain))];
+      const propertySelectorsByKey = new Map<string, SinglePublisherPropertySelector>();
+      let selectorExpansions = 0;
+      for (const raw of value.publisher_properties) {
+        checkPreprocessingBudget();
+        selectorExpansions += Array.isArray(raw.publisher_domains) ? raw.publisher_domains.length : 1;
+        if (selectorExpansions > 4096) throw new Error('selector_work_limit_exceeded');
+        for (const selector of expandPublisherPropertySelector(parsePublisherPropertySelector(raw))) {
+          propertySelectorsByKey.set(JSON.stringify(selector), selector);
+        }
+      }
+      const propertySelectors = [...propertySelectorsByKey.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([, selector]) => selector);
+      const selectorsByHost = new Map<string, SinglePublisherPropertySelector[]>();
+      for (const selector of propertySelectors) {
+        const existing = selectorsByHost.get(selector.publisher_domain);
+        if (existing) existing.push(selector);
+        else selectorsByHost.set(selector.publisher_domain, [selector]);
+      }
+      const collectionIdsByOwner = new Map<string, Set<string>>();
       for (const selector of value.collections) {
+        checkPreprocessingBudget();
         if (
           !record(selector) ||
           !Object.keys(selector).every(key => ['publisher_domain', 'collection_ids'].includes(key)) ||
@@ -84,16 +114,24 @@ export async function annotateProductsSupplyPaths<T extends object>(
         )
           throw new Error('invalid_collection_selector');
         const owner = domain(selector.publisher_domain)!;
-        for (const host of hosts) {
+        let ids = collectionIdsByOwner.get(owner);
+        if (!ids) {
+          ids = new Set();
+          collectionIdsByOwner.set(owner, ids);
+        }
+        for (const id of selector.collection_ids) ids.add(id);
+      }
+      for (const [owner, collectionIds] of collectionIdsByOwner) {
+        for (const [host, selectors] of selectorsByHost) {
           if (domain(host) === owner) continue;
-          for (const id of selector.collection_ids) {
+          for (const id of collectionIds) {
+            checkPreprocessingBudget();
             const request = validateSupplyPathRequest({
               owner_domain: owner,
               host_domain: host,
               agent_url: agentUrl,
               collection_id: id,
             });
-            const selectors = propertySelectors.filter(s => s.publisher_domain === host);
             const key = JSON.stringify({ request, selectors });
             if (!requests.has(key) && requests.size >= maxPaths) {
               if (!errors.includes('path_limit_exceeded')) errors.push('path_limit_exceeded');
@@ -113,18 +151,22 @@ export async function annotateProductsSupplyPaths<T extends object>(
   // Bound fan-out without allocating one network operation per product.
   const pending = [...requests.entries()];
   let position = 0;
-  const timeoutMs = boundedOption(options.timeoutMs, 15_000, 60_000, 'timeoutMs');
+  checkPreprocessingBudget();
   const controller = new AbortController();
   const onAbort = () => controller.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', onAbort, { once: true });
   if (options.signal?.aborted) onAbort();
-  const timer = setTimeout(() => controller.abort(new Error('Supply-path discovery deadline exceeded')), timeoutMs);
-  const session =
-    options.source === 'authoritative'
-      ? new SupplyPathEvidenceSession({ ...options, signal: controller.signal })
-      : undefined;
+  const timer = setTimeout(
+    () => controller.abort(new Error('Supply-path discovery deadline exceeded')),
+    Math.max(1, deadlineAt - Date.now())
+  );
+  let session: SupplyPathEvidenceSession | undefined;
   let onDeadline: () => void = () => {};
   try {
+    session =
+      options.source === 'authoritative'
+        ? new SupplyPathEvidenceSession({ ...options, signal: controller.signal })
+        : undefined;
     controller.signal.throwIfAborted();
     const aborted = new Promise<never>((_, reject) => {
       onDeadline = () => reject(controller.signal.reason);
