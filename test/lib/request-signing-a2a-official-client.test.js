@@ -171,3 +171,28 @@ test('a header the fixture and the client both set goes on the wire ONCE', () =>
   );
   assert.strictEqual(signed.headers[contentTypeNames[0]], 'application/json');
 });
+
+test("a header the FIXTURE deliberately malforms survives the transport's clean one", () => {
+  const loaded = loadRequestSigningVectors({});
+  // Vector 022 presents a multi-valued Content-Type — that header IS the fault
+  // under test. If the transport's clean `content-type` overwrites it the agent
+  // answers about some other defect entirely, and the vector grades nothing.
+  const vector = loaded.negative.find(v => v.id.startsWith('022-'));
+  assert.ok(vector, 'expected negative vector 022');
+  const fixtureContentType = Object.entries(vector.request.headers || {}).find(([h]) => /^content-type$/i.test(h));
+  assert.ok(fixtureContentType, '022 must set Content-Type for this to grade anything');
+
+  const built = buildPositiveRequest(loaded.positive[0], loaded.keys, {
+    baseUrl: 'https://agent.example.com',
+    transport: 'a2a',
+    a2aRequest: {
+      url: 'https://agent.example.com/a2a',
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'a2a-version': '1.0', accept: 'application/json' },
+      body: '{}',
+    },
+  });
+  // The transport still supplies what the fixture does not set.
+  assert.strictEqual(built.headers['a2a-version'], '1.0');
+  assert.strictEqual(built.headers['accept'], 'application/json');
+});

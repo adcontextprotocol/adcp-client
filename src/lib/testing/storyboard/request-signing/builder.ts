@@ -453,9 +453,11 @@ interface TransportShapedRequest {
 /**
  * Merge *overrides* onto *base*, treating header names case-insensitively.
  *
- * An override replaces any base entry whose name matches case-insensitively,
- * and keeps the OVERRIDE's spelling — the wire should carry the name the
- * transport actually sending it chose, exactly once.
+ * An override replaces any base entry matching case-insensitively and keeps the
+ * OVERRIDE's spelling, so a header the two sides spell differently
+ * (`Content-Type` vs `content-type`) goes on the wire exactly ONCE. A plain
+ * object spread is case-sensitive and sends it twice, which a conformant
+ * verifier refuses at checklist step 1 before grading anything.
  */
 function mergeHeadersCaseInsensitively(
   base: Record<string, string>,
@@ -479,11 +481,14 @@ function applyTransport(vector: PositiveVector | NegativeVector, options: BuildO
           `inventing an A2A binding, which is the thing that transport exists not to do.`
       );
     }
-    // The SDK's headers WIN over the vector's recorded REST headers: they
-    // describe the request that is actually going out (content-type,
-    // a2a-version), and they are present before signing so the signature base
-    // covers them. The vector's headers are kept underneath for anything the
-    // fixture adds that the transport does not set.
+    // THE FIXTURE WINS; the transport only fills gaps. The client's headers
+    // supply what the wire needs and the fixture does not set (`a2a-version`,
+    // `accept`), but where a vector names a header it is naming it ON PURPOSE —
+    // vector 022 presents a deliberately multi-valued `Content-Type`, and that
+    // header IS the fault under test. Letting the transport's clean
+    // `content-type` overwrite it destroys the vector: the agent then answers
+    // about some other defect, and the run grades a request nobody meant to
+    // send.
     //
     // CASE-INSENSITIVELY, because HTTP header names are. A plain object spread
     // is case-SENSITIVE, so a fixture's `Content-Type` and the client's
@@ -495,7 +500,7 @@ function applyTransport(vector: PositiveVector | NegativeVector, options: BuildO
     return {
       method: options.a2aRequest.method,
       url: options.a2aRequest.url,
-      headers: mergeHeadersCaseInsensitively(headers, options.a2aRequest.headers),
+      headers: mergeHeadersCaseInsensitively(options.a2aRequest.headers, headers),
       body: options.a2aRequest.body,
     };
   }
