@@ -1,3 +1,8 @@
+import {
+  annotateProductsSupplyPaths,
+  type ListProductsResponseWithSupplyPath,
+  type ProductSupplyPathOptions,
+} from '../supply-path/products';
 // Main ADCP Client - Type-safe conversation-aware client for AdCP agents
 
 import { z } from 'zod';
@@ -19,6 +24,7 @@ import { isExternalSchemaRootActive, schemaAllowsTopLevelField } from '../valida
 import type {
   GetProductsRequest,
   GetProductsResponse,
+  ListProductsRequest,
   PropertyListReference,
   ListCreativeFormatsRequest,
   ListCreativeFormatsResponse,
@@ -1499,6 +1505,8 @@ export interface SingleAgentClientConfig extends ConversationConfig {
      * violates an exclusion for `ladbible.com`.
      */
     productPropertyPolicy?: ClientProductPropertyPolicy | false;
+    /** Opt in to computed, evidence-bearing external collection path annotations on product discovery. */
+    supplyPathVerification?: ProductSupplyPathOptions;
   };
   /** Governance configuration for buyer-side campaign governance */
   governance?: import('./GovernanceTypes').GovernanceConfig;
@@ -4771,7 +4779,7 @@ export class SingleAgentClient {
       this.rememberProductPolicyRequestParams(taskType, context.productPolicyRequest, result, resumedOptions);
     }
     this.rememberLegacyFormatConverter(taskType, finalizerLegacyFormatConverter, result, resumedOptions);
-    result = await this.applyProductPropertyPolicy(result, taskType, context.productPolicyRequest);
+    result = await this.applyProductPropertyPolicy(result, taskType, context.productPolicyRequest, options?.signal);
     throwIfAborted(options?.signal);
 
     if (context.canonical) {
@@ -4828,14 +4836,21 @@ export class SingleAgentClient {
     if (result.submitted && rawSubmittedWaitForCompletion) {
       result.submitted = {
         ...result.submitted,
-        waitForCompletion: async (pollInterval, signal) =>
-          this.finalizeTaskResult(
-            await rawSubmittedWaitForCompletion(pollInterval, signal),
+        waitForCompletion: async (pollInterval, signal) => {
+          const signals = [options?.signal, signal].filter(
+            (candidate): candidate is AbortSignal => candidate !== undefined
+          );
+          const completionSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+          const completionOptions = { ...(options ?? {}), ...(completionSignal ? { signal: completionSignal } : {}) };
+          const completed = await rawSubmittedWaitForCompletion(pollInterval, signal);
+          return this.finalizeTaskResult(
+            completed,
             context,
-            options,
+            completed.success && completed.status === 'completed' ? completionOptions : options,
             transformCompletedResponse,
             finalizerLegacyFormatConverter
-          ),
+          );
+        },
       };
     }
 
@@ -5324,13 +5339,33 @@ export class SingleAgentClient {
   private async applyProductPropertyPolicy<T>(
     result: TaskResult<T>,
     taskType: string,
-    requestParams: Record<string, unknown>
+    requestParams: Record<string, unknown>,
+    taskSignal?: AbortSignal
   ): Promise<TaskResult<T>> {
     // Reject non-transactable products (no pricing_options) before any
     // property-policy evaluation, regardless of whether a property policy is
     // configured. This runs on the same completion chokepoint so it covers the
     // sync, polling, track, and webhook paths uniformly.
     result = this.enforceProductPricingOptions(result, taskType);
+    if (
+      this.config.validation?.supplyPathVerification &&
+      (taskType === 'get_products' || taskType === 'list_products') &&
+      result.success &&
+      result.status === 'completed' &&
+      result.data
+    ) {
+      const data = result.data as { products?: object[] };
+      if (Array.isArray(data.products)) {
+        const configured = this.config.validation.supplyPathVerification;
+        const signals = [configured.signal, taskSignal].filter((signal): signal is AbortSignal => signal !== undefined);
+        const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+        const products = await annotateProductsSupplyPaths(data.products, this.agent.agent_uri, {
+          ...configured,
+          ...(signal ? { signal } : {}),
+        });
+        result = { ...result, data: { ...result.data, products } };
+      }
+    }
 
     const policyConfig = this.config.validation?.productPropertyPolicy;
     if (policyConfig === false || taskType !== 'get_products') return result;
@@ -5525,7 +5560,11 @@ export class SingleAgentClient {
     result: TaskResult<T>,
     options?: TaskOptions
   ): void {
-    if (taskType !== 'get_products') return;
+    if (
+      taskType !== 'get_products' &&
+      !(taskType === 'list_products' && this.config.validation?.supplyPathVerification)
+    )
+      return;
     if (result.status !== 'submitted' && result.status !== 'working') return;
 
     const keys = new Set<string>();
@@ -5609,7 +5648,13 @@ export class SingleAgentClient {
     requestParams: Record<string, unknown>,
     options?: TaskOptions
   ): TaskResult<T> {
-    if (taskType !== 'get_products' || result.status !== 'submitted' || !result.submitted) return result;
+    if (
+      (taskType !== 'get_products' &&
+        !(taskType === 'list_products' && this.config.validation?.supplyPathVerification)) ||
+      result.status !== 'submitted' ||
+      !result.submitted
+    )
+      return result;
 
     const submitted = result.submitted;
     const policyState: { request?: Readonly<Record<string, unknown>> } = {
@@ -5633,7 +5678,8 @@ export class SingleAgentClient {
           return await this.applyProductPropertyPolicyToTaskInfo(
             taskInfo,
             taskType,
-            (policyState.request ?? {}) as Record<string, unknown>
+            (policyState.request ?? {}) as Record<string, unknown>,
+            options?.signal
           );
         } finally {
           if (terminal) {
@@ -5652,7 +5698,8 @@ export class SingleAgentClient {
           return await this.applyProductPropertyPolicy(
             completed,
             taskType,
-            (policyState.request ?? {}) as Record<string, unknown>
+            (policyState.request ?? {}) as Record<string, unknown>,
+            signal ?? options?.signal
           );
         } finally {
           if (terminal) {
@@ -5673,9 +5720,16 @@ export class SingleAgentClient {
   private async applyProductPropertyPolicyToTaskInfo(
     taskInfo: TaskInfo,
     taskType: string,
-    requestParams: Record<string, unknown>
+    requestParams: Record<string, unknown>,
+    taskSignal?: AbortSignal
   ): Promise<TaskInfo> {
-    if (taskType !== 'get_products' || taskInfo.status !== 'completed' || !taskInfo.result) return taskInfo;
+    if (
+      (taskType !== 'get_products' &&
+        !(taskType === 'list_products' && this.config.validation?.supplyPathVerification)) ||
+      taskInfo.status !== 'completed' ||
+      !taskInfo.result
+    )
+      return taskInfo;
 
     const policyResult = await this.applyProductPropertyPolicy(
       attachMatch({
@@ -5694,7 +5748,8 @@ export class SingleAgentClient {
         debug_logs: [],
       }),
       taskType,
-      requestParams
+      requestParams,
+      taskSignal
     );
 
     if (policyResult.success) {
@@ -5734,7 +5789,12 @@ export class SingleAgentClient {
     result: AdCPAsyncResponseData | undefined,
     metadata: WebhookMetadata
   ): Promise<{ result: AdCPAsyncResponseData | undefined; metadata: WebhookMetadata; suppressHandler: boolean }> {
-    if (metadata.task_type !== 'get_products' || metadata.status !== 'completed' || !result) {
+    if (
+      (metadata.task_type !== 'get_products' &&
+        !(metadata.task_type === 'list_products' && this.config.validation?.supplyPathVerification)) ||
+      metadata.status !== 'completed' ||
+      !result
+    ) {
       return { result, metadata, suppressHandler: false };
     }
 
@@ -6105,6 +6165,21 @@ export class SingleAgentClient {
       effectiveLegacyFormatConverter,
       undefined,
       projectionCatalogs
+    );
+  }
+
+  /** Discover products through the compact AdCP 3.2 catalog task. */
+  async listProducts(
+    params: ListProductsRequest,
+    inputHandler?: InputHandler,
+    options?: TaskOptions
+  ): Promise<TaskResult<ListProductsResponseWithSupplyPath>> {
+    return this.executeAndHandle<ListProductsResponseWithSupplyPath>(
+      'list_products',
+      'onListProductsStatusChange',
+      params,
+      inputHandler,
+      options
     );
   }
 
@@ -7296,6 +7371,8 @@ export class SingleAgentClient {
     switch (taskName) {
       case 'get_products':
         return this.getProducts(params as CanonicalGetProductsRequest, inputHandler, options);
+      case 'list_products':
+        return this.listProducts(params as ListProductsRequest, inputHandler, options);
       case 'create_media_buy':
         return (await this.createMediaBuy(
           params as MutatingRequestInput<CanonicalCreateMediaBuyRequest>,

@@ -44,11 +44,11 @@ import type {
 import { assertNativeRequestProposalsTask, guardNativeRequestProposalsCompletion } from './request-proposals-guard';
 import type { AdcpCapabilities } from '../utils/capabilities';
 import type { WebhookHeaderValue } from '../webhooks';
+import type { ListProductsResponseWithSupplyPath } from '../supply-path';
 import type {
   GetProductsRequest,
   GetProductsResponse,
   ListProductsRequest,
-  ListProductsResponse,
   RequestProposalsRequest,
   RequestProposalsResponse,
   DeclineProposalsRequest,
@@ -212,7 +212,7 @@ export type V2AugmentedGetProductsResponse = CanonicalGetProductsResponse;
  */
 export type TaskResponseTypeMap = {
   get_products: CanonicalGetProductsResponse;
-  list_products: ListProductsResponse;
+  list_products: ListProductsResponseWithSupplyPath;
   request_proposals: RequestProposalsResponse;
   refine_proposals: RefineProposalsResponse;
   decline_proposals: DeclineProposalsResponse;
@@ -820,7 +820,7 @@ export class AgentClient {
     params: ListProductsRequest,
     inputHandler?: InputHandler,
     options?: TaskOptions
-  ): Promise<TaskResult<ListProductsResponse>> {
+  ): Promise<TaskResult<ListProductsResponseWithSupplyPath>> {
     const result = await this.client.executeTask(
       'list_products',
       params,

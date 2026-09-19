@@ -622,6 +622,7 @@ export type {
   UpdateMediaBuyStatusChangeHandler,
   SyncCreativesStatusChangeHandler,
   GetProductsStatusChangeHandler,
+  ListProductsStatusChangeHandler,
 } from './core/AsyncHandler';
 export {
   AsyncHandler,
@@ -2318,3 +2319,12 @@ export type {
   SellerActionResolutionOptions,
   SellerActionResolution,
 } from './server/media-buy-action-resolver';
+
+// Authoritative supply-path evidence and the canonical registry wrapper.
+export * from './supply-path';
+export type {
+  AuthorizationCollectionSelector,
+  ProductCollectionSelector,
+  CollectionDistribution,
+  DiscoveryCollection,
+} from './discovery/types';

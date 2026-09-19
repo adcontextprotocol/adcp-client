@@ -31,3 +31,6 @@ test/fixtures/media-buy-update-fields/
 
 # Canonical reporting consumer-status source retained byte-for-byte as evidence.
 test/fixtures/reporting-consumer-status/canonical-rc3.json
+
+# Canonical supply-path verdict vectors, byte-identical to the upstream corpus.
+test/fixtures/supply-path/vectors.json

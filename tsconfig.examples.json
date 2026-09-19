@@ -12,6 +12,7 @@
     }
   },
   "include": [
+    "examples/supply-path-verification.ts",
     "examples/comply-controller-seller.ts",
     "examples/seller-3.2-starter.ts",
     "examples/seller-test-controller.ts",

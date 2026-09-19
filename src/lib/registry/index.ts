@@ -1,3 +1,5 @@
+import type { SupplyPathRequest, RegistrySupplyPathResult } from '../supply-path/types';
+import { validateSupplyPathRequest, assertRegistrySupplyPathResult } from '../supply-path/validation';
 import type {
   ResolvedBrand,
   LookupBrandOptions,
@@ -912,6 +914,14 @@ export class RegistryClient {
       identifier_value: identifierValue,
     });
     return this.get(`${this.baseUrl}/api/registry/validate/property-authorization?${params}`);
+  }
+
+  /** Cached registry verdict. Fetch authoritative evidence for enforcement. */
+  async verifySupplyPath(request: SupplyPathRequest): Promise<RegistrySupplyPathResult> {
+    const normalized = validateSupplyPathRequest(request);
+    const response: unknown = await this.post(`${this.baseUrl}/api/registry/verify/supply-path`, normalized);
+    assertRegistrySupplyPathResult(response, normalized);
+    return response;
   }
 
   /** Validate product authorization for an agent across publisher properties. */
