@@ -17,6 +17,7 @@ class AuthorityAdmissionBudget {
 
 export interface SupplyPathRevocation {
   publisher_domain: string;
+  /** Publisher timestamp, or `unspecified` for a legacy domain-only declaration. Never use this as the hold expiry. */
   revoked_at: string;
 }
 /**
@@ -25,6 +26,8 @@ export interface SupplyPathRevocation {
  * across changed publisher timestamps, and reject on storage failure instead of returning an empty set.
  * Capture tenant identity from trusted application context in the store instance;
  * include that tenant in every key and transaction. Publisher evidence must never select a tenant.
+ * Persist `revoked_at` as publisher metadata that may be the `unspecified` sentinel;
+ * maintain the seven-day first-observation expiry in a separate timestamp column.
  */
 export interface SupplyPathRevocationStore {
   observe(authority: string, revoked: readonly SupplyPathRevocation[]): Promise<readonly SupplyPathRevocation[]>;

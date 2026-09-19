@@ -521,6 +521,21 @@ describe('live evidence retrieval', () => {
       /cancelled/
     );
   });
+  it('preserves a sanitized transport cause code in unavailable evidence', async () => {
+    const failure = new Error('internal address and TLS details');
+    failure.code = 'ECONNREFUSED';
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      trustedFetchFn: async () => {
+        throw failure;
+      },
+    });
+    assert.equal(result.state, 'unverified');
+    assert.ok(result.sources.evidence.length > 0);
+    assert.ok(result.sources.evidence.every(item => item.error === 'fetch_failed'));
+    assert.ok(result.sources.evidence.every(item => item.cause_code === 'ECONNREFUSED'));
+    assert.ok(result.sources.evidence.every(item => !JSON.stringify(item).includes('internal address')));
+  });
   it('rejects oversized authority pointers before fetching or retaining them', async () => {
     const oversized = `https://cdn.example/${'x'.repeat(8192)}`;
     const calls = [];
@@ -1232,6 +1247,7 @@ describe('authority pins require a successfully validated manifest', () => {
     malformed: new Response('{invalid JSON', { headers: { 'content-type': 'application/json' } }),
     missing_envelope: {},
     malformed_envelope: { authorized_agents: null },
+    malformed_agent_entry: { authorized_agents: [null] },
     chained: { authoritative_location: 'https://chained.example/another.json' },
   };
   for (const [name, failedTarget] of Object.entries(failures)) {

@@ -138,6 +138,8 @@ export interface SupplyPathEvidence {
   byte_length?: number;
   connection_pinned?: boolean;
   error?: string;
+  /** Sanitized transport code such as ECONNREFUSED; never contains the underlying error message. */
+  cause_code?: string;
   /** Present for HTTP redirects and authoritative_location delegation. */
   delegated_to?: string;
   /** Exact bytes for audit/replay when retainEvidenceBodies is enabled. */

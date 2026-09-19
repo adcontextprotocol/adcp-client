@@ -6,7 +6,7 @@ import { SsrfRefusedError, SSRF_TRANSIENT_CODES, type SsrfFetchResult } from '..
 import { ssrfSafeFetchAdAgents, AdAgentsRedirectRefusedError } from '../discovery/adagents-redirects';
 import type { AuthoritativeSupplyPathOptions, SupplyPathEvidence, SupplyPathManifest } from './types';
 import { defaultSupplyPathRevocations, parseRevocations, type SupplyPathRevocation } from './revocations';
-import { record } from './validation';
+import { agentIdentity, record } from './validation';
 
 export function boundedOption(value: number | undefined, fallback: number, maximum: number, name: string): number {
   if (value === undefined) return fallback;
@@ -133,6 +133,9 @@ export class SupplyPathEvidenceSession {
       return response;
     } catch (error) {
       this.signal.throwIfAborted();
+      const rawCauseCode = record(error) && typeof error.code === 'string' ? error.code.toUpperCase() : undefined;
+      const causeCode =
+        rawCauseCode && /^(?:E[A-Z0-9_]{2,40}|CERT_[A-Z0-9_]{2,40})$/.test(rawCauseCode) ? rawCauseCode : undefined;
       const code =
         error instanceof SsrfRefusedError || error instanceof AdAgentsRedirectRefusedError
           ? error.code
@@ -146,6 +149,7 @@ export class SupplyPathEvidenceSession {
         requested_url: url,
         fetched_at: new Date().toISOString(),
         error: code,
+        ...(causeCode ? { cause_code: causeCode } : {}),
       });
       // Preserve the repository's explicit network-policy refusal boundary.
       if (error instanceof SsrfRefusedError && !SSRF_TRANSIENT_CODES.has(error.code)) throw error;
@@ -236,8 +240,11 @@ export class SupplyPathEvidenceSession {
     } else {
       await this.checkAuthority(publisher, authorityLocation, 'check');
     }
-    if (!Array.isArray(manifest.authorized_agents)) {
-      this.documentError(publisher, documentResponse, 'missing_authorized_agents');
+    if (
+      !Array.isArray(manifest.authorized_agents) ||
+      !manifest.authorized_agents.every(entry => record(entry) && agentIdentity(entry.url))
+    ) {
+      this.documentError(publisher, documentResponse, 'malformed_authorized_agents');
       // parseManifest already captured denials; invalid envelopes cannot establish a pin.
       return null;
     }
