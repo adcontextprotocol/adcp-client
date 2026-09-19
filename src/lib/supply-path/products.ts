@@ -24,8 +24,10 @@ export interface ProductSupplyPathAnnotation {
     | { source: 'authoritative'; scope: 'product_properties'; paths: AuthoritativeSupplyPathResult[] }
   ) & { errors: string[] };
 }
+export type AnnotatedSupplyPathProduct<T extends object> = Omit<T, keyof ProductSupplyPathAnnotation> &
+  ProductSupplyPathAnnotation;
 export type ListProductsResponseWithSupplyPath = Omit<ListProductsResponse, 'products'> & {
-  products?: Array<NonNullable<ListProductsResponse['products']>[number] & ProductSupplyPathAnnotation>;
+  products?: Array<AnnotatedSupplyPathProduct<NonNullable<ListProductsResponse['products']>[number]>>;
 };
 export type ProductSupplyPathOptions = VerifySupplyPathOptions & {
   /** Maximum distinct paths in one discovery response. Default 64, max 256. */
@@ -48,7 +50,7 @@ export async function annotateProductsSupplyPaths<T extends object>(
   products: readonly T[],
   agentUrl: string,
   options: ProductSupplyPathOptions = { source: 'authoritative' }
-): Promise<Array<T & ProductSupplyPathAnnotation>> {
+): Promise<Array<AnnotatedSupplyPathProduct<T>>> {
   const maxPaths = boundedOption(options.maxPaths, 64, 256, 'maxPaths');
   const timeoutMs = boundedOption(options.timeoutMs, 15_000, 60_000, 'timeoutMs');
   if (options.source === 'authoritative')
@@ -205,7 +207,7 @@ export async function annotateProductsSupplyPaths<T extends object>(
     void _state;
     void _verification;
     const { keys, errors } = selections[index]!;
-    if (!keys.length && !errors.length) return rest as T & ProductSupplyPathAnnotation;
+    if (!keys.length && !errors.length) return rest as AnnotatedSupplyPathProduct<T>;
     const paths = keys.map(key => outcomes.get(key)!);
     const state = errors.length
       ? 'unverified'
@@ -223,6 +225,6 @@ export async function annotateProductsSupplyPaths<T extends object>(
         paths,
         errors,
       },
-    } as T & ProductSupplyPathAnnotation;
+    } as AnnotatedSupplyPathProduct<T>;
   });
 }

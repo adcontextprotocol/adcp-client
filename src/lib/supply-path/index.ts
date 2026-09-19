@@ -3,6 +3,7 @@ export { verifySupplyPath } from './verify';
 export { evaluateSupplyPath, parseInventoryPartnerDomains, SUPPLY_PATH_STATES } from './evaluate';
 export {
   annotateProductsSupplyPaths,
+  type AnnotatedSupplyPathProduct,
   type ListProductsResponseWithSupplyPath,
   type ProductSupplyPathAnnotation,
   type ProductSupplyPathOptions,

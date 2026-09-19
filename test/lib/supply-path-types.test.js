@@ -20,7 +20,9 @@ import type {
   AgentClient,
   ListProductsResponseWithSupplyPath,
   ListProductsStatusChangeHandler,
+  SupplyPathState,
 } from '${modulePath}';
+import { annotateProductsSupplyPaths } from '${modulePath}';
 
 type ListResult = Awaited<ReturnType<AgentClient['listProducts']>>;
 declare const result: ListResult;
@@ -34,6 +36,14 @@ response.products?.[0]?.supply_path_state;
 const handler: ListProductsStatusChangeHandler = async completed => {
   completed.products?.[0]?.supply_path_verification?.errors;
 };
+const replaced = annotateProductsSupplyPaths(
+  [{ product_id: 'seller-authored', supply_path_state: 'verified_owner_sold' as const }],
+  'https://sales.example'
+);
+replaced.then(products => {
+  const state: SupplyPathState | undefined = products[0]?.supply_path_state;
+  void state;
+});
 void handler;
 `
   );

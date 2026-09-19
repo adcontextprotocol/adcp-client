@@ -708,6 +708,30 @@ describe('bounded evidence and complete product scope', () => {
     });
     assert.equal(result.state, 'owner_attested');
   });
+  for (const selectionType of ['all', 'by_tag']) {
+    it(`fails closed when a ${selectionType} selector includes a property without property_id`, async () => {
+      const fixture = input();
+      fixture.hostManifest.properties[0].tags = ['selected'];
+      fixture.hostManifest.properties.push({
+        property_type: 'website',
+        name: 'Unaddressable property',
+        identifiers: [{ type: 'domain', value: 'extra.example' }],
+        tags: ['selected'],
+      });
+      const selector = {
+        publisher_domain: HOST,
+        selection_type: selectionType,
+        ...(selectionType === 'by_tag' ? { property_tags: ['selected'] } : {}),
+      };
+      const result = await verifySupplyPath(request, {
+        source: 'authoritative',
+        trustedFetchFn: transport({ [`https://${HOST}/.well-known/adagents.json`]: fixture.hostManifest }),
+        propertySelectors: [selector],
+      });
+      assert.equal(result.state, 'owner_attested');
+      assert.equal(result.legs.host_authorization.failure, 'property_scope_mismatch');
+    });
+  }
   it('holds revocations across refreshes and scopes them to the publisher authority', async () => {
     const revocationStore = new sdk.InMemorySupplyPathRevocationStore();
     const revoked = input().hostManifest;

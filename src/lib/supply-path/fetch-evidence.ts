@@ -258,7 +258,7 @@ export class SupplyPathEvidenceSession {
     this.signal.throwIfAborted();
     if (!accepted)
       throw new TypeError(
-        `Authoritative location changed for ${publisher} to ${location}; independently confirm the publisher migration before updating its pin`
+        `Authoritative location changed for ${publisher}; independently confirm the publisher migration before updating its pin`
       );
   }
   private async readAndRemember(publisher: string): Promise<SupplyPathManifest | null> {

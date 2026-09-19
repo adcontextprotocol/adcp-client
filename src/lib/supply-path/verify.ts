@@ -22,6 +22,24 @@ import type {
   AuthoritativeSupplyPathResult,
 } from './types';
 
+/**
+ * Verify one owner/host/agent path. Authoritative mode (the default) fetches
+ * live publisher evidence; registry mode validates a remote cached verdict.
+ * Invalid evidence rejects or returns a fail-closed verdict—it is never
+ * converted into synthetic authorization.
+ *
+ * @example
+ * ```ts
+ * const verdict = await verifySupplyPath({
+ *   owner_domain: 'owner.example',
+ *   host_domain: 'host.example',
+ *   agent_url: 'https://sales.example',
+ *   collection_id: 'news',
+ * });
+ * ```
+ *
+ * @see docs/guides/SUPPLY-PATH-VERIFICATION.md
+ */
 export function verifySupplyPath(
   request: SupplyPathRequest,
   options: RegistrySupplyPathOptions
@@ -34,7 +52,6 @@ export function verifySupplyPath(
   request: SupplyPathRequest,
   options: VerifySupplyPathOptions
 ): Promise<RegistrySupplyPathResult | AuthoritativeSupplyPathResult>;
-/** Verify a single owner/host/agent path. Defaults to live authoritative evidence. */
 export async function verifySupplyPath(
   request: SupplyPathRequest,
   options: VerifySupplyPathOptions = { source: 'authoritative' }
@@ -108,14 +125,13 @@ export async function verifyAuthoritativeSupplyPath(
             throw new TypeError('Invalid product property tags');
           let matched = false;
           for (const property of properties) {
-            if (typeof property.property_id !== 'string') continue;
-            if (
+            const selected =
               single.selection_type === 'all' ||
-              (strings(property.tags) && property.tags.some(tag => single.property_tags.includes(tag)))
-            ) {
-              ids.add(property.property_id);
-              matched = true;
-            }
+              (strings(property.tags) && property.tags.some(tag => single.property_tags.includes(tag)));
+            if (!selected) continue;
+            matched = true;
+            if (typeof property.property_id !== 'string' || !property.property_id.length) unresolved = true;
+            else ids.add(property.property_id);
           }
           if (!matched) unresolved = true;
         }
