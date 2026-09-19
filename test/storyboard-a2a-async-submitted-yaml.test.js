@@ -249,13 +249,16 @@ describe(
       await new Promise(resolve => server.once('listening', resolve));
       const { port } = server.address();
       const baseUrl = `http://127.0.0.1:${port}`;
-      app.get('/.well-known/agent-card.json', (_req, res) => {
+      app.get('/.well-known/agent.json', (_req, res) => {
         res.json({
           name: 'Regressed seller',
           description: 'pre-#899 wire shape',
           url: baseUrl,
           version: '1.0.0',
-          protocolVersion: '0.3.0',
+          // Compliance runs grade the native contract; keep this fixture's
+          // regression limited to the submitted response shape below.
+          protocolVersion: '1.0.0',
+          supportedInterfaces: [{ url: baseUrl, protocolBinding: 'JSONRPC', protocolVersion: '1.0', tenant: '' }],
           defaultInputModes: ['application/json'],
           defaultOutputModes: ['application/json'],
           capabilities: { streaming: false, pushNotifications: false },
@@ -268,7 +271,7 @@ describe(
       });
       app.post('/', (req, res) => {
         const { id, method, params } = req.body ?? {};
-        if (method !== 'message/send') {
+        if (method !== 'SendMessage') {
           res.json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
           return;
         }
