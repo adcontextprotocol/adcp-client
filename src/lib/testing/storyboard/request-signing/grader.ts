@@ -445,20 +445,30 @@ function preflightSkip(
     return { ...base, skipped: true, skip_reason: semantic.skip_reason, diagnostic: semantic.diagnostic };
   }
   // Canonicalization-edge positive vectors (005–008) bake their edge case
-  // into the vector URL path, query, or port. MCP mode flattens every vector
-  // to the same baseUrl (JSON-RPC single endpoint), so these vectors become
-  // indistinguishable from vector 001 — passing under MCP is not evidence
-  // the edge was tested. Skip with a distinct reason so the report doesn't
-  // claim coverage it didn't deliver.
-  if (kind === 'positive' && (options.transport ?? 'mcp') === 'mcp' && MCP_FLATTENED_VECTORS.has(vector.id)) {
+  // into the vector URL path, query, or port. A single-endpoint transport
+  // flattens every vector to the same target, so these vectors become
+  // indistinguishable from vector 001 — passing is not evidence the edge was
+  // tested. Skip with a distinct reason so the report doesn't claim coverage it
+  // didn't deliver.
+  //
+  // BOTH single-endpoint transports, not just MCP. A2A routes every vector to
+  // the one RPC endpoint the agent card names, for exactly the reason MCP routes
+  // every vector to the one JSON-RPC mount, so the URL edge never reaches the
+  // wire on either. Gating this on MCP alone let an A2A run report these as
+  // PASSES — coverage claimed and not delivered, and the two cards stopped
+  // grading the same vector set, which is the one property that makes comparing
+  // them worth anything.
+  const flattensUrlEdges = ((options.transport ?? 'mcp') as string) !== 'raw';
+  if (kind === 'positive' && flattensUrlEdges && MCP_FLATTENED_VECTORS.has(vector.id)) {
     return {
       ...base,
       skipped: true,
       skip_reason: 'mcp_mode_flattens_url_edges',
       diagnostic:
         `Vector ${vector.id} tests a URL-canonicalization edge (port/path/query/encoding) ` +
-        `that MCP mode neutralizes by routing every vector to the MCP endpoint. ` +
-        `Grade this edge with \`--transport raw\` against a per-operation AdCP agent.`,
+        `that ${options.transport ?? 'mcp'} mode neutralizes by routing every vector to the one ` +
+        `endpoint the agent exposes. Grade this edge with \`--transport raw\` against a ` +
+        `per-operation AdCP agent.`,
     };
   }
   if (kind === 'negative') {
