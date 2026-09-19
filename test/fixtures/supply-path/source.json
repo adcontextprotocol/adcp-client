@@ -1,7 +1,7 @@
 {
   "repository": "adcontextprotocol/adcp",
-  "commit": "f701ede564fe55909f5ace51b48575f586c4f890",
+  "commit": "dc69e0b2264b4c563f2175a48c515b7108dbb4f6",
   "path": "static/compliance/source/test-vectors/supply-path/vectors.json",
-  "sha256": "c81122ed89d041660c5568471002cb6d21d21b55917699ddff209a5838668337",
+  "sha256": "1a239d61209896aad843375d307650fb22dbfe7a8c73ebb900d8aec6d58abd31",
   "semantics_version": "1"
 }

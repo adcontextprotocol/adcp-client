@@ -9,6 +9,7 @@ import {
   expandPublisherPropertySelector,
 } from '../discovery/publisher-property-selector';
 import type { AdAgentsJson, AuthorizedAgent } from '../discovery/types';
+import { MediaChannelValues, PropertyIdentifierTypesValues, PropertyTypeValues } from '../types/enums.generated';
 import type { SupplyPathInput, SupplyPathLegs, SupplyPathManifest, SupplyPathVerdict } from './types';
 import { agentIdentity, domain, record, records, strings } from './validation';
 
@@ -52,6 +53,70 @@ function coversCollection(entry: Record<string, unknown>, owner: string, id: str
       domain(selector.publisher_domain) === owner &&
       (selector.collection_ids === undefined || (id !== undefined && selector.collection_ids.includes(id)))
   );
+}
+
+const PROPERTY_TYPES = new Set<string>(PropertyTypeValues);
+const PROPERTY_IDENTIFIER_TYPES = new Set<string>(PropertyIdentifierTypesValues);
+const PROPERTY_CHANNELS = new Set<string>(MediaChannelValues);
+
+/** A declaration is not evidence unless its property grant is complete and schema-shaped. */
+function hasPropertyAuthorizationEnvelope(entry: Record<string, unknown>): boolean {
+  const propertyToken = (value: unknown): value is string => typeof value === 'string' && /^[a-z0-9_]+$/.test(value);
+  const propertyTokens = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.length > 0 && value.every(propertyToken);
+  const optionalUniqueList = (value: unknown, valid: (item: unknown) => boolean): boolean =>
+    value === undefined || (Array.isArray(value) && value.every(valid) && new Set(value).size === value.length);
+  const validInlineProperty = (value: unknown): boolean => {
+    if (
+      !record(value) ||
+      typeof value.property_type !== 'string' ||
+      !PROPERTY_TYPES.has(value.property_type) ||
+      typeof value.name !== 'string' ||
+      !Array.isArray(value.identifiers) ||
+      value.identifiers.length === 0
+    ) {
+      return false;
+    }
+    if (value.property_id !== undefined && !propertyToken(value.property_id)) return false;
+    if (value.publisher_domain !== undefined && typeof value.publisher_domain !== 'string') return false;
+    if (
+      !optionalUniqueList(value.tags, propertyToken) ||
+      !optionalUniqueList(value.supported_channels, item => typeof item === 'string' && PROPERTY_CHANNELS.has(item))
+    ) {
+      return false;
+    }
+    return value.identifiers.every(
+      identifier =>
+        record(identifier) &&
+        typeof identifier.type === 'string' &&
+        PROPERTY_IDENTIFIER_TYPES.has(identifier.type) &&
+        typeof identifier.value === 'string'
+    );
+  };
+
+  if (entry.authorization_type === 'property_ids') return propertyTokens(entry.property_ids);
+  if (entry.authorization_type === 'property_tags') return propertyTokens(entry.property_tags);
+  if (entry.authorization_type === 'inline_properties') {
+    return (
+      Array.isArray(entry.properties) && entry.properties.length > 0 && entry.properties.every(validInlineProperty)
+    );
+  }
+  if (entry.authorization_type === 'publisher_properties') {
+    if (
+      !Array.isArray(entry.publisher_properties) ||
+      entry.publisher_properties.length === 0 ||
+      !entry.publisher_properties.every(record)
+    ) {
+      return false;
+    }
+    try {
+      entry.publisher_properties.forEach(selector => parsePublisherPropertySelector(selector));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 /** Resolve one entry at a time: separate grants are alternatives, never merged across collection scopes. */
@@ -314,6 +379,7 @@ export function evaluateSupplyPath(input: SupplyPathInput): SupplyPathVerdict {
           e =>
             agentIdentity(e.url) === agent &&
             owner &&
+            hasPropertyAuthorizationEnvelope(e) &&
             (!input.requireExplicitOwnerPublisherDomain || e.collections !== undefined) &&
             coversCollection(e, owner, input.collectionId) &&
             !unsupportedConstraints(e).length

@@ -26,7 +26,15 @@ function input() {
     collectionId: 'retro_news',
     hostInventoryPartnerDomains: null,
     ownerManifest: {
-      authorized_agents: [{ url: AGENT, authorized_for: 'Owner avails', collections: [{ publisher_domain: OWNER }] }],
+      authorized_agents: [
+        {
+          url: AGENT,
+          authorized_for: 'Owner avails',
+          authorization_type: 'property_ids',
+          property_ids: ['owner_property'],
+          collections: [{ publisher_domain: OWNER }],
+        },
+      ],
       collections: [
         {
           collection_id: 'retro_news',
@@ -758,6 +766,11 @@ it('bulk fetching preserves untyped collection fallback alongside a typed websit
   const fixture = corpus.ads_txt_policy_vectors.find(
     v => v.id === 'bulk-fetch-includes-untyped-collection-fallback'
   ).input;
+  // The policy vector isolates file selection and intentionally omits a complete
+  // owner grant. Supply one here so this integration assertion measures the
+  // fetched inventory-partner fallback rather than owner-grant validation.
+  fixture.ownerManifest.authorized_agents[0].authorization_type = 'property_ids';
+  fixture.ownerManifest.authorized_agents[0].property_ids = ['owner_property'];
   const calls = [];
   const result = await verifySupplyPath(
     { owner_domain: OWNER, host_domain: HOST, agent_url: AGENT },
