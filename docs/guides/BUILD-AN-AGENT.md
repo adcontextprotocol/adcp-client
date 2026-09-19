@@ -308,6 +308,12 @@ removes the v0.3 interface from the agent card and disables the SDK's legacy
 JSON-RPC and card handlers; it does not introduce a separate protocol
 implementation.
 
+Compliance storyboards are stricter than ordinary adopter calls: A2A runs use
+native 1.0 mode unconditionally, including per-agent routes in a multi-agent
+run. An agent that publishes only the v0.3 compatibility interface can remain
+reachable by normal SDK clients but will fail A2A compliance grading until it
+publishes its native 1.0 card and JSON-RPC interface.
+
 `tokenStore.lookup` represents your real credential verifier or identity provider. Returning a fixed principal for any
 non-empty bearer is an authentication bypass, not a safe example simplification.
 

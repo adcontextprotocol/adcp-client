@@ -50,6 +50,7 @@ import { getOrCreateClient, getOrDiscoverProfile } from '../client';
 import type { AgentProfile } from '../types';
 import { TASK_FEATURE_MAP, type AdcpProtocol } from '../../utils/capabilities';
 import type { AgentEntry, Storyboard, StoryboardRunOptions, StoryboardStep } from './types';
+import { applyNativeA2AComplianceTransportOptions } from './native-a2a-compliance';
 
 /** Storyboard applicability is any-of; it does not authorize individual steps. */
 export function hasAnyRequiredTool(required: readonly string[] | undefined, tools: readonly string[]): boolean {
@@ -143,7 +144,7 @@ function scrubAuthSecrets(text: string): string {
 
 /** Per-agent options view: per-entry overrides shadow run-level defaults. */
 function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): StoryboardRunOptions {
-  return {
+  return applyNativeA2AComplianceTransportOptions({
     ...options,
     auth: entry.auth ?? options.auth,
     protocol: entry.transport ?? options.protocol,
@@ -161,7 +162,7 @@ function buildAgentOptions(entry: AgentEntry, options: StoryboardRunOptions): St
     _controllerCapabilities: undefined,
     agents: undefined,
     agentTools: undefined,
-  };
+  });
 }
 
 /** Bind execution gates and transport observations to the same agent as dispatch. */
