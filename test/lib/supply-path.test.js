@@ -521,6 +521,26 @@ describe('live evidence retrieval', () => {
       /cancelled/
     );
   });
+  it('rejects oversized authority pointers before fetching or retaining them', async () => {
+    const oversized = `https://cdn.example/${'x'.repeat(8192)}`;
+    const calls = [];
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      trustedFetchFn: transport(
+        { [`https://${OWNER}/.well-known/adagents.json`]: { authoritative_location: oversized } },
+        calls
+      ),
+    });
+    assert.equal(result.state, 'unverified');
+    assert.equal(
+      calls.some(call => call.url === oversized),
+      false
+    );
+    const store = new sdk.InMemorySupplyPathAuthorityStore();
+    await assert.rejects(store.check(OWNER, oversized), /1 to 8192 characters/);
+    await assert.rejects(store.observe(OWNER, oversized), /1 to 8192 characters/);
+    assert.throws(() => store.approveChange(OWNER, oversized), /1 to 8192 characters/);
+  });
 });
 
 describe('registry wrapper and product discovery annotations', () => {

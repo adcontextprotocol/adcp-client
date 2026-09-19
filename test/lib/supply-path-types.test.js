@@ -44,6 +44,11 @@ replaced.then(products => {
   const state: SupplyPathState | undefined = products[0]?.supply_path_state;
   void state;
 });
+annotateProductsSupplyPaths([], 'https://sales.example', {
+  source: 'authoritative',
+  // @ts-expect-error Annotation property scope is always derived from each product.
+  propertySelectors: [],
+});
 void handler;
 `
   );

@@ -694,6 +694,50 @@ describe('supply-path annotations across discovery completion paths', () => {
     assert.strictEqual(evidenceSignal.aborted, true);
   });
 
+  test('waitForCompletion cancellation aborts authoritative evidence retrieval', async () => {
+    const product = makeProduct('owner-sold', 'host.example', {
+      collections: [{ publisher_domain: 'owner.example', collection_ids: ['channel'] }],
+    });
+    let started;
+    const evidenceStarted = new Promise(resolve => {
+      started = resolve;
+    });
+    let evidenceSignal;
+    const agent = makeClient({
+      validation: {
+        supplyPathVerification: {
+          source: 'authoritative',
+          trustedFetchFn: async (_url, init) => {
+            evidenceSignal = init.signal;
+            started();
+            return await new Promise((_resolve, reject) => {
+              init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+            });
+          },
+        },
+      },
+    });
+    ProtocolClient.callTool = async (_agent, tool) =>
+      tool === 'get_products'
+        ? { status: 'submitted', task_id: 'cancel-completion' }
+        : {
+            task_id: 'cancel-completion',
+            task_type: 'get_products',
+            protocol: 'media-buy',
+            status: 'completed',
+            created_at: '2026-09-19T00:00:00Z',
+            updated_at: '2026-09-19T00:00:01Z',
+            result: { products: [product], cache_scope: 'public' },
+          };
+    const submitted = await agent.getProducts({ brief: 'sports' }, undefined, { project: false });
+    const controller = new AbortController();
+    const pending = submitted.submitted.waitForCompletion(1, controller.signal);
+    await evidenceStarted;
+    controller.abort(new Error('completion cancelled'));
+    await assert.rejects(pending, /completion cancelled/);
+    assert.strictEqual(evidenceSignal.aborted, true);
+  });
+
   for (const taskName of ['get_products', 'list_products']) {
     test(`${taskName} annotates immediate, polled, and webhook products before publication`, async () => {
       const products = [

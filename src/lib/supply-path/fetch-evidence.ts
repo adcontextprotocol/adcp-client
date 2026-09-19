@@ -196,6 +196,7 @@ export class SupplyPathEvidenceSession {
       const target = manifest.authoritative_location ?? manifest.superseded_by;
       if (
         typeof target !== 'string' ||
+        target.length > 8192 ||
         (manifest.authoritative_location !== undefined &&
           (manifest.authorized_agents !== undefined || manifest.superseded_by !== undefined))
       ) {

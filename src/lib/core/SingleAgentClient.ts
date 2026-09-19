@@ -4836,14 +4836,20 @@ export class SingleAgentClient {
     if (result.submitted && rawSubmittedWaitForCompletion) {
       result.submitted = {
         ...result.submitted,
-        waitForCompletion: async (pollInterval, signal) =>
-          this.finalizeTaskResult(
+        waitForCompletion: async (pollInterval, signal) => {
+          const signals = [options?.signal, signal].filter(
+            (candidate): candidate is AbortSignal => candidate !== undefined
+          );
+          const completionSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+          const completionOptions = { ...(options ?? {}), ...(completionSignal ? { signal: completionSignal } : {}) };
+          return this.finalizeTaskResult(
             await rawSubmittedWaitForCompletion(pollInterval, signal),
             context,
-            options,
+            completionOptions,
             transformCompletedResponse,
             finalizerLegacyFormatConverter
-          ),
+          );
+        },
       };
     }
 

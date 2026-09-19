@@ -13,7 +13,8 @@ import type {
   SupplyPathState,
   RegistrySupplyPathResult,
   AuthoritativeSupplyPathResult,
-  VerifySupplyPathOptions,
+  RegistrySupplyPathOptions,
+  AuthoritativeSupplyPathOptions,
 } from './types';
 
 export interface ProductSupplyPathAnnotation {
@@ -29,7 +30,10 @@ export type AnnotatedSupplyPathProduct<T extends object> = Omit<T, keyof Product
 export type ListProductsResponseWithSupplyPath = Omit<ListProductsResponse, 'products'> & {
   products?: Array<AnnotatedSupplyPathProduct<NonNullable<ListProductsResponse['products']>[number]>>;
 };
-export type ProductSupplyPathOptions = VerifySupplyPathOptions & {
+type ProductSupplyPathVerificationOptions =
+  | RegistrySupplyPathOptions
+  | Omit<AuthoritativeSupplyPathOptions, 'propertySelectors'>;
+export type ProductSupplyPathOptions = ProductSupplyPathVerificationOptions & {
   /** Maximum distinct paths in one discovery response. Default 64, max 256. */
   maxPaths?: number;
   /** Overall batch deadline, including all paths. Default 15 seconds, max 60 seconds. */

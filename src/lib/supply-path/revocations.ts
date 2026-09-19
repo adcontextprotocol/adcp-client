@@ -110,10 +110,12 @@ export class InMemorySupplyPathAuthorityStore implements SupplyPathAuthorityStor
   private readonly admission = new AuthorityAdmissionBudget();
   private readonly locations = new Map<string, string>();
   async check(publisherDomain: string, location: string): Promise<boolean> {
+    this.assertBoundedLocation(location);
     const pinned = this.locations.get(publisherDomain);
     return pinned === undefined || pinned === location;
   }
   async observe(publisherDomain: string, location: string): Promise<boolean> {
+    this.assertBoundedLocation(location);
     const pinned = this.locations.get(publisherDomain);
     if (pinned !== undefined) return pinned === location;
     if (this.locations.size >= 10000) throw new Error('Supply-path authority store capacity exceeded');
@@ -123,10 +125,15 @@ export class InMemorySupplyPathAuthorityStore implements SupplyPathAuthorityStor
   }
   /** Call only after independently confirming a publisher's migration. Never call from an automatic retry. */
   approveChange(publisherDomain: string, location: string): void {
+    this.assertBoundedLocation(location);
     if (!this.locations.has(publisherDomain) && this.locations.size >= 10000)
       throw new Error('Supply-path authority store capacity exceeded');
     if (!this.locations.has(publisherDomain)) this.admission.consume();
     this.locations.set(publisherDomain, location);
+  }
+  private assertBoundedLocation(location: string): void {
+    if (typeof location !== 'string' || location.length === 0 || location.length > 8192)
+      throw new TypeError('Supply-path authority location must contain 1 to 8192 characters');
   }
 }
 export const defaultSupplyPathAuthorities = new InMemorySupplyPathAuthorityStore();
