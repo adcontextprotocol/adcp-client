@@ -1,5 +1,25 @@
 # Changelog
 
+## 14.0.0-rc.40
+
+### Minor Changes
+
+- e184366: Add supply-path verification with a typed canonical registry wrapper and a live authoritative mode that checks owner/host adagents.json declarations and ads.txt/app-ads.txt evidence. Return per-leg diagnostics and auditable fetch provenance, with DNS-pinned SSRF protection, bounded fetching and fail-closed handling of malformed or unresolved authorization constraints.
+
+  Add opt-in external collection path annotations for product discovery, public selector/distribution types, and an explicit distinction between authorization bulk grants and product selectors that require concrete collection IDs.
+
+  Support explicit publisher attribution on shared collection declarations, bounded process-local authority admission, durable tenant-scoped stores, and independent authority migration confirmation. Establish first-use pins only after successful manifest validation, with a read-only precheck and atomic successful-observation commit.
+
+  Persist parsed revocations before later fetch or authority-store failures, preserving their seven-day hold through failed affirmative verification.
+
+### Patch Changes
+
+- 0daacec: Keep content-digest acceptance, mismatch, and malformed-header vectors graded
+  when the selected request-signing verifier profile allows either covered or
+  uncovered requests. Only vectors whose expected outcome depends on a stricter
+  content-digest policy are skipped.
+- cfab37e: Preserve extensible response envelopes when bundled and modular tool schemas share a canonical root `$id`.
+
 ## 14.0.0-rc.39
 
 ### Major Changes
