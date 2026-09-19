@@ -313,7 +313,8 @@ function nodeCost(value: unknown): number {
   return cost;
 }
 
-function limitVerdict(): SupplyPathVerdict {
+/** Internal fail-closed result used when preprocessing reaches the same evaluation budget. */
+export function evaluationLimitVerdict(): SupplyPathVerdict {
   const failure = { ok: false, failure: 'evaluation_limit_exceeded' as const };
   return {
     semantics_version: '1',
@@ -330,12 +331,12 @@ function limitVerdict(): SupplyPathVerdict {
 
 export function evaluateSupplyPath(input: SupplyPathInput): SupplyPathVerdict {
   const total = nodeCost(input);
-  if (!Number.isFinite(total)) return limitVerdict();
+  if (!Number.isFinite(total)) return evaluationLimitVerdict();
   const grants = nodeCost(input.hostManifest?.authorized_agents);
   const properties = nodeCost(input.hostManifest?.properties);
   const collections = records(input.ownerManifest?.collections).length;
   if (!Number.isFinite(total) || grants * properties + Math.max(1, collections) * total * 4 > 4_000_000) {
-    return limitVerdict();
+    return evaluationLimitVerdict();
   }
   // Bulk inquiry is existential over complete individual paths, not a union
   // of owner collection A's carriage and collection B's host authorization.

@@ -179,7 +179,11 @@ export async function annotateProductsSupplyPaths<T extends object>(
   try {
     session =
       options.source === 'authoritative'
-        ? new SupplyPathEvidenceSession({ ...options, signal: controller.signal })
+        ? new SupplyPathEvidenceSession({
+            ...options,
+            signal: controller.signal,
+            timeoutMs: Math.max(1, deadlineAt - Date.now()),
+          })
         : undefined;
     controller.signal.throwIfAborted();
     const aborted = new Promise<never>((_, reject) => {

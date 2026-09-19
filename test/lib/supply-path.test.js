@@ -777,6 +777,33 @@ describe('bounded evidence and complete product scope', () => {
     });
     assert.equal(result.state, 'owner_attested');
   });
+  it('fails closed before selector and property tags can multiply synchronous work', async () => {
+    const fixture = input();
+    fixture.hostManifest.properties[0].tags = Array.from({ length: 1024 }, (_, index) => `host_${index}`);
+    const propertySelectors = Array.from({ length: 40 }, (_, selector) => ({
+      publisher_domain: HOST,
+      selection_type: 'by_tag',
+      property_tags: Array.from({ length: 1024 }, (_, tag) => `selector_${selector}_${tag}`),
+    }));
+    const result = await verifySupplyPath(request, {
+      source: 'authoritative',
+      timeoutMs: 200,
+      trustedFetchFn: transport({ [`https://${HOST}/.well-known/adagents.json`]: fixture.hostManifest }),
+      propertySelectors,
+    });
+    assert.equal(result.state, 'unverified');
+    assert.equal(result.legs.host_authorization.failure, 'evaluation_limit_exceeded');
+  });
+  it('enforces its absolute deadline even before the timer callback can run', () => {
+    const { SupplyPathEvidenceSession } = require('../../dist/lib/supply-path/fetch-evidence');
+    const session = new SupplyPathEvidenceSession({ source: 'authoritative', timeoutMs: 1 });
+    const until = Date.now() + 5;
+    while (Date.now() < until) {
+      // Deliberately occupy the event loop so only the absolute check can observe expiry.
+    }
+    assert.throws(() => session.assertActive(), /deadline/i);
+    session.close();
+  });
   for (const selectionType of ['all', 'by_tag']) {
     it(`fails closed when a ${selectionType} selector includes a property without property_id`, async () => {
       const fixture = input();

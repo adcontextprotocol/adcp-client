@@ -24,6 +24,7 @@ export class SupplyPathEvidenceSession {
   readonly signal: AbortSignal;
   private readonly maxBodyBytes: number;
   private readonly timeoutMs: number;
+  private readonly deadlineAt: number;
   private readonly timer: ReturnType<typeof setTimeout>;
   private readonly controller = new AbortController();
   private readonly abort: () => void;
@@ -34,6 +35,7 @@ export class SupplyPathEvidenceSession {
 
   constructor(private readonly options: AuthoritativeSupplyPathOptions) {
     this.timeoutMs = boundedOption(options.timeoutMs, 15_000, 60_000, 'timeoutMs');
+    this.deadlineAt = Date.now() + this.timeoutMs;
     this.maxBodyBytes = boundedOption(options.maxBodyBytes, 256 * 1024, 20 * 1024 * 1024, 'maxBodyBytes');
     this.signal = this.controller.signal;
     this.abort = () => this.controller.abort(options.signal?.reason);
@@ -48,6 +50,14 @@ export class SupplyPathEvidenceSession {
     clearTimeout(this.timer);
     this.controller.abort(new Error('Supply-path evidence session closed'));
     this.options.signal?.removeEventListener('abort', this.abort);
+  }
+  /** Enforce the absolute deadline even while synchronous evidence evaluation blocks timer delivery. */
+  assertActive(): void {
+    this.signal.throwIfAborted();
+    if (Date.now() >= this.deadlineAt) {
+      this.controller.abort(new Error('Supply-path verification deadline exceeded'));
+      this.signal.throwIfAborted();
+    }
   }
   adagents(publisher: string): Promise<SupplyPathManifest | null> {
     let pending = this.documents.get(publisher);
@@ -77,7 +87,7 @@ export class SupplyPathEvidenceSession {
     url: string,
     pointer = false
   ): Promise<SsrfFetchResult | null> {
-    this.signal.throwIfAborted();
+    this.assertActive();
     try {
       if (this.observedBytes >= 64 * 1024 * 1024) throw new Error('evidence_budget_exceeded');
       const parsed = new URL(url);
@@ -157,6 +167,7 @@ export class SupplyPathEvidenceSession {
     }
   }
   private async parseManifest(publisher: string, response: SsrfFetchResult): Promise<SupplyPathManifest | null> {
+    this.assertActive();
     let document: unknown;
     try {
       document = parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
@@ -165,6 +176,7 @@ export class SupplyPathEvidenceSession {
       this.documentError(publisher, response, 'invalid_document');
       return null;
     }
+    this.assertActive();
     const denials = parseRevocations(document.revoked_publisher_domains);
     if (denials === null) {
       this.documentError(publisher, response, 'invalid_revocations');
